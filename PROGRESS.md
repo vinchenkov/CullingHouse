@@ -24,24 +24,28 @@ KNOWN-FAILING: (none)
 
 ## Parked
 
-- **Secrets in git history.** `OPERATOR-INPUTS.md` (MiniMax key, Discord bot
-  token) was committed in the two seed commits (`13187fa`, `d24e2c9`). It is
-  now untracked + gitignored, but the values remain in local history. A
-  history rewrite was declined mid-session. Decision needed: (a) approve a
-  history scrub (backup bundle exists in session scratchpad), or (b) rotate
-  the MiniMax key and Discord bot token. **No private remote will be created
-  or pushed until one of these happens.**
-- **Private remote** (handoff §1.1): no `gh` CLI / credentials available to
-  create it. Operator: create a private repo and `git remote add origin …`
-  — after the secrets-in-history item is resolved.
-- **Proxy CA pair** (handoff §4.1 row 9): not provided. Agent can generate
-  one via openssl (private key host-side only) unless the operator prefers
-  to supply it — confirm, then S4 unparks.
-- **Claude auth posture for the `claude` binding** (handoff §4.1 row 2):
-  host `claude` is keychain-authenticated; no container-side credential dir
-  or `setup-token` was minted. Needed for S3/Phase 5.
-- **Token-spend authorization** (handoff §4.1 row 8): no budget sentence in
-  `OPERATOR-INPUTS.md`. Phase 5 live turns will not run until stated.
+- ~~Secrets in git history~~ **RESOLVED 2026-07-10**: operator explicitly
+  accepts the values in local history; no scrub, no rotation. Noted in
+  OPERATOR-INPUTS.md.
+- **Private remote** (handoff §1.1): still recommended (disk-failure
+  protection for long autonomous stretches). Operator: create an empty
+  private GitHub repo, then `git remote add origin <url> && git push -u
+  origin main`. Agents push after green commits once it exists.
+- ~~Proxy CA pair~~ **RESOLVED 2026-07-10**: agent generated it —
+  `~/.mc-dev-home/ca/ca.key` (0600, host-side only) + `ca.crt` (valid to
+  2036). S4 unparked.
+- **Credential materialization for S3/Phase 5** — two operator commands
+  (the agent is not permitted to copy live login tokens itself):
+
+      security find-generic-password -s "Claude Code-credentials" -w > ~/.mc-dev-home/cred/claude/.credentials.json && chmod 600 ~/.mc-dev-home/cred/claude/.credentials.json
+      cp -p ~/.codex/auth.json ~/.mc-dev-home/cred/codex/auth.json && chmod 600 ~/.mc-dev-home/cred/codex/auth.json
+
+  S3 runs against these copies, never against `~/.claude` / `~/.codex`.
+  Caveat the operator accepts by running S3: an in-container token refresh
+  may rotate a refresh token and could invalidate the host-side login
+  (re-login is quick if so).
+- ~~Token-spend authorization~~ **RESOLVED 2026-07-10**: all bindings
+  subscription-based; unconstrained, Phase 5 + smoke pre-authorized.
 - **Sacrificial Worksource standing directive** (handoff §4.1 row 7):
   `llm-council` path recorded, but no standing directive written. Needed
   before Strategist(propose) e2e tests and the smoke.
@@ -51,6 +55,28 @@ KNOWN-FAILING: (none)
 - **S7 sleep drill**: the 30-min Mac sleep mid-lease test needs the operator
   (an agent cannot sleep the machine it runs on). All other S7 sub-tests
   proceed.
+- **Codex autonomy profile** (handoff §1.5): the agent is not permitted to
+  write `approval_policy="never"` / `sandbox_mode="danger-full-access"`
+  into `~/.codex/config.toml` (auto-mode classifier denial — correctly:
+  self-configured unsafe agents need the operator's hand). Operator: append
+  this block to `~/.codex/config.toml`, then the takeover smoke
+  (`codex exec -p mc` + one `/goal` set/clear in the repo) can run:
+
+      [features]
+      goals = true
+
+      [profiles.mc]
+      approval_policy = "never"
+      sandbox_mode = "danger-full-access"
+
+      [projects."/Users/vinchenkov/Documents/dev/ai/homie"]
+      trust_level = "trusted"
+
+- **Claude Code permission posture** (handoff §1.4): the agent may not
+  widen its own allowlist (`.claude/settings.json` write denied by the
+  classifier). Operator: either run sessions in this folder with
+  `claude --dangerously-skip-permissions` (handoff-recommended), or create
+  `.claude/settings.json` yourself allowing `go/bun/docker/git/mise/sqlite3`.
 - **db_schemas.sql missing** (handoff §1.1): not present in the seeded
   folder. Proceeding by deriving the schema from spec §4/§5 (spec wins
   anyway). Informational unless the operator has the file — if so, drop it
