@@ -69,4 +69,15 @@ KNOWN-FAILING: (none)
   IMPLEMENTATION-NOTES.md, docs/adr/ slots, docs/priors/ (reconstructed),
   spikes/ stubs.
 
-NEXT: Phase 0 — run spikes S1, S2, S5, S6, S7 (partial), S8. S3/S4 parked.
+- 2026-07-10 — Toolchain pinned via tracked .mise.toml (Go 1.24.5, Bun
+  1.3.9); mise installed. Phase 0 spike workflow launched: S1/S2/S5/S6/S8
+  in parallel, then a serialized Docker-restart drill + S7 (launchd) —
+  restart-dependent assertions serialized because they share the daemon.
+- 2026-07-10 — ADR-001 (role-side verbs + verb-by-scope table, spec §18)
+  authored and Accepted. One genuine spec ambiguity found and tracked:
+  the Editor's wave plan-review has no defined dispatch stage (children
+  are born seeded → Workers would dispatch immediately); routed to S6's
+  ambiguity list, see ADR-001 Open Questions.
+
+NEXT: Phase 0 — collect spike results (workflow in flight), fold RESULT.md
+files, commit per spike, write fallback ADRs for any red. Then Phase 1.
