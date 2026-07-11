@@ -105,5 +105,12 @@ KNOWN-FAILING: (none)
   are born seeded → Workers would dispatch immediately); routed to S6's
   ambiguity list, see ADR-001 Open Questions.
 
+- 2026-07-10 — Operator created private remote (github.com:vinchenkov/
+  CullingHouse); GitHub push protection caught the Discord token in the two
+  seed commits. History rewritten with `git filter-repo --invert-paths
+  --path OPERATOR-INPUTS.md` — **all SHAs changed** (tip now `887e30e`);
+  backup bundle in session scratchpad. Any kickoff sentence must use the
+  new SHAs. Push pending (operator runs it).
+
 NEXT: Phase 0 — collect spike results (workflow in flight), fold RESULT.md
 files, commit per spike, write fallback ADRs for any red. Then Phase 1.
