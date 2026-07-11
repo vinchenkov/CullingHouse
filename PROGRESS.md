@@ -1,9 +1,10 @@
 # PROGRESS — Mission Control implementation ledger
 
 <!-- Header block: kept current by every session. -->
-LAST GREEN SHA: (none yet — scaffold in progress)
-PHASES PASSING: (none)
+LAST GREEN SHA: 771480e
+PHASES PASSING: Phase 0 (S1,S2,S5,S6,S7,S8; S3/S4 in flight); Phase 1a substrate (155 tests: cd mc && mise exec -- go test ./substrate/)
 KNOWN-FAILING: (none)
+FAST SUITE: mc/substrate/check.sh (+ spikes/06-dispatch-table/check.sh until promoted)
 
 ## Phases
 
@@ -131,6 +132,11 @@ KNOWN-FAILING: (none)
   exit before relaunch. All spikes committed. S3/S4 remain: credential
   files not yet materialized by operator; CA pair ready.
 
+- 2026-07-10 ~22:10 — **Phase 1a substrate GREEN and committed (771480e)**:
+  schema.sql + trigger lattice + 155-case backstop suite. Adversarial
+  review (3 lenses) found 13 real defects, all fixed — see the workflow
+  summary; NOTES.md carries 20 NOTE(P1.n) decisions. Independent verify:
+  gofmt/vet clean, suite green in 0.9s.
 - 2026-07-10 ~21:35 — **Harness login expiry mid-run** killed both S3/S4
   spike agents ("Login expired"); timing coincides with S3 forcing a claude
   token refresh against the credential copy — plausibly the accepted
@@ -144,14 +150,19 @@ KNOWN-FAILING: (none)
   boundary. Handing off per handoff §1.4/§1.5. Phase 1a workflow can be
   re-launched fresh (nothing to resume; the failed run wrote nothing).
 
-NEXT: Phase 1a — substrate: spine schema + trigger lattice + pure-SQL
-backstop test matrix (handoff Part 3, Phase 1(a)), derived from spec §4-§6
-honoring spikes/06-dispatch-table's NOTE(S6.n) interpretations. Deliverables
-under mc/: go.mod (modernc.org/sqlite v1.53.0), substrate/schema.sql,
-substrate/substrate_test.go, substrate/check.sh — suite green via
-`cd mc && go test ./substrate/`. Then Phase 1b walking skeleton.
+NEXT: Phase 1b — the walking skeleton (handoff Part 3, Phase 1(b)): one
+origin:user task traverses tick → dispatch → lease → fake-harness Worker →
+mc complete → … → packet → approve → land through the real Go binary, real
+resident, real container topology. Build order: (1) the fake harness (tiny
+CLI implementing the Runtime Adapter contract — start session, one turn,
+completion event, native.jsonl, scripted exit — registered as a third
+harness family in test configs only); (2) minimal mc verbs the skeleton
+needs (init/dispatch/complete/heartbeat/packet decide + run rows), reusing
+S6's Decide() and the substrate; (3) minimal resident tick loop (Bun);
+(4) the skeleton e2e test. S3/S4 spike workflow still in flight — fold its
+results first if landed.
 
 Kickoff (next session, either harness): "Continue the Mission Control
-implementation from commit `<current main tip>`, phase `P-1a`. Follow the
+implementation from commit `<current main tip>`, phase `P-1b`. Follow the
 session protocol in AGENTS.md; read PROGRESS.md; do not invent scope; stop
 rather than guess missing operator inputs."
