@@ -131,6 +131,13 @@ KNOWN-FAILING: (none)
   exit before relaunch. All spikes committed. S3/S4 remain: credential
   files not yet materialized by operator; CA pair ready.
 
+- 2026-07-10 ~21:35 — **Harness login expiry mid-run** killed both S3/S4
+  spike agents ("Login expired"); timing coincides with S3 forcing a claude
+  token refresh against the credential copy — plausibly the accepted
+  rotation-invalidates-host-login caveat firing (not confirmed; could be
+  ordinary expiry). Operator re-ran /login; S3/S4 workflow relaunched.
+  Note for the future: expect host /login re-auth after S3-style refresh
+  probes; Phase 5's refresh canary should schedule around it.
 - 2026-07-10 ~19:20 — **QUOTA: Claude Code session limit hit** (resets
   20:50 America/Los_Angeles). The Phase 1a substrate-author subagent died
   mid-spec-reading; no files written, tree clean — this IS the green
