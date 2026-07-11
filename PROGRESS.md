@@ -2,7 +2,7 @@
 
 <!-- Header block: kept current by every session. -->
 LAST GREEN SHA: 771480e
-PHASES PASSING: Phase 0 (S1,S2,S5,S6,S7,S8; S3/S4 in flight); Phase 1a substrate (155 tests: cd mc && mise exec -- go test ./substrate/)
+PHASES PASSING: Phase 0 COMPLETE (S1–S8 all green, no fallback ADRs; only operator-leg deferrals remain); Phase 1a substrate (155 tests: cd mc && mise exec -- go test ./substrate/)
 KNOWN-FAILING: (none)
 FAST SUITE: mc/substrate/check.sh (+ spikes/06-dispatch-table/check.sh until promoted)
 
@@ -12,8 +12,13 @@ FAST SUITE: mc/substrate/check.sh (+ spikes/06-dispatch-table/check.sh until pro
   - [x] S1 setuid gate — GREEN incl. DD-restart + volume reattach; no fallback
   - [x] S2 exec fidelity — GREEN (30-min hold deferred to Phase 3 suite);
         signal-cancellation protocol finding in RESULT.md
-  - [ ] S3 OAuth lifecycle — **waiting on the two credential commands** (see Parked)
-  - [ ] S4 egress gateway + CA — CA ready; live turns wait on same commands
+  - [x] S3 OAuth lifecycle — GREEN (materialized posture works both bindings;
+        DD-restart-mid-refresh deferred to serialized leg; see RESULT.md
+        finding 5: canonical codex refresh token may be consumed — recovery
+        copy at ~/.mc-dev-home/spike03/race-codex/auth.json)
+  - [x] S4 egress gateway + CA — GREEN (fail-closed net shape proven live;
+        codex streams over WebSocket; ADR-005 base_url routing confirmed;
+        DD-restart leg deferred to serialized leg)
   - [x] S5 SQLite WAL crash discipline — GREEN incl. DD restart mid-write
   - [x] S6 dispatch decision table — GREEN; 8 interpretation notes (NOTE(S6.n))
   - [x] S7 launchd + clock — GREEN unattended; sleep drill + Resource Saver
@@ -149,6 +154,17 @@ FAST SUITE: mc/substrate/check.sh (+ spikes/06-dispatch-table/check.sh until pro
   mid-spec-reading; no files written, tree clean — this IS the green
   boundary. Handing off per handoff §1.4/§1.5. Phase 1a workflow can be
   re-launched fresh (nothing to resume; the failed run wrote nothing).
+
+- 2026-07-11 — Session start (Claude Code): found S3/S4 results landed
+  untracked from the relaunched workflow — **both GREEN, Phase 0 complete,
+  zero fallback ADRs across all eight spikes**. Also found the first two
+  fake-harness files (runner/fake-harness/{cli,behavior}.ts) written but
+  uncommitted (no README/tests yet — Phase 1b work-in-progress, kept).
+  Committed S3/S4 (out/ evidence dirs stay untracked per spike convention,
+  now gitignored). Operator notes ledgered: S3 finding 5 (canonical codex
+  refresh token may be consumed; recovery copy at
+  ~/.mc-dev-home/spike03/race-codex/auth.json); DD-restart-mid-refresh legs
+  deferred to the serialized drill in Phase 3.
 
 NEXT: Phase 1b — the walking skeleton (handoff Part 3, Phase 1(b)): one
 origin:user task traverses tick → dispatch → lease → fake-harness Worker →

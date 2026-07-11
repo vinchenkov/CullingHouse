@@ -9,6 +9,8 @@ OPERATOR-INPUTS.md
 
 # Build & dependency output
 node_modules/
+__pycache__/
+spikes/*/out/
 dist/
 *.test
 /mc/mc
