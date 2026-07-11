@@ -1,0 +1,8 @@
+2026-07-11T02:47:37Z tick pid=74559 PATH=/usr/bin:/bin:/usr/sbin:/sbin
+2026-07-11T02:47:37Z resolve context=desktop-linux endpoint=unix:///Users/vinchenkov/.docker/run/docker.sock
+2026-07-11T02:47:37Z docker OK server=29.4.0 attempt=1
+2026-07-11T02:47:38Z clock host_before=1783738057 container=1783738058 host_after=1783738058 skew_bound=[0,2]s
+2026-07-11T02:47:58Z tick pid=74905 PATH=/usr/bin:/bin:/usr/sbin:/sbin
+2026-07-11T02:47:58Z resolve context=desktop-linux endpoint=unix:///Users/vinchenkov/.docker/run/docker.sock
+2026-07-11T02:47:58Z docker OK server=29.4.0 attempt=1
+2026-07-11T02:47:58Z clock host_before=1783738078 container=1783738078 host_after=1783738078 skew_bound=[0,1]s

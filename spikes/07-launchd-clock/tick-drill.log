@@ -1,0 +1,52 @@
+2026-07-11T02:37:02Z tick pid=64662 PATH=/usr/bin:/bin:/usr/sbin:/sbin
+2026-07-11T02:37:02Z resolve context=desktop-linux endpoint=unix:///Users/vinchenkov/.docker/run/docker.sock
+2026-07-11T02:37:02Z docker OK server=29.4.0 attempt=1
+2026-07-11T02:37:03Z clock host_before=1783737422 container=1783737422 host_after=1783737423 skew_bound=[-1,1]s
+2026-07-11T02:37:23Z tick pid=64846 PATH=/usr/bin:/bin:/usr/sbin:/sbin
+2026-07-11T02:37:23Z resolve context=desktop-linux endpoint=unix:///Users/vinchenkov/.docker/run/docker.sock
+2026-07-11T02:37:23Z docker OK server=29.4.0 attempt=1
+2026-07-11T02:37:23Z clock host_before=1783737443 container=1783737443 host_after=1783737443 skew_bound=[0,1]s
+2026-07-11T02:37:43Z tick pid=65043 PATH=/usr/bin:/bin:/usr/sbin:/sbin
+2026-07-11T02:37:43Z resolve context=desktop-linux endpoint=unix:///Users/vinchenkov/.docker/run/docker.sock
+2026-07-11T02:37:43Z docker OK server=29.4.0 attempt=1
+2026-07-11T02:37:43Z clock host_before=1783737463 container=1783737463 host_after=1783737463 skew_bound=[0,1]s
+2026-07-11T02:38:03Z tick pid=65227 PATH=/usr/bin:/bin:/usr/sbin:/sbin
+2026-07-11T02:38:04Z resolve context=desktop-linux endpoint=unix:///Users/vinchenkov/.docker/run/docker.sock
+2026-07-11T02:38:04Z docker OK server=29.4.0 attempt=1
+2026-07-11T02:38:04Z clock host_before=1783737484 container=1783737484 host_after=1783737484 skew_bound=[0,1]s
+2026-07-11T02:38:24Z tick pid=65410 PATH=/usr/bin:/bin:/usr/sbin:/sbin
+2026-07-11T02:38:24Z resolve context=desktop-linux endpoint=unix:///Users/vinchenkov/.docker/run/docker.sock
+2026-07-11T02:38:56Z docker OK server=request returned 500 Internal Server Error for API route and version http://%2FUsers%2Fvinchenkov%2F.docker%2Frun%2Fdocker.sock/v1.54/info, check if the server supports the requested API version attempt=1
+2026-07-11T02:39:38Z tick pid=65956 PATH=/usr/bin:/bin:/usr/sbin:/sbin
+2026-07-11T02:39:38Z resolve context=desktop-linux endpoint=unix:///Users/vinchenkov/.docker/run/docker.sock
+2026-07-11T02:40:10Z docker OK server=request returned 500 Internal Server Error for API route and version http://%2FUsers%2Fvinchenkov%2F.docker%2Frun%2Fdocker.sock/v1.54/info, check if the server supports the requested API version attempt=1
+2026-07-11T02:40:52Z tick pid=66565 PATH=/usr/bin:/bin:/usr/sbin:/sbin
+2026-07-11T02:40:53Z resolve context=desktop-linux endpoint=unix:///Users/vinchenkov/.docker/run/docker.sock
+2026-07-11T02:41:10Z tick pid=66702 PATH=/usr/bin:/bin:/usr/sbin:/sbin
+2026-07-11T02:41:10Z resolve context=desktop-linux endpoint=unix:///Users/vinchenkov/.docker/run/docker.sock
+2026-07-11T02:41:42Z docker OK server=request returned 500 Internal Server Error for API route and version http://%2FUsers%2Fvinchenkov%2F.docker%2Frun%2Fdocker.sock/v1.54/info, check if the server supports the requested API version attempt=1
+2026-07-11T02:42:24Z tick pid=67446 PATH=/usr/bin:/bin:/usr/sbin:/sbin
+2026-07-11T02:42:24Z resolve context=desktop-linux endpoint=unix:///Users/vinchenkov/.docker/run/docker.sock
+2026-07-11T02:42:56Z docker OK server=request returned 500 Internal Server Error for API route and version http://%2FUsers%2Fvinchenkov%2F.docker%2Frun%2Fdocker.sock/v1.54/info, check if the server supports the requested API version attempt=1
+2026-07-11T02:43:39Z tick pid=70531 PATH=/usr/bin:/bin:/usr/sbin:/sbin
+2026-07-11T02:43:39Z resolve context=desktop-linux endpoint=unix:///Users/vinchenkov/.docker/run/docker.sock
+2026-07-11T02:44:11Z docker DOWN attempt=1 next_delay=1s err=request returned 500 Internal Server Error for API route and version http://%2FUsers%2Fvinchenkov%2F.docker%2Frun%2Fdock
+2026-07-11T02:44:44Z docker DOWN attempt=2 next_delay=2s err=request returned 500 Internal Server Error for API route and version http://%2FUsers%2Fvinchenkov%2F.docker%2Frun%2Fdock
+2026-07-11T02:45:18Z docker DOWN attempt=3 next_delay=4s err=request returned 500 Internal Server Error for API route and version http://%2FUsers%2Fvinchenkov%2F.docker%2Frun%2Fdock
+2026-07-11T02:45:54Z docker DOWN attempt=4 next_delay=8s err=request returned 500 Internal Server Error for API route and version http://%2FUsers%2Fvinchenkov%2F.docker%2Frun%2Fdock
+2026-07-11T02:45:54Z backoff exhausted for this tick; yielding to next StartInterval tick
+2026-07-11T02:46:15Z tick pid=72963 PATH=/usr/bin:/bin:/usr/sbin:/sbin
+2026-07-11T02:46:15Z resolve context=desktop-linux endpoint=unix:///Users/vinchenkov/.docker/run/docker.sock
+2026-07-11T02:46:28Z docker DOWN attempt=1 next_delay=1s err=Error reading remote info: EOF
+2026-07-11T02:46:29Z docker DOWN attempt=2 next_delay=2s err=
+2026-07-11T02:46:31Z docker DOWN attempt=3 next_delay=4s err=
+2026-07-11T02:46:36Z docker DOWN attempt=4 next_delay=8s err=
+2026-07-11T02:46:36Z backoff exhausted for this tick; yielding to next StartInterval tick
+2026-07-11T02:46:56Z tick pid=73804 PATH=/usr/bin:/bin:/usr/sbin:/sbin
+2026-07-11T02:46:56Z resolve context=desktop-linux endpoint=unix:///Users/vinchenkov/.docker/run/docker.sock
+2026-07-11T02:46:56Z docker OK server=29.4.0 attempt=1
+2026-07-11T02:46:57Z clock host_before=1783738016 container=1783738017 host_after=1783738017 skew_bound=[0,2]s
+2026-07-11T02:47:17Z tick pid=74232 PATH=/usr/bin:/bin:/usr/sbin:/sbin
+2026-07-11T02:47:17Z resolve context=desktop-linux endpoint=unix:///Users/vinchenkov/.docker/run/docker.sock
+2026-07-11T02:47:17Z docker OK server=29.4.0 attempt=1
+2026-07-11T02:47:17Z clock host_before=1783738037 container=1783738037 host_after=1783738037 skew_bound=[0,1]s
