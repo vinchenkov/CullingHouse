@@ -7,15 +7,17 @@ KNOWN-FAILING: (none)
 
 ## Phases
 
-- [ ] Phase 0 — Architecture-kill spikes (S1–S8, handoff Part 2)
-  - [ ] S1 setuid gate on named volumes
-  - [ ] S2 warm-helper docker exec fidelity
-  - [ ] S3 OAuth lifecycle in bind-mounted control dirs — **parked** (needs operator inputs, see Parked)
-  - [ ] S4 egress gateway + CA trust — **parked** (needs proxy CA decision + binding auth, see Parked)
-  - [ ] S5 SQLite WAL + crash discipline on named volume
-  - [ ] S6 dispatch decision table as pure function
-  - [ ] S7 launchd + sleep + clock drill (sleep sub-test needs operator presence)
-  - [ ] S8 arm64 image build + Playwright smoke
+- [~] Phase 0 — Architecture-kill spikes (S1–S8, handoff Part 2)
+  - [x] S1 setuid gate — GREEN incl. DD-restart + volume reattach; no fallback
+  - [x] S2 exec fidelity — GREEN (30-min hold deferred to Phase 3 suite);
+        signal-cancellation protocol finding in RESULT.md
+  - [ ] S3 OAuth lifecycle — **waiting on the two credential commands** (see Parked)
+  - [ ] S4 egress gateway + CA — CA ready; live turns wait on same commands
+  - [x] S5 SQLite WAL crash discipline — GREEN incl. DD restart mid-write
+  - [x] S6 dispatch decision table — GREEN; 8 interpretation notes (NOTE(S6.n))
+  - [x] S7 launchd + clock — GREEN unattended; sleep drill + Resource Saver
+        are operator legs (see Parked)
+  - [x] S8 arm64 image + Playwright — GREEN, digest-pinned
 - [ ] Phase 1 — Substrate + walking skeleton (fake harness built here)
 - [ ] Phase 2 — Dispatch + domain correctness
 - [ ] Phase 3 — Boundary conformance (Docker)
@@ -53,8 +55,12 @@ KNOWN-FAILING: (none)
   (ECI state, Resource Saver, VM sizing, version pin). Agent will probe what
   it can in S1/S7 and record findings; operator confirms and freezes.
 - **S7 sleep drill**: the 30-min Mac sleep mid-lease test needs the operator
-  (an agent cannot sleep the machine it runs on). All other S7 sub-tests
-  proceed.
+  (an agent cannot sleep the machine it runs on). Instructions in
+  spikes/07-launchd-clock/RESULT.md. All other S7 sub-tests passed.
+- **Docker Desktop settings (operator, from S7 snapshot)**: Resource Saver
+  is ENABLED (handoff §4.1 row 4 says disable it or prove tick survival)
+  and "start at sign-in" is OFF (row 4 says on). Operator: flip both in
+  Docker Desktop settings. Full snapshot in spikes/07-launchd-clock/RESULT.md.
 - **Codex autonomy profile** (handoff §1.5): the agent is not permitted to
   write `approval_policy="never"` / `sandbox_mode="danger-full-access"`
   into `~/.codex/config.toml` (auto-mode classifier denial — correctly:
@@ -112,5 +118,17 @@ KNOWN-FAILING: (none)
   backup bundle in session scratchpad. Any kickoff sentence must use the
   new SHAs. Push pending (operator runs it).
 
-NEXT: Phase 0 — collect spike results (workflow in flight), fold RESULT.md
-files, commit per spike, write fallback ADRs for any red. Then Phase 1.
+- 2026-07-10 — Phase 0 workflow completed: 6 agents, 0 errors. Every
+  runnable assertion across S1/S2/S5/S6/S7/S8 PASSED through two hard
+  Docker Desktop restarts; **no fallback ADRs needed**. Drill findings for
+  the resident's watchdog: (1) macOS TCC blocks launchd payloads under
+  ~/Documents — runtime bits must live in ~/Library; (2) `docker info
+  --format` exits 0 while printing 500s during daemon transitions —
+  liveness must validate output shape, not exit code; (3) Docker Desktop
+  4.70.0 quit can wedge 10+ min — watchdog must confirm com.docker.backend
+  exit before relaunch. All spikes committed. S3/S4 remain: credential
+  files not yet materialized by operator; CA pair ready.
+
+NEXT: Phase 1a — substrate: spine schema + trigger lattice + pure-SQL
+backstop test matrix (handoff Part 3, Phase 1(a)), derived from spec §4-§6
+with S6's NOTE(S6.n) interpretations. Then Phase 1b walking skeleton.
