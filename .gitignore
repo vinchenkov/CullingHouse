@@ -1,0 +1,18 @@
+# Live operator secrets — never tracked (handoff §1.1, §4).
+OPERATOR-INPUTS.md
+
+# Conventional in-repo MC_HOME location — backstop fence (spec §16.1).
+.mc/
+
+# Dev scratch state (dev MC_HOME lives OUT of tree; this is a second backstop).
+.mc-dev-home/
+
+# Build & dependency output
+node_modules/
+dist/
+*.test
+/mc/mc
+spikes/**/bin/
+
+# OS noise
+.DS_Store
