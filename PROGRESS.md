@@ -23,6 +23,13 @@ KNOWN-FAILING: (none)
 - [ ] Phase 3 — Boundary conformance (Docker)
 - [ ] Phase 4 — E2E control loops (six scenario families)
 - [ ] Phase 5 — Real-subscription acceptance (operator-scheduled)
+- [ ] Release prep (after Phase 5): swap the repo's construction face for
+      its distribution face — rewrite CLAUDE.md/AGENTS.md
+      operator/contributor-facing (front door = install.sh + /onboard per
+      spec §16.1/§17), ship the /onboard skill, operator decides fate of
+      PROGRESS.md / IMPLEMENTATION-NOTES.md / spikes/ (keep-as-history vs
+      docs/history/); specs/ and docs/adr/ stay. This repo IS the final
+      deliverable (handoff §4.2 row 1) — no separate folder.
 
 ## Parked
 
