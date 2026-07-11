@@ -129,6 +129,20 @@ KNOWN-FAILING: (none)
   exit before relaunch. All spikes committed. S3/S4 remain: credential
   files not yet materialized by operator; CA pair ready.
 
+- 2026-07-10 ~19:20 — **QUOTA: Claude Code session limit hit** (resets
+  20:50 America/Los_Angeles). The Phase 1a substrate-author subagent died
+  mid-spec-reading; no files written, tree clean — this IS the green
+  boundary. Handing off per handoff §1.4/§1.5. Phase 1a workflow can be
+  re-launched fresh (nothing to resume; the failed run wrote nothing).
+
 NEXT: Phase 1a — substrate: spine schema + trigger lattice + pure-SQL
 backstop test matrix (handoff Part 3, Phase 1(a)), derived from spec §4-§6
-with S6's NOTE(S6.n) interpretations. Then Phase 1b walking skeleton.
+honoring spikes/06-dispatch-table's NOTE(S6.n) interpretations. Deliverables
+under mc/: go.mod (modernc.org/sqlite v1.53.0), substrate/schema.sql,
+substrate/substrate_test.go, substrate/check.sh — suite green via
+`cd mc && go test ./substrate/`. Then Phase 1b walking skeleton.
+
+Kickoff (next session, either harness): "Continue the Mission Control
+implementation from commit `<current main tip>`, phase `P-1a`. Follow the
+session protocol in AGENTS.md; read PROGRESS.md; do not invent scope; stop
+rather than guess missing operator inputs."
