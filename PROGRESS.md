@@ -36,16 +36,9 @@ KNOWN-FAILING: (none)
 - ~~Proxy CA pair~~ **RESOLVED 2026-07-10**: agent generated it —
   `~/.mc-dev-home/ca/ca.key` (0600, host-side only) + `ca.crt` (valid to
   2036). S4 unparked.
-- **Credential materialization for S3/Phase 5** — two operator commands
-  (the agent is not permitted to copy live login tokens itself):
-
-      security find-generic-password -s "Claude Code-credentials" -w > ~/.mc-dev-home/cred/claude/.credentials.json && chmod 600 ~/.mc-dev-home/cred/claude/.credentials.json
-      cp -p ~/.codex/auth.json ~/.mc-dev-home/cred/codex/auth.json && chmod 600 ~/.mc-dev-home/cred/codex/auth.json
-
-  S3 runs against these copies, never against `~/.claude` / `~/.codex`.
-  Caveat the operator accepts by running S3: an in-container token refresh
-  may rotate a refresh token and could invalidate the host-side login
-  (re-login is quick if so).
+- ~~Credential materialization~~ **RESOLVED 2026-07-10 21:15**: operator ran
+  both commands; `~/.mc-dev-home/cred/{claude/.credentials.json,codex/auth.json}`
+  exist, 0600. Rotation-may-invalidate-host-login caveat stands, accepted.
 - ~~Token-spend authorization~~ **RESOLVED 2026-07-10**: all bindings
   subscription-based; unconstrained, Phase 5 + smoke pre-authorized.
 - **Sacrificial Worksource standing directive** (handoff §4.1 row 7):
@@ -57,10 +50,12 @@ KNOWN-FAILING: (none)
 - **S7 sleep drill**: the 30-min Mac sleep mid-lease test needs the operator
   (an agent cannot sleep the machine it runs on). Instructions in
   spikes/07-launchd-clock/RESULT.md. All other S7 sub-tests passed.
-- **Docker Desktop settings (operator, from S7 snapshot)**: Resource Saver
-  is ENABLED (handoff §4.1 row 4 says disable it or prove tick survival)
-  and "start at sign-in" is OFF (row 4 says on). Operator: flip both in
-  Docker Desktop settings. Full snapshot in spikes/07-launchd-clock/RESULT.md.
+- ~~Docker Desktop settings~~ **RESOLVED 2026-07-10 21:15**: operator
+  flipped both — verified `UseResourceSaver: False`, `AutoStart: True`.
+- ~~Sacrificial Worksource standing directive~~ **RESOLVED 2026-07-10**:
+  agent-authored at operator request; recorded in OPERATOR-INPUTS.md
+  (hardening/tests directive with command-checkable criteria).
+- ~~Private remote~~ **RESOLVED**: origin pushed and in sync.
 - **Codex autonomy profile** (handoff §1.5): the agent is not permitted to
   write `approval_policy="never"` / `sandbox_mode="danger-full-access"`
   into `~/.codex/config.toml` (auto-mode classifier denial — correctly:
