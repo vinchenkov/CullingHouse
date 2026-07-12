@@ -1,0 +1,9 @@
+{
+  "name": "mc-resident",
+  "private": true,
+  "type": "module",
+  "description": "Mission Control resident: skeleton tick loop (Phase 1b). Bun-only, zero dependencies.",
+  "scripts": {
+    "test": "bun test"
+  }
+}

@@ -1,0 +1,5 @@
+{
+  "name": "mc-agent-runner",
+  "private": true,
+  "type": "module"
+}

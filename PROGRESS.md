@@ -1,10 +1,10 @@
 # PROGRESS — Mission Control implementation ledger
 
 <!-- Header block: kept current by every session. -->
-LAST GREEN SHA: 771480e
-PHASES PASSING: Phase 0 COMPLETE (S1–S8 all green, no fallback ADRs; only operator-leg deferrals remain); Phase 1a substrate (155 tests: cd mc && mise exec -- go test ./substrate/)
+LAST GREEN SHA: (this commit)
+PHASES PASSING: Phase 0 COMPLETE (S1–S8 all green, no fallback ADRs; only operator-leg deferrals remain); Phase 1 COMPLETE pending review closure — 1a substrate (155) + 1b walking skeleton (dispatch 68, cmd/mc 63+, fake-harness 43, agent-runner 7, resident 27; Docker e2e PASS ×2)
 KNOWN-FAILING: (none)
-FAST SUITE: mc/substrate/check.sh (+ spikes/06-dispatch-table/check.sh until promoted)
+FAST SUITE: mc/check.sh (gofmt+vet+go test ./... — includes substrate + promoted dispatch) + runner/fake-harness/check.sh + runner/agent-runner/check.sh + resident/check.sh. Docker e2e (phase-completion lane): cd mc && mise exec -- go test -tags docker_e2e -timeout 15m ./e2e/...
 
 ## Phases
 
@@ -24,7 +24,19 @@ FAST SUITE: mc/substrate/check.sh (+ spikes/06-dispatch-table/check.sh until pro
   - [x] S7 launchd + clock — GREEN unattended; sleep drill + Resource Saver
         are operator legs (see Parked)
   - [x] S8 arm64 image + Playwright — GREEN, digest-pinned
-- [ ] Phase 1 — Substrate + walking skeleton (fake harness built here)
+- [~] Phase 1 — Substrate + walking skeleton (fake harness built here)
+  - [x] 1a substrate: schema + trigger lattice + 155-case backstop (771480e)
+  - [x] 1b walking skeleton: contract (docs/phase1b-contract.md), fake
+        harness (runner/fake-harness), agent runner (runner/agent-runner),
+        mc binary (init/task add/dispatch/complete/editor decide/strategist
+        propose/verifier verdict/packet decide/land report/heartbeat/
+        register-session/lock get/run list; S6 Decide() promoted to
+        mc/dispatch byte-identical), resident tick loop (resident/),
+        mc-fake-e2e image (runner/image), Docker e2e green ×2 behind
+        `docker_e2e` build tag
+  - [ ] 1b adversarial review closure: quota killed the correctness lens +
+        most verifiers + the fixer; 10 findings from the two surviving
+        lenses saved (2 major), 1 confirmed; relaunched — see NEXT
 - [ ] Phase 2 — Dispatch + domain correctness
 - [ ] Phase 3 — Boundary conformance (Docker)
 - [ ] Phase 4 — E2E control loops (six scenario families)
@@ -166,19 +178,36 @@ FAST SUITE: mc/substrate/check.sh (+ spikes/06-dispatch-table/check.sh until pro
   ~/.mc-dev-home/spike03/race-codex/auth.json); DD-restart-mid-refresh legs
   deferred to the serialized drill in Phase 3.
 
-NEXT: Phase 1b — the walking skeleton (handoff Part 3, Phase 1(b)): one
-origin:user task traverses tick → dispatch → lease → fake-harness Worker →
-mc complete → … → packet → approve → land through the real Go binary, real
-resident, real container topology. Build order: (1) the fake harness (tiny
-CLI implementing the Runtime Adapter contract — start session, one turn,
-completion event, native.jsonl, scripted exit — registered as a third
-harness family in test configs only); (2) minimal mc verbs the skeleton
-needs (init/dispatch/complete/heartbeat/packet decide + run rows), reusing
-S6's Decide() and the substrate; (3) minimal resident tick loop (Bun);
-(4) the skeleton e2e test. S3/S4 spike workflow still in flight — fold its
-results first if landed.
+- 2026-07-11/12 — **Phase 1b walking skeleton GREEN end-to-end** (workflow:
+  contract + 3 parallel builders + integrator, 19 agents). The 11-step
+  ladder passes through the real mc binary (self-delegating into a warm
+  helper container per §11.5), real resident (Bun, 500ms timer), real
+  container topology (spine on a named volume, mc-fake-e2e image,
+  --network none), and the fake harness: proposed → Editor → seeded →
+  Worker (heartbeat advances, branch+commit) → worked → Verifier →
+  verified → Packager → packaged+packet → approve (pure write, main
+  unmoved) → tick → mc-land → landed (--no-ff merge of verified_sha,
+  worktree/branch gone, cascade archive, lock free). PASS ×2, no leaks.
+  22 deviation entries appended to IMPLEMENTATION-NOTES.md (notable: two
+  additive schema columns lock.hard_deadline_minutes + runs.pool_snapshot;
+  skeleton-only `mc init`; MC_RUN_JSON test override — flagged by review).
+- 2026-07-12 — **QUOTA: session limit hit mid-review** (reset 20:40 PT
+  07-11): the correctness lens, 8 of 10 verifiers, and the fixer died.
+  Two lenses survived with 10 findings (2 major: run.json materialized
+  inside the RW-mounted session dir → forgeable identity + Inv. 26
+  violation; mc-land `git checkout` switches the operator's checked-out
+  branch, §6.2 violation). 1 finding confirmed (contract §8 still claims
+  "no schema changes" — false). Findings saved to session scratchpad;
+  committed the green boundary per AGENTS.md §8, review closure relaunched.
+
+NEXT: Phase 1b review closure — run the correctness lens over the Phase 1b
+diff (e6cf4a1..HEAD), adversarially verify the 9 deduped open findings +
+any new ones, fix confirmed ones (the 2 majors look real), re-green fast
+lane + Docker e2e. Then Phase 2 — dispatch + domain correctness (handoff
+Part 3): decision-table coverage, domain aggregates, CLI verb error paths,
+split-brain kill-point suite, property suites.
 
 Kickoff (next session, either harness): "Continue the Mission Control
-implementation from commit `<current main tip>`, phase `P-1b`. Follow the
-session protocol in AGENTS.md; read PROGRESS.md; do not invent scope; stop
-rather than guess missing operator inputs."
+implementation from commit `<current main tip>`, phase `P-1b-review` (then
+P-2). Follow the session protocol in AGENTS.md; read PROGRESS.md; do not
+invent scope; stop rather than guess missing operator inputs."

@@ -1,0 +1,3 @@
+# build.sh's compiled linux/arm64 mc binary (baked into the image, never
+# committed).
+/mc

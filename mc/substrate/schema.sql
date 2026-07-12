@@ -469,6 +469,12 @@ CREATE TABLE lock (
     grace_minutes        INTEGER NOT NULL DEFAULT 15,
     heartbeat_interval_s INTEGER NOT NULL DEFAULT 60,
     spawn_grace_s        INTEGER NOT NULL DEFAULT 60,
+    -- hard_deadline_minutes: the tunable mc dispatch adds to acquired_at when
+    -- stamping hard_deadline_at at claim (Inv. 1; §10). Phase 1b contract §2
+    -- pins it as an `mc init` tunable stored on the lock row alongside the
+    -- other lease tunables (NOTE(P1b.1): additive column, default preserves
+    -- every Phase 1a behavior).
+    hard_deadline_minutes INTEGER NOT NULL DEFAULT 240,
 
     -- Claim fields travel together; a free lock carries no run residue.
     CHECK ((run_id IS NULL) = (owner IS NULL)),
@@ -505,7 +511,11 @@ CREATE TABLE runs (
     session_path       TEXT,   -- where the session folder is
     binding            TEXT,   -- which harness + model wrote it
     native_session_ref TEXT,   -- the harness's own session handle
-    trace_filename     TEXT    -- the trace's filename
+    trace_filename     TEXT,   -- the trace's filename
+    pool_snapshot      TEXT    -- Editor runs: JSON array of the proposed pool
+                               -- snapshotted at claim; `mc editor decide` must
+                               -- cover it exactly (ADR-001 D4; Phase 1b
+                               -- contract §2, NOTE(P1b.2))
 );
 
 -- Every run's trace is kept forever (Inv. 26); so is its row.

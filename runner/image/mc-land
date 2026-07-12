@@ -1,0 +1,43 @@
+#!/bin/sh
+# mc-land — the landing script (spec §7 "Landing", steps 1-3), baked into
+# the base image and versioned with it. Runs in a short-lived container
+# with ONLY the workspace mounted at /workspace/source: landing holds no
+# lease and never touches the spine — the resident reports the exit code
+# via `mc land report` (contract §1/§5).
+#
+#   usage: mc-land <branch> <verified_sha> <target_ref>
+#
+# set -eu: any failing step aborts nonzero — nothing half-lands (§7).
+set -eu
+
+if [ "$#" -ne 3 ]; then
+    echo "usage: mc-land <branch> <verified_sha> <target_ref>" >&2
+    exit 2
+fi
+branch=$1
+sha=$2
+target=$3
+
+cd /workspace/source
+
+# Step 1 — the SHA fence: only the exact reviewed commit can land (§7).
+actual=$(git rev-parse "refs/heads/$branch")
+if [ "$actual" != "$sha" ]; then
+    echo "mc-land: SHA fence: $branch is at $actual, verified_sha is $sha (§7 step 1)" >&2
+    exit 1
+fi
+
+# Step 2 — merge --no-ff in the primary checkout (§7): the merge commit's
+# second parent is the verified SHA.
+git checkout -q "$target"
+git -c user.name='mission control' -c user.email='mc@mission-control.invalid' \
+    merge --no-ff -m "Land $branch ($sha) into $target" "$sha"
+
+# Step 3 — remove the worktree and branch by exact path (§7): resolve the
+# worktree registered on this branch, never a guessed path.
+wt=$(git worktree list --porcelain \
+     | awk -v ref="refs/heads/$branch" '$1=="worktree"{w=$2} $1=="branch"&&$2==ref{print w}')
+if [ -n "$wt" ]; then
+    git worktree remove "$wt"
+fi
+git branch -d "$branch"
