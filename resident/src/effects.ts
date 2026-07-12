@@ -1,9 +1,15 @@
 // effects.ts — the resident's effectors: apply one `mc dispatch` effect
 // JSON, in order, exactly as docs/phase1b-contract.md §5 pins:
 //
-//   spawn   → mkdir MC_HOME/sessions/<run_id>; write run.json; docker run
+//   spawn   → mkdir MC_HOME/sessions/<run_id>; write MC_HOME/runs/<run_id>.json
+//             (the launch envelope lives OUTSIDE the trace-only session
+//             folder, spec §4/Inv. 26, and is the only thing mounted RO at
+//             /mc/run.json — no RW alias through the session mount, §11.3);
+//             docker run
 //   land    → docker run --rm mc-land; then `mc land report` from exit code
-//   reap    → docker stop mc-run-<run_id> (exact name, strict charset, §11.6)
+//   reap    → docker stop mc-run-<run_id> (exact name, strict charset, §11.6),
+//             then remove the run's launch envelope ("removed with the
+//             container", §11.3 materialize-at-spawn)
 //   idle / reenter → nothing
 //
 // Fail-closed throughout: anything unrecognized or malformed is logged and
@@ -40,6 +46,18 @@ export async function applyEffect(effect: Effect, deps: TickDeps): Promise<void>
   }
 }
 
+/** Host dir for materialized launch envelopes — a SIBLING of sessions/, never
+ * inside a session folder (spec §4: run.json is "mounted … separately from
+ * the session folder"; Inv. 26: the folder holds nothing but the trace). */
+function runsDir(mcHome: string): string {
+  return `${mcHome}/runs`;
+}
+
+/** Host path of one run's launch envelope. */
+function runJsonHostPath(mcHome: string, runId: string): string {
+  return `${runsDir(mcHome)}/${runId}.json`;
+}
+
 type SpawnEffect = Extract<Effect, { action: "spawn" }>;
 type LandEffect = Extract<Effect, { action: "land" }>;
 type ReapEffect = Extract<Effect, { action: "reap" }>;
@@ -58,9 +76,12 @@ async function spawn(effect: SpawnEffect, deps: TickDeps): Promise<void> {
     return;
   }
 
-  // 1. folder
+  // 1. folder — the trace-only session folder (Inv. 26) plus the sibling
+  // envelope dir: run.json must live OUTSIDE the session folder so the RW
+  // session mount never aliases the RO /mc/run.json mount (spec §4, §11.3).
   const sessionDir = `${config.mcHome}/sessions/${run_id}`;
   await deps.fs.mkdir(sessionDir);
+  await deps.fs.mkdir(runsDir(config.mcHome));
 
   // 2. run.json (contract §6 fixed schema; materialize-at-spawn, §11.3)
   const runJson = {
@@ -78,7 +99,7 @@ async function spawn(effect: SpawnEffect, deps: TickDeps): Promise<void> {
     harness_config: { behavior },
     mounts: { session: "/mc/session", workspace: "/workspace/source" },
   };
-  const runJsonPath = `${sessionDir}/run.json`;
+  const runJsonPath = runJsonHostPath(config.mcHome, run_id);
   await deps.fs.writeFile(runJsonPath, JSON.stringify(runJson, null, 2) + "\n");
 
   // 3. container (contract §1 row "agent container": --rm, --network none,
@@ -141,7 +162,8 @@ async function land(effect: LandEffect, deps: TickDeps): Promise<void> {
 }
 
 /** §11.6 decide-then-effect: the decision (and its writes) are already
- * committed; the resident only stops the exact-named container. */
+ * committed; the resident only stops the exact-named container, then removes
+ * the run's launch envelope ("removed with the container", §11.3). */
 async function reap(effect: ReapEffect, deps: TickDeps): Promise<void> {
   const { log } = deps;
   if (!effect.stop_container) {
@@ -157,4 +179,8 @@ async function reap(effect: ReapEffect, deps: TickDeps): Promise<void> {
     // Already-gone containers are expected (crash path); log and continue.
     log(`reap ${effect.run_id}: docker stop exited ${res.exitCode}: ${res.stderr.trim()}`);
   }
+  // The envelope is ephemeral launch input (spec §4, §11.3): remove it with
+  // the container. Normal-exit removal awaits a container-exit hook (see
+  // deviation note); missing files are fine (force semantics).
+  await deps.fs.rm(runJsonHostPath(deps.config.mcHome, effect.run_id));
 }

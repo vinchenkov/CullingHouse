@@ -57,6 +57,10 @@ export class FakeFs {
       this.events.push(`write:${path}`);
       this.writes.set(path, data);
     },
+    rm: async (path: string): Promise<void> => {
+      this.events.push(`rm:${path}`);
+      this.writes.delete(path);
+    },
   };
 }
 

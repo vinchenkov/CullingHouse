@@ -2,7 +2,7 @@
 
 <!-- Header block: kept current by every session. -->
 LAST GREEN SHA: (this commit)
-PHASES PASSING: Phase 0 COMPLETE (S1–S8 all green, no fallback ADRs; only operator-leg deferrals remain); Phase 1 COMPLETE pending review closure — 1a substrate (155) + 1b walking skeleton (dispatch 68, cmd/mc 63+, fake-harness 43, agent-runner 7, resident 27; Docker e2e PASS ×2)
+PHASES PASSING: Phase 0 COMPLETE (S1–S8 all green, no fallback ADRs; only operator-leg deferrals remain); Phase 1 COMPLETE (1a substrate 155; 1b walking skeleton reviewed-and-fixed — fake-harness 43, agent-runner 11, resident 29, dispatch + cmd/mc suites; Docker e2e PASS ×4 total)
 KNOWN-FAILING: (none)
 FAST SUITE: mc/check.sh (gofmt+vet+go test ./... — includes substrate + promoted dispatch) + runner/fake-harness/check.sh + runner/agent-runner/check.sh + resident/check.sh. Docker e2e (phase-completion lane): cd mc && mise exec -- go test -tags docker_e2e -timeout 15m ./e2e/...
 
@@ -24,7 +24,7 @@ FAST SUITE: mc/check.sh (gofmt+vet+go test ./... — includes substrate + promot
   - [x] S7 launchd + clock — GREEN unattended; sleep drill + Resource Saver
         are operator legs (see Parked)
   - [x] S8 arm64 image + Playwright — GREEN, digest-pinned
-- [~] Phase 1 — Substrate + walking skeleton (fake harness built here)
+- [x] Phase 1 — Substrate + walking skeleton (fake harness built here)
   - [x] 1a substrate: schema + trigger lattice + 155-case backstop (771480e)
   - [x] 1b walking skeleton: contract (docs/phase1b-contract.md), fake
         harness (runner/fake-harness), agent runner (runner/agent-runner),
@@ -34,9 +34,11 @@ FAST SUITE: mc/check.sh (gofmt+vet+go test ./... — includes substrate + promot
         mc/dispatch byte-identical), resident tick loop (resident/),
         mc-fake-e2e image (runner/image), Docker e2e green ×2 behind
         `docker_e2e` build tag
-  - [ ] 1b adversarial review closure: quota killed the correctness lens +
-        most verifiers + the fixer; 10 findings from the two surviving
-        lenses saved (2 major), 1 confirmed; relaunched — see NEXT
+  - [x] 1b adversarial review closure: correctness lens re-run, 12 findings
+        adversarially verified → 9 confirmed and FIXED (4 major: run.json
+        RW-alias/Inv. 26, mc-land silent checkout, mc-land missing
+        merge --abort, register-session lease-fence race), 4 refuted with
+        documented reasons; fast lane + Docker e2e re-green
 - [ ] Phase 2 — Dispatch + domain correctness
 - [ ] Phase 3 — Boundary conformance (Docker)
 - [ ] Phase 4 — E2E control loops (six scenario families)
@@ -200,14 +202,36 @@ FAST SUITE: mc/check.sh (gofmt+vet+go test ./... — includes substrate + promot
   "no schema changes" — false). Findings saved to session scratchpad;
   committed the green boundary per AGENTS.md §8, review closure relaunched.
 
-NEXT: Phase 1b review closure — run the correctness lens over the Phase 1b
-diff (e6cf4a1..HEAD), adversarially verify the 9 deduped open findings +
-any new ones, fix confirmed ones (the 2 majors look real), re-green fast
-lane + Docker e2e. Then Phase 2 — dispatch + domain correctness (handoff
-Part 3): decision-table coverage, domain aggregates, CLI verb error paths,
-split-brain kill-point suite, property suites.
+- 2026-07-12 — **Phase 1 COMPLETE.** Review-closure workflow (14 agents,
+  0 errors): fresh correctness lens found 4 new findings (2 major);
+  12 total adversarially verified → 9 confirmed, all FIXED, 4 refuted
+  (MC_RUN_JSON override = already-logged P3 deferral; same-tx overclaim =
+  Phase 2 split-brain territory, code satisfies invariants now; resident
+  exec timeouts and land-report idempotency = deferred with reasons in the
+  workflow record). Fixes: run.json now at MC_HOME/runs/<run_id>.json
+  mounted RO (no RW alias, reap removes it; session folders assert
+  trace-only), mc-land gained a HEAD fence (no checkout) + merge --abort
+  on conflict, register-session fences on own-row identity instead of the
+  live lease (race with the terminal verb eliminated, regression test
+  added), contract §8 schema pin corrected, role outputs moved out of
+  session folders, ladder-9 approve assertions de-flaked, runner process
+  behaviors now tested as a real subprocess (exit-code passthrough,
+  register-once, heartbeat-nonfatal). Suites after fixes: fast lane green
+  (43/11/29 bun + full go), Docker e2e PASS ×2 with rebuilt image. Two
+  deviation entries appended (run.json relocation; container-naming
+  log-and-go).
+
+NEXT: Phase 2 — dispatch + domain correctness (handoff Part 3, largest
+investment). Order: (1) Phase 2 contract (like docs/phase1b-contract.md —
+pin the domain-aggregate layer's shape, where it sits between verbs and
+substrate, the §18 full verb/error surface, split-brain kill-point
+harness design, property-suite scope); (2) build in waves: domain
+aggregates + completion/fencing first, then decision-table + CLI error
+paths, then split-brain suite, then nightly property suites; adversarial
+review per wave. Reuse the Phase 1b workflow shape (contract → parallel
+builders → integrate → review → verify → fix).
 
 Kickoff (next session, either harness): "Continue the Mission Control
-implementation from commit `<current main tip>`, phase `P-1b-review` (then
-P-2). Follow the session protocol in AGENTS.md; read PROGRESS.md; do not
-invent scope; stop rather than guess missing operator inputs."
+implementation from commit `<current main tip>`, phase `P-2`. Follow the
+session protocol in AGENTS.md; read PROGRESS.md; do not invent scope; stop
+rather than guess missing operator inputs."

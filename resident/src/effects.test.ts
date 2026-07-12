@@ -59,15 +59,24 @@ describe("spawn effect", () => {
     await applyEffect(spawnEffect, rig.deps);
     expect(rig.fakeFs.events).toEqual([
       "mkdir:/tmp/mc-home/sessions/run-42-worker",
-      "write:/tmp/mc-home/sessions/run-42-worker/run.json",
+      "mkdir:/tmp/mc-home/runs",
+      "write:/tmp/mc-home/runs/run-42-worker.json",
       "docker:run",
     ]);
+  });
+
+  test("run.json is materialized OUTSIDE the session folder (spec §4, Inv. 26)", async () => {
+    const rig = makeRig();
+    await applyEffect(spawnEffect, rig.deps);
+    for (const path of rig.fakeFs.writes.keys()) {
+      expect(path.startsWith("/tmp/mc-home/sessions/")).toBe(false);
+    }
   });
 
   test("run.json matches the §6 fixed schema", async () => {
     const rig = makeRig();
     await applyEffect(spawnEffect, rig.deps);
-    const written = rig.fakeFs.writes.get("/tmp/mc-home/sessions/run-42-worker/run.json");
+    const written = rig.fakeFs.writes.get("/tmp/mc-home/runs/run-42-worker.json");
     expect(written).toBeDefined();
     expect(written!.endsWith("\n")).toBe(true);
     const runJson = JSON.parse(written!);
@@ -101,7 +110,7 @@ describe("spawn effect", () => {
       rig.deps,
     );
     const runJson = JSON.parse(
-      rig.fakeFs.writes.get("/tmp/mc-home/sessions/run-9-strategist/run.json")!,
+      rig.fakeFs.writes.get("/tmp/mc-home/runs/run-9-strategist.json")!,
     );
     expect(runJson.subject_id).toBeNull();
     expect(runJson.pool_ids).toEqual([]);
@@ -120,7 +129,7 @@ describe("spawn effect", () => {
         "--label", "mc-managed",
         "--label", "mc-tier=pipeline",
         "-v", "/tmp/mc-home/sessions/run-42-worker:/mc/session",
-        "-v", "/tmp/mc-home/sessions/run-42-worker/run.json:/mc/run.json:ro",
+        "-v", "/tmp/mc-home/runs/run-42-worker.json:/mc/run.json:ro",
         "-v", "/host/behaviors:/mc/behaviors:ro",
         "-v", "/host/runner:/app/src:ro",
         "-v", "/host/workspace:/workspace/source",
@@ -206,24 +215,34 @@ describe("reap effect", () => {
     expect(rig.docker.calls).toEqual([["stop", "mc-run-run-42-worker"]]);
   });
 
-  test("no docker call when stop_container is absent", async () => {
+  test("removes the launch envelope with the container (§11.3)", async () => {
+    const rig = makeRig();
+    rig.docker.enqueue(ok(""));
+    await applyEffect({ action: "reap", run_id: "run-42-worker", stop_container: true }, rig.deps);
+    expect(rig.fakeFs.events).toEqual(["rm:/tmp/mc-home/runs/run-42-worker.json"]);
+  });
+
+  test("no docker call and no fs effect when stop_container is absent", async () => {
     const rig = makeRig();
     await applyEffect({ action: "reap", run_id: "run-42-worker" }, rig.deps);
     expect(rig.docker.calls).toEqual([]);
+    expect(rig.fakeFs.events).toEqual([]);
   });
 
   test("a run_id outside the charset is refused (never spliced into argv)", async () => {
     const rig = makeRig();
     await applyEffect({ action: "reap", run_id: "x $(reboot)", stop_container: true }, rig.deps);
     expect(rig.docker.calls).toEqual([]);
+    expect(rig.fakeFs.events).toEqual([]);
     expect(rig.logs.some((l) => l.includes("reap refused"))).toBe(true);
   });
 
-  test("docker stop failure (already gone) is logged, not thrown", async () => {
+  test("docker stop failure (already gone) is logged, not thrown — envelope still removed", async () => {
     const rig = makeRig();
     rig.docker.enqueue(fail(1, "No such container"));
     await applyEffect({ action: "reap", run_id: "run-42-worker", stop_container: true }, rig.deps);
     expect(rig.logs.some((l) => l.includes("docker stop exited 1"))).toBe(true);
+    expect(rig.fakeFs.events).toEqual(["rm:/tmp/mc-home/runs/run-42-worker.json"]);
   });
 });
 

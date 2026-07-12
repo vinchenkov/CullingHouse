@@ -387,7 +387,7 @@ func TestPipelineWalk(t *testing.T) {
 	}
 	if res := runMC(t, spineEnv(spine), "", "run", "register-session", "not-the-run",
 		"--native-ref", "x", "--file", "y"); res.code != 1 {
-		t.Fatalf("stale register-session exit = %d, want 1", res.code)
+		t.Fatalf("unknown-run register-session exit = %d, want 1", res.code)
 	}
 
 	// Worker terminal: seeded → worked, branch recorded (Ambiguity A2), and
@@ -418,6 +418,16 @@ func TestPipelineWalk(t *testing.T) {
 		"--run", workerRun, "--status", "worked")
 	if res.code != 1 {
 		t.Fatalf("replayed complete exit = %d, want 1 (stale-run fencing)", res.code)
+	}
+
+	// register-session is NOT lease-fenced (ADR-001 D6 "(own run)"): the
+	// runner fires it at session-start, which can lose the race against the
+	// behavior's terminal verb releasing the lease — the own-row write must
+	// still land after release, or the locators are silently lost forever.
+	rs = runMC(t, spineEnv(spine), "", "run", "register-session", workerRun,
+		"--native-ref", "fake-session", "--file", "native.jsonl")
+	if rs.code != 0 {
+		t.Fatalf("register-session after lease release exit = %d, want 0 (own-row identity, not fencing): %s", rs.code, rs.stderr)
 	}
 
 	// Stage: Verifier.

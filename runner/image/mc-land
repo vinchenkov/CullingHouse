@@ -29,9 +29,26 @@ fi
 
 # Step 2 — merge --no-ff in the primary checkout (§7): the merge commit's
 # second parent is the verified SHA.
-git checkout -q "$target"
-git -c user.name='mission control' -c user.email='mc@mission-control.invalid' \
-    merge --no-ff -m "Land $branch ($sha) into $target" "$sha"
+#
+# HEAD fence first: §7's landing enumeration has no checkout step, and §6.2
+# forbids Mission Control touching the operator's branches — so if the
+# operator has anything but the target checked out (or a detached HEAD),
+# fail closed instead of switching branches under them. Nonzero exit blocks
+# the task with the reason (§7 failure protocol), exactly like the SHA fence.
+head=$(git symbolic-ref --short -q HEAD) || head=""
+if [ "$head" != "$target" ]; then
+    echo "mc-land: HEAD fence: primary checkout is on ${head:-a detached HEAD}, not $target (§6.2, §7 step 2)" >&2
+    exit 1
+fi
+if ! git -c user.name='mission control' -c user.email='mc@mission-control.invalid' \
+        merge --no-ff -m "Land $branch ($sha) into $target" "$sha"; then
+    # §7: "Nonzero … → git merge --abort where applicable, nothing
+    # half-lands" — never leave the operator's checkout in a MERGING state
+    # (a lingering MERGE_HEAD would wedge every landing retry).
+    git merge --abort >/dev/null 2>&1 || true
+    echo "mc-land: merge of $sha into $target failed; merge aborted, nothing half-lands (§7)" >&2
+    exit 1
+fi
 
 # Step 3 — remove the worktree and branch by exact path (§7): resolve the
 # worktree registered on this branch, never a guessed path.

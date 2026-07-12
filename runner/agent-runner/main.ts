@@ -26,8 +26,11 @@
 // heartbeat or registration is logged and never fatal — the lease fencing
 // in the spine is the authority on staleness (§10).
 
-const RUN_JSON = "/mc/run.json";
-const HARNESS_CLI = "/app/src/fake-harness/cli.ts";
+// Fixed in-container paths; the env overrides exist ONLY for the test tier
+// (runner-process.test.ts runs main() as a real subprocess against a temp
+// envelope + a stub mc) — the agent container never sets either.
+const RUN_JSON = process.env["MC_RUN_JSON"] || "/mc/run.json";
+const HARNESS_CLI = process.env["MC_HARNESS_CLI"] || "/app/src/fake-harness/cli.ts";
 const NATIVE_FILENAME = "native.jsonl"; // cli.ts's fixed name; registered via --file
 
 export interface RunEnvelope {

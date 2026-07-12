@@ -176,15 +176,28 @@ func TestWalkingSkeleton(t *testing.T) {
 	if got := f.mcRun("", "packet", "decide", fmt.Sprint(taskID), "--approve"); got.code != 0 {
 		t.Fatalf("mc packet decide --approve exited %d: %s", got.code, got.stderr)
 	}
-	task = f.mcOK("", "task", "get", fmt.Sprint(taskID))
-	if task["decision"] != "approved" || task["status"] != "packaged" || task["archived"].(float64) != 0 {
-		t.Fatalf("after approve: %v, want decision=approved status=packaged archived=0 (§7, Inv. 2)", task)
-	}
-	if p := f.packets(); p[0]["archived"].(float64) != 0 {
-		t.Fatalf("packet archived at approve time — the split collapsed (§7)")
-	}
+	// The split is asserted FIRST and host-locally (~ms read): a collapsed
+	// split would move main synchronously, before decide returned. The
+	// spine reads that follow are docker-exec round trips racing the live
+	// 500 ms tick loop — the land effect may legitimately complete under
+	// them, so they tolerate an already-landed row; ladder 10 re-verifies
+	// every landed invariant deterministically.
 	if now := f.git("rev-parse", "main"); now != mainBefore {
 		t.Fatalf("host main moved at approve time (%s → %s): approve must be a pure state write (Inv. 2)", mainBefore, now)
+	}
+	task = f.mcOK("", "task", "get", fmt.Sprint(taskID))
+	if task["decision"] != "approved" {
+		t.Fatalf("after approve: decision = %v, want approved (§7)", task["decision"])
+	}
+	if task["archived"].(float64) == 0 && task["status"] != "packaged" {
+		t.Fatalf("after approve: %v, want status=packaged while unarchived (§7, Inv. 2)", task)
+	}
+	if p := f.packets(); p[0]["archived"].(float64) != 0 {
+		// Only legitimate if the timer already landed the task between the
+		// two reads; a packet archived ahead of its task is the collapse.
+		if tk := f.mcOK("", "task", "get", fmt.Sprint(taskID)); tk["archived"].(float64) != 1 {
+			t.Fatalf("packet archived while task unarchived — the split collapsed (§7)")
+		}
 	}
 
 	// ── Ladder 10: tick → land effect → mc-land → mc land report ─────────
@@ -220,6 +233,24 @@ func TestWalkingSkeleton(t *testing.T) {
 		}
 		return true, ""
 	})
+
+	// Every session folder holds NOTHING but the trace (Inv. 26, spec §4):
+	// no run.json alias, no role outputs, no scratch — ever.
+	sessions, err := os.ReadDir(filepath.Join(f.home, "sessions"))
+	if err != nil {
+		t.Fatalf("read sessions dir: %v", err)
+	}
+	for _, s := range sessions {
+		entries, err := os.ReadDir(filepath.Join(f.home, "sessions", s.Name()))
+		if err != nil {
+			t.Fatalf("read session %s: %v", s.Name(), err)
+		}
+		for _, e := range entries {
+			if e.Name() != "native.jsonl" {
+				t.Fatalf("session %s holds %q — the folder holds nothing but the trace (Inv. 26)", s.Name(), e.Name())
+			}
+		}
+	}
 }
 
 // ───────────────────────────── fixtures ─────────────────────────────────
@@ -355,12 +386,17 @@ func (f *fixture) writeBehaviors() {
 			{"do":"exec","command":"mc complete \"$MC_SUBJECT_ID\" --run \"$MC_RUN_ID\" --status worked --branch \"mc/task-$MC_SUBJECT_ID\""},
 			{"do":"succeed","output":"worked"}]}`,
 		// Verifier: verdict on the exact commit it inspected (contract A2).
+		// Role outputs never land in the trace-only session folder (Inv. 26,
+		// spec §4): evidence goes under the gitignored .mc-worktrees/ — as a
+		// SIBLING of the registered worktree, so `git worktree remove` (§7
+		// step 3) never sees an untracked file inside it.
 		"verifier.json": `{"steps":[
-			{"do":"exec","command":"set -e; sha=$(git -C /workspace/source rev-parse \"refs/heads/mc/task-$MC_SUBJECT_ID\"); printf 'gate ladder: fake pass\\n' > /mc/session/evidence.txt; mc verifier verdict \"$MC_SUBJECT_ID\" --run \"$MC_RUN_ID\" --outcome pass --evidence /mc/session/evidence.txt --sha \"$sha\""},
+			{"do":"exec","command":"set -e; sha=$(git -C /workspace/source rev-parse \"refs/heads/mc/task-$MC_SUBJECT_ID\"); printf 'gate ladder: fake pass\\n' > \"/workspace/source/.mc-worktrees/task-$MC_SUBJECT_ID.evidence.txt\"; mc verifier verdict \"$MC_SUBJECT_ID\" --run \"$MC_RUN_ID\" --outcome pass --evidence \"/workspace/source/.mc-worktrees/task-$MC_SUBJECT_ID.evidence.txt\" --sha \"$sha\""},
 			{"do":"succeed","output":"verified"}]}`,
-		// Packager: packaged + packet birth in one transaction (Inv. 10/11).
+		// Packager: packaged + packet birth in one transaction (Inv. 10/11);
+		// the rendered packet is a role output too — same non-session home.
 		"packager.json": `{"steps":[
-			{"do":"exec","command":"mc complete \"$MC_SUBJECT_ID\" --run \"$MC_RUN_ID\" --status packaged --outputs /mc/session/packet.md"},
+			{"do":"exec","command":"mc complete \"$MC_SUBJECT_ID\" --run \"$MC_RUN_ID\" --status packaged --outputs \"/workspace/source/.mc-worktrees/task-$MC_SUBJECT_ID.packet.md\""},
 			{"do":"succeed","output":"packaged"}]}`,
 		// Strategist(propose): the liveness terminal — empty batch, which
 		// also exercises the subjectless lease (ADR-001 constraint b).

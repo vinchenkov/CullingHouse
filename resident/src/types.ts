@@ -61,6 +61,8 @@ export interface TickDeps {
     /** mkdir -p semantics. */
     mkdir(path: string): Promise<void>;
     writeFile(path: string, data: string): Promise<void>;
+    /** rm -f semantics (missing file is not an error). */
+    rm(path: string): Promise<void>;
   };
   config: ResidentConfig;
 }

@@ -37,18 +37,32 @@ func Heartbeat(db *sql.DB, runID string) (any, error) {
 // RegisterSession records the harness's native session locators on the runs
 // row (ADR-001 D5; §15.4): the native session handle and the trace filename
 // — a locator, never assumed, because real harnesses differ (contract §4).
+//
+// Deliberately NOT lease-fenced (ADR-001 D6 scopes it "(own run)", not
+// "fenced"): a run writing locators to its own permanent runs row needs
+// identity, not fencing — the runner fires register-session at session-start,
+// which can race the behavior's terminal verb releasing the lease, and a
+// lease fence here would silently lose the locators forever (Inv. 26).
+// The own-row existence check below is the identity; Heartbeat stays fenced.
 func RegisterSession(db *sql.DB, runID, nativeRef, file string) (any, error) {
 	if nativeRef == "" || file == "" {
 		return nil, Usagef("mc run register-session requires --native-ref and --file")
 	}
 	err := inTx(db, func(ctx context.Context, q Q) error {
-		if _, err := fenceRun(ctx, q, runID); err != nil {
-			return err
-		}
-		_, err := q.ExecContext(ctx, `
+		res, err := q.ExecContext(ctx, `
 			UPDATE runs SET native_session_ref = ?, trace_filename = ?
 			WHERE id = ?`, nativeRef, file, runID)
-		return err
+		if err != nil {
+			return err
+		}
+		n, err := res.RowsAffected()
+		if err != nil {
+			return err
+		}
+		if n != 1 {
+			return Domainf("unknown run %q: register-session writes only its own runs row (ADR-001 D6)", runID)
+		}
+		return nil
 	})
 	if err != nil {
 		return nil, err

@@ -1,5 +1,7 @@
-// runner.test.ts — unit tests for the agent runner's pure helpers (the
-// process flow itself is exercised end-to-end by the Docker e2e, mc/e2e).
+// runner.test.ts — unit tests for the agent runner's pure helpers. The
+// process flow (exit-code passthrough, register-session-once, nonfatal mc
+// failures) is covered subprocess-level by runner-process.test.ts; the
+// Docker e2e exercises only exit-0 harness runs.
 // Docker-free, token-free: part of the fast suite.
 
 import { describe, expect, test } from "bun:test";

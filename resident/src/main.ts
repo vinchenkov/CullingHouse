@@ -12,7 +12,7 @@
 // The e2e (contract §7) spawns this process, points it at its test config,
 // and only ever observes — advancement stays timer-driven.
 
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, rm, writeFile } from "node:fs/promises";
 import { startTickLoop } from "./tick-loop";
 import type { Exec, ResidentConfig, TickDeps } from "./types";
 
@@ -67,6 +67,7 @@ async function main(): Promise<void> {
         await mkdir(path, { recursive: true });
       },
       writeFile: (path, data) => writeFile(path, data),
+      rm: (path) => rm(path, { force: true }),
     },
     config,
   };

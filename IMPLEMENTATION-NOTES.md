@@ -263,3 +263,41 @@ Entry template:
   (heartbeats can never extend hard_deadline_at, Inv. 1)
 - Spec impact: none
 - Needs your decision: no
+
+## 2026-07-12 — run.json relocated outside the session folder; normal-exit removal deferred
+- Where: Phase 1b fixes (spec §4 file plane, §11.3, Inv. 26); adversarial
+  review finding on resident/src/effects.ts
+- Gap: the skeleton materialized run.json INSIDE sessions/<run_id>/,
+  creating a writable alias of the RO /mc/run.json mount (defeating the
+  §11.3 per-container grain) and permanently polluting the trace-only
+  folder. The earlier "run.json materialized inside the session dir" entry's
+  "Spec impact: none" was wrong.
+- Choice: materialize at MC_HOME/runs/<run_id>.json (sibling dir), mount
+  only that file RO; remove it in the reap effector. "Removed with the
+  container" on NORMAL exit is deferred: the skeleton resident is
+  fire-and-forget (docker run -d --rm) with no container-exit hook — a
+  leftover runs/<id>.json sits outside every session folder, so Inv. 26 and
+  the §11.3 grain hold now; full removal lands with the Phase 2/3 lifecycle
+  work (orphan sweep / exit observation). Conservative: least new
+  machinery, fail-closed, easy to finish later.
+- Spec impact: none (spec text stands; contract §5/§6 updated to match)
+- Needs your decision: no
+
+## 2026-07-12 — agent container named mc-run-<run_id>, not §11.1's mc-<worksource>-<run_id>
+- Where: Phase 1b topology (spec §11.1 naming, §11.6 exact-name stop);
+  contract §1 pinned the name without logging the deviation
+- Gap: §11.1 names instances mc-<worksource>-<run_id>, but subjectless runs
+  (Strategist propose; future Homie tier) carry no worksource, and the reap
+  effect carries only run_id — the spec pattern has no defined value for
+  the very runs the skeleton spawns.
+- Choice: keep mc-run-<run_id> (resident/src/effects.ts spawn+stop,
+  mc/verbs/verbs.go newRunID comment, e2e filter). Functionally safe: the
+  §11.6 orphan sweep and pre-spawn assertion are label-keyed
+  (mc-managed/mc-tier), and spawn/stop are self-consistent. Renaming later
+  touches two components + the e2e; operator tooling written against
+  §11.1's literal pattern must use the labels (which the spec also
+  mandates) or this name.
+- Spec impact: §11.1 "named mc-<worksource>-<run_id>" → "named
+  mc-run-<run_id>" (or define the subjectless form)
+- Needs your decision: no (log-and-go; flag if you want the spec's literal
+  pattern for worksource-bearing runs)

@@ -119,7 +119,7 @@ dispatches (Inv. 3).
 | Verb | Spine writes |
 |---|---|
 | `mc heartbeat <run_id>` | `lock.last_heartbeat_at = datetime('now')` iff `run_id` matches (fenced, §10); can never extend `hard_deadline_at` (Inv. 1) |
-| `mc run register-session <run_id> --native-ref <ref> --file <name>` | `runs.native_session_ref`, `runs.trace_filename` (ADR D5; §15.4 locators) |
+| `mc run register-session <run_id> --native-ref <ref> --file <name>` | `runs.native_session_ref`, `runs.trace_filename` (ADR D5; §15.4 locators). **Own-row identity, not lease-fenced** (ADR D6 "(own run)"): fired at session-start, it may lose the race against the behavior's terminal verb releasing the lease, and must still land — a lease fence here would silently lose the locators forever |
 
 Within-container runner-vs-model scope separation is best-effort by decision
 (§11.5) and moot for a scripted fake; per-container kernel enforcement **[P3]**.
@@ -217,16 +217,24 @@ tick = invoke `mc dispatch` (host binary, self-delegating) and effect the
 returned JSON in order (§10: folder → `run.json` → container; no proxy for
 the fake family):
 
-- `spawn` → mkdir `MC_HOME/sessions/<run_id>`; write `run.json` (schema §6
-  below); `docker run --rm -d` the agent container with the §1 mounts/labels.
+- `spawn` → mkdir `MC_HOME/sessions/<run_id>` (the trace-only folder,
+  Inv. 26); write `run.json` at `MC_HOME/runs/<run_id>.json` — a **sibling**
+  of the sessions tree, never inside a session folder (spec §4: mounted
+  "separately from the session folder"; keeps the RO `/mc/run.json` mount
+  free of any RW alias through `/mc/session`, §11.3); `docker run --rm -d`
+  the agent container with the §1 mounts/labels.
 - `land` → `docker run --rm` the `mc-land` container (workspace mounted at
   the canonical path, §6.2) with `(branch, verified_sha, target_ref)` argv;
   then `mc land report <task> --status success|failure` from its exit code
-  (§7 Landing steps 1–3: SHA fence, `merge --no-ff` in the primary checkout,
-  remove worktree + branch by exact path; nonzero → abort, nothing
-  half-lands).
+  (§7 Landing steps 1–3: SHA fence; **HEAD fence** — the script never checks
+  out the target, it fails closed unless the primary checkout is already on
+  it, §6.2 "the operator's own git work is untouched"; `merge --no-ff` in
+  the primary checkout, with `git merge --abort` on a failed merge so
+  nothing half-lands and the §7 retry never wedges; remove worktree + branch
+  by exact path).
 - `reap` → `docker stop mc-run-<run_id>` (exact name, strict charset —
-  §11.6 decide-then-effect; only the host holds the control socket).
+  §11.6 decide-then-effect; only the host holds the control socket), then
+  remove `MC_HOME/runs/<run_id>.json` ("removed with the container", §11.3).
 - `idle` / `reenter` → nothing.
 
 **Injectable time**: the loop is `startTickLoop(deps)` where `deps` carries
@@ -244,8 +252,13 @@ scheduling, `mc backup` chore.
 
 ## 6. `run.json` (skeleton schema, §11.5 launch envelope)
 
-Mounted RO at `/mc/run.json`, materialized at spawn, removed with the
-container (§11.3 materialize-at-spawn). Fixed schema, mechanical read:
+Mounted RO at `/mc/run.json`, materialized at spawn on the host at
+`MC_HOME/runs/<run_id>.json` — **outside** the session folder, so the RW
+`/mc/session` mount never aliases the identity file `mc` trusts (spec §4
+separateness; §11.3 nested-RO grain; Inv. 26 trace-only folder) — and
+removed with the container (§11.3 materialize-at-spawn; the skeleton removes
+it in the reap effector — normal-exit removal awaits a container-exit hook,
+see the deviation log). Fixed schema, mechanical read:
 
 ```json
 { "run_id": "…", "tier": "pipeline", "role": "worker",
@@ -287,7 +300,7 @@ git (§6.2 sanctions this).
 | 6 | tick → Verifier; `mc verifier verdict … --outcome pass --sha $(git rev-parse …)` | task `verified`, `verified_sha` recorded |
 | 7 | tick → Packager; `mc complete --status packaged` | task `packaged`, packet row unarchived — born in the same transaction (Inv. 10/11) |
 | 8 | interim ticks (board drained) | any Strategist(propose) spawns terminate via empty batch; **no new tasks appear** (§10 step 4 fires legitimately; liveness note below) |
-| 9 | **approve**: `mc packet decide <task> --approve` | *the split, first half (§7)*: exit 0; task `decision='approved'`, still `status='packaged'`, `archived=0`; packet unarchived; **host `main` HEAD unchanged** — approve is a pure state write, no filesystem effect (Inv. 2) |
+| 9 | **approve**: `mc packet decide <task> --approve` | *the split, first half (§7)*: exit 0; **host `main` HEAD unchanged**, asserted first and host-locally — approve is a pure state write, no filesystem effect (Inv. 2). The follow-on spine reads (task `decision='approved'`, `status='packaged'`, `archived=0`, packet unarchived) race the live tick loop and tolerate an already-landed row; step 10 re-verifies every landed invariant |
 | 10 | tick → land effect → `mc-land` → `mc land report` | *the split, second half (§7)*: `main` advanced by a `--no-ff` merge whose second parent is `verified_sha`; worktree dir and `mc/task-<id>` branch gone; task `archived=1`, packet archived (cascade trigger); lock free |
 | 11 | teardown | resident stopped; `mc-managed`-labeled containers removed; volume removed |
 
@@ -308,8 +321,14 @@ which also exercises ADR constraint (b), the subjectless lease, for free.
   `mc/dispatch/` (promoted S6 package + suite), `mc/verbs/` (or per-verb
   packages; builder's choice inside `mc/`), `mc/e2e/` (build-tagged e2e —
   consumes resident + runner strictly through this contract), existing
-  `mc/substrate/` untouched (155 tests + check.sh stay green; schema
-  changes are **out of scope** for 1b — nothing here needs one).
+  `mc/substrate/` suite stays green (155 tests + check.sh). The schema
+  gained exactly **two additive, default-preserving columns** during 1b
+  integration, both demanded by §2's verb surface:
+  `lock.hard_deadline_minutes` (the `mc init` lease tunable dispatch stamps
+  into `hard_deadline_at` — schema `NOTE(P1b.1)`) and `runs.pool_snapshot`
+  (the Editor pool snapshotted at claim that `mc editor decide` must cover
+  exactly — schema `NOTE(P1b.2)`). Any further schema change is out of
+  scope for 1b.
 - **`resident/`** (Bun builder): `src/` tick loop + effectors, `*.test.ts`
   (fake-timer unit tests), `package.json` + lockfile (§16.1).
 - **`runner/`** (Bun builder): `fake-harness/` (existing cli.ts +
