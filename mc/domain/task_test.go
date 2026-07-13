@@ -233,7 +233,7 @@ func TestApplyVerdictCorrect(t *testing.T) {
 
 		res, err := applyVerdict(t, db, domain.VerdictArgs{
 			TaskID: id, RunID: "v1", Outcome: "correct",
-			EvidencePath: "e.md", VerifiedSHA: "abc", CorrectionPath: "corrections/mc-1-corrections1",
+			EvidencePath: "e.md", CorrectionPath: "corrections/mc-1-corrections1",
 		})
 		if err != nil {
 			t.Fatalf("correct verdict: %v", err)
@@ -263,7 +263,7 @@ func TestApplyVerdictCorrect(t *testing.T) {
 		mkRun(t, db, "v1", "verifier", id)
 		wantCode(t, db, domain.CodeCorrectionRequired, func(ctx context.Context, q domain.Q) error {
 			_, err := domain.ApplyVerdict(ctx, q, domain.VerdictArgs{
-				TaskID: id, RunID: "v1", Outcome: "correct", EvidencePath: "e", VerifiedSHA: "s",
+				TaskID: id, RunID: "v1", Outcome: "correct", EvidencePath: "e",
 			})
 			return err
 		})
@@ -280,7 +280,7 @@ func TestApplyVerdictCorrect(t *testing.T) {
 		wantCode(t, db, domain.CodeBudgetExhausted, func(ctx context.Context, q domain.Q) error {
 			_, err := domain.ApplyVerdict(ctx, q, domain.VerdictArgs{
 				TaskID: id, RunID: "v1", Outcome: "correct",
-				EvidencePath: "e", VerifiedSHA: "s", CorrectionPath: "c",
+				EvidencePath: "e", CorrectionPath: "c",
 			})
 			return err
 		})
@@ -296,7 +296,7 @@ func TestApplyVerdictCorrect(t *testing.T) {
 			mkRun(t, db, run, "verifier", id)
 			res, err := applyVerdict(t, db, domain.VerdictArgs{
 				TaskID: id, RunID: run, Outcome: "correct",
-				EvidencePath: "e", VerifiedSHA: "s", CorrectionPath: "c",
+				EvidencePath: "e", CorrectionPath: "c",
 			})
 			if err != nil {
 				t.Fatalf("round %d: %v", i, err)
@@ -357,6 +357,78 @@ func TestApplyVerdictBudgetSpent(t *testing.T) {
 	})
 }
 
+func TestApplyVerdictCarrierMatrix(t *testing.T) {
+	tests := []struct {
+		name  string
+		args  domain.VerdictArgs
+		code  string
+		spent bool
+	}{
+		{name: "pass_requires_evidence", args: domain.VerdictArgs{Outcome: "pass", VerifiedSHA: "sha"}, code: domain.CodeEvidenceRequired},
+		{name: "pass_requires_sha", args: domain.VerdictArgs{Outcome: "pass", EvidencePath: "e"}, code: domain.CodeSHARequired},
+		{name: "pass_forbids_correction", args: domain.VerdictArgs{Outcome: "pass", EvidencePath: "e", VerifiedSHA: "sha", CorrectionPath: "c"}, code: domain.CodeCarrierForbidden},
+		{name: "correct_requires_evidence", args: domain.VerdictArgs{Outcome: "correct", CorrectionPath: "c"}, code: domain.CodeEvidenceRequired},
+		{name: "correct_forbids_sha", args: domain.VerdictArgs{Outcome: "correct", EvidencePath: "e", VerifiedSHA: "sha", CorrectionPath: "c"}, code: domain.CodeCarrierForbidden},
+		{name: "budget_spent_requires_sha", args: domain.VerdictArgs{Outcome: "budget-spent", EvidencePath: "e"}, code: domain.CodeSHARequired, spent: true},
+		{name: "budget_spent_forbids_correction", args: domain.VerdictArgs{Outcome: "budget-spent", EvidencePath: "e", VerifiedSHA: "sha", CorrectionPath: "c"}, code: domain.CodeCarrierForbidden, spent: true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			db := openSpine(t)
+			id := mkTask(t, db, "task", "worked")
+			mkRun(t, db, "v1", "verifier", id)
+			if tc.spent {
+				mustExec(t, db, `UPDATE tasks SET correction_count = 3 WHERE id = ?`, id)
+			}
+			a := tc.args
+			a.TaskID, a.RunID = id, "v1"
+			wantCode(t, db, tc.code, func(ctx context.Context, q domain.Q) error {
+				_, err := domain.ApplyVerdict(ctx, q, a)
+				return err
+			})
+			if got := taskStr(t, db, id, "status"); got != "worked" {
+				t.Fatalf("invalid carrier moved task to %q", got)
+			}
+			if got := oneStr(t, db, `SELECT verdict_outcome FROM runs WHERE id = 'v1'`); got != "<NULL>" {
+				t.Fatalf("invalid carrier wrote verdict %q", got)
+			}
+		})
+	}
+}
+
+func TestApplyVerdictRequiresMatchingVerifierRun(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		makeRun func(t *testing.T, db *sql.DB, taskID int64)
+		code    string
+	}{
+		{name: "missing_run", makeRun: func(t *testing.T, db *sql.DB, taskID int64) {}, code: domain.CodeNotFound},
+		{name: "wrong_role", makeRun: func(t *testing.T, db *sql.DB, taskID int64) {
+			mkRun(t, db, "v1", "worker", taskID)
+		}, code: domain.CodeRoleMismatch},
+		{name: "wrong_subject", makeRun: func(t *testing.T, db *sql.DB, taskID int64) {
+			other := mkTask(t, db, "task", "worked")
+			mkRun(t, db, "v1", "verifier", other)
+		}, code: domain.CodeStaleRun},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			db := openSpine(t)
+			id := mkTask(t, db, "task", "worked")
+			tc.makeRun(t, db, id)
+			wantCode(t, db, tc.code, func(ctx context.Context, q domain.Q) error {
+				_, err := domain.ApplyVerdict(ctx, q, domain.VerdictArgs{
+					TaskID: id, RunID: "v1", Outcome: "pass",
+					EvidencePath: "e", VerifiedSHA: "sha",
+				})
+				return err
+			})
+			if got := taskStr(t, db, id, "status"); got != "worked" {
+				t.Fatalf("invalid Run moved task to %q", got)
+			}
+		})
+	}
+}
+
 // The refinement round-trip (§8, A-P2-1): the live packet is the derived
 // marker; --deepening is required at the rally-ending verdict and applied to
 // the streak in the same transaction.
@@ -400,16 +472,20 @@ func TestApplyVerdictDeepening(t *testing.T) {
 		}
 	})
 
-	t.Run("churn_pass_increments_streak", func(t *testing.T) {
+	t.Run("churn_pass_rejected_unchanged", func(t *testing.T) {
 		db, id := roundTrip(t)
-		if _, err := applyVerdict(t, db, domain.VerdictArgs{
-			TaskID: id, RunID: "v1", Outcome: "pass",
-			EvidencePath: "e", VerifiedSHA: "s", Deepening: "churn",
-		}); err != nil {
-			t.Fatalf("churn pass: %v", err)
+		wantCode(t, db, domain.CodeDeepeningForbidden, func(ctx context.Context, q domain.Q) error {
+			_, err := domain.ApplyVerdict(ctx, q, domain.VerdictArgs{
+				TaskID: id, RunID: "v1", Outcome: "pass",
+				EvidencePath: "e", VerifiedSHA: "s", Deepening: "churn",
+			})
+			return err
+		})
+		if got := taskStr(t, db, id, "status"); got != "worked" {
+			t.Fatalf("rejected churn PASS moved task to %q", got)
 		}
-		if got := oneInt(t, db, `SELECT refine_streak FROM review_packets WHERE task_id = ?`, id); got != 1 {
-			t.Fatalf("refine_streak = %d, want 1", got)
+		if got := oneInt(t, db, `SELECT refine_streak FROM review_packets WHERE task_id = ?`, id); got != 0 {
+			t.Fatalf("rejected churn PASS changed streak to %d", got)
 		}
 	})
 
@@ -446,7 +522,7 @@ func TestApplyVerdictDeepening(t *testing.T) {
 		wantCode(t, db, domain.CodeDeepeningForbidden, func(ctx context.Context, q domain.Q) error {
 			_, err := domain.ApplyVerdict(ctx, q, domain.VerdictArgs{
 				TaskID: id, RunID: "v1", Outcome: "correct",
-				EvidencePath: "e", VerifiedSHA: "s", CorrectionPath: "c", Deepening: "churn",
+				EvidencePath: "e", CorrectionPath: "c", Deepening: "churn",
 			})
 			return err
 		})

@@ -429,3 +429,18 @@ BUDGET-SPENT refinement is churn, correction belongs only to CORRECT, and
 required evidence/SHA must be enforced in the domain transaction. Then close
 strict batch parsing and Strategist mode fences. Initiative wave CLI remains
 Parked.
+
+- 2026-07-12 — **Phase 2 adversarial review: Verifier carrier matrix fixed.**
+  Red domain/CLI regressions proved a PASS refinement could increment churn,
+  PASS/BUDGET-SPENT could persist correction files, CORRECT could carry a
+  meaningless landing SHA, and direct aggregate callers could omit evidence,
+  SHA, or the matching Verifier Run. Outcome-specific validation now exists
+  in the real state-law layer and the CLI rejects impossible flag shapes:
+  PASS→genuine, BUDGET-SPENT→churn, correction only on CORRECT, SHA only on
+  the two verified outcomes. The verdict carrier must update exactly the
+  matching Verifier Run/subject. Complete fast lane green: Go plus fake 43,
+  agent-runner 12, runner/image 2, resident 30.
+
+NEXT: Close strict single-document batch parsing and exact Strategist mode /
+subject-shape fencing red-first, then fix invalid-console-TZ reap precedence
+and blocked-proposal Editor visibility. Initiative wave CLI remains Parked.

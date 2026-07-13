@@ -1410,7 +1410,7 @@ func TestVerifierVerdictValidation(t *testing.T) {
 		spine, taskID, run, env := verifierFixture(t, "correct needs feedback")
 		_ = spine
 		res := runMC(t, env, "", "verifier", "verdict", fmt.Sprint(taskID), "--run", run,
-			"--outcome", "correct", "--evidence", "e", "--sha", "s")
+			"--outcome", "correct", "--evidence", "e")
 		if res.code != 1 || !strings.Contains(res.stderr, "--correction") {
 			t.Fatalf("exit = %d stderr %q", res.code, res.stderr)
 		}
@@ -1419,7 +1419,7 @@ func TestVerifierVerdictValidation(t *testing.T) {
 	t.Run("correct_reenters_and_records_verdict", func(t *testing.T) {
 		spine, taskID, run, env := verifierFixture(t, "correct once")
 		res := runMC(t, env, "", "verifier", "verdict", fmt.Sprint(taskID), "--run", run,
-			"--outcome", "correct", "--evidence", "e.md", "--sha", "s",
+			"--outcome", "correct", "--evidence", "e.md",
 			"--correction", "corrections/c1.md")
 		if res.code != 0 {
 			t.Fatalf("correct failed: %s", res.stderr)
@@ -1432,6 +1432,36 @@ func TestVerifierVerdictValidation(t *testing.T) {
 			t.Fatalf("verdict record = %q", got)
 		}
 	})
+
+	for _, tc := range []struct {
+		name string
+		args []string
+		msg  string
+	}{
+		{name: "pass_forbids_correction", args: []string{"--outcome", "pass", "--evidence", "e", "--sha", "s", "--correction", "c"}, msg: "--correction"},
+		{name: "budget_spent_forbids_correction", args: []string{"--outcome", "budget-spent", "--evidence", "e", "--sha", "s", "--correction", "c"}, msg: "--correction"},
+		{name: "correct_forbids_sha", args: []string{"--outcome", "correct", "--evidence", "e", "--sha", "s", "--correction", "c"}, msg: "--sha"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			spine, taskID, run, env := verifierFixture(t, tc.name)
+			args := []string{"verifier", "verdict", fmt.Sprint(taskID), "--run", run}
+			args = append(args, tc.args...)
+			res := runMC(t, env, "", args...)
+			if res.code != 2 || !strings.Contains(res.stderr, tc.msg) {
+				t.Fatalf("exit = %d stderr %q, want usage containing %q", res.code, res.stderr, tc.msg)
+			}
+			db := openDB(t, spine)
+			if got := queryStr(t, db, `SELECT status FROM tasks WHERE id = ?`, taskID); got != "worked" {
+				t.Fatalf("invalid carrier moved task to %q", got)
+			}
+			if got := queryStr(t, db, `SELECT ended_at FROM runs WHERE id = ?`, run); got != "<NULL>" {
+				t.Fatalf("invalid carrier ended run at %q", got)
+			}
+			if got := queryStr(t, db, `SELECT run_id FROM lock WHERE id = 1`); got != run {
+				t.Fatalf("invalid carrier released lease to %q", got)
+			}
+		})
+	}
 
 	t.Run("budget_spent_requires_exhausted_rally", func(t *testing.T) {
 		_, taskID, run, env := verifierFixture(t, "budget remains")

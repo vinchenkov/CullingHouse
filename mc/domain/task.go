@@ -2,6 +2,7 @@ package domain
 
 import (
 	"context"
+	"database/sql"
 )
 
 // ---------------------------------------------------------------------------
@@ -161,6 +162,52 @@ func ApplyVerdict(ctx context.Context, q Q, a VerdictArgs) (VerdictResult, error
 			"a verdict judges worked rows (§7); task %d is %q", a.TaskID, r.Status)
 	}
 
+	if a.EvidencePath == "" {
+		return res, Errf(CodeEvidenceRequired,
+			"a Verifier verdict requires evidence for every gate (Inv. 12, §7)")
+	}
+	switch a.Outcome {
+	case "pass", "budget-spent":
+		if a.VerifiedSHA == "" {
+			return res, Errf(CodeSHARequired,
+				"%s requires the exact verified commit SHA (§7 landing fence)", a.Outcome)
+		}
+		if a.CorrectionPath != "" {
+			return res, Errf(CodeCarrierForbidden,
+				"--correction belongs only to a CORRECT verdict (§7)")
+		}
+	case "correct":
+		if a.CorrectionPath == "" {
+			return res, Errf(CodeCorrectionRequired,
+				"a CORRECT verdict requires --correction <path> (§7: the feedback rides the file plane)")
+		}
+		if a.VerifiedSHA != "" {
+			return res, Errf(CodeCarrierForbidden,
+				"--sha belongs only to PASS or BUDGET-SPENT; CORRECT does not verify a landing commit (§7)")
+		}
+	default:
+		return res, Errf(CodeIllegalTransition,
+			"unknown verdict outcome %q (§7: pass|correct|budget-spent)", a.Outcome)
+	}
+	var runRole string
+	var runSubject sql.NullInt64
+	if err := q.QueryRowContext(ctx,
+		`SELECT role, subject FROM runs WHERE id = ?`, a.RunID,
+	).Scan(&runRole, &runSubject); err != nil {
+		if err == sql.ErrNoRows {
+			return res, Errf(CodeNotFound, "no Verifier Run %q for verdict", a.RunID)
+		}
+		return res, err
+	}
+	if runRole != "verifier" {
+		return res, Errf(CodeRoleMismatch,
+			"Run %q is role %q, not verifier", a.RunID, runRole)
+	}
+	if !runSubject.Valid || runSubject.Int64 != a.TaskID {
+		return res, Errf(CodeStaleRun,
+			"Verifier Run %q is not bound to task %d (§10 fencing)", a.RunID, a.TaskID)
+	}
+
 	// The refinement-round-trip fact, derived (A-P2-1).
 	var livePacket int
 	if err := q.QueryRowContext(ctx,
@@ -179,6 +226,14 @@ func ApplyVerdict(ctx context.Context, q Q, a VerdictArgs) (VerdictResult, error
 		return res, Errf(CodeDeepeningForbidden,
 			"--deepening is only legal on the rally-ending verdict of a refinement round-trip (§8, A-P2-1)")
 	}
+	if refinementRound && a.Outcome == "pass" && a.Deepening != "genuine" {
+		return res, Errf(CodeDeepeningForbidden,
+			"a PASS refinement is genuine by definition and requires --deepening genuine (§8, A-P2-1)")
+	}
+	if refinementRound && a.Outcome == "budget-spent" && a.Deepening != "churn" {
+		return res, Errf(CodeDeepeningForbidden,
+			"BUDGET-SPENT on a refinement is churn by definition and requires --deepening churn (§8, A-P2-1)")
+	}
 
 	switch a.Outcome {
 	case "pass":
@@ -189,10 +244,6 @@ func ApplyVerdict(ctx context.Context, q Q, a VerdictArgs) (VerdictResult, error
 		}
 		res = VerdictResult{Status: "verified", CorrectionCount: r.CorrectionCount}
 	case "correct":
-		if a.CorrectionPath == "" {
-			return res, Errf(CodeCorrectionRequired,
-				"a CORRECT verdict requires --correction <path> (§7: the feedback rides the file plane)")
-		}
 		if r.CorrectionCount >= 3 {
 			return res, Errf(CodeBudgetExhausted,
 				"correction budget spent (%d of 3): the fourth verdict must be budget-spent (§7)", r.CorrectionCount)
@@ -208,19 +259,12 @@ func ApplyVerdict(ctx context.Context, q Q, a VerdictArgs) (VerdictResult, error
 			return res, Errf(CodeBudgetRemaining,
 				"budget-spent requires correction_count = 3, task %d has %d (§7)", a.TaskID, r.CorrectionCount)
 		}
-		if a.Deepening == "genuine" {
-			return res, Errf(CodeDeepeningForbidden,
-				"budget-spent on a refinement round is churn by definition (§8, A-P2-1)")
-		}
 		if _, err := q.ExecContext(ctx, `
 			UPDATE tasks SET status = 'verified', verified_sha = ? WHERE id = ?`,
 			a.VerifiedSHA, a.TaskID); err != nil {
 			return res, err
 		}
 		res = VerdictResult{Status: "verified", CorrectionCount: r.CorrectionCount, ExceptionLabeled: true}
-	default:
-		return res, Errf(CodeIllegalTransition,
-			"unknown verdict outcome %q (§7: pass|correct|budget-spent)", a.Outcome)
 	}
 
 	if rallyEnding && refinementRound {
@@ -230,13 +274,22 @@ func ApplyVerdict(ctx context.Context, q Q, a VerdictArgs) (VerdictResult, error
 	}
 
 	// The verdict record, on the Verifier's own runs row (NOTE(P2.2)).
-	if _, err := q.ExecContext(ctx, `
+	updated, err := q.ExecContext(ctx, `
 		UPDATE runs SET verdict_outcome = ?, evidence_path = ?,
 		       correction_path = ?, deepening = ?
 		WHERE id = ?`,
 		a.Outcome, nullIfEmpty(a.EvidencePath), nullIfEmpty(a.CorrectionPath),
-		nullIfEmpty(a.Deepening), a.RunID); err != nil {
+		nullIfEmpty(a.Deepening), a.RunID)
+	if err != nil {
 		return res, err
+	}
+	n, err := updated.RowsAffected()
+	if err != nil {
+		return res, err
+	}
+	if n != 1 {
+		return res, Errf(CodeStaleRun,
+			"Verifier Run %q disappeared before its verdict carrier write", a.RunID)
 	}
 	return res, nil
 }

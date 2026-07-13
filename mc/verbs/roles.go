@@ -301,8 +301,14 @@ func VerifierVerdict(db *sql.DB, id *RunIdentity, a VerdictArgs) (any, error) {
 	if a.Evidence == "" {
 		return nil, Usagef("mc verifier verdict requires --evidence (Inv. 12: every gate records evidence)")
 	}
-	if a.SHA == "" {
+	if (a.Outcome == "pass" || a.Outcome == "budget-spent") && a.SHA == "" {
 		return nil, Usagef("mc verifier verdict requires --sha (§7: only the exact reviewed commit can land)")
+	}
+	if a.Outcome == "correct" && a.SHA != "" {
+		return nil, Usagef("--sha is forbidden for CORRECT; that outcome re-enters without a verified landing commit (§7)")
+	}
+	if a.Outcome != "correct" && a.Correction != "" {
+		return nil, Usagef("--correction is legal only with --outcome correct (§7)")
 	}
 	if a.Deepening != "" && a.Deepening != "genuine" && a.Deepening != "churn" {
 		return nil, Usagef("--deepening must be genuine|churn (§8)")
