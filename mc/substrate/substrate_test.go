@@ -816,6 +816,12 @@ func TestHomieSessionRegistryInvariants(t *testing.T) {
 	// Start-time identity and resume locators are authoritative registry
 	// state, never nullable placeholders that a later component guesses.
 	wantAbort(t, db, `INSERT INTO homie_sessions (id) VALUES ('incomplete')`)
+	wantAbort(t, db, `INSERT INTO homie_sessions
+		(id, container_name, verb_allowlist, session_path, binding)
+		VALUES ('bad-json', 'mc-homie-bad-json', 'not-json', 'sessions/bad-json', 'fake/fake')`)
+	wantAbort(t, db, `INSERT INTO homie_sessions
+		(id, container_name, verb_allowlist, session_path, binding)
+		VALUES ('bad-shape', 'mc-homie-bad-shape', '{}', 'sessions/bad-shape', 'fake/fake')`)
 	mkHomieSession(t, db, "h1")
 
 	for name, update := range map[string]string{

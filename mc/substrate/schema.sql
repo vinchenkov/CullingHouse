@@ -713,7 +713,9 @@ CREATE TABLE homie_sessions (
     created_at         TEXT NOT NULL DEFAULT (datetime('now')),
     last_activity_at   TEXT NOT NULL DEFAULT (datetime('now')),
     container_name     TEXT NOT NULL,
-    verb_allowlist     TEXT NOT NULL,   -- frozen at mc homie start (§15.3)
+    verb_allowlist     TEXT NOT NULL    -- frozen at mc homie start (§15.3)
+                       CHECK (json_valid(verb_allowlist)
+                              AND json_type(verb_allowlist) = 'array'),
     session_path       TEXT NOT NULL,   -- the four locators (§9, §15.4)
     binding            TEXT NOT NULL,
     native_session_ref TEXT,

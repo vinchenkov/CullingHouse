@@ -409,6 +409,13 @@ func applySpawn(ctx context.Context, q Q, now time.Time, sp *dispatch.Spawn, tun
 // while routing is being repaired. Parse/validation completes before
 // lease.Claim, so an invalid route opens no Run and returns no spawn effect.
 func resolveSpawnRoute(role dispatch.Role) (routing.Route, error) {
+	return resolveRoleRoute(baseRole(string(role)))
+}
+
+// resolveRoleRoute reads the authoritative route for both leased pipeline
+// spawns and the lease-free Homie registry. Capturing Homie's exact historical
+// binding at start makes later resume independent of routing.md drift (§15.4).
+func resolveRoleRoute(role string) (routing.Route, error) {
 	home := os.Getenv("MC_HOME")
 	if home == "" {
 		userHome, err := os.UserHomeDir()
@@ -430,8 +437,7 @@ func resolveSpawnRoute(role dispatch.Role) (routing.Route, error) {
 	if err != nil {
 		return routing.Route{}, Domainf("invalid routing.md at %q: %v (run: mc onboard routing)", path, err)
 	}
-	base := baseRole(string(role))
-	resolved, err := table.Resolve(base)
+	resolved, err := table.Resolve(baseRole(role))
 	if err != nil {
 		return routing.Route{}, Domainf("invalid routing.md at %q: %v (run: mc onboard routing)", path, err)
 	}

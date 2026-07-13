@@ -32,6 +32,9 @@ func WorksourceAdd(db *sql.DB, id *RunIdentity, a WorksourceAddArgs) (any, error
 		return nil, Usagef("mc worksource add --seeding-mode must be propose-only|auto")
 	}
 	err := inTx(db, func(ctx context.Context, q Q) error {
+		if err := requireOperatorVerbTx(ctx, q, id, "worksource.add"); err != nil {
+			return err
+		}
 		if a.SandboxProfile != "" {
 			var exists int
 			if err := q.QueryRowContext(ctx,
@@ -65,6 +68,9 @@ func WorksourceSetStatus(db *sql.DB, id *RunIdentity, worksource, target string)
 		return nil, Usagef("worksource status target must be paused|archived")
 	}
 	err := inTx(db, func(ctx context.Context, q Q) error {
+		if err := requireOperatorVerbTx(ctx, q, id, "worksource."+target); err != nil {
+			return err
+		}
 		var current string
 		err := q.QueryRowContext(ctx,
 			`SELECT status FROM worksources WHERE id = ?`, worksource).Scan(&current)

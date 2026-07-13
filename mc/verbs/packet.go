@@ -39,6 +39,9 @@ func PacketDecide(db *sql.DB, id *RunIdentity, task int64, decision, reason stri
 
 	result := map[string]any{"task_id": task}
 	err := inTx(db, func(ctx context.Context, q Q) error {
+		if err := requireOperatorVerbTx(ctx, q, id, "packet.decide"); err != nil {
+			return err
+		}
 		switch decision {
 		case "approve":
 			archived, err := domain.Approve(ctx, q, task)

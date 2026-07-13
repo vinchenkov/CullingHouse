@@ -25,6 +25,9 @@ func InitiativeAdd(db *sql.DB, id *RunIdentity, title, worksource, charter strin
 	}
 	var initiativeID int64
 	err := inTx(db, func(ctx context.Context, q Q) error {
+		if err := requireOperatorVerbTx(ctx, q, id, "initiative.add"); err != nil {
+			return err
+		}
 		var err error
 		initiativeID, err = domain.BirthProposal(ctx, q, domain.ProposalArgs{
 			Title: title, Description: charter, Scope: "initiative", Priority: priority,

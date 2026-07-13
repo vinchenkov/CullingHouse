@@ -156,7 +156,8 @@ and is easiest to reverse.
 - **NOTE(P2.4) — Homie start provenance is immutable registry state.** The
   start-known fields (`id`, `created_at`, container name, frozen verb
   allowlist, session path, and exact runtime binding) are non-null and
-  immutable. The runner-known native handle and trace filename are a paired
+  immutable; the allowlist is structurally a JSON array. The runner-known
+  native handle and trace filename are a paired
   set-once locator, mirroring `runs`. Status and `last_activity_at` remain the
   only ordinary mutable session fields; ended/reaped rows remain resumable.
 

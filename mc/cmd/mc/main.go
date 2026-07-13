@@ -133,6 +133,8 @@ func dispatchVerb(args []string, stdin io.Reader) (any, error) {
 		return cmdStrategist(rest, stdin)
 	case "console":
 		return cmdConsole(rest)
+	case "homie":
+		return cmdHomie(rest)
 	case "verifier":
 		return cmdVerifier(rest)
 	case "heartbeat":
@@ -575,6 +577,82 @@ func cmdConsole(args []string) (any, error) {
 	return withSpine(func(db *sql.DB) (any, error) {
 		return verbs.ConsolePublish(db, id, *run, *content)
 	})
+}
+
+func cmdHomie(args []string) (any, error) {
+	if len(args) == 0 {
+		return nil, verbs.Usagef("usage: mc homie start|bind|list …")
+	}
+	switch args[0] {
+	case "start":
+		fs := newFlags("mc homie start")
+		from := fs.String("from", "", "initial surface:channel_ref")
+		allowSet := false
+		allowRaw := ""
+		fs.Func("allow", "comma-separated Homie-agent verbs, or none", func(value string) error {
+			if allowSet {
+				return fmt.Errorf("--allow may be supplied only once")
+			}
+			allowSet = true
+			allowRaw = value
+			return nil
+		})
+		if err := parse(fs, args[1:]); err != nil {
+			return nil, err
+		}
+		if *from == "" {
+			return nil, verbs.Usagef("mc homie start requires --from <surface:channel_ref>")
+		}
+		var allowlist *[]string
+		if allowSet {
+			values := []string{}
+			if allowRaw != "none" {
+				values = strings.Split(allowRaw, ",")
+			}
+			allowlist = &values
+		}
+		id, err := verbs.LoadIdentity()
+		if err != nil {
+			return nil, err
+		}
+		return withSpine(func(db *sql.DB) (any, error) {
+			return verbs.HomieStart(db, id, verbs.HomieStartArgs{From: *from, Allowlist: allowlist})
+		})
+
+	case "bind":
+		sessionID, rest, err := positional("mc homie bind", args[1:])
+		if err != nil {
+			return nil, err
+		}
+		fs := newFlags("mc homie bind")
+		from := fs.String("from", "", "surface:channel_ref")
+		if err := parse(fs, rest); err != nil {
+			return nil, err
+		}
+		if *from == "" {
+			return nil, verbs.Usagef("mc homie bind requires --from <surface:channel_ref>")
+		}
+		id, err := verbs.LoadIdentity()
+		if err != nil {
+			return nil, err
+		}
+		return withSpine(func(db *sql.DB) (any, error) {
+			return verbs.HomieBind(db, id, sessionID, *from)
+		})
+
+	case "list":
+		if len(args) != 1 {
+			return nil, verbs.Usagef("usage: mc homie list")
+		}
+		id, err := verbs.LoadIdentity()
+		if err != nil {
+			return nil, err
+		}
+		return withSpine(func(db *sql.DB) (any, error) {
+			return verbs.HomieList(db, id)
+		})
+	}
+	return nil, verbs.Usagef("unknown subverb: mc homie %s", args[0])
 }
 
 func cmdVerifier(args []string) (any, error) {

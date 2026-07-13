@@ -22,6 +22,9 @@ func TaskAdd(db *sql.DB, id *RunIdentity, title, worksource, description string,
 	}
 	var taskID int64
 	err := inTx(db, func(ctx context.Context, q Q) error {
+		if err := requireOperatorVerbTx(ctx, q, id, "task.add"); err != nil {
+			return err
+		}
 		pri := 2 // schema default P2
 		if priority != nil {
 			pri = *priority
@@ -74,13 +77,14 @@ func TaskBlock(db *sql.DB, id *RunIdentity, task int64, reason string) (any, err
 	if reason == "" {
 		return nil, Usagef("mc task block requires --reason (§4)")
 	}
-	if id != nil {
-		if id.Tier != "pipeline" {
-			return nil, Domainf("mc task block is host or pipeline scope; run.json tier is %q (ADR-001 D6)", id.Tier)
+	pipeline := id != nil && id.Tier == "pipeline"
+	if !pipeline {
+		if err := RequireOperatorVerb(id, "task.block"); err != nil {
+			return nil, err
 		}
 	}
 	err := inTx(db, func(ctx context.Context, q Q) error {
-		if id != nil {
+		if pipeline {
 			// Pipeline caller: own subject only, fenced to the live lease.
 			subject, err := fenceRun(ctx, q, id.RunID)
 			if err != nil {
@@ -89,6 +93,8 @@ func TaskBlock(db *sql.DB, id *RunIdentity, task int64, reason string) (any, err
 			if subject == nil || *subject != task {
 				return Domainf("a pipeline run blocks only its own subject (ADR-001 D6); task %d is not it", task)
 			}
+		} else if err := requireOperatorVerbTx(ctx, q, id, "task.block"); err != nil {
+			return err
 		}
 		return domain.Block(ctx, q, task, reason)
 	})
@@ -106,6 +112,9 @@ func TaskUnblock(db *sql.DB, id *RunIdentity, task int64) (any, error) {
 		return nil, err
 	}
 	err := inTx(db, func(ctx context.Context, q Q) error {
+		if err := requireOperatorVerbTx(ctx, q, id, "task.unblock"); err != nil {
+			return err
+		}
 		return domain.Unblock(ctx, q, task)
 	})
 	if err != nil {
@@ -124,6 +133,9 @@ func TaskInterrupt(db *sql.DB, id *RunIdentity, task int64) (any, error) {
 	}
 	var runID string
 	err := inTx(db, func(ctx context.Context, q Q) error {
+		if err := requireOperatorVerbTx(ctx, q, id, "task.interrupt"); err != nil {
+			return err
+		}
 		var lockRun sql.NullString
 		var subject sql.NullInt64
 		if err := q.QueryRowContext(ctx,

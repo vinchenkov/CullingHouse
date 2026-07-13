@@ -731,3 +731,25 @@ host scope; an allowlisted Homie may list only its own active session, while
 host list includes active/ended/reaped rows. Start atomically writes registry
 and its initial binding after trusted Homie route resolution and never touches the
 pipeline lease, Runs, outbox, file plane, or resident effects.
+
+- 2026-07-12 — **Phase 2 Homie start/bind/list green.** ADR-009 pins the
+  previously unspecified CLI and record contract. Host-only start resolves
+  the trusted Homie route, mints a disjoint `h-` identity, freezes the
+  canonical agent-verb allowlist/path/container/runtime binding, and writes
+  the registry row plus initial surface binding atomically. It returns no
+  launch effect and leaves a simultaneously live pipeline lease, Runs,
+  outbox, and file plane untouched. Bind retries are idempotent for the same
+  session/place and never transfer an occupied place. Host list includes all
+  resumable statuses; an allowlisted Homie sees only its own active row.
+  Every Homie-authorized operator mutation now rechecks the canonical active
+  registry row and exact frozen allowlist inside its write transaction, so an
+  ended zombie or forged envelope is inert; this also enables the missing
+  Homie `task block` arm from ADR-001 D6. Invalid route/input/scope, binding
+  collision, duplicate-origin start, and injected initial-binding failure all
+  leave no partial registry state. Complete fast lane green.
+
+NEXT: TDD `mc homie send|history|end`: host-origin inbound append with stable
+per-session sequence, origin binding and cross-surface echo outbox in one
+transaction; deterministic durable history; host or allowlisted-own end that
+deactivates bindings without deleting rows or touching the pipeline lease.
+Keep implicit resume and runner claim/reply behind their following slices.
