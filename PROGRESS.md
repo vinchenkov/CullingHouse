@@ -624,3 +624,15 @@ durable holistic plan-review representation.
 NEXT: Author the Phase 2 wave-2 acceptance contract from handoff Part 3 and
 spec §18, preserving the parked initiative-wave line. Then TDD the full CLI
 verb/error/scope matrix before split-brain and nightly suites.
+
+- 2026-07-12 — **Phase 2 wave-2 contract authored.** The contract orders
+  provenance before new surface area, pins structured error JSON, enumerates
+  core/operator, Console/Homie/outbox, and operational verb acceptance,
+  defines the deterministic split-brain boundary table, and names the nightly
+  generator-honesty/planted-mutant gates. It explicitly excludes rather than
+  bypasses the parked initiative-wave terminal.
+
+NEXT: TDD wave 2 slice 1: enforce ADR-001 D6 provenance on every existing
+verb before it opens/mutates the spine, with pipeline attempts at init,
+dispatch, task add, packet decide, task unblock, and land report proven
+bit-for-bit inert. Then add structured error JSON.
