@@ -32,6 +32,7 @@ func main() {
 func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
 		fmt.Fprintln(stderr, "usage: mc <verb> …")
+		writeErrorEnvelope(stdout, stderr, "usage", "usage: mc <verb> …")
 		return 2
 	}
 
@@ -56,13 +57,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 				errorCode = domainErr.Code
 			}
 		}
-		envelope := map[string]any{
-			"error": map[string]any{"code": errorCode, "message": err.Error()},
-		}
-		if jsonErr := writeJSON(stdout, envelope); jsonErr != nil {
-			fmt.Fprintln(stderr, "mc: write error JSON:", jsonErr)
-			return 2
-		}
+		writeErrorEnvelope(stdout, stderr, errorCode, err.Error())
 		return exitCode
 	}
 	if err := writeJSON(stdout, out); err != nil {
@@ -84,10 +79,22 @@ func delegate(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		if errors.As(err, &exit) {
 			return exit.ExitCode()
 		}
+		// Wrapper-only failure: the inner mc never ran, so there are no
+		// delegated bytes to preserve — emit the local envelope.
 		fmt.Fprintln(stderr, "mc: self-delegation failed:", err)
+		writeErrorEnvelope(stdout, stderr, "usage", "self-delegation failed: "+err.Error())
 		return 2
 	}
 	return 0
+}
+
+func writeErrorEnvelope(stdout, stderr io.Writer, code, message string) {
+	envelope := map[string]any{
+		"error": map[string]any{"code": code, "message": message},
+	}
+	if err := writeJSON(stdout, envelope); err != nil {
+		fmt.Fprintln(stderr, "mc: write error JSON:", err)
+	}
 }
 
 func writeJSON(w io.Writer, v any) error {
@@ -738,6 +745,10 @@ func cmdOutbox(args []string) (any, error) {
 		if err != nil {
 			return nil, err
 		}
+		// Refusal precedes spine open (wave-2 contract §1).
+		if err := verbs.RequireHostScope(id, "mc outbox poll"); err != nil {
+			return nil, err
+		}
 		return withSpine(func(db *sql.DB) (any, error) {
 			return verbs.OutboxPoll(db, id, *surface, *limit)
 		})
@@ -757,6 +768,10 @@ func cmdOutbox(args []string) (any, error) {
 		}
 		id, err := verbs.LoadIdentity()
 		if err != nil {
+			return nil, err
+		}
+		// Refusal precedes spine open (wave-2 contract §1).
+		if err := verbs.RequireHostScope(id, "mc outbox ack"); err != nil {
 			return nil, err
 		}
 		return withSpine(func(db *sql.DB) (any, error) {
@@ -842,6 +857,11 @@ func cmdLand(args []string) (any, error) {
 	}
 	id, err := verbs.LoadIdentity()
 	if err != nil {
+		return nil, err
+	}
+	// Refusal precedes spine open (wave-2 contract §1): a pipeline caller
+	// must not create spine bytes at a fresh MC_SPINE path.
+	if err := verbs.RequireHostScope(id, "mc land report"); err != nil {
 		return nil, err
 	}
 	return withSpine(func(db *sql.DB) (any, error) {

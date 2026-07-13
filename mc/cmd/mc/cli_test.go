@@ -126,6 +126,26 @@ func TestStructuredErrorJSON(t *testing.T) {
 	if !strings.Contains(scopeRes.stderr, scopeErr["message"].(string)) {
 		t.Fatalf("stderr %q does not preserve JSON diagnostic %v", scopeRes.stderr, scopeErr)
 	}
+
+	// Zero-args and wrapper-only delegation failures are local rejections
+	// too: one stdout JSON envelope each, not bare stderr.
+	bare := runMC(t, spineEnv(spine), "")
+	if bare.code != 2 {
+		t.Fatalf("zero-args exit = %d stderr=%q", bare.code, bare.stderr)
+	}
+	bareErr, ok := bare.json["error"].(map[string]any)
+	if !ok || bareErr["code"] != "usage" {
+		t.Fatalf("zero-args error JSON = %v", bare.json)
+	}
+
+	broken := runMC(t, []string{"MC_HELPER=phantom", "PATH=/nonexistent"}, "", "task", "list")
+	if broken.code != 2 {
+		t.Fatalf("delegation-failure exit = %d stderr=%q", broken.code, broken.stderr)
+	}
+	brokenErr, ok := broken.json["error"].(map[string]any)
+	if !ok || brokenErr["code"] != "usage" {
+		t.Fatalf("delegation-failure error JSON = %v stdout=%q", broken.json, broken.stdout)
+	}
 }
 
 const fakeRoutingMarkdown = `# Mission Control routing
@@ -515,6 +535,26 @@ func TestWorksourceLifecycle(t *testing.T) {
 	}
 	if got := queryInt(t, db, `SELECT COUNT(*) FROM worksources WHERE id='bad-profile'`); got != 0 {
 		t.Fatalf("invalid profile left %d worksource rows", got)
+	}
+}
+
+func TestScopeRefusalPrecedesSpineOpen(t *testing.T) {
+	// Wave-2 contract §1: every refusal precedes spine mutation. A pipeline
+	// caller pointed at a fresh MC_SPINE path must be refused before the
+	// database file (or -wal/-shm) is created.
+	for _, args := range [][]string{
+		{"land", "report", "1", "--status", "success"},
+		{"outbox", "poll", "--surface", "dashboard"},
+		{"outbox", "ack", "1", "--surface", "dashboard"},
+	} {
+		probe := filepath.Join(t.TempDir(), "probe.db")
+		res := runMC(t, runJSONEnv(t, probe, "r-probe", "pipeline", "editor"), "", args...)
+		if res.code != 1 {
+			t.Fatalf("%v pipeline exit = %d stderr=%q", args, res.code, res.stderr)
+		}
+		if _, err := os.Stat(probe); !os.IsNotExist(err) {
+			t.Fatalf("%v created spine bytes before the scope refusal (stat err=%v)", args, err)
+		}
 	}
 }
 
