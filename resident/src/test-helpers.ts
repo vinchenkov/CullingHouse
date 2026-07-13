@@ -1,6 +1,7 @@
 // test-helpers.ts — the fake timer, fake mc/docker/fs, and a deps factory.
-// No real setInterval, no real filesystem, no Docker: the whole suite is
-// deterministic and Docker-free (contract §1 gate; fast suite, AGENTS.md §3).
+// Tests using this complete fake rig touch no real filesystem or Docker. The
+// split-brain acceptance suite overrides the injectable mc/fs seams with the
+// real CLI and temp host state, but keeps this timer and fake Docker.
 
 import type { ExecResult, ResidentConfig, TickDeps } from "./types";
 

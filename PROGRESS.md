@@ -2,7 +2,7 @@
 
 <!-- Header block: kept current by every session. -->
 LAST GREEN SHA: (this commit)
-PHASES PASSING: Phase 0 COMPLETE (S1–S8 all green, no fallback ADRs; only operator-leg deferrals remain); Phase 1 COMPLETE (1a substrate 172; 1b walking skeleton reviewed-and-fixed — fake-harness 43, agent-runner 13, runner/image 2, resident 32, dispatch + cmd/mc suites; Docker e2e PASS ×4 total)
+PHASES PASSING: Phase 0 COMPLETE (S1–S8 all green, no fallback ADRs; only operator-leg deferrals remain); Phase 1 COMPLETE (1a substrate 172; 1b walking skeleton reviewed-and-fixed — fake-harness 43, agent-runner 13, runner/image 2, resident 34, dispatch + cmd/mc suites; Docker e2e PASS ×4 total)
 KNOWN-FAILING: (none)
 FAST SUITE: mc/check.sh (gofmt+vet+go test ./... — includes substrate + promoted dispatch) + runner/fake-harness/check.sh + runner/agent-runner/check.sh + runner/image/check.sh + resident/check.sh. Docker e2e (phase-completion lane): cd mc && mise exec -- go test -tags docker_e2e -timeout 15m ./e2e/...
 
@@ -47,7 +47,8 @@ FAST SUITE: mc/check.sh (gofmt+vet+go test ./... — includes substrate + promot
   - [!] Strategist wave CLI: isolated under Parked (durable holistic Editor
         plan-review representation is operator/spec input)
   - [x] Wave 2 full unparked §18 verb/error/scope surface
-  - [ ] Split-brain kill-point convergence suite
+  - [~] Split-brain kill-point convergence suite
+    - [x] action selected / before effect; session folder / before run.json
   - [ ] Nightly randomized/metamorphic/lifecycle properties + planted mutants
 - [ ] Phase 3 — Boundary conformance (Docker)
 - [ ] Phase 4 — E2E control loops (six scenario families)
@@ -980,3 +981,26 @@ loop and assert the record/lock/effect triple converges with a new run and no
 duplicate durable work; add no fault hook to `mc`. Then walk the remaining
 kill boundaries. Initiative wave CLI remains Parked pending the durable
 plan-review representation.
+
+- 2026-07-13 — **First two deterministic split-brain boundaries green.** A
+  new Docker-free cross-boundary resident suite builds the real test-tagged
+  `mc`, commits each spawn decision against a temp spine, and injects death
+  only through resident dependencies. Both `action selected / before effect`
+  and `session folder / before run.json` restart through the ordinary tick
+  loop: the spawn watchdog reaps the old Run, tolerates the absent container,
+  releases the lease, charges exactly one dispatch retry, and reselects the
+  unchanged subject under a distinct Run. The folder-boundary fixture proves
+  the old trace-only folder remains present and empty while the absent
+  envelope is safely removed; an extra tick proves the new live lease idles
+  without duplicate Run, retry charge, or host effect. No production fault
+  hook or recovery branch was added. Complete fast lane green (Go all
+  packages; fake 43, agent-runner 13, runner/image 2, resident 34).
+
+NEXT: Extend the same parameterized split-brain harness through `run.json /
+before container` and `container start / before first heartbeat` (wave-2
+contract §4). Assert reap removes the materialized envelope in both cases,
+the trace-only folder survives, and the spawn watchdog charges exactly one
+retry before the unchanged subject receives a distinct Run; model the
+post-start death at the injectable Docker seam, never with a fault hook in
+`mc`. Then continue to the workspace/commit boundary rows. Initiative wave
+CLI remains Parked pending the durable plan-review representation.
