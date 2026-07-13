@@ -518,6 +518,50 @@ func TestWorksourceLifecycle(t *testing.T) {
 	}
 }
 
+func TestHomieWorksourcePauseArchive(t *testing.T) {
+	spine := initSpine(t)
+	add := runMC(t, spineEnv(spine), "", "worksource", "add", "ws-homie",
+		"--title", "Homie-managed", "--kind", "repo")
+	if add.code != 0 {
+		t.Fatalf("worksource add failed: %s", add.stderr)
+	}
+	started := runMC(t, spineEnv(spine), "", "homie", "start", "--from", "dashboard:ops")
+	if started.code != 0 {
+		t.Fatalf("homie start failed: %s", started.stderr)
+	}
+	session := started.json["session_id"].(string)
+	env := homieJSONEnv(t, spine, session, defaultHomieAllowlist)
+
+	pause := runMC(t, env, "", "worksource", "pause", "ws-homie")
+	if pause.code != 0 {
+		t.Fatalf("allowlisted Homie worksource pause failed (%d): %s", pause.code, pause.stderr)
+	}
+	db := openDB(t, spine)
+	if got := queryStr(t, db, `SELECT status FROM worksources WHERE id='ws-homie'`); got != "paused" {
+		t.Fatalf("after Homie pause status = %q", got)
+	}
+	archive := runMC(t, env, "", "worksource", "archive", "ws-homie")
+	if archive.code != 0 {
+		t.Fatalf("allowlisted Homie worksource archive failed (%d): %s", archive.code, archive.stderr)
+	}
+	if got := queryStr(t, db, `SELECT status FROM worksources WHERE id='ws-homie'`); got != "archived" {
+		t.Fatalf("after Homie archive status = %q", got)
+	}
+
+	narrow := runMC(t, spineEnv(spine), "", "homie", "start", "--from", "cli:narrow", "--allow", "task.add")
+	if narrow.code != 0 {
+		t.Fatalf("narrow homie start failed: %s", narrow.stderr)
+	}
+	narrowEnv := homieJSONEnv(t, spine, narrow.json["session_id"].(string), []string{"task.add"})
+	denied := runMC(t, narrowEnv, "", "worksource", "pause", "ws-test")
+	if denied.code != 1 || !strings.Contains(denied.stderr, "not allowed") {
+		t.Fatalf("narrow Homie pause = code %d stderr %q", denied.code, denied.stderr)
+	}
+	if got := queryStr(t, db, `SELECT status FROM worksources WHERE id='ws-test'`); got != "active" {
+		t.Fatalf("denied pause mutated ws-test to %q", got)
+	}
+}
+
 func TestPacketListEmpty(t *testing.T) {
 	spine := initSpine(t)
 	res := runMC(t, spineEnv(spine), "", "packet", "list")
