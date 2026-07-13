@@ -3,6 +3,8 @@ package verbs
 import (
 	"context"
 	"database/sql"
+
+	"mc/domain"
 )
 
 // TaskAdd files human-seeded work into the proposed pool as origin:user
@@ -45,7 +47,7 @@ func TaskGet(db *sql.DB, id int64) (any, error) {
 		       created_at, status, stage_rank, stage_entered_at,
 		       correction_count, blocked, blocked_reason, dispatch_retries,
 		       decision, decided_at, archived, origin, worksource,
-		       branch, verified_sha, target_ref
+		       branch, verified_sha, target_ref, refine_notes
 		FROM tasks WHERE id = ?`, id)
 	if err != nil {
 		return nil, classify(err)
@@ -59,6 +61,54 @@ func TaskGet(db *sql.DB, id int64) (any, error) {
 		return nil, Domainf("no task %d", id)
 	}
 	return out[0], nil
+}
+
+// TaskBlock is `mc task block <task> --reason …` (§18; ADR-001 D6): host
+// scope, or a pipeline run for its **own subject only** — fenced through the
+// run's identity (run.json run_id against the live lease; deny rule 2). It
+// never touches the lease: blocking mid-run is not a terminal.
+func TaskBlock(db *sql.DB, id *RunIdentity, task int64, reason string) (any, error) {
+	if reason == "" {
+		return nil, Usagef("mc task block requires --reason (§4)")
+	}
+	if id != nil {
+		if id.Tier != "pipeline" {
+			return nil, Domainf("mc task block is host or pipeline scope; run.json tier is %q (ADR-001 D6)", id.Tier)
+		}
+	}
+	err := inTx(db, func(ctx context.Context, q Q) error {
+		if id != nil {
+			// Pipeline caller: own subject only, fenced to the live lease.
+			subject, err := fenceRun(ctx, q, id.RunID)
+			if err != nil {
+				return err
+			}
+			if subject == nil || *subject != task {
+				return Domainf("a pipeline run blocks only its own subject (ADR-001 D6); task %d is not it", task)
+			}
+		}
+		return domain.Block(ctx, q, task, reason)
+	})
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{"task_id": task, "blocked": true}, nil
+}
+
+// TaskUnblock is `mc task unblock <task>` (§18; ADR-001 D6): an operator
+// verb, denied to pipeline runs (deny rule 1) — resuming work is the
+// operator's judgment.
+func TaskUnblock(db *sql.DB, id *RunIdentity, task int64) (any, error) {
+	if id != nil {
+		return nil, Domainf("mc task unblock is an operator verb, denied to pipeline runs (§18 deny rule 1)")
+	}
+	err := inTx(db, func(ctx context.Context, q Q) error {
+		return domain.Unblock(ctx, q, task)
+	})
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{"task_id": task, "blocked": false}, nil
 }
 
 func nullIfEmpty(s string) any {

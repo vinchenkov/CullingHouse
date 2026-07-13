@@ -22,14 +22,17 @@ import (
 	"os"
 	"strings"
 	"time"
+
+	"mc/domain"
 )
 
-// DomainError is a domain rejection: exit 1 (contract §2).
-type DomainError struct{ Msg string }
+// DomainError is a domain rejection: exit 1 (contract §2). It is
+// mc/domain's coded error, re-exported so existing signatures survive the
+// Phase 2 layering (phase2-contract §1.1).
+type DomainError = domain.DomainError
 
-func (e *DomainError) Error() string { return e.Msg }
-
-// Domainf builds a DomainError.
+// Domainf builds an uncoded DomainError (CLI-plane validation); domain-layer
+// rejections carry their stable Code slug (contract §1.1).
 func Domainf(format string, a ...any) error {
 	return &DomainError{Msg: fmt.Sprintf(format, a...)}
 }
@@ -44,12 +47,9 @@ func Usagef(format string, a ...any) error {
 	return &UsageError{Msg: fmt.Sprintf(format, a...)}
 }
 
-// Q is the query surface verbs run against inside a transaction.
-type Q interface {
-	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
-	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
-	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
-}
+// Q is the query surface verbs run against inside a transaction — moved to
+// mc/domain and re-exported (contract §1.1).
+type Q = domain.Q
 
 // inTx runs fn under BEGIN IMMEDIATE on a single connection (§10 storage
 // discipline). Any error from fn rolls the transaction back and is returned;
@@ -153,61 +153,46 @@ func LoadIdentity() (*RunIdentity, error) {
 	return &id, nil
 }
 
-// requireRole checks the pipeline-role scope (ADR-001 D2): identity present,
-// tier pipeline, and run.json role (base-role) matching want.
-func requireRole(id *RunIdentity, want string) error {
+// requirePipeline checks identity presence and tier (ADR-001 D2), for the
+// verbs whose role expectation is subject-dependent or role-neutral.
+func requirePipeline(id *RunIdentity) error {
 	if id == nil {
 		return Domainf("this verb requires a pipeline run identity (run.json); host scope is refused (§18)")
 	}
 	if id.Tier != "pipeline" {
 		return Domainf("this verb is pipeline-tier only; run.json tier is %q", id.Tier)
 	}
+	return nil
+}
+
+// roleMismatch is the ADR-001 D2 refusal, coded (contract §1.1).
+func roleMismatch(id *RunIdentity, want string) error {
+	return &DomainError{Code: domain.CodeRoleMismatch,
+		Msg: fmt.Sprintf("role mismatch: run.json role is %q, verb requires %q (ADR-001 D2)", id.Role, want)}
+}
+
+// requireRole checks the pipeline-role scope (ADR-001 D2): identity present,
+// tier pipeline, and run.json role (base-role) matching want.
+func requireRole(id *RunIdentity, want string) error {
+	if err := requirePipeline(id); err != nil {
+		return err
+	}
 	if got := baseRole(id.Role); got != want {
-		return Domainf("role mismatch: run.json role is %q, verb requires %q (ADR-001 D2)", id.Role, want)
+		return roleMismatch(id, want)
 	}
 	return nil
 }
 
 // fenceRun verifies the --run fencing token against the live lease (§10,
-// §18 deny rule 2): a call whose run_id no longer matches is rejected, never
-// double-applied. Returns the lease's subject (nil for subjectless runs).
+// §18 deny rule 2) — the domain's lease.Fence.
 func fenceRun(ctx context.Context, q Q, runID string) (*int64, error) {
-	var lockRun sql.NullString
-	var subject sql.NullInt64
-	err := q.QueryRowContext(ctx, `SELECT run_id, subject FROM lock WHERE id = 1`).
-		Scan(&lockRun, &subject)
-	if err != nil {
-		return nil, err
-	}
-	if !lockRun.Valid || lockRun.String != runID {
-		return nil, Domainf("stale run: %q does not hold the live lease (§10 fencing)", runID)
-	}
-	if subject.Valid {
-		s := subject.Int64
-		return &s, nil
-	}
-	return nil, nil
+	return domain.Fence(ctx, q, runID)
 }
 
-// releaseLease is the ADR-001 D3 terminal boilerplate, lease half: NULL every
-// claim column (a free lock carries no run residue — substrate CHECKs).
+// releaseLease is the ADR-001 D3 terminal boilerplate, lease half — the
+// domain's fenced lease.Release.
 func releaseLease(ctx context.Context, q Q, runID string) error {
-	res, err := q.ExecContext(ctx, `
-		UPDATE lock SET run_id = NULL, worksource = NULL, subject = NULL,
-			owner = NULL, acquired_at = NULL, last_heartbeat_at = NULL,
-			hard_deadline_at = NULL
-		WHERE id = 1 AND run_id = ?`, runID)
-	if err != nil {
-		return err
-	}
-	n, err := res.RowsAffected()
-	if err != nil {
-		return err
-	}
-	if n != 1 {
-		return Domainf("stale run: %q does not hold the live lease (§10 fencing)", runID)
-	}
-	return nil
+	return domain.Release(ctx, q, runID)
 }
 
 // endRun is the D3 terminal boilerplate, runs half: stamp ended_at/outcome.

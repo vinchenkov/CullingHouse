@@ -101,6 +101,12 @@ CREATE TABLE tasks (
     verified_sha     TEXT,
     target_ref       TEXT,
 
+    -- NOTE(P2.3): the carried notes of §7 ("Revise → … notes carried into
+    -- the next run brief") and §8's Refiner deepening scope. Written by the
+    -- domain re-entry (task.Reenter), overwritten per re-entry, read at
+    -- spawn-brief assembly, cleared on the next packaging (A-P2-6).
+    refine_notes     TEXT,
+
     -- stage_rank: how far into the pipeline the row is, for furthest-first
     -- dispatch (§5, §10). packaged ranks 0 — in the review queue, out of
     -- pipeline dispatch. Generated: unwritable by construction.
@@ -475,6 +481,16 @@ CREATE TABLE lock (
     -- other lease tunables (NOTE(P1b.1): additive column, default preserves
     -- every Phase 1a behavior).
     hard_deadline_minutes INTEGER NOT NULL DEFAULT 240,
+    -- NOTE(P2.1): the Daily Console stored schedule (§16.3 "delivery time +
+    -- IANA timezone"), lock-row tunable pattern of NOTE(P1b.1). The default
+    -- hour 24 normalizes past end-of-day, so consoleDue never fires — the
+    -- stored not-configured value, replacing the Phase 1b hardcoded sentinel
+    -- (deviation D-mc-4; phase2-contract §4.3). Settable via `mc init`.
+    console_hour          INTEGER NOT NULL DEFAULT 24
+                          CHECK (console_hour BETWEEN 0 AND 24),
+    console_minute        INTEGER NOT NULL DEFAULT 0
+                          CHECK (console_minute BETWEEN 0 AND 59),
+    console_tz            TEXT    NOT NULL DEFAULT 'UTC',
 
     -- Claim fields travel together; a free lock carries no run residue.
     CHECK ((run_id IS NULL) = (owner IS NULL)),
@@ -512,10 +528,19 @@ CREATE TABLE runs (
     binding            TEXT,   -- which harness + model wrote it
     native_session_ref TEXT,   -- the harness's own session handle
     trace_filename     TEXT,   -- the trace's filename
-    pool_snapshot      TEXT    -- Editor runs: JSON array of the proposed pool
+    pool_snapshot      TEXT,   -- Editor runs: JSON array of the proposed pool
                                -- snapshotted at claim; `mc editor decide` must
                                -- cover it exactly (ADR-001 D4; Phase 1b
                                -- contract §2, NOTE(P1b.2))
+
+    -- NOTE(P2.2): the verdict record lives on the Verifier's own runs row
+    -- (ADR-001 D4 "one transaction writes the verdict record (gate-ladder
+    -- evidence path included)"); the next Worker brief's correction file is
+    -- queried from the subject's latest correct-verdict run — no task column.
+    verdict_outcome    TEXT CHECK (verdict_outcome IN ('pass', 'correct', 'budget-spent')),
+    evidence_path      TEXT,
+    correction_path    TEXT,
+    deepening          TEXT CHECK (deepening IN ('genuine', 'churn'))
 );
 
 -- Every run's trace is kept forever (Inv. 26); so is its row.

@@ -3,10 +3,11 @@ package verbs
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"time"
+	_ "time/tzdata" // the console's IANA zones (§16.3) with no host dependency
 
 	"mc/dispatch"
+	"mc/domain"
 )
 
 // Dispatch is the one caller of dispatch.Decide (contract §3; §10; Inv. 2/3).
@@ -30,21 +31,26 @@ func Dispatch(db *sql.DB) (any, error) {
 		if err != nil {
 			return err
 		}
+		loc, err := time.LoadLocation(tun.consoleTZ)
+		if err != nil {
+			// Fail-closed (contract §4.3): a broken stored zone aborts the
+			// tick rather than delivering on a guessed clock.
+			return Domainf("lock.console_tz %q is not a loadable IANA zone (§16.3): %v", tun.consoleTZ, err)
+		}
 		cfg := dispatch.Config{
 			ReviewWIPCap:   3, // Inv. 18; the substrate trigger is the backstop
 			TimeoutMinutes: tun.timeoutMinutes,
 			GraceMinutes:   tun.graceMinutes,
 			SpawnGraceS:    tun.spawnGraceS,
-			// Console scheduling is [P2] (contract §5 deferred list). Hour 24
-			// normalizes to next-day 00:00, so consoleDue never fires: the
-			// stored schedule is pinned "not yet configured" without touching
-			// the promoted dispatch package (see deviation note D-mc-4).
-			ConsoleHour:   24,
-			ConsoleMinute: 0,
-			ConsoleLoc:    time.UTC,
+			// The stored §16.3 schedule (NOTE(P2.1)); the default hour 24
+			// normalizes past end-of-day, so consoleDue never fires until an
+			// operator configures a real time (D-mc-4, resolved).
+			ConsoleHour:   tun.consoleHour,
+			ConsoleMinute: tun.consoleMinute,
+			ConsoleLoc:    loc,
 		}
 		action := dispatch.Decide(rec, lk, cfg, dispatch.Clock{Now: now})
-		effect, err = applyAction(ctx, q, action, tun)
+		effect, err = applyAction(ctx, q, now, action, tun)
 		return err
 	})
 	if err != nil {
@@ -53,13 +59,17 @@ func Dispatch(db *sql.DB) (any, error) {
 	return effect, nil
 }
 
-// tunables are the lock row's stored knobs (§16.3; contract §2 mc init).
+// tunables are the lock row's stored knobs (§16.3; contract §2 mc init;
+// NOTE(P2.1) console schedule).
 type tunables struct {
 	timeoutMinutes      int
 	graceMinutes        int
 	heartbeatIntervalS  int
 	spawnGraceS         int
 	hardDeadlineMinutes int
+	consoleHour         int
+	consoleMinute       int
+	consoleTZ           string
 }
 
 func spineNow(ctx context.Context, q Q) (time.Time, error) {
@@ -79,11 +89,13 @@ func loadLock(ctx context.Context, q Q) (dispatch.Lock, tunables, error) {
 	err := q.QueryRowContext(ctx, `
 		SELECT run_id, owner, subject, acquired_at, last_heartbeat_at,
 		       hard_deadline_at, timeout_minutes, grace_minutes,
-		       heartbeat_interval_s, spawn_grace_s, hard_deadline_minutes
+		       heartbeat_interval_s, spawn_grace_s, hard_deadline_minutes,
+		       console_hour, console_minute, console_tz
 		FROM lock WHERE id = 1`).Scan(
 		&runID, &owner, &subject, &acquiredAt, &lastHB, &hardDeadline,
 		&tun.timeoutMinutes, &tun.graceMinutes, &tun.heartbeatIntervalS,
-		&tun.spawnGraceS, &tun.hardDeadlineMinutes)
+		&tun.spawnGraceS, &tun.hardDeadlineMinutes,
+		&tun.consoleHour, &tun.consoleMinute, &tun.consoleTZ)
 	if err != nil {
 		return dispatch.Lock{}, tun, err
 	}
@@ -213,17 +225,35 @@ func loadRecords(ctx context.Context, q Q) (dispatch.Records, error) {
 }
 
 // applyAction writes the decided action inside the same transaction and
-// builds the effect JSON pinned by contract §2.
-func applyAction(ctx context.Context, q Q, a dispatch.Action, tun tunables) (map[string]any, error) {
+// builds the effect JSON pinned by contract §2. The write bodies live behind
+// the domain aggregates (lease.Claim / lease.ApplyReap / task.Reenter —
+// phase2-contract §1.3).
+func applyAction(ctx context.Context, q Q, now time.Time, a dispatch.Action, tun tunables) (map[string]any, error) {
 	switch a.Kind {
 	case dispatch.KindIdle:
 		return map[string]any{"action": "idle", "reason": string(a.Idle)}, nil
 
 	case dispatch.KindSpawn:
-		return applySpawn(ctx, q, a.Spawn, tun)
+		return applySpawn(ctx, q, now, a.Spawn, tun)
 
 	case dispatch.KindReap:
-		return applyReap(ctx, q, a.Reap)
+		// The reap decision's charge/block computation is Decide's; the write
+		// side (mark reaped → charge → free) is the lease aggregate's, which
+		// re-derives blocking from the charge itself (§10 "never a silent
+		// loop") — the two agree by construction on the same records.
+		reap := domain.ReapArgs{RunID: a.Reap.RunID, Reason: string(a.Reap.Reason)}
+		if a.Reap.SubjectID != nil && a.Reap.ChargeRetries {
+			reap.SubjectID = a.Reap.SubjectID
+		}
+		if _, err := domain.ApplyReap(ctx, q, reap); err != nil {
+			return nil, err
+		}
+		return map[string]any{
+			"action":         "reap",
+			"run_id":         a.Reap.RunID,
+			"reason":         string(a.Reap.Reason),
+			"stop_container": a.Reap.StopContainer,
+		}, nil
 
 	case dispatch.KindLand:
 		// The land effect is pure effect data (§10 step 0c): the writes come
@@ -237,10 +267,10 @@ func applyAction(ctx context.Context, q Q, a dispatch.Action, tun tunables) (map
 		}, nil
 
 	case dispatch.KindReenter:
-		// Step (2b), initiative arm [P2 tests]: one pure mutation,
-		// packaged → seeded; no spawn this tick.
-		if _, err := q.ExecContext(ctx,
-			`UPDATE tasks SET status = 'seeded' WHERE id = ?`, a.Reenter.TaskID); err != nil {
+		// Step (2b), initiative arm: one pure mutation, packaged → seeded via
+		// the one re-entry edge (Inv. 11); no spawn this tick, no notes —
+		// Strategist(initiative) carries the deepening as waves (§8).
+		if err := domain.Reenter(ctx, q, a.Reenter.TaskID, ""); err != nil {
 			return nil, err
 		}
 		return map[string]any{"action": "reenter", "task_id": a.Reenter.TaskID}, nil
@@ -248,9 +278,9 @@ func applyAction(ctx context.Context, q Q, a dispatch.Action, tun tunables) (map
 	return nil, Domainf("dispatch: unknown action kind %q", a.Kind)
 }
 
-// applySpawn is the claim-and-spawn: CAS the free lock + INSERT the runs row
-// (Inv. 4: the row is committed before the process starts), one transaction.
-func applySpawn(ctx context.Context, q Q, sp *dispatch.Spawn, tun tunables) (map[string]any, error) {
+// applySpawn is the claim-and-spawn behind lease.Claim: CAS the free lock +
+// INSERT the runs row (Inv. 4), one transaction.
+func applySpawn(ctx context.Context, q Q, now time.Time, sp *dispatch.Spawn, tun tunables) (map[string]any, error) {
 	runID, err := newRunID()
 	if err != nil {
 		return nil, err
@@ -258,58 +288,29 @@ func applySpawn(ctx context.Context, q Q, sp *dispatch.Spawn, tun tunables) (map
 	owner := baseRole(string(sp.Role))
 	sessionPath := "sessions/" + runID // MC_HOME-relative (§16.1)
 
-	// The subject's worksource rides the lock row; subjectless runs
-	// (propose/console) carry none.
-	var worksource any
-	var subject any
-	if sp.SubjectID != nil {
-		subject = *sp.SubjectID
-		var ws string
-		if err := q.QueryRowContext(ctx,
-			`SELECT worksource FROM tasks WHERE id = ?`, *sp.SubjectID).Scan(&ws); err != nil {
-			return nil, err
-		}
-		worksource = ws
-	}
-
 	// Editor runs snapshot the entire proposed pool at claim (§10 step 3;
 	// ADR-001 D4 coverage check reads it back).
-	var pool any
+	var pool []int64
 	if sp.Role == dispatch.RoleEditor {
-		b, err := json.Marshal(sp.ProposedPool)
-		if err != nil {
-			return nil, err
+		pool = sp.ProposedPool
+		if pool == nil {
+			pool = []int64{}
 		}
-		pool = string(b)
 	}
 
-	// binding='fake': routing.md resolution is [P2]; the skeleton stamps the
-	// test-config-only fake family (contract Ambiguity A5).
-	if _, err := q.ExecContext(ctx, `
-		INSERT INTO runs (id, tier, role, worksource, subject, session_path,
-		                  binding, pool_snapshot)
-		VALUES (?, 'pipeline', ?, ?, ?, ?, 'fake', ?)`,
-		runID, owner, worksource, subject, sessionPath, pool); err != nil {
-		return nil, err
-	}
-
-	res, err := q.ExecContext(ctx, `
-		UPDATE lock SET run_id = ?, worksource = ?, subject = ?, owner = ?,
-			acquired_at = datetime('now'), last_heartbeat_at = NULL,
-			hard_deadline_at = datetime('now', '+' || ? || ' minutes')
-		WHERE id = 1 AND run_id IS NULL`,
-		runID, worksource, subject, owner, tun.hardDeadlineMinutes)
+	// binding='fake': routing.md resolution is later-phase work; the fake
+	// family is the test-config-only binding (phase1b contract Ambiguity A5).
+	claim, err := domain.Claim(ctx, q, now, domain.ClaimArgs{
+		RunID:               runID,
+		Owner:               owner,
+		SubjectID:           sp.SubjectID,
+		SessionPath:         sessionPath,
+		Binding:             "fake",
+		PoolSnapshot:        pool,
+		HardDeadlineMinutes: tun.hardDeadlineMinutes,
+	})
 	if err != nil {
 		return nil, err
-	}
-	n, err := res.RowsAffected()
-	if err != nil {
-		return nil, err
-	}
-	if n != 1 {
-		// Unreachable inside BEGIN IMMEDIATE (Decide only spawns on a free
-		// lock read in this same transaction); kept as the CAS backstop.
-		return nil, Domainf("lost the claim race: lock is held (§10 fencing)")
 	}
 
 	poolIDs := sp.ProposedPool
@@ -320,6 +321,10 @@ func applySpawn(ctx context.Context, q Q, sp *dispatch.Spawn, tun tunables) (map
 	if sp.SubjectID != nil {
 		subjectID = *sp.SubjectID
 	}
+	var worksource any
+	if claim.Worksource != nil {
+		worksource = *claim.Worksource
+	}
 	return map[string]any{
 		"action":               "spawn",
 		"run_id":               runID,
@@ -329,39 +334,5 @@ func applySpawn(ctx context.Context, q Q, sp *dispatch.Spawn, tun tunables) (map
 		"pool_ids":             poolIDs,
 		"session_path":         sessionPath,
 		"heartbeat_interval_s": tun.heartbeatIntervalS,
-	}, nil
-}
-
-// applyReap is the step-(0) mutation: mark the run reaped, charge/block the
-// subject per budget, free the lease — one transaction; the container stop
-// returns as effect data (§10 step 0, §11.6).
-func applyReap(ctx context.Context, q Q, r *dispatch.Reap) (map[string]any, error) {
-	if err := endRun(ctx, q, r.RunID, "reaped"); err != nil {
-		return nil, err
-	}
-	if r.SubjectID != nil && r.ChargeRetries {
-		if _, err := q.ExecContext(ctx, `
-			UPDATE tasks SET dispatch_retries =
-				CASE WHEN dispatch_retries > 0 THEN dispatch_retries - 1 ELSE 0 END
-			WHERE id = ?`, *r.SubjectID); err != nil {
-			return nil, err
-		}
-		if r.BlockSubject {
-			if _, err := q.ExecContext(ctx, `
-				UPDATE tasks SET blocked = 1,
-					blocked_reason = 'dispatch retries exhausted (' || ? || ')'
-				WHERE id = ? AND blocked = 0`, string(r.Reason), *r.SubjectID); err != nil {
-				return nil, err
-			}
-		}
-	}
-	if err := releaseLease(ctx, q, r.RunID); err != nil {
-		return nil, err
-	}
-	return map[string]any{
-		"action":         "reap",
-		"run_id":         r.RunID,
-		"reason":         string(r.Reason),
-		"stop_container": r.StopContainer,
 	}, nil
 }

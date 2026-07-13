@@ -7,6 +7,9 @@ import (
 	"fmt"
 	"io"
 	"sort"
+	"strings"
+
+	"mc/domain"
 )
 
 // EditorVerdicts is mc editor decide's stdin payload (ADR-001 D4).
@@ -19,10 +22,11 @@ type EditorVerdicts struct {
 }
 
 // EditorDecide applies the Editor's batch verdict pass (ADR-001 D4): parse
-// fully, validate fully, commit in one transaction (constraint a). Skeleton:
-// the promote arm (proposed → seeded) with the exact-coverage check against
-// the pool snapshotted on the runs row at claim; the reject arm and the
-// zero-promotion guard are [P2].
+// fully, validate fully, commit in one transaction (constraint a). promote →
+// proposed → seeded; reject → decision='rejected' + archive, reason
+// mandatory. Zero-promotion batches are rejected when the ready queue is
+// empty — no unarchived, unblocked, dispatchable row exists outside the
+// proposed pool (spec §3's guard, mechanical).
 func EditorDecide(db *sql.DB, id *RunIdentity, run string, batch io.Reader) (any, error) {
 	if err := requireRole(id, "editor"); err != nil {
 		return nil, err
@@ -31,17 +35,22 @@ func EditorDecide(db *sql.DB, id *RunIdentity, run string, batch io.Reader) (any
 	if err := json.NewDecoder(batch).Decode(&payload); err != nil {
 		return nil, Domainf("mc editor decide: bad batch payload: %v", err)
 	}
+	allReject := true
 	for _, v := range payload.Verdicts {
 		switch v.Decision {
 		case "promote":
+			allReject = false
 		case "reject":
-			return nil, Domainf("the reject arm is deferred to Phase 2 (contract §2 [P2])")
+			if v.Reason == "" {
+				return nil, &DomainError{Code: domain.CodeReasonRequired,
+					Msg: fmt.Sprintf("reject of task %d requires a reason (ADR-001 D4)", v.Task)}
+			}
 		default:
 			return nil, Domainf("unknown decision %q (ADR-001 D4: promote|reject)", v.Decision)
 		}
 	}
 
-	var promoted []int64
+	promoted, rejected := []int64{}, []int64{}
 	err := inTx(db, func(ctx context.Context, q Q) error {
 		if _, err := fenceRun(ctx, q, run); err != nil {
 			return err
@@ -66,14 +75,46 @@ func EditorDecide(db *sql.DB, id *RunIdentity, run string, batch io.Reader) (any
 			got = append(got, v.Task)
 		}
 		if !sameIDSet(pool, got) {
-			return Domainf("batch must cover exactly the run's snapshotted pool %v, got %v (ADR-001 D4)", pool, got)
+			return &DomainError{Code: domain.CodePoolMismatch,
+				Msg: fmt.Sprintf("batch must cover exactly the run's snapshotted pool %v, got %v (ADR-001 D4)", pool, got)}
 		}
-		for _, v := range payload.Verdicts {
-			if _, err := q.ExecContext(ctx,
-				`UPDATE tasks SET status = 'seeded' WHERE id = ?`, v.Task); err != nil {
+
+		// The zero-promotion guard (ADR-001 D4; spec §3): an all-reject batch
+		// is refused while nothing dispatchable exists outside the pool.
+		if allReject && len(payload.Verdicts) > 0 {
+			args := make([]any, 0, len(pool))
+			ph := make([]string, 0, len(pool))
+			for _, p := range pool {
+				args = append(args, p)
+				ph = append(ph, "?")
+			}
+			query := `SELECT COUNT(*) FROM tasks WHERE archived = 0 AND blocked = 0 AND stage_rank > 0`
+			if len(ph) > 0 {
+				query += ` AND id NOT IN (` + strings.Join(ph, ",") + `)`
+			}
+			var ready int
+			if err := q.QueryRowContext(ctx, query, args...).Scan(&ready); err != nil {
 				return err
 			}
-			promoted = append(promoted, v.Task)
+			if ready == 0 {
+				return &DomainError{Code: domain.CodeZeroPromotion,
+					Msg: "zero-promotion batch rejected: the ready queue would be empty (spec §3, ADR-001 D4)"}
+			}
+		}
+
+		for _, v := range payload.Verdicts {
+			switch v.Decision {
+			case "promote":
+				if err := domain.Promote(ctx, q, v.Task); err != nil {
+					return err
+				}
+				promoted = append(promoted, v.Task)
+			case "reject":
+				if err := domain.RejectProposal(ctx, q, v.Task, v.Reason); err != nil {
+					return err
+				}
+				rejected = append(rejected, v.Task)
+			}
 		}
 		if err := endRun(ctx, q, run, "completed"); err != nil {
 			return err
@@ -83,10 +124,7 @@ func EditorDecide(db *sql.DB, id *RunIdentity, run string, batch io.Reader) (any
 	if err != nil {
 		return nil, err
 	}
-	if promoted == nil {
-		promoted = []int64{}
-	}
-	return map[string]any{"promoted": promoted}, nil
+	return map[string]any{"promoted": promoted, "rejected": rejected}, nil
 }
 
 func sameIDSet(a, b []int64) bool {
@@ -120,7 +158,7 @@ type StrategistProposals struct {
 
 // StrategistPropose inserts all proposals in one transaction under the
 // subjectless lease (ADR-001 D4, constraint b) and releases it — the run's
-// terminal action.
+// terminal action. The insert rides the domain birth helper.
 func StrategistPropose(db *sql.DB, id *RunIdentity, run string, batch io.Reader) (any, error) {
 	if err := requireRole(id, "strategist"); err != nil {
 		return nil, err
@@ -138,32 +176,23 @@ func StrategistPropose(db *sql.DB, id *RunIdentity, run string, batch io.Reader)
 		}
 	}
 
-	var ids []int64
+	ids := []int64{}
 	err := inTx(db, func(ctx context.Context, q Q) error {
 		if _, err := fenceRun(ctx, q, run); err != nil {
 			return err
 		}
 		for _, p := range payload.Proposals {
-			scope := p.Scope
-			if scope == "" {
-				scope = "task"
-			}
-			pri := 2
-			if p.Priority != nil {
-				pri = *p.Priority
-			}
 			// origin='autonomous': the schema's agent-provenance value
 			// (ADR-001 D4 calls it 'agent'; the substrate CHECK pins the
 			// vocabulary to user|autonomous — see deviation note D-mc-6).
-			res, err := q.ExecContext(ctx, `
-				INSERT INTO tasks (title, description, scope, priority,
-				                   origin, worksource, target_ref)
-				VALUES (?, ?, ?, ?, 'autonomous', ?, 'main')`,
-				p.Title, nullIfEmpty(p.Description), scope, pri, p.Worksource)
-			if err != nil {
-				return err
-			}
-			tid, err := res.LastInsertId()
+			tid, err := domain.BirthProposal(ctx, q, domain.ProposalArgs{
+				Title:       p.Title,
+				Description: p.Description,
+				Scope:       p.Scope,
+				Priority:    p.Priority,
+				Origin:      "autonomous",
+				Worksource:  p.Worksource,
+			})
 			if err != nil {
 				return err
 			}
@@ -177,45 +206,47 @@ func StrategistPropose(db *sql.DB, id *RunIdentity, run string, batch io.Reader)
 	if err != nil {
 		return nil, err
 	}
-	if ids == nil {
-		ids = []int64{}
-	}
 	return map[string]any{"task_ids": ids}, nil
 }
 
-// VerifierVerdict is the Verifier terminal (ADR-001 D4). Skeleton: the pass
-// arm only (worked → verified, records tasks.verified_sha — contract
-// Ambiguity A2: the SHA is verification-time knowledge). correct /
-// budget-spent / --deepening are [P2].
-func VerifierVerdict(db *sql.DB, id *RunIdentity, task int64, run, outcome, evidence, sha string) (any, error) {
-	if err := requireRole(id, "verifier"); err != nil {
+// StrategistWaveChildren is mc strategist wave's stdin payload (ADR-001 D4).
+type StrategistWaveChildren struct {
+	Children []struct {
+		Title       string `json:"title"`
+		Description string `json:"description"`
+		Priority    *int   `json:"priority"`
+	} `json:"children"`
+}
+
+// StrategistWave is Strategist(initiative)'s wave terminal (ADR-001 D4):
+// whole-wave atomic birth into a live, still-seeded initiative — the lease's
+// subject. Whole wave or nothing (constraint a).
+func StrategistWave(db *sql.DB, id *RunIdentity, run string, initiative int64, batch io.Reader) (any, error) {
+	if err := requireRole(id, "strategist"); err != nil {
 		return nil, err
 	}
-	switch outcome {
-	case "pass":
-	case "correct", "budget-spent":
-		return nil, Domainf("outcome %q is deferred to Phase 2 (contract §2 [P2])", outcome)
-	default:
-		return nil, Usagef("mc verifier verdict requires --outcome pass|correct|budget-spent")
+	var payload StrategistWaveChildren
+	if err := json.NewDecoder(batch).Decode(&payload); err != nil {
+		return nil, Domainf("mc strategist wave: bad batch payload: %v", err)
 	}
-	if evidence == "" {
-		return nil, Usagef("mc verifier verdict requires --evidence (Inv. 12: every gate records evidence)")
-	}
-	if sha == "" {
-		return nil, Usagef("mc verifier verdict requires --sha (§7: only the exact reviewed commit can land)")
+	children := make([]domain.WaveChild, 0, len(payload.Children))
+	for _, c := range payload.Children {
+		children = append(children, domain.WaveChild{
+			Title: c.Title, Description: c.Description, Priority: c.Priority,
+		})
 	}
 
+	ids := []int64{}
 	err := inTx(db, func(ctx context.Context, q Q) error {
 		subject, err := fenceRun(ctx, q, run)
 		if err != nil {
 			return err
 		}
-		if subject == nil || *subject != task {
-			return Domainf("task %d is not the live lease's subject (§10 fencing)", task)
+		if subject == nil || *subject != initiative {
+			return Domainf("initiative %d is not the live lease's subject (§10 fencing)", initiative)
 		}
-		if _, err := q.ExecContext(ctx, `
-			UPDATE tasks SET status = 'verified', verified_sha = ?
-			WHERE id = ?`, sha, task); err != nil {
+		ids, err = domain.BirthWave(ctx, q, initiative, children)
+		if err != nil {
 			return err
 		}
 		if err := endRun(ctx, q, run, "completed"); err != nil {
@@ -226,5 +257,85 @@ func VerifierVerdict(db *sql.DB, id *RunIdentity, task int64, run, outcome, evid
 	if err != nil {
 		return nil, err
 	}
-	return map[string]any{"task_id": task, "status": "verified", "verified_sha": sha}, nil
+	return map[string]any{"initiative": initiative, "child_ids": ids}, nil
+}
+
+// VerdictArgs carries mc verifier verdict's flags (ADR-001 D4; §7).
+type VerdictArgs struct {
+	Task       int64
+	Run        string
+	Outcome    string // pass | correct | budget-spent
+	Evidence   string
+	SHA        string
+	Correction string // required for correct
+	Deepening  string // genuine | churn — the §8 refinement judgment
+}
+
+// VerifierVerdict is the Verifier terminal (ADR-001 D4): one transaction
+// writes the verdict record on the run's own row (NOTE(P2.2)) and applies
+// the §7 outcome table via task.ApplyVerdict — pass (worked → verified),
+// correct (worked → seeded, correction_count++), budget-spent (ships
+// exception-labeled). On a refinement round-trip the rally-ending verdict
+// carries --deepening into the packet's streak (§8, A-P2-1).
+func VerifierVerdict(db *sql.DB, id *RunIdentity, a VerdictArgs) (any, error) {
+	if err := requireRole(id, "verifier"); err != nil {
+		return nil, err
+	}
+	switch a.Outcome {
+	case "pass", "correct", "budget-spent":
+	default:
+		return nil, Usagef("mc verifier verdict requires --outcome pass|correct|budget-spent")
+	}
+	if a.Evidence == "" {
+		return nil, Usagef("mc verifier verdict requires --evidence (Inv. 12: every gate records evidence)")
+	}
+	if a.SHA == "" {
+		return nil, Usagef("mc verifier verdict requires --sha (§7: only the exact reviewed commit can land)")
+	}
+	if a.Deepening != "" && a.Deepening != "genuine" && a.Deepening != "churn" {
+		return nil, Usagef("--deepening must be genuine|churn (§8)")
+	}
+
+	var res domain.VerdictResult
+	err := inTx(db, func(ctx context.Context, q Q) error {
+		subject, err := fenceRun(ctx, q, a.Run)
+		if err != nil {
+			return err
+		}
+		if subject == nil || *subject != a.Task {
+			return Domainf("task %d is not the live lease's subject (§10 fencing)", a.Task)
+		}
+		res, err = domain.ApplyVerdict(ctx, q, domain.VerdictArgs{
+			TaskID:         a.Task,
+			RunID:          a.Run,
+			Outcome:        a.Outcome,
+			EvidencePath:   a.Evidence,
+			VerifiedSHA:    a.SHA,
+			CorrectionPath: a.Correction,
+			Deepening:      a.Deepening,
+		})
+		if err != nil {
+			return err
+		}
+		if err := endRun(ctx, q, a.Run, "completed"); err != nil {
+			return err
+		}
+		return releaseLease(ctx, q, a.Run)
+	})
+	if err != nil {
+		return nil, err
+	}
+	out := map[string]any{
+		"task_id":          a.Task,
+		"outcome":          a.Outcome,
+		"status":           res.Status,
+		"correction_count": res.CorrectionCount,
+	}
+	if res.Status == "verified" {
+		out["verified_sha"] = a.SHA
+	}
+	if res.ExceptionLabeled {
+		out["exception_labeled"] = true
+	}
+	return out, nil
 }

@@ -781,3 +781,53 @@ func TestConversationRowsAppendOnly(t *testing.T) {
 		`UPDATE conversation_messages SET completed_at = datetime('now')
 		 WHERE session_id = 'h1' AND seq = 1`)
 }
+
+// ---------------------------------------------------------------------------
+// Phase 2 additive columns (phase2-contract §5) — new-column coverage only;
+// every case above is Phase 1a/1b and stays untouched.
+// ---------------------------------------------------------------------------
+
+// NOTE(P2.1): the console schedule tunables live on the lock row with the
+// not-configured default (hour 24 = never due), CHECK-bounded.
+func TestLockConsoleScheduleColumns(t *testing.T) {
+	db := openSpine(t)
+	if h := oneInt(t, db, `SELECT console_hour FROM lock WHERE id = 1`); h != 24 {
+		t.Fatalf("console_hour default = %d, want 24 (not configured, D-mc-4)", h)
+	}
+	if m := oneInt(t, db, `SELECT console_minute FROM lock WHERE id = 1`); m != 0 {
+		t.Fatalf("console_minute default = %d, want 0", m)
+	}
+	if tz := oneStr(t, db, `SELECT console_tz FROM lock WHERE id = 1`); tz != "UTC" {
+		t.Fatalf("console_tz default = %q, want UTC", tz)
+	}
+	mustExec(t, db, `UPDATE lock SET console_hour = 8, console_minute = 30, console_tz = 'America/New_York' WHERE id = 1`)
+	wantAbort(t, db, `UPDATE lock SET console_hour = 25 WHERE id = 1`)
+	wantAbort(t, db, `UPDATE lock SET console_hour = -1 WHERE id = 1`)
+	wantAbort(t, db, `UPDATE lock SET console_minute = 60 WHERE id = 1`)
+}
+
+// NOTE(P2.2): the verdict record on the Verifier's own runs row — outcome
+// vocabulary CHECK-pinned, evidence/correction paths free-form.
+func TestRunsVerdictRecordColumns(t *testing.T) {
+	db := openSpine(t)
+	id := mkTask(t, db, "task", "worked")
+	mustExec(t, db, `INSERT INTO runs (id, tier, role, worksource, subject) VALUES ('v1', 'pipeline', 'verifier', 'ws', ?)`, id)
+	mustExec(t, db, `
+		UPDATE runs SET verdict_outcome = 'correct', evidence_path = 'e.md',
+		       correction_path = 'corrections/mc-1-corrections1', deepening = 'churn'
+		WHERE id = 'v1'`)
+	wantAbort(t, db, `UPDATE runs SET verdict_outcome = 'maybe' WHERE id = 'v1'`)
+	wantAbort(t, db, `UPDATE runs SET deepening = 'sideways' WHERE id = 'v1'`)
+}
+
+// NOTE(P2.3): tasks.refine_notes is mutable carried-notes state, not an
+// identity column — the immutability trigger must not catch it.
+func TestTasksRefineNotesColumn(t *testing.T) {
+	db := openSpine(t)
+	id := mkTask(t, db, "task", "packaged")
+	mustExec(t, db, `UPDATE tasks SET refine_notes = 'tighten the abstract' WHERE id = ?`, id)
+	if got := taskStr(t, db, id, "refine_notes"); got != "tighten the abstract" {
+		t.Fatalf("refine_notes = %q", got)
+	}
+	mustExec(t, db, `UPDATE tasks SET refine_notes = NULL WHERE id = ?`, id)
+}
