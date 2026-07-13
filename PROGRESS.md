@@ -318,3 +318,16 @@ NEXT: Add the contract-promised `mc/verbs/dispatchverb_test.go` differential
 suite: every dispatch Action kind through real SQL load/apply, nullable lock/
 task fields, Daily Console activity loading, and re-enter mutation. Then the
 process flock and routing.md resolution remain before wave-1 review closure.
+
+- 2026-07-12 — **Phase 2 SQL↔dispatch adapter differential green.** New
+  `mc/verbs/dispatchverb_test.go` mirrors hand-built projections into real
+  spine rows and proves all five actions (idle/spawn/reap/land/reenter) agree
+  with frozen `dispatch.Decide`; verifies claim/reap/reenter writes, effect-only
+  landing, NULL last-heartbeat/task/subject/worksource handling, Editor pool
+  snapshot, same-day Daily Console suppression, and invalid-zone rollback.
+
+NEXT: Close the two omitted Phase 2 wave-1 obligations identified at takeover:
+(1) process-level `mc.dispatch` flock on the spine volume with concurrent
+loser/no-effect coverage (§10), then (2) parse authoritative routing.md,
+validate role bindings/decorrelation, stamp the resolved binding, and refuse
+unresolved routing before lease claim. Initiative wave remains Parked.
