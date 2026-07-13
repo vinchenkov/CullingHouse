@@ -316,6 +316,21 @@ func cmdTask(args []string) (any, error) {
 		return withSpine(func(db *sql.DB) (any, error) {
 			return verbs.TaskUnblock(db, idn, id)
 		})
+	case "interrupt":
+		id, rest, err := positionalID("mc task interrupt", args[1:])
+		if err != nil {
+			return nil, err
+		}
+		if len(rest) != 0 {
+			return nil, verbs.Usagef("mc task interrupt: unexpected argument %q", rest[0])
+		}
+		idn, err := verbs.LoadIdentity()
+		if err != nil {
+			return nil, err
+		}
+		return withSpine(func(db *sql.DB) (any, error) {
+			return verbs.TaskInterrupt(db, idn, id)
+		})
 	}
 	return nil, verbs.Usagef("unknown subverb: mc task %s", args[0])
 }

@@ -574,6 +574,51 @@ func TestTaskBlockUnblock(t *testing.T) {
 	})
 }
 
+func TestTaskInterrupt(t *testing.T) {
+	t.Run("host_cancels_live_subject_and_returns_exact_stop", func(t *testing.T) {
+		spine, taskID, run, _ := workerFixture(t, "interrupt live run")
+		res := runMC(t, spineEnv(spine), "", "task", "interrupt", fmt.Sprint(taskID))
+		if res.code != 0 || res.json["action"] != "interrupt" ||
+			res.json["run_id"] != run || res.json["stop_container"] != true {
+			t.Fatalf("interrupt code=%d json=%v stderr=%q", res.code, res.json, res.stderr)
+		}
+		db := openDB(t, spine)
+		if got := queryStr(t, db, `SELECT decision || '/' || archived FROM tasks WHERE id=?`, taskID); got != "cancelled/1" {
+			t.Fatalf("interrupted task = %q", got)
+		}
+		if got := queryStr(t, db, `SELECT outcome FROM runs WHERE id=?`, run); got != "interrupted" {
+			t.Fatalf("interrupted run outcome = %q", got)
+		}
+		if got := queryStr(t, db, `SELECT run_id FROM lock WHERE id=1`); got != "<NULL>" {
+			t.Fatalf("interrupt left lease held: %q", got)
+		}
+		replay := runMC(t, spineEnv(spine), "", "task", "interrupt", fmt.Sprint(taskID))
+		if replay.code != 1 {
+			t.Fatalf("interrupt replay exit=%d stderr=%q", replay.code, replay.stderr)
+		}
+	})
+
+	t.Run("wrong_subject_and_pipeline_provenance_are_inert", func(t *testing.T) {
+		spine, taskID, run, env := workerFixture(t, "protected live run")
+		other := taskAdd(t, spine, "not in flight")
+		wrong := runMC(t, spineEnv(spine), "", "task", "interrupt", fmt.Sprint(other))
+		if wrong.code != 1 || !strings.Contains(wrong.stderr, "live lease") {
+			t.Fatalf("wrong-subject exit=%d stderr=%q", wrong.code, wrong.stderr)
+		}
+		denied := runMC(t, env, "", "task", "interrupt", fmt.Sprint(taskID))
+		if denied.code != 1 || !strings.Contains(denied.stderr, "operator verb") {
+			t.Fatalf("pipeline interrupt exit=%d stderr=%q", denied.code, denied.stderr)
+		}
+		db := openDB(t, spine)
+		if got := queryStr(t, db, `SELECT run_id FROM lock WHERE id=1`); got != run {
+			t.Fatalf("refusals disturbed lease: %q", got)
+		}
+		if got := queryStr(t, db, `SELECT decision FROM tasks WHERE id=?`, other); got != "<NULL>" {
+			t.Fatalf("wrong-subject interrupt decided other task: %q", got)
+		}
+	})
+}
+
 // ---------------------------------------------------------------------------
 // The pipeline walk: the contract §7 ladder minus Docker — every stage
 // advanced by a fresh `mc dispatch` against a temp spine, every terminal

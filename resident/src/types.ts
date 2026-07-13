@@ -92,4 +92,5 @@ export type Effect =
       target_ref: string;
     }
   | { action: "reap"; run_id: string; stop_container?: boolean }
+	| { action: "interrupt"; task_id: number; run_id: string; stop_container: true }
   | { action: "reenter"; task_id: number };

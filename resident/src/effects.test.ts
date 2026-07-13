@@ -235,6 +235,17 @@ describe("land effect", () => {
 });
 
 describe("reap effect", () => {
+	test("interrupt stops the exact run container and removes its envelope", async () => {
+		const rig = makeRig();
+		rig.docker.enqueue(ok(""));
+		await applyEffect(
+			{ action: "interrupt", task_id: 42, run_id: "run-42-worker", stop_container: true },
+			rig.deps,
+		);
+		expect(rig.docker.calls).toEqual([["stop", "mc-run-run-42-worker"]]);
+		expect(rig.fakeFs.events).toEqual(["rm:/tmp/mc-home/runs/run-42-worker.json"]);
+	});
+
   test("stops the exact-named container when stop_container is set", async () => {
     const rig = makeRig();
     rig.docker.enqueue(ok(""));

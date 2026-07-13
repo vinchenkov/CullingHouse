@@ -114,6 +114,54 @@ func TaskUnblock(db *sql.DB, id *RunIdentity, task int64) (any, error) {
 	return map[string]any{"task_id": task, "blocked": false}, nil
 }
 
+// TaskInterrupt is the operator's in-flight "scratch that" (§15.3): cancel
+// the exact live subject, end its Run, and clear its lease in one transaction.
+// The returned effect is only the host instruction to stop that exact
+// container; no successor is dispatched.
+func TaskInterrupt(db *sql.DB, id *RunIdentity, task int64) (any, error) {
+	if err := RequireOperatorVerb(id, "task.interrupt"); err != nil {
+		return nil, err
+	}
+	var runID string
+	err := inTx(db, func(ctx context.Context, q Q) error {
+		var lockRun sql.NullString
+		var subject sql.NullInt64
+		if err := q.QueryRowContext(ctx,
+			`SELECT run_id, subject FROM lock WHERE id = 1`,
+		).Scan(&lockRun, &subject); err != nil {
+			return err
+		}
+		if !lockRun.Valid || !subject.Valid || subject.Int64 != task {
+			return Domainf("task %d is not the live lease subject; nothing to interrupt", task)
+		}
+		runID = lockRun.String
+		if err := domain.Cancel(ctx, q, task, "operator_interrupt"); err != nil {
+			return err
+		}
+		ended, err := q.ExecContext(ctx, `
+			UPDATE runs SET ended_at = datetime('now'), outcome = 'interrupted'
+			WHERE id = ? AND ended_at IS NULL`, runID)
+		if err != nil {
+			return err
+		}
+		n, err := ended.RowsAffected()
+		if err != nil {
+			return err
+		}
+		if n != 1 {
+			return Domainf("live lease Run %q was already ended", runID)
+		}
+		return domain.Release(ctx, q, runID)
+	})
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{
+		"action": "interrupt", "task_id": task, "run_id": runID,
+		"stop_container": true,
+	}, nil
+}
+
 func nullIfEmpty(s string) any {
 	if s == "" {
 		return nil

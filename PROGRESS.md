@@ -2,7 +2,7 @@
 
 <!-- Header block: kept current by every session. -->
 LAST GREEN SHA: (this commit)
-PHASES PASSING: Phase 0 COMPLETE (S1–S8 all green, no fallback ADRs; only operator-leg deferrals remain); Phase 1 COMPLETE (1a substrate 155; 1b walking skeleton reviewed-and-fixed — fake-harness 43, agent-runner 13, runner/image 2, resident 31, dispatch + cmd/mc suites; Docker e2e PASS ×4 total)
+PHASES PASSING: Phase 0 COMPLETE (S1–S8 all green, no fallback ADRs; only operator-leg deferrals remain); Phase 1 COMPLETE (1a substrate 155; 1b walking skeleton reviewed-and-fixed — fake-harness 43, agent-runner 13, runner/image 2, resident 32, dispatch + cmd/mc suites; Docker e2e PASS ×4 total)
 KNOWN-FAILING: (none)
 FAST SUITE: mc/check.sh (gofmt+vet+go test ./... — includes substrate + promoted dispatch) + runner/fake-harness/check.sh + runner/agent-runner/check.sh + runner/image/check.sh + resident/check.sh. Docker e2e (phase-completion lane): cd mc && mise exec -- go test -tags docker_e2e -timeout 15m ./e2e/...
 
@@ -685,3 +685,17 @@ NEXT: Implement `mc task interrupt` as one operator transaction: cancel the
 live task with reason `operator_interrupt`, end the matching Run, clear only
 its lease, and return the exact container-stop effect. Add stale/non-live and
 pipeline-provenance negatives, then resident effect coverage.
+
+- 2026-07-12 — **Phase 2 wave 2 operator interrupt green.** `task interrupt`
+  now requires host or allowlisted-Homie provenance and an exact live lease
+  subject. One transaction cancels/archives the task with
+  `operator_interrupt`, ends the matching Run as `interrupted`, and clears
+  only that lease; wrong-subject, replay, and pipeline attempts are inert.
+  The returned stop effect names the exact container, and the resident stops
+  it and removes the ephemeral launch envelope. Complete fast lane green;
+  resident suite now 32.
+
+NEXT: TDD Console publication over existing activity/outbox tables: exact
+Strategist(console), subjectless own-run fence, content path required,
+same-day event + destination rows + Run end/lease release atomically. Keep
+the broader Homie/outbox transport surface as the following slice.

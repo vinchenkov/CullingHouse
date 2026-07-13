@@ -38,6 +38,11 @@ export async function applyEffect(effect: Effect, deps: TickDeps): Promise<void>
       return land(effect, deps);
     case "reap":
       return reap(effect, deps);
+		case "interrupt":
+			return reap(
+				{ action: "reap", run_id: effect.run_id, stop_container: effect.stop_container },
+				deps,
+			);
     default:
       deps.log(
         `tick: unknown action ${JSON.stringify((effect as { action?: unknown }).action)}; ignored (fail-closed)`,
