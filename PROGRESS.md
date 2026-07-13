@@ -2,7 +2,7 @@
 
 <!-- Header block: kept current by every session. -->
 LAST GREEN SHA: (this commit)
-PHASES PASSING: Phase 0 COMPLETE (S1–S8 all green, no fallback ADRs; only operator-leg deferrals remain); Phase 1 COMPLETE (1a substrate 172; 1b walking skeleton reviewed-and-fixed — fake-harness 43, agent-runner 13, runner/image 2, resident 38, dispatch + cmd/mc suites; Docker e2e PASS ×4 total)
+PHASES PASSING: Phase 0 COMPLETE (S1–S8 all green, no fallback ADRs; only operator-leg deferrals remain); Phase 1 COMPLETE (1a substrate 172; 1b walking skeleton reviewed-and-fixed — fake-harness 43, agent-runner 13, runner/image 40, resident 41, dispatch + cmd/mc suites; Docker e2e PASS ×4 total)
 KNOWN-FAILING: (none)
 FAST SUITE: mc/check.sh (gofmt+vet+go test ./... — includes substrate + promoted dispatch) + runner/fake-harness/check.sh + runner/agent-runner/check.sh + runner/image/check.sh + resident/check.sh. Docker e2e (phase-completion lane): cd mc && mise exec -- go test -tags docker_e2e -timeout 15m ./e2e/...
 
@@ -51,6 +51,7 @@ FAST SUITE: mc/check.sh (gofmt+vet+go test ./... — includes substrate + promot
     - [x] action selected / before effect; session folder / before run.json
     - [x] run.json / before container; container start / before heartbeat
     - [x] workspace bytes / before commit; git commit / before complete
+    - [x] operator approve / before land; merge success / cleanup or report gap
   - [ ] Nightly randomized/metamorphic/lifecycle properties + planted mutants
 - [ ] Phase 3 — Boundary conformance (Docker)
 - [ ] Phase 4 — E2E control loops (six scenario families)
@@ -1062,3 +1063,34 @@ creates a second merge, preserves success truth, and exposes cleanup/report
 debt. Inject death only at host-side effect seams, never in `mc`. Then cover
 the outbox delivery boundary. Initiative wave CLI remains Parked pending the
 durable plan-review representation.
+
+- 2026-07-13 — **Approval/landing split-brain boundaries green.** The real
+  CLI now binds Worker-reported standalone branches to `mc/task-<id>` (and an
+  initiative child to its assigned parent branch), refuses branchless land
+  reports, and makes a committed landing success terminal and replay-safe.
+  The ordinary resident loop proves approval-without-effect re-emits the same
+  land tuple, while cleanup-loss and report-loss restart from one exact merge
+  receipt without a second merge, Run, lease, retry charge, or status lie.
+  `mc-land` now fences the numeric task namespace and exact SHA, verifies real
+  primary/task bytes with zero-stat indexes, preserves unrelated operator
+  edits, pins merge behavior and receipt identity, compare-deletes the task
+  ref, and surfaces ambiguous residue as success-with-cleanup-debt. An
+  adversarial pass found primary/task config redirects, executable content
+  transforms, replacement refs, stat-cache/index-visibility hiding, and late
+  cleanup config races; content-sensitive merge/preflight/removal now use a
+  minimal isolated Git common/config/attributes view sharing only the intended
+  real objects, refs, linked-worktree metadata, index, and working tree. The
+  40-case direct landing matrix includes all of those regressions plus hooks,
+  rename inference, conflict abort, moved/symbolic refs, path spaces, and
+  report replay. Complete fast lane green (Go gofmt/vet/all packages; fake
+  43, agent-runner 13, runner/image 40, resident 41).
+
+NEXT: TDD the final deterministic split-brain row, `message/outbox insert /
+delivery` (wave-2 contract §4), through the real `mc` CLI and the host/native
+surface delivery seam. Prove message+outbox insertion is one transaction;
+death after physical delivery but before ack re-polls the same durable outbox
+id for at-least-once delivery; external de-duplication keys that id; ack and
+ack-response-loss replay are idempotent; and the record/lock/effect triple
+converges without deleting the source message. Then implement the nightly
+property package and bounded fast honesty/mutant gates (§5). Initiative wave
+CLI remains Parked pending the durable plan-review representation.

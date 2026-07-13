@@ -8,6 +8,7 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
 import {
+  chmodSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -30,6 +31,7 @@ const repoRoot = resolve(import.meta.dir, "..", "..");
 const mcSourceDir = join(repoRoot, "mc", "cmd", "mc");
 const agentRunnerMain = join(repoRoot, "runner", "agent-runner", "main.ts");
 const fakeHarnessCli = join(repoRoot, "runner", "fake-harness", "cli.ts");
+const mcLandScript = join(repoRoot, "runner", "image", "mc-land");
 const suiteRoot = mkdtempSync(join(tmpdir(), "mc-split-brain-suite-"));
 const mcBin = join(suiteRoot, "mc");
 
@@ -340,6 +342,100 @@ async function seedStandaloneTask(fixture: Fixture): Promise<string> {
   return runId;
 }
 
+async function runScopedMc(
+  fixture: Fixture,
+  runId: string,
+  role: string,
+  argv: string[],
+): Promise<JsonObject> {
+  const identity = join(fixture.root, `setup-${role}-${runId}.json`);
+  writeFileSync(identity, JSON.stringify({
+    run_id: runId,
+    tier: "pipeline",
+    role,
+    pool_ids: [],
+  }));
+  const env = mcEnv(fixture.home, fixture.spine);
+  env.MC_RUN_JSON = identity;
+  const result = await runProcess([mcBin, ...argv], { env });
+  if (result.exitCode !== 0) {
+    throw new Error(
+      `scoped ${role} mc ${argv.join(" ")} exited ${result.exitCode}: ${result.stderr || result.stdout}`,
+    );
+  }
+  return result.stdout.trim() === "" ? {} : JSON.parse(result.stdout) as JsonObject;
+}
+
+function requireSpawn(
+  effect: JsonObject,
+  role: string,
+  taskId: number,
+): string {
+  if (
+    effect.action !== "spawn" || effect.role !== role ||
+    effect.subject_id !== taskId || typeof effect.run_id !== "string"
+  ) {
+    throw new Error(`wanted ${role} spawn for task ${taskId}, got ${JSON.stringify(effect)}`);
+  }
+  return effect.run_id;
+}
+
+interface PackagedGitTask {
+  baseSHA: string;
+  branch: string;
+  worktree: string;
+  verifiedSHA: string;
+}
+
+/** Drive one standalone task to a real branch-carrying Review Packet. */
+async function packageStandaloneGitTask(fixture: Fixture): Promise<PackagedGitTask> {
+  const baseSHA = await initializeGitWorkspace(fixture);
+  await seedStandaloneTask(fixture);
+
+  const branch = `mc/task-${fixture.taskId}`;
+  const worktree = join(fixture.workspace, ".mc-worktrees", `task-${fixture.taskId}`);
+  await git(fixture, "worktree", "add", worktree, "-b", branch);
+  writeFileSync(join(worktree, "landing.txt"), `reviewed landing for task ${fixture.taskId}\n`);
+  await gitAt(worktree, "add", "landing.txt");
+  await gitAt(
+    worktree,
+    "-c", "user.name=mc worker",
+    "-c", "user.email=worker@mc.invalid",
+    "commit", "-q", "-m", `${branch}: reviewed landing`,
+  );
+  const verifiedSHA = await gitAt(worktree, "rev-parse", "HEAD");
+
+  const worker = await mcJson(fixture.home, fixture.spine, ["dispatch"]);
+  const workerRun = requireSpawn(worker, "worker", fixture.taskId);
+  await runScopedMc(fixture, workerRun, "worker", [
+    "complete", String(fixture.taskId),
+    "--run", workerRun,
+    "--status", "worked",
+    "--branch", branch,
+  ]);
+
+  const verifier = await mcJson(fixture.home, fixture.spine, ["dispatch"]);
+  const verifierRun = requireSpawn(verifier, "verifier", fixture.taskId);
+  await runScopedMc(fixture, verifierRun, "verifier", [
+    "verifier", "verdict", String(fixture.taskId),
+    "--run", verifierRun,
+    "--outcome", "pass",
+    "--evidence", "evidence/landing.md",
+    "--sha", verifiedSHA,
+  ]);
+
+  const packager = await mcJson(fixture.home, fixture.spine, ["dispatch"]);
+  const packagerRun = requireSpawn(packager, "packager", fixture.taskId);
+  await runScopedMc(fixture, packagerRun, "packager", [
+    "complete", String(fixture.taskId),
+    "--run", packagerRun,
+    "--status", "packaged",
+    "--outputs", `packets/${fixture.taskId}.html`,
+  ]);
+
+  return { baseSHA, branch, worktree, verifiedSHA };
+}
+
 function ageHeartbeatedLease(spine: string): void {
   const db = new Database(spine);
   try {
@@ -540,6 +636,105 @@ class LocalWorkerDocker {
     // `docker run -d` reports container creation, not the eventual runner
     // exit. The test observes exit separately through this injected seam.
     return ok(`local-container-${runId}\n`);
+  };
+}
+
+/** Real mc-land behind the resident's Docker-shaped injection seam. */
+class LocalLandDocker {
+  calls: string[][] = [];
+  results: ExecResult[] = [];
+  private readonly wrapperBin?: string;
+
+  constructor(
+    private readonly fixture: Fixture,
+    failCleanupOnce = false,
+  ) {
+    if (!failCleanupOnce) return;
+    const realGit = Bun.which("git");
+    if (realGit === null) throw new Error("git not found for landing fixture");
+    const bin = join(fixture.root, "land-bin");
+    const marker = join(fixture.root, "cleanup-failed-once");
+    mkdirSync(bin);
+    const wrapper = join(bin, "git");
+    writeFileSync(
+      wrapper,
+      "#!/bin/sh\n" +
+        "previous=\n" +
+        "for arg do\n" +
+        `  if [ \"$previous $arg\" = \"worktree remove\" ] && [ ! -e ${shellQuote(marker)} ]; then\n` +
+        `    : > ${shellQuote(marker)}\n` +
+        "    echo 'forced one-shot cleanup failure' >&2\n" +
+        "    exit 77\n" +
+        "  fi\n" +
+        "  previous=$arg\n" +
+        "done\n" +
+        `exec ${shellQuote(realGit)} \"$@\"\n`,
+    );
+    chmodSync(wrapper, 0o755);
+    this.wrapperBin = bin;
+  }
+
+  exec: Exec = async (argv) => {
+    this.calls.push([...argv]);
+    if (argv[0] !== "run" || argv.includes("-d")) {
+      throw new Error(`local land Docker received an unexpected command: ${JSON.stringify(argv)}`);
+    }
+    if (!argv.includes("--rm") || !argv.includes("--network") || !argv.includes("none")) {
+      throw new Error(`local land Docker did not receive the confined one-shot shape: ${JSON.stringify(argv)}`);
+    }
+    if (mountSource(argv, "/workspace/source") !== this.fixture.workspace) {
+      throw new Error(`local land Docker received the wrong Worksource mount: ${JSON.stringify(argv)}`);
+    }
+    const imageAt = argv.indexOf(this.fixture.config.image);
+    const command = imageAt < 0 ? [] : argv.slice(imageAt + 1);
+    if (command.length !== 4 || command[0] !== "mc-land") {
+      throw new Error(`local land Docker received the wrong command: ${JSON.stringify(argv)}`);
+    }
+    const env = mcEnv(this.fixture.home, this.fixture.spine);
+    env.MC_LAND_WORKSPACE = this.fixture.workspace;
+    if (this.wrapperBin !== undefined) {
+      env.PATH = `${this.wrapperBin}:${env.PATH ?? ""}`;
+    }
+    const result = await runProcess(["sh", mcLandScript, ...command.slice(1)], {
+      cwd: this.fixture.workspace,
+      env,
+    });
+    this.results.push(result);
+    return result;
+  };
+}
+
+/** Commit real dispatch/report calls while injecting only resident death. */
+class LandingMc {
+  calls: string[][] = [];
+  private killAfterLandDispatch: boolean;
+  private dieBeforeLandReport: boolean;
+
+  constructor(
+    private readonly fixture: Fixture,
+    readonly effects: Effect[],
+    options: { killAfterLandDispatch?: boolean; dieBeforeLandReport?: boolean } = {},
+  ) {
+    this.killAfterLandDispatch = options.killAfterLandDispatch ?? false;
+    this.dieBeforeLandReport = options.dieBeforeLandReport ?? false;
+  }
+
+  exec: Exec = async (argv) => {
+    this.calls.push([...argv]);
+    if (argv[0] === "land" && argv[1] === "report" && this.dieBeforeLandReport) {
+      this.dieBeforeLandReport = false;
+      throw new Error("simulated resident death before mc land report");
+    }
+    const result = await runMc(this.fixture.home, this.fixture.spine, argv);
+    if (argv.length === 1 && argv[0] === "dispatch" && result.exitCode === 0) {
+      const effect = JSON.parse(result.stdout) as Effect;
+      this.effects.push(effect);
+      if (effect.action === "land" && this.killAfterLandDispatch) {
+        this.killAfterLandDispatch = false;
+        throw new Error("simulated resident death after land selection, before effect");
+      }
+    }
+    return result;
   };
 }
 
@@ -1072,6 +1267,245 @@ describe("split-brain convergence: standalone scripted Worker Git boundary", () 
         );
       } finally {
         docker?.killAll();
+        rmSync(fixture.root, { recursive: true, force: true });
+      }
+    }, 30_000);
+  }
+});
+
+const landingBoundaries = [
+  {
+    name: "operator approve / before land",
+    killAfterLandDispatch: true,
+    dieBeforeLandReport: false,
+    failCleanupOnce: false,
+    mergedAtCheckpoint: false,
+    residueAtCheckpoint: true,
+  },
+  {
+    name: "merge success / cleanup gap",
+    killAfterLandDispatch: false,
+    dieBeforeLandReport: true,
+    failCleanupOnce: true,
+    mergedAtCheckpoint: true,
+    residueAtCheckpoint: true,
+  },
+  {
+    name: "merge success / report gap",
+    killAfterLandDispatch: false,
+    dieBeforeLandReport: true,
+    failCleanupOnce: false,
+    mergedAtCheckpoint: true,
+    residueAtCheckpoint: false,
+  },
+] as const;
+
+describe("split-brain convergence: approval and landing boundary", () => {
+  for (const boundary of landingBoundaries) {
+    test(boundary.name, async () => {
+      const fixture = await makeFixture();
+      try {
+        const gitTask = await packageStandaloneGitTask(fixture);
+        const beforeApproval = await task(fixture);
+        expect(beforeApproval).toMatchObject({
+          status: "packaged",
+          branch: gitTask.branch,
+          verified_sha: gitTask.verifiedSHA,
+          target_ref: "main",
+          decision: null,
+          decided_at: null,
+          archived: 0,
+          blocked: 0,
+        });
+        expect(await lock(fixture)).toMatchObject({
+          run_id: null,
+          worksource: null,
+          subject: null,
+          owner: null,
+          acquired_at: null,
+          last_heartbeat_at: null,
+          hard_deadline_at: null,
+        });
+        expect(await git(fixture, "rev-parse", "main")).toBe(gitTask.baseSHA);
+        expect(await gitAt(gitTask.worktree, "rev-parse", "HEAD")).toBe(gitTask.verifiedSHA);
+        const beforeLandingRuns = await runs(fixture);
+
+        // The operator commits only the durable approval. It neither moves
+        // Git nor creates an effect, Run, or lease; landing is derived on a
+        // later resident tick.
+        const approved = await mcJson(fixture.home, fixture.spine, [
+          "packet", "decide", String(fixture.taskId), "--approve",
+        ]);
+        expect(approved).toEqual({
+          archived: false,
+          decision: "approved",
+          task_id: fixture.taskId,
+        });
+        expect(approved.action).toBeUndefined();
+        const approvedTask = await task(fixture);
+        expect(approvedTask).toMatchObject({
+          status: "packaged",
+          branch: gitTask.branch,
+          verified_sha: gitTask.verifiedSHA,
+          target_ref: "main",
+          decision: "approved",
+          archived: 0,
+          blocked: 0,
+        });
+        expect(typeof approvedTask.decided_at).toBe("string");
+        const decidedAt = approvedTask.decided_at;
+        expect(await runs(fixture)).toEqual(beforeLandingRuns);
+        expect(await git(fixture, "rev-parse", "main")).toBe(gitTask.baseSHA);
+
+        const effects: Effect[] = [];
+        const localDocker = new LocalLandDocker(fixture, boundary.failCleanupOnce);
+        const firstMc = new LandingMc(fixture, effects, {
+          killAfterLandDispatch: boundary.killAfterLandDispatch,
+          dieBeforeLandReport: boundary.dieBeforeLandReport,
+        });
+        const first = makeRig({
+          runMc: firstMc.exec,
+          docker: localDocker.exec,
+          fs: recordingFs().fs,
+          config: fixture.config,
+        });
+        const firstLoop = startTickLoop(first.deps);
+        await first.timer.fire();
+        await firstLoop.stop();
+
+        const expectedEffect = {
+          action: "land",
+          task_id: fixture.taskId,
+          branch: gitTask.branch,
+          verified_sha: gitTask.verifiedSHA,
+          target_ref: "main",
+        } as const;
+        expect(effects).toEqual([expectedEffect]);
+        expect(first.logs.some((line) => line.includes("simulated resident death"))).toBe(true);
+        expect(localDocker.calls).toHaveLength(boundary.mergedAtCheckpoint ? 1 : 0);
+
+        // Until the separate report commits, canonical state remains the
+        // same derived landing-pending tuple and landing never owns a lease.
+        expect(await task(fixture)).toMatchObject({
+          status: "packaged",
+          branch: gitTask.branch,
+          verified_sha: gitTask.verifiedSHA,
+          target_ref: "main",
+          decision: "approved",
+          decided_at: decidedAt,
+          archived: 0,
+          blocked: 0,
+        });
+        const checkpointPackets = await mcJson(fixture.home, fixture.spine, ["packet", "list"]);
+        expect(checkpointPackets.packets).toEqual([
+          expect.objectContaining({ task_id: fixture.taskId, archived: 0 }),
+        ]);
+        expect(await lock(fixture)).toMatchObject({
+          run_id: null,
+          worksource: null,
+          subject: null,
+          owner: null,
+          acquired_at: null,
+          last_heartbeat_at: null,
+          hard_deadline_at: null,
+        });
+        expect(await runs(fixture)).toEqual(beforeLandingRuns);
+
+        let checkpointMain = gitTask.baseSHA;
+        if (boundary.mergedAtCheckpoint) {
+          expect(localDocker.results[0]!.exitCode).toBe(0);
+          checkpointMain = await git(fixture, "rev-parse", "main");
+          expect(checkpointMain).not.toBe(gitTask.baseSHA);
+          expect(await git(fixture, "rev-parse", "main^1")).toBe(gitTask.baseSHA);
+          expect(await git(fixture, "rev-parse", "main^2")).toBe(gitTask.verifiedSHA);
+          expect(await git(fixture, "rev-list", "--count", "--merges", `${gitTask.baseSHA}..main`))
+            .toBe("1");
+          expect(existsSync(gitTask.worktree)).toBe(boundary.residueAtCheckpoint);
+          const branchRef = await runProcess([
+            "git", "-C", fixture.workspace,
+            "show-ref", "--verify", `refs/heads/${gitTask.branch}`,
+          ]);
+          expect(branchRef.exitCode === 0).toBe(boundary.residueAtCheckpoint);
+          if (boundary.failCleanupOnce) {
+            expect(localDocker.results[0]!.stderr).toContain("cleanup debt");
+            expect(first.logs.some((line) => line.includes("cleanup debt"))).toBe(true);
+          }
+        } else {
+          expect(await git(fixture, "rev-parse", "main")).toBe(gitTask.baseSHA);
+          expect(existsSync(gitTask.worktree)).toBe(true);
+        }
+
+        // A fresh ordinary resident recomputes the identical effect. The
+        // report-gap arms recognize the exact first landing receipt and skip
+        // a second merge; the cleanup-gap arm also removes only exact residue.
+        const recoveredMc = new LandingMc(fixture, effects);
+        const recovered = makeRig({
+          runMc: recoveredMc.exec,
+          docker: localDocker.exec,
+          fs: recordingFs().fs,
+          config: fixture.config,
+        });
+        const recoveredLoop = startTickLoop(recovered.deps);
+        await recovered.timer.fire();
+        await recoveredLoop.stop();
+
+        expect(effects).toEqual([expectedEffect, expectedEffect]);
+        expect(localDocker.calls).toHaveLength(boundary.mergedAtCheckpoint ? 2 : 1);
+        expect(localDocker.results.every((result) => result.exitCode === 0)).toBe(true);
+        const finalMain = await git(fixture, "rev-parse", "main");
+        if (boundary.mergedAtCheckpoint) expect(finalMain).toBe(checkpointMain);
+        expect(finalMain).not.toBe(gitTask.baseSHA);
+        expect(await git(fixture, "rev-parse", "main^1")).toBe(gitTask.baseSHA);
+        expect(await git(fixture, "rev-parse", "main^2")).toBe(gitTask.verifiedSHA);
+        expect(await git(fixture, "rev-list", "--count", "--merges", `${gitTask.baseSHA}..main`))
+          .toBe("1");
+        if (boundary.mergedAtCheckpoint) {
+          expect(recovered.logs.some((line) => line.includes("cleanup/report debt"))).toBe(true);
+        }
+
+        expect(existsSync(gitTask.worktree)).toBe(false);
+        expect(
+          (await git(fixture, "for-each-ref", "--format=%(refname:short)", "refs/heads/mc/task-*"))
+            .split("\n")
+            .filter((line) => line !== ""),
+        ).toEqual([]);
+        expect(
+          (await git(fixture, "worktree", "list", "--porcelain"))
+            .split("\n")
+            .filter((line) => line.startsWith("worktree ")),
+        ).toHaveLength(1);
+        expect(await git(fixture, "status", "--porcelain")).toBe("");
+
+        const landedTask = await task(fixture);
+        expect(landedTask).toMatchObject({
+          status: "packaged",
+          branch: gitTask.branch,
+          verified_sha: gitTask.verifiedSHA,
+          target_ref: "main",
+          decision: "approved",
+          decided_at: decidedAt,
+          archived: 1,
+          blocked: 0,
+          blocked_reason: null,
+        });
+        const landedPackets = await mcJson(fixture.home, fixture.spine, ["packet", "list"]);
+        expect(landedPackets.packets).toEqual([
+          expect.objectContaining({ task_id: fixture.taskId, archived: 1 }),
+        ]);
+        expect(await lock(fixture)).toMatchObject({
+          run_id: null,
+          worksource: null,
+          subject: null,
+          owner: null,
+          acquired_at: null,
+          last_heartbeat_at: null,
+          hard_deadline_at: null,
+        });
+        expect(await runs(fixture)).toEqual(beforeLandingRuns);
+
+        const after = await mcJson(fixture.home, fixture.spine, ["dispatch"]);
+        expect(after.action).not.toBe("land");
+      } finally {
         rmSync(fixture.root, { recursive: true, force: true });
       }
     }, 30_000);

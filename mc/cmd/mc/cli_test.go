@@ -1162,7 +1162,7 @@ func TestDispatchRoutingResolution(t *testing.T) {
 	t.Run("invalid_routing_does_not_block_pending_land", func(t *testing.T) {
 		spine := initSpine(t)
 		id := taskAdd(t, spine, "already verified")
-		packageTask(t, spine, id, "mc/task-routing-land")
+		packageTask(t, spine, id, fmt.Sprintf("mc/task-%d", id))
 		res := runMC(t, spineEnv(spine), "", "packet", "decide", fmt.Sprint(id), "--approve")
 		if res.code != 0 {
 			t.Fatalf("approve fixture: %s", res.stderr)
@@ -1519,12 +1519,43 @@ func TestApproveBranchlessArchivesSynchronously(t *testing.T) {
 	if eff := dispatch(t, spine); eff["action"] == "land" {
 		t.Fatalf("branchless approve left a landing pending: %v", eff)
 	}
+	// A host cannot counterfeit a Git landing for an artifact-only packet.
+	if got := runMC(t, spineEnv(spine), "", "land", "report", fmt.Sprint(taskID), "--status", "success"); got.code != 1 || !strings.Contains(got.stderr, "no branch") {
+		t.Fatalf("branchless land report exit=%d stderr=%q, want inert refusal", got.code, got.stderr)
+	}
+}
+
+func TestLandReportSuccessIsTerminalAndReplaySafe(t *testing.T) {
+	spine := initSpine(t)
+	taskID := taskAdd(t, spine, "landing report truth")
+	packageTask(t, spine, taskID, fmt.Sprintf("mc/task-%d", taskID))
+	if got := runMC(t, spineEnv(spine), "", "packet", "decide", fmt.Sprint(taskID), "--approve"); got.code != 0 {
+		t.Fatalf("approve failed: %s", got.stderr)
+	}
+	for i := 0; i < 2; i++ {
+		if got := runMC(t, spineEnv(spine), "", "land", "report", fmt.Sprint(taskID), "--status", "success"); got.code != 0 {
+			t.Fatalf("success report %d failed: %s", i+1, got.stderr)
+		}
+	}
+
+	stale := runMC(t, spineEnv(spine), "", "land", "report", fmt.Sprint(taskID),
+		"--status", "failure", "--reason", "late stale failure")
+	if stale.code != 1 || !strings.Contains(stale.stderr, "already landed") {
+		t.Fatalf("stale failure exit=%d stderr=%q, want inert refusal", stale.code, stale.stderr)
+	}
+	db := openDB(t, spine)
+	if got := queryStr(t, db, `SELECT archived || '/' || blocked || '/' || COALESCE(blocked_reason, 'null') FROM tasks WHERE id=?`, taskID); got != "1/0/null" {
+		t.Fatalf("stale failure regressed landing truth: %q", got)
+	}
+	if got := queryInt(t, db, `SELECT archived FROM review_packets WHERE task_id=?`, taskID); got != 1 {
+		t.Fatalf("stale failure regressed packet archive: %d", got)
+	}
 }
 
 func TestDoubleApproveRejected(t *testing.T) {
 	spine := initSpine(t)
 	taskID := taskAdd(t, spine, "decided once")
-	packageTask(t, spine, taskID, "mc/task-x")
+	packageTask(t, spine, taskID, fmt.Sprintf("mc/task-%d", taskID))
 	if res := runMC(t, spineEnv(spine), "", "packet", "decide", fmt.Sprint(taskID), "--approve"); res.code != 0 {
 		t.Fatalf("first approve failed: %s", res.stderr)
 	}
@@ -1537,7 +1568,7 @@ func TestDoubleApproveRejected(t *testing.T) {
 func TestLandReportFailureBlocks(t *testing.T) {
 	spine := initSpine(t)
 	taskID := taskAdd(t, spine, "will fail landing")
-	packageTask(t, spine, taskID, "mc/task-y")
+	packageTask(t, spine, taskID, fmt.Sprintf("mc/task-%d", taskID))
 	runMC(t, spineEnv(spine), "", "packet", "decide", fmt.Sprint(taskID), "--approve")
 
 	res := runMC(t, spineEnv(spine), "", "land", "report", fmt.Sprint(taskID),
@@ -3453,6 +3484,87 @@ func TestCompletePhase2Terminals(t *testing.T) {
 		}
 		if got := queryStr(t, db, `SELECT outcome FROM runs WHERE id = ?`, run); got != "infra-failed" {
 			t.Fatalf("run outcome = %q", got)
+		}
+	})
+
+	t.Run("worked_rejects_noncanonical_standalone_branch_before_terminal", func(t *testing.T) {
+		spine, taskID, run, env := workerFixture(t, "branch provenance")
+		res := runMC(t, env, "", "complete", fmt.Sprint(taskID), "--run", run,
+			"--status", "worked", "--branch", "mc/task-999999")
+		if res.code != 1 || !strings.Contains(res.stderr, fmt.Sprintf("mc/task-%d", taskID)) {
+			t.Fatalf("noncanonical branch exit=%d stderr=%q", res.code, res.stderr)
+		}
+		db := openDB(t, spine)
+		if got := queryStr(t, db, `SELECT status || '/' || COALESCE(branch, 'null') FROM tasks WHERE id=?`, taskID); got != "seeded/null" {
+			t.Fatalf("rejected branch changed task: %q", got)
+		}
+		if got := queryStr(t, db, `SELECT run_id FROM lock WHERE id=1`); got != run {
+			t.Fatalf("rejected branch released lease: %q", got)
+		}
+		if got := queryStr(t, db, `SELECT ended_at FROM runs WHERE id=?`, run); got != "<NULL>" {
+			t.Fatalf("rejected branch ended Run: %q", got)
+		}
+	})
+
+	t.Run("initiative_child_requires_the_parent_shared_branch", func(t *testing.T) {
+		spine := initSpine(t)
+		db := openDB(t, spine)
+		parentResult, err := db.Exec(`INSERT INTO tasks
+			(title, scope, worksource, target_ref, branch)
+			VALUES ('parent', 'initiative', 'ws-test', 'main', 'mc/shared-parent')`)
+		if err != nil {
+			t.Fatal(err)
+		}
+		parentID, err := parentResult.LastInsertId()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := db.Exec(`UPDATE tasks SET status='seeded' WHERE id=?`, parentID); err != nil {
+			t.Fatal(err)
+		}
+		childResult, err := db.Exec(`INSERT INTO tasks
+			(title, scope, status, initiative_id, worksource, target_ref)
+			VALUES ('child', 'task', 'seeded', ?, 'ws-test', 'main')`, parentID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		childID, err := childResult.LastInsertId()
+		if err != nil {
+			t.Fatal(err)
+		}
+		run := "initiative-child-worker"
+		if _, err := db.Exec(`INSERT INTO runs
+			(id, tier, role, worksource, subject)
+			VALUES (?, 'pipeline', 'worker', 'ws-test', ?)`, run, childID); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := db.Exec(`UPDATE lock SET
+			run_id=?, worksource='ws-test', subject=?, owner='worker',
+			acquired_at=datetime('now'), hard_deadline_at=datetime('now', '+4 hours')
+			WHERE id=1`, run, childID); err != nil {
+			t.Fatal(err)
+		}
+		env := runJSONEnv(t, spine, run, "pipeline", "worker")
+
+		wrong := runMC(t, env, "", "complete", fmt.Sprint(childID), "--run", run,
+			"--status", "worked", "--branch", fmt.Sprintf("mc/task-%d", childID))
+		if wrong.code != 1 || !strings.Contains(wrong.stderr, "shared branch") {
+			t.Fatalf("wrong shared branch exit=%d stderr=%q", wrong.code, wrong.stderr)
+		}
+		if got := queryStr(t, db, `SELECT status || '/' || COALESCE(branch, 'null') FROM tasks WHERE id=?`, childID); got != "seeded/null" {
+			t.Fatalf("wrong branch changed child: %q", got)
+		}
+		if got := queryStr(t, db, `SELECT run_id FROM lock WHERE id=1`); got != run {
+			t.Fatalf("wrong branch released lease: %q", got)
+		}
+
+		correct := runMC(t, env, "", "complete", fmt.Sprint(childID), "--run", run,
+			"--status", "worked", "--branch", "mc/shared-parent")
+		if correct.code != 0 {
+			t.Fatalf("assigned shared branch failed: %s", correct.stderr)
+		}
+		if got := queryStr(t, db, `SELECT status || '/' || branch FROM tasks WHERE id=?`, childID); got != "worked/mc/shared-parent" {
+			t.Fatalf("completed child = %q", got)
 		}
 	})
 

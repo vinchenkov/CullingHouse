@@ -18,13 +18,279 @@ branch=$1
 sha=$2
 target=$3
 
+# The landing container owns Git repository discovery and command-scoped
+# configuration. Never let inherited process variables redirect Git to a
+# different index, object store, namespace, or worktree.
+unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_COMMON_DIR \
+    GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_NAMESPACE \
+    GIT_CONFIG_COUNT GIT_CONFIG_PARAMETERS GIT_CONFIG_GLOBAL \
+    GIT_CONFIG_SYSTEM GIT_CONFIG_NOSYSTEM GIT_ATTR_SOURCE \
+    GIT_ATTR_NOSYSTEM GIT_EXEC_PATH
+
+# Replacement refs can make one object id read as another tree while keeping
+# every visible SHA fence unchanged. Landing always addresses the real
+# content-addressed objects, including every helper Git process below.
+export GIT_NO_REPLACE_OBJECTS=1
+
 workspace=${MC_LAND_WORKSPACE:-/workspace/source}
 cd "$workspace"
 
+if git config --get core.worktree >/dev/null 2>&1; then
+    echo "mc-land: configured core.worktree can redirect primary-checkout bytes; refusing" >&2
+    exit 1
+fi
+workspace_physical=$(pwd -P)
+git_top=$(git rev-parse --show-toplevel 2>/dev/null || true)
+if [ -z "$git_top" ]; then
+    echo "mc-land: workspace is not a non-bare Git working tree" >&2
+    exit 1
+fi
+git_top_physical=$(cd "$git_top" && pwd -P)
+if [ "$workspace_physical" != "$git_top_physical" ]; then
+    echo "mc-land: Git top-level $git_top_physical differs from mounted workspace $workspace_physical; refusing" >&2
+    exit 1
+fi
+
+# Only the Phase-2 standalone branch shape is authorized here. The initiative
+# lifecycle is still a separately parked line and will add its shared-branch
+# provenance when that contract is implemented. Never let a Worker-provided
+# landing tuple turn this cleanup script into a delete capability over an
+# operator ref.
+case "$branch" in
+    mc/task-*) branch_id=${branch#mc/task-} ;;
+    *)
+        echo "mc-land: branch namespace: $branch is not an authorized Mission Control task branch" >&2
+        exit 1
+        ;;
+esac
+case "$branch_id" in
+    ''|*[!0-9]*)
+        echo "mc-land: branch namespace: $branch is not an authorized numeric task branch" >&2
+        exit 1
+        ;;
+esac
+if [ "$branch" = "$target" ] || ! git check-ref-format "refs/heads/$target" >/dev/null 2>&1; then
+    echo "mc-land: target ref $target is not a distinct local branch" >&2
+    exit 1
+fi
+
+# Byte-preservation checks use disposable indexes populated from trees, not
+# the Worksource's possibly relaxed/poisoned stat cache. The directory lives
+# only for this one-shot process (and in the isolated landing container in
+# production).
+preflight_tmp=$(mktemp -d "${TMPDIR:-/tmp}/mc-land-preflight.XXXXXX")
+cleanup_preflight() {
+    rm -rf "$preflight_tmp"
+}
+trap cleanup_preflight EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
+preflight_git() {
+    git -c core.hooksPath=/dev/null \
+        -c core.trustctime=true \
+        -c core.checkStat=default \
+        -c core.ignoreStat=false \
+        -c core.fileMode=true \
+        -c core.fsmonitor=false \
+        -c core.untrackedCache=false \
+        "$@"
+}
+
+# Git's local and per-worktree configuration is mutable operator state. A
+# check followed by an ordinary `git add`/`git merge` would leave a race in
+# which a newly configured filter or merge driver runs arbitrary commands
+# against the read-write Worksource. Content-sensitive operations therefore
+# use a minimal repository view: the real object/ref stores and intended
+# index/worktree, but an empty info/attributes namespace and script-authored
+# configuration with global/system configuration disabled. This is still the
+# primary checkout -- the real primary index, working tree, and target ref are
+# what merge updates -- without executable configuration as an ambient input.
+common_git_dir=$(git rev-parse --git-common-dir 2>/dev/null || true)
+primary_index=$(git rev-parse --git-path index 2>/dev/null || true)
+if [ -z "$common_git_dir" ] || [ -z "$primary_index" ]; then
+    echo "mc-land: could not resolve primary Git storage; refusing" >&2
+    exit 1
+fi
+case "$common_git_dir" in
+    /*) ;;
+    *) common_git_dir="$workspace_physical/$common_git_dir" ;;
+esac
+if ! common_git_dir=$(cd "$common_git_dir" 2>/dev/null && pwd -P); then
+    echo "mc-land: could not resolve primary Git common directory; refusing" >&2
+    exit 1
+fi
+case "$primary_index" in
+    /*) ;;
+    *) primary_index="$workspace_physical/$primary_index" ;;
+esac
+if [ ! -d "$common_git_dir/objects" ] || [ ! -d "$common_git_dir/refs" ]; then
+    echo "mc-land: unsupported Git object/ref storage layout; refusing" >&2
+    exit 1
+fi
+
+isolated_git_dir="$preflight_tmp/git"
+mkdir -p "$isolated_git_dir/info"
+ln -s "$common_git_dir/objects" "$isolated_git_dir/objects"
+ln -s "$common_git_dir/refs" "$isolated_git_dir/refs"
+if [ -d "$common_git_dir/worktrees" ]; then
+    ln -s "$common_git_dir/worktrees" "$isolated_git_dir/worktrees"
+fi
+for shared_git_file in packed-refs shallow; do
+    if [ -e "$common_git_dir/$shared_git_file" ]; then
+        ln -s "$common_git_dir/$shared_git_file" "$isolated_git_dir/$shared_git_file"
+    fi
+done
+printf 'ref: refs/heads/%s\n' "$target" > "$isolated_git_dir/HEAD"
+object_format=$(git rev-parse --show-object-format=storage 2>/dev/null || true)
+case "$object_format" in
+    sha1)
+        printf '%s\n' \
+            '[core]' \
+            '    repositoryFormatVersion = 0' \
+            '    bare = false' \
+            '    logAllRefUpdates = false' \
+            '    hooksPath = /dev/null' \
+            > "$isolated_git_dir/config"
+        ;;
+    sha256)
+        printf '%s\n' \
+            '[core]' \
+            '    repositoryFormatVersion = 1' \
+            '    bare = false' \
+            '    logAllRefUpdates = false' \
+            '    hooksPath = /dev/null' \
+            '[extensions]' \
+            '    objectFormat = sha256' \
+            > "$isolated_git_dir/config"
+        ;;
+    *)
+        echo "mc-land: unsupported Git object format ${object_format:-unknown}; refusing" >&2
+        exit 1
+        ;;
+esac
+isolated_index_git() {
+    isolated_index=$1
+    isolated_worktree=$2
+    shift 2
+    GIT_DIR="$isolated_git_dir" \
+    GIT_COMMON_DIR="$isolated_git_dir" \
+    GIT_WORK_TREE="$isolated_worktree" \
+    GIT_INDEX_FILE="$isolated_index" \
+    GIT_CONFIG_NOSYSTEM=1 \
+    GIT_CONFIG_GLOBAL=/dev/null \
+    GIT_ATTR_NOSYSTEM=1 \
+    git -c core.attributesFile=/dev/null \
+        -c core.excludesFile=/dev/null \
+        -c core.hooksPath=/dev/null \
+        -c core.trustctime=true \
+        -c core.checkStat=default \
+        -c core.ignoreStat=false \
+        -c core.fileMode=true \
+        -c core.fsmonitor=false \
+        -c core.untrackedCache=false \
+        "$@"
+}
+isolated_repo_git() {
+    # Repository-management commands must choose each linked worktree's own
+    # index. In particular, pinning the primary index while removing a task
+    # worktree would compare that worktree with main after a divergent merge
+    # and falsely call clean reviewed bytes dirty.
+    GIT_DIR="$isolated_git_dir" \
+    GIT_COMMON_DIR="$isolated_git_dir" \
+    GIT_WORK_TREE="$workspace_physical" \
+    GIT_CONFIG_NOSYSTEM=1 \
+    GIT_CONFIG_GLOBAL=/dev/null \
+    GIT_ATTR_NOSYSTEM=1 \
+    git -c core.attributesFile=/dev/null \
+        -c core.excludesFile=/dev/null \
+        -c core.hooksPath=/dev/null \
+        -c core.trustctime=true \
+        -c core.checkStat=default \
+        -c core.ignoreStat=false \
+        -c core.fileMode=true \
+        -c core.fsmonitor=false \
+        -c core.untrackedCache=false \
+        "$@"
+}
+
+# `git add` can execute clean/process filters and `git merge` can execute
+# custom merge drivers. Both run with the Worksource mounted read-write and
+# can mutate unrelated ignored operator secrets, so the mechanical landing
+# boundary refuses executable Git content transforms. Built-in attributes
+# (text, binary, union) remain available.
+executable_git_config=$(git config --list --name-only 2>/dev/null \
+    | awk '/^merge\..*\.driver$/ || /^filter\..*\.(clean|smudge|process)$/ { print; exit }')
+
+# A successful merge and its spine report are separate host effects. If the
+# resident dies between them, normal cleanup has already removed the task ref.
+# The merge commit itself is the only crash-atomic receipt: target movement,
+# parents, tree, and message publish as one ref update. A second mutable Git
+# computation is not a receipt — custom drivers/config can change after the
+# first success. Bind the immutable commit to the full landing tuple with an
+# exact script-authored message and identity, in addition to its two-parent
+# topology. An operator who can forge every byte of Git can forge any local
+# marker; that is outside the distinction this mechanism can make.
+receipt_message=$(printf '%s\n\n%s\n%s\n%s\n%s' \
+    "Land $branch ($sha) into $target" \
+    "MC-Landing-Receipt: v1" \
+    "MC-Branch: $branch" \
+    "MC-Verified-SHA: $sha" \
+    "MC-Target: $target")
+find_receipt() {
+    git rev-list --first-parent --merges --parents "refs/heads/$target" 2>/dev/null \
+        | while IFS=' ' read -r candidate parent1 parent2 extra; do
+            if [ -n "$candidate" ] && [ -z "$extra" ] && [ "$parent2" = "$sha" ]; then
+                if [ "$(git show -s --format=%B "$candidate")" = "$receipt_message" ] \
+                   && [ "$(git show -s --format=%an "$candidate")" = "mission control" ] \
+                   && [ "$(git show -s --format=%ae "$candidate")" = "mc@mission-control.invalid" ] \
+                   && [ "$(git show -s --format=%cn "$candidate")" = "mission control" ] \
+                   && [ "$(git show -s --format=%ce "$candidate")" = "mc@mission-control.invalid" ]; then
+                    printf '%s\n' "$candidate"
+                    break
+                fi
+            fi
+        done
+}
+receipt=$(find_receipt)
+already_landed=0
+cleanup_debt=0
+if [ -n "$receipt" ]; then
+    already_landed=1
+    echo "mc-land: cleanup/report debt: exact landing merge $receipt already exists; reconciling cleanup" >&2
+fi
+
 # Step 1 — the SHA fence: only the exact reviewed commit can land (§7).
-actual=$(git rev-parse "refs/heads/$branch")
-if [ "$actual" != "$sha" ]; then
-    echo "mc-land: SHA fence: $branch is at $actual, verified_sha is $sha (§7 step 1)" >&2
+# After an exact receipt, the branch may legitimately be absent because the
+# first attempt completed step 3 before its report was lost.
+branch_present=0
+branch_exact=0
+actual=""
+branch_symref=$(git symbolic-ref -q "refs/heads/$branch" 2>/dev/null || true)
+if [ -n "$branch_symref" ]; then
+    if [ "$already_landed" -eq 0 ]; then
+        echo "mc-land: SHA fence: $branch is a symbolic ref to $branch_symref; refusing before merge" >&2
+        exit 1
+    fi
+    # Never dereference or remove an alias that can target operator state.
+    echo "mc-land: cleanup debt: landed $sha but $branch is a symbolic ref to $branch_symref; preserving it" >&2
+    cleanup_debt=1
+elif git show-ref --verify --quiet "refs/heads/$branch"; then
+    branch_present=1
+    actual=$(git rev-parse "refs/heads/$branch")
+    if [ "$actual" = "$sha" ]; then
+        branch_exact=1
+    elif [ "$already_landed" -eq 0 ]; then
+        echo "mc-land: SHA fence: $branch is at $actual, verified_sha is $sha (§7 step 1)" >&2
+        exit 1
+    else
+        # Landing truth is already durable. Never delete a ref that somebody
+        # recreated or advanced after the merge; retain it as visible debt.
+        echo "mc-land: cleanup debt: landed $sha but $branch now points at $actual; preserving it" >&2
+        cleanup_debt=1
+    fi
+elif [ "$already_landed" -eq 0 ]; then
+    echo "mc-land: SHA fence: missing branch $branch for verified_sha $sha (§7 step 1)" >&2
     exit 1
 fi
 
@@ -36,24 +302,215 @@ fi
 # operator has anything but the target checked out (or a detached HEAD),
 # fail closed instead of switching branches under them. Nonzero exit blocks
 # the task with the reason (§7 failure protocol), exactly like the SHA fence.
-head=$(git symbolic-ref --short -q HEAD) || head=""
-if [ "$head" != "$target" ]; then
-    echo "mc-land: HEAD fence: primary checkout is on ${head:-a detached HEAD}, not $target (§6.2, §7 step 2)" >&2
-    exit 1
+if [ "$already_landed" -eq 0 ]; then
+    head=$(git symbolic-ref --short -q HEAD) || head=""
+    if [ "$head" != "$target" ]; then
+        echo "mc-land: HEAD fence: primary checkout is on ${head:-a detached HEAD}, not $target (§6.2, §7 step 2)" >&2
+        exit 1
+    fi
+    # `git merge --no-ff` still creates no merge when the reviewed SHA is
+    # already reachable. Without a receipt, accepting that no-op would delete
+    # the only branch/worktree evidence and make a lost report unrecoverable.
+    if git merge-base --is-ancestor "$sha" "refs/heads/$target"; then
+        echo "mc-land: target $target already contains $sha but has no exact landing receipt; refusing before cleanup" >&2
+        exit 1
+    fi
+
+    # Never adopt or abort an operator-owned merge already in progress. If
+    # our later merge creates MERGE_HEAD and fails, only then is abort ours.
+    if git rev-parse -q --verify MERGE_HEAD >/dev/null 2>&1; then
+        echo "mc-land: primary checkout has an operator merge already in progress; refusing without aborting it" >&2
+        exit 1
+    fi
+
+    if [ -n "$executable_git_config" ]; then
+        echo "mc-land: executable Git merge driver or content filter is configured; refusing fresh landing" >&2
+        exit 1
+    fi
+
+    primary_visibility=$(preflight_git ls-files -v \
+        | awk 'substr($0,1,1)=="S" || substr($0,1,1) ~ /[a-z]/ { print; exit }')
+    if [ -n "$primary_visibility" ]; then
+        echo "mc-land: primary checkout index visibility flags can hide operator bytes; refusing before merge" >&2
+        exit 1
+    fi
+
+    # Only paths changed by the reviewed side can be touched by its merge.
+    # A unique merge base is the ordinary task-worktree topology; ambiguous
+    # criss-cross history is judgment work, not a mechanical landing guess.
+    merge_bases=$(git merge-base --all "refs/heads/$target" "$sha") || merge_bases=""
+    merge_base_count=$(printf '%s\n' "$merge_bases" | awk 'NF { n++ } END { print n+0 }')
+    if [ "$merge_base_count" -ne 1 ]; then
+        echo "mc-land: expected one merge base for $target and $sha, found $merge_base_count; refusing mechanical landing" >&2
+        exit 1
+    fi
+    merge_base=$merge_bases
+    changed_paths="$preflight_tmp/reviewed-paths.z"
+    git diff-tree -r --no-commit-id --name-only --no-renames \
+        --no-ext-diff --no-textconv -z \
+        "$merge_base" "$sha" > "$changed_paths"
+
+    if [ -s "$changed_paths" ]; then
+        # Git intentionally overwrites ignored untracked files when a merge
+        # starts tracking the same path. Check reviewed paths and their
+        # ancestors, while allowing unrelated ignored trees such as
+        # node_modules. NUL-delimited xargs preserves every valid Git name.
+        if ! xargs -0 -n 32 sh -c '
+            target_ref=$1
+            shift
+            for path do
+                probe=$path
+                while :; do
+                    if [ -e "$probe" ] || [ -L "$probe" ]; then
+                        if ! object_type=$(git cat-file -t "$target_ref:$probe" 2>/dev/null); then
+                            # An ordinary untracked directory ancestor is a
+                            # safe container for a newly reviewed descendant;
+                            # Git adds beside its other bytes. Exact-path
+                            # objects and symlink/file ancestors can be
+                            # replaced or traversed, so fence those.
+                            if [ "$probe" != "$path" ] && [ -d "$probe" ] && [ ! -L "$probe" ]; then
+                                :
+                            else
+                                printf "mc-land: untracked primary path collision at %s; preserving operator bytes\n" "$probe" >&2
+                                exit 77
+                            fi
+                        fi
+                        if [ "$object_type" = "tree" ] && { [ ! -d "$probe" ] || [ -L "$probe" ]; }; then
+                            printf "mc-land: primary path %s no longer matches its tracked directory; preserving operator bytes\n" "$probe" >&2
+                            exit 77
+                        fi
+                    fi
+                    case "$probe" in
+                        */*) probe=${probe%/*} ;;
+                        *) break ;;
+                    esac
+                done
+            done
+        ' sh "refs/heads/$target" < "$changed_paths"; then
+            exit 1
+        fi
+
+        # Re-materialize the primary tracked working tree from a zero-stat
+        # target index, forcing Git to read bytes even if an earlier command
+        # refreshed a relaxed stat cache. Compare both its real index and its
+        # actual working bytes only at reviewed paths; unrelated dirty edits
+        # are deliberately allowed by §7.
+        primary_worktree_index="$preflight_tmp/primary-worktree.index"
+        isolated_index_git "$primary_worktree_index" "$workspace_physical" \
+            read-tree "refs/heads/$target"
+        isolated_index_git "$primary_worktree_index" "$workspace_physical" add -u -- .
+        primary_worktree_tree=$(isolated_index_git \
+            "$primary_worktree_index" "$workspace_physical" write-tree)
+        if ! primary_index_tree=$(preflight_git write-tree); then
+            echo "mc-land: primary checkout index is unmerged; refusing before landing" >&2
+            exit 1
+        fi
+        target_tree=$(git rev-parse "refs/heads/$target^{tree}")
+        if ! MC_TARGET_TREE="$target_tree" \
+             MC_PRIMARY_INDEX_TREE="$primary_index_tree" \
+             MC_PRIMARY_WORKTREE_TREE="$primary_worktree_tree" \
+             xargs -0 -n 32 sh -c '
+                for candidate in "$MC_PRIMARY_INDEX_TREE" "$MC_PRIMARY_WORKTREE_TREE"; do
+                    if ! git diff-tree --quiet --no-ext-diff --no-textconv \
+                        "$MC_TARGET_TREE" "$candidate" -- "$@"; then
+                        exit 77
+                    fi
+                done
+             ' sh < "$changed_paths"; then
+            echo "mc-land: primary checkout has operator changes overlapping reviewed paths; refusing before merge" >&2
+            exit 1
+        fi
+    fi
 fi
 
 # Resolve and preflight the exact task worktree before the irreversible merge.
 # A dirty worktree means the reviewed branch is no longer the whole execution
 # state; refuse while main is untouched instead of discovering it during
 # post-merge removal and falsely reporting that the merge failed.
-wt=$(git worktree list --porcelain \
-     | awk -v ref="refs/heads/$branch" '$1=="worktree"{w=$2} $1=="branch"&&$2==ref{print w}')
+wt=""
+if [ "$branch_exact" -eq 1 ]; then
+    wt=$(git worktree list --porcelain \
+         | awk -v ref="refs/heads/$branch" \
+             '$1=="worktree"{w=substr($0, 10)} $1=="branch"&&$2==ref{print w}')
+fi
+cleanup_safe=1
 if [ -n "$wt" ]; then
-    if ! git -C "$wt" diff --quiet --ignore-submodules -- \
-       || ! git -C "$wt" diff --cached --quiet --ignore-submodules -- \
-       || [ -n "$(git -C "$wt" ls-files --others --exclude-standard)" ]; then
-        echo "mc-land: task worktree $wt is dirty; refusing before main moves (§7 nothing half-lands)" >&2
-        exit 1
+    task_core_worktree=$(git -C "$wt" config --get core.worktree 2>/dev/null || true)
+    task_executable_git_config=$(git -C "$wt" config --list --name-only 2>/dev/null \
+        | awk '/^merge\..*\.driver$/ || /^filter\..*\.(clean|smudge|process)$/ { print; exit }')
+    if [ -n "$task_core_worktree" ]; then
+        if [ "$already_landed" -eq 0 ]; then
+            echo "mc-land: task worktree $wt has configured core.worktree; refusing before main moves" >&2
+            exit 1
+        fi
+        echo "mc-land: cleanup debt: task worktree $wt has configured core.worktree; preserving it" >&2
+        cleanup_safe=0
+        cleanup_debt=1
+    elif [ -n "$task_executable_git_config" ]; then
+        if [ "$already_landed" -eq 0 ]; then
+            echo "mc-land: task worktree $wt has an executable Git merge driver or content filter; refusing before main moves" >&2
+            exit 1
+        fi
+        echo "mc-land: cleanup debt: task worktree $wt has an executable Git content transform; preserving it" >&2
+        cleanup_safe=0
+        cleanup_debt=1
+    fi
+
+    # assume-unchanged and skip-worktree make ordinary status/diff blind to
+    # local tracked bytes. Refuse those index visibility promises entirely;
+    # otherwise worktree removal could erase changes the preflight never saw.
+    task_index=$(git -C "$wt" rev-parse --git-path index 2>/dev/null || true)
+    case "$task_index" in
+        /*) ;;
+        '')
+            echo "mc-land: could not resolve task worktree index for $wt; refusing cleanup" >&2
+            if [ "$already_landed" -eq 0 ]; then exit 1; fi
+            cleanup_safe=0
+            cleanup_debt=1
+            ;;
+        *) task_index="$wt/$task_index" ;;
+    esac
+    index_visibility=""
+    if [ "$cleanup_safe" -eq 1 ]; then
+        index_visibility=$(isolated_index_git "$task_index" "$wt" ls-files -v \
+            | awk 'substr($0,1,1)=="S" || substr($0,1,1) ~ /[a-z]/ { print; exit }')
+    fi
+    if [ -n "$index_visibility" ]; then
+        if [ "$already_landed" -eq 0 ]; then
+            echo "mc-land: task worktree $wt carries index visibility flags; refusing before main moves" >&2
+            exit 1
+        fi
+        echo "mc-land: cleanup debt: landed $sha but task worktree $wt carries index visibility flags; preserving it" >&2
+        cleanup_safe=0
+        cleanup_debt=1
+    elif [ "$cleanup_safe" -ne 1 ]; then
+        :
+    elif [ -n "$executable_git_config" ]; then
+        # A successful merge receipt remains truth even if executable config
+        # appeared later. Do not run it merely to clean residue; preserve the
+        # worktree and surface debt.
+        echo "mc-land: cleanup debt: executable Git content transform is configured; preserving task worktree $wt" >&2
+        cleanup_safe=0
+        cleanup_debt=1
+    else
+        task_worktree_index="$preflight_tmp/task-worktree.index"
+        isolated_index_git "$task_worktree_index" "$wt" read-tree "$sha"
+        isolated_index_git "$task_worktree_index" "$wt" add -u -- .
+        task_worktree_tree=$(isolated_index_git "$task_worktree_index" "$wt" write-tree)
+        task_expected_tree=$(git rev-parse "$sha^{tree}")
+        task_index_tree=$(isolated_index_git "$task_index" "$wt" write-tree 2>/dev/null || true)
+        task_untracked=$(isolated_index_git "$task_index" "$wt" ls-files --others)
+        if [ "$task_worktree_tree" != "$task_expected_tree" ] \
+           || [ "$task_index_tree" != "$task_expected_tree" ] \
+           || [ -n "$task_untracked" ]; then
+        if [ "$already_landed" -eq 0 ]; then
+            echo "mc-land: task worktree $wt is dirty; refusing before main moves (§7 nothing half-lands)" >&2
+            exit 1
+        fi
+        echo "mc-land: cleanup debt: landed $sha but task worktree $wt is now dirty; preserving it" >&2
+        cleanup_safe=0
+        cleanup_debt=1
+        fi
     fi
     locked=$(git worktree list --porcelain \
         | awk -v ref="refs/heads/$branch" '
@@ -66,35 +523,91 @@ if [ -n "$wt" ]; then
               if (on_ref && is_locked) print "locked"
             }')
     if [ -n "$locked" ]; then
-        echo "mc-land: task worktree $wt is locked; refusing before main moves (§7 nothing half-lands)" >&2
-        exit 1
+        if [ "$already_landed" -eq 0 ]; then
+            echo "mc-land: task worktree $wt is locked; refusing before main moves (§7 nothing half-lands)" >&2
+            exit 1
+        fi
+        echo "mc-land: cleanup debt: landed $sha but task worktree $wt is locked; preserving it" >&2
+        cleanup_safe=0
+        cleanup_debt=1
     fi
 fi
 
-if ! git -c user.name='mission control' -c user.email='mc@mission-control.invalid' \
-        merge --no-ff -m "Land $branch ($sha) into $target" "$sha"; then
-    # §7: "Nonzero … → git merge --abort where applicable, nothing
-    # half-lands" — never leave the operator's checkout in a MERGING state
-    # (a lingering MERGE_HEAD would wedge every landing retry).
-    git merge --abort >/dev/null 2>&1 || true
-    echo "mc-land: merge of $sha into $target failed; merge aborted, nothing half-lands (§7)" >&2
-    exit 1
+if [ "$already_landed" -eq 0 ]; then
+    if ! GIT_AUTHOR_NAME='mission control' \
+         GIT_AUTHOR_EMAIL='mc@mission-control.invalid' \
+         GIT_COMMITTER_NAME='mission control' \
+         GIT_COMMITTER_EMAIL='mc@mission-control.invalid' \
+         isolated_index_git "$primary_index" "$workspace_physical" \
+             -c merge.autoStash=false \
+             -c merge.log=false \
+             -c merge.branchdesc=false \
+             -c merge.renames=false \
+             -c merge.directoryRenames=false \
+             -c user.name='mission control' \
+             -c user.email='mc@mission-control.invalid' \
+             -c commit.gpgSign=false \
+             -c merge.gpgSign=false \
+             merge --no-ff --no-autostash --no-gpg-sign --no-log --cleanup=verbatim \
+             -s ort \
+             -m "$receipt_message" "$sha"; then
+        # §7: "Nonzero … → git merge --abort where applicable, nothing
+        # half-lands" — never leave the operator's checkout in a MERGING state
+        # (a lingering MERGE_HEAD would wedge every landing retry).
+        failed_merge_head=$(isolated_index_git "$primary_index" "$workspace_physical" \
+            rev-parse -q --verify MERGE_HEAD 2>/dev/null || true)
+        operator_merge_head=$(git rev-parse -q --verify MERGE_HEAD 2>/dev/null || true)
+        merge_message_path=$(isolated_index_git "$primary_index" "$workspace_physical" \
+            rev-parse --git-path MERGE_MSG)
+        if [ -z "$operator_merge_head" ] \
+           && [ "$failed_merge_head" = "$sha" ] \
+           && [ -f "$merge_message_path" ] \
+           && grep -F -x "Land $branch ($sha) into $target" "$merge_message_path" >/dev/null \
+           && grep -F -x "MC-Landing-Receipt: v1" "$merge_message_path" >/dev/null \
+           && grep -F -x "MC-Branch: $branch" "$merge_message_path" >/dev/null \
+           && grep -F -x "MC-Verified-SHA: $sha" "$merge_message_path" >/dev/null \
+           && grep -F -x "MC-Target: $target" "$merge_message_path" >/dev/null; then
+            # MERGE_HEAD plus the exact tuple marker proves this invocation
+            # owns the partial merge. A racing operator merge is never ours
+            # merely because it appeared after the early preflight.
+            isolated_index_git "$primary_index" "$workspace_physical" \
+                merge --abort >/dev/null 2>&1 || true
+        elif [ -n "$operator_merge_head" ]; then
+            echo "mc-land: merge failure found operator MERGE_HEAD $operator_merge_head; preserving operator merge state" >&2
+        elif [ -n "$failed_merge_head" ]; then
+            echo "mc-land: merge failure left non-owned isolated MERGE_HEAD $failed_merge_head; preserving it" >&2
+        fi
+        echo "mc-land: merge of $sha into $target failed; invocation-owned state reconciled (§7)" >&2
+        exit 1
+    fi
 fi
 
 # Step 3 — remove the preflighted worktree and branch by exact path (§7).
 # Once main has moved, a cleanup error is no longer a landing failure: report
 # success so canonical state tells the truth, and surface the residue as
 # cleanup debt for the orphan/health path to finish.
-cleanup_debt=0
-if [ -n "$wt" ]; then
-    if ! git worktree remove "$wt"; then
+if [ "$cleanup_safe" -eq 1 ] && [ -n "$wt" ]; then
+    # Use the same configuration-isolated repository view for Git's final
+    # cleanliness check. A task-local core.worktree redirect or info exclude
+    # appearing after our explicit preflight must not make Git inspect one
+    # directory and delete another. The real linked-worktree metadata is
+    # shared into the view, so successful removal still updates the canonical
+    # repository by this one exact path.
+    if ! isolated_repo_git worktree remove "$wt"; then
         echo "mc-land: cleanup debt: landed $sha but could not remove worktree $wt" >&2
+        # Keep its branch ref too: raw update-ref can delete a ref still
+        # checked out by a residue that `worktree remove` refused.
+        cleanup_safe=0
         cleanup_debt=1
     fi
 fi
-if ! git branch -d "$branch"; then
-    echo "mc-land: cleanup debt: landed $sha but could not delete branch $branch" >&2
-    cleanup_debt=1
+if [ "$cleanup_safe" -eq 1 ] && [ "$branch_exact" -eq 1 ]; then
+    # Compare-and-delete closes the preflight→cleanup ref race: if anybody
+    # moved or recreated the branch after the SHA fence, preserve it as debt.
+    if ! preflight_git update-ref --no-deref -d "refs/heads/$branch" "$sha"; then
+        echo "mc-land: cleanup debt: landed $sha but could not delete branch $branch" >&2
+        cleanup_debt=1
+    fi
 fi
 if [ "$cleanup_debt" -ne 0 ]; then
     echo "mc-land: landing succeeded with cleanup debt; main already contains $sha" >&2

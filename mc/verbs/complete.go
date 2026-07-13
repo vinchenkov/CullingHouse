@@ -3,6 +3,7 @@ package verbs
 import (
 	"context"
 	"database/sql"
+	"fmt"
 
 	"mc/domain"
 )
@@ -100,8 +101,10 @@ func Complete(db *sql.DB, id *RunIdentity, a CompleteArgs) (any, error) {
 			// Role by subject scope (A-P2-3): the done-declaration is
 			// Strategist(initiative)'s terminal, not a Worker's.
 			var scope string
+			var initiativeID sql.NullInt64
 			if err := q.QueryRowContext(ctx,
-				`SELECT scope FROM tasks WHERE id = ?`, a.Task).Scan(&scope); err != nil {
+				`SELECT scope, initiative_id FROM tasks WHERE id = ?`, a.Task).
+				Scan(&scope, &initiativeID); err != nil {
 				return err
 			}
 			if scope == "initiative" {
@@ -114,8 +117,31 @@ func Complete(db *sql.DB, id *RunIdentity, a CompleteArgs) (any, error) {
 				if a.Branch != "" {
 					return Usagef("--branch belongs to the Worker terminal, not an initiative done-declaration")
 				}
-			} else if baseRole(id.Role) != "worker" {
-				return roleMismatch(id, "worker")
+			} else {
+				if baseRole(id.Role) != "worker" {
+					return roleMismatch(id, "worker")
+				}
+				if a.Branch != "" {
+					if !initiativeID.Valid {
+						expected := fmt.Sprintf("mc/task-%d", a.Task)
+						if a.Branch != expected {
+							return Domainf("standalone task %d may complete only on its assigned branch %s (§6.2, Inv. 25)", a.Task, expected)
+						}
+					} else {
+						// Initiative children share the parent's one branch. Do
+						// not invent its naming convention here; require the host-
+						// assigned parent value and exact equality instead.
+						var shared sql.NullString
+						if err := q.QueryRowContext(ctx,
+							`SELECT branch FROM tasks WHERE id = ? AND scope = 'initiative'`,
+							initiativeID.Int64).Scan(&shared); err != nil {
+							return err
+						}
+						if !shared.Valid || a.Branch != shared.String {
+							return Domainf("initiative child %d may complete only on its assigned shared branch (§6.1, Inv. 25)", a.Task)
+						}
+					}
+				}
 			}
 			if err := domain.AdvanceStage(ctx, q, a.Task, "worked"); err != nil {
 				return err

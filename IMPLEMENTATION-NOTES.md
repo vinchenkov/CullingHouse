@@ -634,3 +634,32 @@ Entry template:
   drift.
 - Spec impact: none (this is named incomplete implementation, not a changed contract)
 - Needs your decision: no
+
+## 2026-07-13 — Landing cleanup debt is visible but not yet a durable health record
+- Where: Phase-2 split-brain `merge success / cleanup or report gap`;
+  runner/image/mc-land; resident/src/effects.ts; spec §7/§13
+- Gap: an exact successful merge is irreversible even when later worktree or
+  branch cleanup fails. The current Phase-2 resident preserves success truth
+  and exposes the residue through `mc-land` stderr and its health log, but it
+  does not write a durable cleanup-debt row. If the residue is dirty, locked,
+  or its ref has moved, safe replay must preserve it; after the success report
+  archives the task, ordinary landing dispatch no longer retries that debt.
+- Choice: make the report-loss path idempotent from an immutable exact Git
+  receipt: a target first-parent two-parent merge whose second parent is the
+  verified SHA and whose message and author/committer identity bind the full
+  branch/SHA/target tuple. The fresh merge pins the strategy, disables
+  autostash and hooks, and isolates content-sensitive Git commands from
+  Worksource-local, per-worktree, global, and info/attributes configuration
+  while retaining the real primary index, working tree, objects, and refs.
+  Fresh landing refuses pre-existing executable transforms or core.worktree
+  redirects in either checkout; the isolated view also closes their check/use
+  race. Recovery never recomputes mutable merge-driver output. Reconcile only
+  a still-exact clean task worktree/ref, and preserve any moved, dirty, locked,
+  redirected, executable-configured, or index-hidden residue with an explicit
+  warning. The Phase-2 acceptance test captures both stderr and resident-log
+  visibility without claiming durability. The later System Health/cleanup
+  implementation must surface persistent Git residue durably; do not turn an
+  already-successful landing into failure or delete ambiguous operator state
+  meanwhile.
+- Spec impact: none (success truth and exact cleanup remain §7 obligations)
+- Needs your decision: no
