@@ -4084,3 +4084,287 @@ func TestReset(t *testing.T) {
 		}
 	})
 }
+
+// mc onboard (§17, ADR-015): the section dispatcher at the Phase-2 tier —
+// named sections only, resumable/idempotent, §16.4 spine identity rules,
+// deferred doubles for the Docker/host-effect sections, no launchd ever.
+func TestOnboard(t *testing.T) {
+	freshHome := func(t *testing.T) (string, string, []string) {
+		t.Helper()
+		home := filepath.Join(t.TempDir(), "mc-home")
+		spine := filepath.Join(home, "spine.db")
+		return home, spine, []string{"MC_HOME=" + home, "MC_SPINE=" + spine}
+	}
+	sectionStatus := func(t *testing.T, res mcResult) map[string]map[string]any {
+		t.Helper()
+		out := map[string]map[string]any{}
+		sections, ok := res.json["sections"].([]any)
+		if !ok {
+			t.Fatalf("onboard result = %v", res.json)
+		}
+		for _, raw := range sections {
+			s := raw.(map[string]any)
+			out[s["section"].(string)] = s
+		}
+		return out
+	}
+
+	t.Run("named_sections_only_and_host_scope", func(t *testing.T) {
+		home, _, env := freshHome(t)
+		res := runMC(t, env, "", "onboard", "bogus-section")
+		if res.code != 2 || !strings.Contains(res.stderr, "preflight|home|runtime-auth|routing|container|worksource|tunables|surfaces|supervision|verify") {
+			t.Fatalf("unknown section = code %d stderr %q", res.code, res.stderr)
+		}
+		if _, err := os.Stat(home); !os.IsNotExist(err) {
+			t.Fatalf("refused onboard created MC_HOME (err %v)", err)
+		}
+		spine := initSpine(t)
+		for name, envDenied := range map[string][]string{
+			"pipeline": runJSONEnv(t, spine, "r-x", "pipeline", "worker"),
+			"homie":    homieJSONEnv(t, spine, "h-x", defaultHomieAllowlist),
+		} {
+			res := runMC(t, envDenied, "", "onboard", "home")
+			if res.code != 1 {
+				t.Fatalf("%s onboard exit = %d stderr %q", name, res.code, res.stderr)
+			}
+		}
+		smoke := runMC(t, env, "", "onboard", "--smoke")
+		if smoke.code != 1 || !strings.Contains(smoke.stderr, "Phase") {
+			t.Fatalf("smoke = code %d stderr %q", smoke.code, smoke.stderr)
+		}
+	})
+
+	t.Run("home_provisions_the_deployment_idempotently", func(t *testing.T) {
+		home, spine, env := freshHome(t)
+		res := runMC(t, env, "", "onboard", "home")
+		if res.code != 0 {
+			t.Fatalf("onboard home failed (%d): %s", res.code, res.stderr)
+		}
+		if sectionStatus(t, res)["home"]["status"] != "done" {
+			t.Fatalf("fresh home = %v", res.json)
+		}
+		for _, dir := range []string{"backups", "sessions", "outputs", "attachments", "workflows"} {
+			if st, err := os.Stat(filepath.Join(home, dir)); err != nil || !st.IsDir() {
+				t.Fatalf("home scaffold missing %s/: %v", dir, err)
+			}
+		}
+		db, err := substrate.Open(spine)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer db.Close()
+		uuid := queryStr(t, db, `SELECT deployment_uuid FROM meta WHERE id = 1`)
+		if uuid == "" {
+			t.Fatal("home did not seed the meta identity")
+		}
+		// Re-running skips; the deployment identity never changes (§16.4).
+		again := runMC(t, env, "", "onboard", "home")
+		if again.code != 0 || sectionStatus(t, again)["home"]["status"] != "ok" {
+			t.Fatalf("re-run home = code %d json %v", again.code, again.json)
+		}
+		if got := queryStr(t, db, `SELECT deployment_uuid FROM meta WHERE id = 1`); got != uuid {
+			t.Fatalf("re-run changed deployment identity %q -> %q", uuid, got)
+		}
+	})
+
+	t.Run("home_never_reinitializes_a_nonempty_spine", func(t *testing.T) {
+		home, spine, env := freshHome(t)
+		if err := os.MkdirAll(home, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		raw, err := substrate.Open(spine)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := raw.Exec(`CREATE TABLE stranger (x); INSERT INTO stranger VALUES (42)`); err != nil {
+			t.Fatal(err)
+		}
+		raw.Close()
+		res := runMC(t, env, "", "onboard", "home")
+		if res.code != 1 || !strings.Contains(res.stderr, "restore from backup") {
+			t.Fatalf("nonempty-spine home = code %d stderr %q", res.code, res.stderr)
+		}
+		check, err := substrate.Open(spine)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer check.Close()
+		if n := queryInt(t, check, `SELECT COUNT(*) FROM stranger`); n != 1 {
+			t.Fatalf("onboard touched the foreign spine: %d rows", n)
+		}
+	})
+
+	t.Run("preflight_fences_git_working_trees", func(t *testing.T) {
+		repo := filepath.Join(t.TempDir(), "repo")
+		if err := os.MkdirAll(filepath.Join(repo, ".git"), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		home := filepath.Join(repo, "deep", "mc-home")
+		res := runMC(t, []string{"MC_HOME=" + home, "MC_SPINE=" + filepath.Join(home, "s.db")}, "", "onboard", "preflight")
+		if res.code != 1 || !strings.Contains(res.stderr, "git working tree") {
+			t.Fatalf("git-tree preflight = code %d stderr %q", res.code, res.stderr)
+		}
+		outside, _, env := freshHome(t)
+		ok := runMC(t, env, "", "onboard", "preflight")
+		if ok.code != 0 || sectionStatus(t, ok)["preflight"]["status"] != "ok" {
+			t.Fatalf("clean preflight = code %d json %v stderr %q", ok.code, ok.json, ok.stderr)
+		}
+		_ = outside
+	})
+
+	t.Run("routing_writes_a_valid_default_once_and_validates_existing", func(t *testing.T) {
+		home, _, env := freshHome(t)
+		res := runMC(t, env, "", "onboard", "routing")
+		if res.code != 0 || sectionStatus(t, res)["routing"]["status"] != "done" {
+			t.Fatalf("fresh routing = code %d json %v stderr %q", res.code, res.json, res.stderr)
+		}
+		path := filepath.Join(home, "routing.md")
+		written, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		again := runMC(t, env, "", "onboard", "routing")
+		if again.code != 0 || sectionStatus(t, again)["routing"]["status"] != "ok" {
+			t.Fatalf("re-run routing = code %d json %v", again.code, again.json)
+		}
+		unchanged, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(unchanged) != string(written) {
+			t.Fatal("re-run rewrote routing.md")
+		}
+		// An existing invalid table fails the section and is never repaired
+		// silently (§17: an invalid routing.md can never come out of onboarding).
+		if err := os.WriteFile(path, []byte("| role | harness |\n|---|---|\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		invalid := runMC(t, env, "", "onboard", "routing")
+		if invalid.code != 1 || !strings.Contains(invalid.stderr, "routing") {
+			t.Fatalf("invalid routing = code %d stderr %q", invalid.code, invalid.stderr)
+		}
+		kept, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(kept) != "| role | harness |\n|---|---|\n" {
+			t.Fatal("failed section rewrote the operator's routing.md")
+		}
+	})
+
+	t.Run("worksource_is_dual_input_and_skips_once_seeded", func(t *testing.T) {
+		_, spine, env := freshHome(t)
+		if res := runMC(t, env, "", "onboard", "home"); res.code != 0 {
+			t.Fatalf("home failed: %s", res.stderr)
+		}
+		missing := runMC(t, env, "", "onboard", "worksource")
+		if missing.code != 1 || !strings.Contains(missing.stderr, "--worksource") {
+			t.Fatalf("inputless worksource = code %d stderr %q", missing.code, missing.stderr)
+		}
+		relative := runMC(t, env, "", "onboard", "worksource",
+			"--worksource", "ws-main", "--workspace-root", "relative/path")
+		if relative.code != 2 {
+			t.Fatalf("relative workspace = code %d stderr %q", relative.code, relative.stderr)
+		}
+		seeded := runMC(t, env, "", "onboard", "worksource",
+			"--worksource", "ws-main", "--workspace-root", "/tmp/ws-main")
+		if seeded.code != 0 || sectionStatus(t, seeded)["worksource"]["status"] != "done" {
+			t.Fatalf("seeding worksource = code %d json %v stderr %q", seeded.code, seeded.json, seeded.stderr)
+		}
+		db, err := substrate.Open(spine)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer db.Close()
+		if got := queryStr(t, db, `SELECT sandbox_profile FROM worksources WHERE id = 'ws-main'`); got != "default" {
+			t.Fatalf("worksource row = %q", got)
+		}
+		skip := runMC(t, env, "", "onboard", "worksource")
+		if skip.code != 0 || sectionStatus(t, skip)["worksource"]["status"] != "ok" {
+			t.Fatalf("seeded re-run = code %d json %v", skip.code, skip.json)
+		}
+	})
+
+	t.Run("full_run_is_ordered_resumable_and_verified", func(t *testing.T) {
+		_, spine, env := freshHome(t)
+		res := runMC(t, env, "", "onboard",
+			"--worksource", "ws-full", "--workspace-root", "/tmp/ws-full")
+		if res.code != 0 || res.json["ok"] != true {
+			t.Fatalf("full onboard = code %d json %v stderr %q", res.code, res.json, res.stderr)
+		}
+		sections := res.json["sections"].([]any)
+		order := []string{}
+		for _, raw := range sections {
+			order = append(order, raw.(map[string]any)["section"].(string))
+		}
+		if strings.Join(order, "|") != "preflight|home|runtime-auth|routing|container|worksource|tunables|surfaces|supervision|verify" {
+			t.Fatalf("section order = %v", order)
+		}
+		byName := sectionStatus(t, res)
+		for section, want := range map[string]string{
+			"preflight": "ok", "home": "done", "runtime-auth": "deferred",
+			"routing": "done", "container": "deferred", "worksource": "done",
+			"tunables": "ok", "surfaces": "ok", "supervision": "deferred",
+			"verify": "ok",
+		} {
+			if byName[section]["status"] != want {
+				t.Fatalf("section %q = %v, want %q", section, byName[section], want)
+			}
+		}
+		db, err := substrate.Open(spine)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer db.Close()
+		uuid := queryStr(t, db, `SELECT deployment_uuid FROM meta WHERE id = 1`)
+
+		// Resumable: the identical re-run performs nothing and changes nothing.
+		again := runMC(t, env, "", "onboard",
+			"--worksource", "ws-full", "--workspace-root", "/tmp/ws-full")
+		if again.code != 0 || again.json["ok"] != true {
+			t.Fatalf("onboard re-run = code %d stderr %q", again.code, again.stderr)
+		}
+		reByName := sectionStatus(t, again)
+		for _, section := range []string{"home", "routing", "worksource"} {
+			if reByName[section]["status"] != "ok" {
+				t.Fatalf("re-run section %q = %v, want ok (skip)", section, reByName[section])
+			}
+		}
+		if got := queryStr(t, db, `SELECT deployment_uuid FROM meta WHERE id = 1`); got != uuid {
+			t.Fatalf("re-run changed deployment identity %q -> %q", uuid, got)
+		}
+		// The provisioned deployment passes its own doctor.
+		doctor := runMC(t, env, "", "doctor")
+		if doctor.code != 0 || doctor.json["ok"] != true {
+			t.Fatalf("post-onboard doctor = code %d json %v", doctor.code, doctor.json)
+		}
+	})
+
+	t.Run("tunables_and_surfaces_apply_operator_answers", func(t *testing.T) {
+		_, spine, env := freshHome(t)
+		if res := runMC(t, env, "", "onboard", "home"); res.code != 0 {
+			t.Fatalf("home failed: %s", res.stderr)
+		}
+		tun := runMC(t, env, "", "onboard", "tunables", "--timeout-minutes", "7")
+		if tun.code != 0 || sectionStatus(t, tun)["tunables"]["status"] != "done" {
+			t.Fatalf("tunables = code %d json %v stderr %q", tun.code, tun.json, tun.stderr)
+		}
+		surf := runMC(t, env, "", "onboard", "surfaces",
+			"--console-hour", "8", "--console-minute", "15", "--console-tz", "America/Los_Angeles")
+		if surf.code != 0 || sectionStatus(t, surf)["surfaces"]["status"] != "done" {
+			t.Fatalf("surfaces = code %d json %v stderr %q", surf.code, surf.json, surf.stderr)
+		}
+		db, err := substrate.Open(spine)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer db.Close()
+		if got := queryStr(t, db, `SELECT timeout_minutes || '|' || console_hour || '|' || console_minute || '|' || console_tz FROM lock WHERE id = 1`); got != "7|8|15|America/Los_Angeles" {
+			t.Fatalf("applied answers = %q", got)
+		}
+		partial := runMC(t, env, "", "onboard", "surfaces", "--console-hour", "8")
+		if partial.code != 2 {
+			t.Fatalf("partial console triple = code %d stderr %q", partial.code, partial.stderr)
+		}
+	})
+}
