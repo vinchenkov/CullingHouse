@@ -135,6 +135,8 @@ func dispatchVerb(args []string, stdin io.Reader) (any, error) {
 		return cmdConsole(rest)
 	case "homie":
 		return cmdHomie(rest)
+	case "outbox":
+		return cmdOutbox(rest)
 	case "verifier":
 		return cmdVerifier(rest)
 	case "heartbeat":
@@ -715,6 +717,53 @@ func cmdHomie(args []string) (any, error) {
 		})
 	}
 	return nil, verbs.Usagef("unknown subverb: mc homie %s", args[0])
+}
+
+func cmdOutbox(args []string) (any, error) {
+	if len(args) == 0 {
+		return nil, verbs.Usagef("usage: mc outbox poll|ack …")
+	}
+	switch args[0] {
+	case "poll":
+		fs := newFlags("mc outbox poll")
+		surface := fs.String("surface", "", "delivery surface")
+		limit := fs.Int("limit", 100, "maximum rows")
+		if err := parse(fs, args[1:]); err != nil {
+			return nil, err
+		}
+		if *surface == "" {
+			return nil, verbs.Usagef("mc outbox poll requires --surface")
+		}
+		id, err := verbs.LoadIdentity()
+		if err != nil {
+			return nil, err
+		}
+		return withSpine(func(db *sql.DB) (any, error) {
+			return verbs.OutboxPoll(db, id, *surface, *limit)
+		})
+
+	case "ack":
+		rowID, rest, err := positionalID("mc outbox ack", args[1:])
+		if err != nil {
+			return nil, err
+		}
+		fs := newFlags("mc outbox ack")
+		surface := fs.String("surface", "", "delivery surface")
+		if err := parse(fs, rest); err != nil {
+			return nil, err
+		}
+		if *surface == "" {
+			return nil, verbs.Usagef("mc outbox ack requires --surface")
+		}
+		id, err := verbs.LoadIdentity()
+		if err != nil {
+			return nil, err
+		}
+		return withSpine(func(db *sql.DB) (any, error) {
+			return verbs.OutboxAck(db, id, rowID, *surface)
+		})
+	}
+	return nil, verbs.Usagef("unknown subverb: mc outbox %s", args[0])
 }
 
 func cmdVerifier(args []string) (any, error) {

@@ -109,7 +109,8 @@ and is easiest to reverse.
   columns abort on UPDATE; `claimed_by`/`claimed_at`/`completed_at` may
   advance. DELETE always aborts. Attachment carriers are JSON arrays, and
   outbox payloads are JSON objects, CHECK-pinned so later transport writers
-  cannot place malformed durable work on either bus.
+  cannot place malformed durable work on either bus; outbox destinations use
+  the same closed `discord|dashboard|cli` vocabulary as durable bindings.
 - **NOTE(P1.14) — defaults where the spec names none:** `priority` defaults
   to 2 (mid-band of P0–P3; expedite is always explicit), `dispatch_retries`
   to 3 (§16.3's shipped budget), lease timing columns to the §16.3 table.

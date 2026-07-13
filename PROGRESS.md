@@ -774,3 +774,20 @@ poll one surface's undelivered rows in stable id order without mutation; ack
 only a row owned by that same surface, idempotently. Then add explicit Homie
 resume plus a real Homie-runner capability seam before claim/reply/register;
 do not expose outbound transport through the model's Homie-agent identity.
+
+- 2026-07-12 — **Phase 2 outbox delivery cursor green.** ADR-011 pins
+  host/native-surface-only `poll --surface [--limit]` and
+  `ack <id> --surface`. Poll returns only that surface's undelivered rows in
+  stable id order with structured payloads and is byte-for-byte read-only.
+  Ack verifies row ownership, stamps the spine clock once, leaves other
+  surfaces untouched, and preserves the original timestamp on replay.
+  Pipeline and Homie identities, wrong-surface/missing-row acks, invalid
+  surfaces, and invalid limits are inert. The substrate now closes outbox
+  surfaces to `discord|dashboard|cli` in addition to its JSON-object check.
+  Complete fast lane green.
+
+NEXT: Design and TDD the Homie-runner capability seam, then extend
+`mc run register-session` to the exact own Homie session and add host-only
+`mc homie resume <session> --from <surface:channel_ref>` as a record-only
+status/binding transition. Require the immutable locator pair for native
+continue mode; keep any conversation-row fallback explicit and audited.

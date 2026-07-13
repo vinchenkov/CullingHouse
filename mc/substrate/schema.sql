@@ -864,7 +864,7 @@ CREATE TABLE outbox (
     kind         TEXT NOT NULL CHECK (kind IN
                  ('homie_reply', 'homie_echo', 'blocked_alert', 'console', 'health')),
     session_id   TEXT REFERENCES homie_sessions(id),
-    surface      TEXT NOT NULL,
+    surface      TEXT NOT NULL CHECK (surface IN ('discord', 'dashboard', 'cli')),
     channel_ref  TEXT,
     payload      TEXT NOT NULL    -- small inline JSON; anything large rides as a path reference
                  CHECK (json_valid(payload) AND json_type(payload) = 'object'),

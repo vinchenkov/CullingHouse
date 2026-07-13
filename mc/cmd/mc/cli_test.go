@@ -2438,6 +2438,145 @@ func TestHomieSendHistoryEnd(t *testing.T) {
 	})
 }
 
+func TestOutboxPollAck(t *testing.T) {
+	fixture := func(t *testing.T) (string, *sql.DB) {
+		t.Helper()
+		spine := initSpine(t)
+		started := runMC(t, spineEnv(spine), "", "homie", "start", "--from", "dashboard:dash")
+		if started.code != 0 {
+			t.Fatalf("homie start failed: %s", started.stderr)
+		}
+		session := started.json["session_id"].(string)
+		if got := runMC(t, spineEnv(spine), "", "homie", "bind", session, "--from", "discord:disc"); got.code != 0 {
+			t.Fatalf("homie bind failed: %s", got.stderr)
+		}
+		if got := runMC(t, spineEnv(spine), "", "homie", "send", session,
+			"--from", "cli:origin", "--body", "deliver me"); got.code != 0 {
+			t.Fatalf("homie send failed: %s", got.stderr)
+		}
+		return spine, openDB(t, spine)
+	}
+
+	t.Run("poll_is_surface_scoped_stable_and_read_only", func(t *testing.T) {
+		spine, db := fixture(t)
+		before := queryStr(t, db, `SELECT group_concat(id || ':' || COALESCE(delivered_at, '<null>'), ',') FROM outbox ORDER BY id`)
+
+		dashboard := runMC(t, spineEnv(spine), "", "outbox", "poll", "--surface", "dashboard")
+		if dashboard.code != 0 {
+			t.Fatalf("dashboard poll failed: %s", dashboard.stderr)
+		}
+		rows := dashboard.json["rows"].([]any)
+		if len(rows) != 1 {
+			t.Fatalf("dashboard poll = %v", dashboard.json)
+		}
+		row := rows[0].(map[string]any)
+		if row["surface"] != "dashboard" || row["channel_ref"] != "dash" || row["kind"] != "homie_echo" {
+			t.Fatalf("dashboard outbox row = %v", row)
+		}
+		payload := row["payload"].(map[string]any)
+		if payload["body"] != "deliver me" || payload["seq"] != float64(1) {
+			t.Fatalf("structured outbox payload = %v", payload)
+		}
+		discord := runMC(t, spineEnv(spine), "", "outbox", "poll", "--surface", "discord")
+		if discord.code != 0 || len(discord.json["rows"].([]any)) != 1 {
+			t.Fatalf("discord poll = code %d json %v stderr %q", discord.code, discord.json, discord.stderr)
+		}
+		if got := queryStr(t, db, `SELECT group_concat(id || ':' || COALESCE(delivered_at, '<null>'), ',') FROM outbox ORDER BY id`); got != before {
+			t.Fatalf("poll mutated delivery state: before %q after %q", before, got)
+		}
+
+		// Stable id order and limit are part of the delivery cursor contract.
+		if _, err := db.Exec(`INSERT INTO outbox (kind, surface, channel_ref, payload)
+			VALUES ('health', 'dashboard', 'dash', '{"n":2}'),
+			       ('health', 'dashboard', 'dash', '{"n":3}')`); err != nil {
+			t.Fatal(err)
+		}
+		limited := runMC(t, spineEnv(spine), "", "outbox", "poll", "--surface", "dashboard", "--limit", "2")
+		if limited.code != 0 {
+			t.Fatalf("limited poll failed: %s", limited.stderr)
+		}
+		limitedRows := limited.json["rows"].([]any)
+		if len(limitedRows) != 2 || limitedRows[0].(map[string]any)["id"].(float64) >= limitedRows[1].(map[string]any)["id"].(float64) {
+			t.Fatalf("limited poll is not ascending: %v", limitedRows)
+		}
+	})
+
+	t.Run("ack_only_owns_its_surface_and_replay_is_idempotent", func(t *testing.T) {
+		spine, db := fixture(t)
+		dashboardID := queryInt(t, db, `SELECT id FROM outbox WHERE surface = 'dashboard'`)
+		discordID := queryInt(t, db, `SELECT id FROM outbox WHERE surface = 'discord'`)
+
+		wrong := runMC(t, spineEnv(spine), "", "outbox", "ack", fmt.Sprint(dashboardID), "--surface", "discord")
+		if wrong.code != 1 || !strings.Contains(wrong.stderr, "belongs to surface") {
+			t.Fatalf("wrong-surface ack = code %d stderr %q", wrong.code, wrong.stderr)
+		}
+		if got := queryStr(t, db, `SELECT delivered_at FROM outbox WHERE id = ?`, dashboardID); got != "<NULL>" {
+			t.Fatalf("wrong-surface ack delivered row: %q", got)
+		}
+
+		acked := runMC(t, spineEnv(spine), "", "outbox", "ack", fmt.Sprint(dashboardID), "--surface", "dashboard")
+		if acked.code != 0 || acked.json["acked"] != true {
+			t.Fatalf("ack = code %d json %v stderr %q", acked.code, acked.json, acked.stderr)
+		}
+		deliveredAt := acked.json["delivered_at"].(string)
+		if deliveredAt == "" || queryStr(t, db, `SELECT delivered_at FROM outbox WHERE id = ?`, dashboardID) != deliveredAt {
+			t.Fatalf("ack timestamp mismatch: %v", acked.json)
+		}
+		if got := runMC(t, spineEnv(spine), "", "outbox", "poll", "--surface", "dashboard"); got.code != 0 || len(got.json["rows"].([]any)) != 0 {
+			t.Fatalf("delivered row still polled: code %d json %v", got.code, got.json)
+		}
+		if got := queryStr(t, db, `SELECT delivered_at FROM outbox WHERE id = ?`, discordID); got != "<NULL>" {
+			t.Fatalf("dashboard ack touched discord row: %q", got)
+		}
+
+		replay := runMC(t, spineEnv(spine), "", "outbox", "ack", fmt.Sprint(dashboardID), "--surface", "dashboard")
+		if replay.code != 0 || replay.json["acked"] != false || replay.json["delivered_at"] != deliveredAt {
+			t.Fatalf("ack replay = code %d json %v stderr %q", replay.code, replay.json, replay.stderr)
+		}
+		missing := runMC(t, spineEnv(spine), "", "outbox", "ack", "99999", "--surface", "dashboard")
+		if missing.code != 1 || !strings.Contains(missing.stderr, "unknown outbox row") {
+			t.Fatalf("missing ack = code %d stderr %q", missing.code, missing.stderr)
+		}
+	})
+
+	t.Run("scope_and_usage_fail_before_delivery_mutation", func(t *testing.T) {
+		spine, db := fixture(t)
+		before := queryStr(t, db, `SELECT group_concat(id || ':' || COALESCE(delivered_at, '<null>'), ',') FROM outbox ORDER BY id`)
+		pipeline := runJSONEnv(t, spine, "pipeline", "pipeline", "worker")
+		homie := homieJSONEnv(t, spine, "h-forged", defaultHomieAllowlist)
+		for name, env := range map[string][]string{"pipeline": pipeline, "homie": homie} {
+			t.Run(name, func(t *testing.T) {
+				for _, args := range [][]string{
+					{"outbox", "poll", "--surface", "dashboard"},
+					{"outbox", "ack", "1", "--surface", "dashboard"},
+				} {
+					got := runMC(t, env, "", args...)
+					if got.code != 1 {
+						t.Fatalf("%v exit = %d stderr %q", args, got.code, got.stderr)
+					}
+				}
+			})
+		}
+		for _, tc := range []struct {
+			args []string
+			msg  string
+		}{
+			{args: []string{"outbox", "poll"}, msg: "requires --surface"},
+			{args: []string{"outbox", "poll", "--surface", "email"}, msg: "discord|dashboard|cli"},
+			{args: []string{"outbox", "poll", "--surface", "dashboard", "--limit", "0"}, msg: "limit"},
+			{args: []string{"outbox", "ack", "1"}, msg: "requires --surface"},
+		} {
+			got := runMC(t, spineEnv(spine), "", tc.args...)
+			if got.code == 0 || !strings.Contains(got.stderr, tc.msg) {
+				t.Fatalf("%v exit = %d stderr %q", tc.args, got.code, got.stderr)
+			}
+		}
+		if got := queryStr(t, db, `SELECT group_concat(id || ':' || COALESCE(delivered_at, '<null>'), ',') FROM outbox ORDER BY id`); got != before {
+			t.Fatalf("scope/usage failure mutated delivery: before %q after %q", before, got)
+		}
+	})
+}
+
 func workerFixture(t *testing.T, title string) (string, int64, string, []string) {
 	t.Helper()
 	spine := initSpine(t)

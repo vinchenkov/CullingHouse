@@ -913,6 +913,7 @@ func TestConversationRowsAppendOnly(t *testing.T) {
 
 func TestOutboxPayloadIsJSONObject(t *testing.T) {
 	db := openSpine(t)
+	wantAbort(t, db, `INSERT INTO outbox (kind, surface, payload) VALUES ('health', 'email', '{"status":"ok"}')`)
 	wantAbort(t, db, `INSERT INTO outbox (kind, surface, payload) VALUES ('health', 'dashboard', 'not-json')`)
 	wantAbort(t, db, `INSERT INTO outbox (kind, surface, payload) VALUES ('health', 'dashboard', '[]')`)
 	mustExec(t, db, `INSERT INTO outbox (kind, surface, payload) VALUES ('health', 'dashboard', '{"status":"ok"}')`)
