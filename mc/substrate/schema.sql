@@ -541,7 +541,7 @@ CREATE TABLE runs (
     ended_at           TEXT,
     outcome            TEXT,
     session_path       TEXT,   -- where the session folder is
-    binding            TEXT,   -- which harness + model wrote it
+    binding            TEXT,   -- immutable "harness/binding" locator for the runtime that wrote it (§9)
     native_session_ref TEXT,   -- the harness's own session handle
     trace_filename     TEXT,   -- the trace's filename
     pool_snapshot      TEXT,   -- Editor runs: JSON array of the proposed pool

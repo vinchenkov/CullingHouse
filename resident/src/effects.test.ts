@@ -15,6 +15,8 @@ const spawnEffect: Effect = {
   subject_id: 42,
   worksource: "ws-e2e",
   pool_ids: [42],
+  harness: "fake",
+  model_binding: "fake",
   session_path: "sessions/run-42-worker",
   heartbeat_interval_s: 1,
 };
@@ -105,6 +107,7 @@ describe("spawn effect", () => {
       {
         action: "spawn", run_id: "run-9-strategist", role: "strategist",
         subject_id: null, worksource: "ws-e2e", pool_ids: [],
+        harness: "fake", model_binding: "fake",
         heartbeat_interval_s: 1,
       },
       rig.deps,

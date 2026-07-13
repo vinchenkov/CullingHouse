@@ -31,7 +31,9 @@ func TestMain(m *testing.M) {
 		os.Exit(1)
 	}
 	mcBin = filepath.Join(dir, "mc")
-	build := exec.Command("go", "build", "-o", mcBin, ".")
+	// The fast CLI tier explicitly registers the deterministic fake routing
+	// family; production builds omit this build tag and cannot resolve it.
+	build := exec.Command("go", "build", "-tags", "test_fake_routing", "-o", mcBin, ".")
 	out, err := build.CombinedOutput()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "build mc binary: %v\n%s", err, out)
@@ -59,7 +61,7 @@ func runMC(t *testing.T, env []string, stdin string, args ...string) mcResult {
 	base := []string{}
 	for _, e := range os.Environ() {
 		if strings.HasPrefix(e, "MC_SPINE=") || strings.HasPrefix(e, "MC_HELPER=") ||
-			strings.HasPrefix(e, "MC_RUN_JSON=") {
+			strings.HasPrefix(e, "MC_RUN_JSON=") || strings.HasPrefix(e, "MC_HOME=") {
 			continue
 		}
 		base = append(base, e)
@@ -88,7 +90,38 @@ func runMC(t *testing.T, env []string, stdin string, args ...string) mcResult {
 	return res
 }
 
-func spineEnv(spine string) []string { return []string{"MC_SPINE=" + spine} }
+const fakeRoutingMarkdown = `# Mission Control routing
+
+| role | harness | binding |
+| --- | --- | --- |
+| strategist | fake | fake |
+| editor | fake | fake |
+| worker | fake | fake |
+| verifier | fake | fake |
+| packager | fake | fake |
+| refiner | fake | fake |
+| homie | fake | fake |
+`
+
+const defaultRoutingMarkdown = `# Mission Control routing
+
+| role | harness | binding |
+| --- | --- | --- |
+| strategist | claude-sdk | claude |
+| editor | codex | chatgpt |
+| worker | claude-sdk | minimax |
+| verifier | codex | chatgpt |
+| packager | claude-sdk | minimax |
+| refiner | codex | chatgpt |
+| homie | claude-sdk | claude |
+`
+
+func spineEnv(spine string) []string {
+	return []string{
+		"MC_SPINE=" + spine,
+		"MC_HOME=" + filepath.Dir(spine),
+	}
+}
 
 // initSpine provisions a fresh temp spine and returns its path.
 func initSpine(t *testing.T, extra ...string) string {
@@ -102,6 +135,9 @@ func initSpine(t *testing.T, extra ...string) string {
 	res := runMC(t, nil, "", args...)
 	if res.code != 0 {
 		t.Fatalf("mc init failed (%d): %s", res.code, res.stderr)
+	}
+	if err := os.WriteFile(filepath.Join(filepath.Dir(spine), "routing.md"), []byte(fakeRoutingMarkdown), 0o600); err != nil {
+		t.Fatalf("write test routing.md: %v", err)
 	}
 	return spine
 }
@@ -667,7 +703,7 @@ func TestDispatchWaitsForProcessFlock(t *testing.T) {
 	}()
 
 	cmd := exec.Command(mcBin, "dispatch")
-	cmd.Env = append(os.Environ(), "MC_SPINE="+spine)
+	cmd.Env = append(os.Environ(), spineEnv(spine)...)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
 	if err := cmd.Start(); err != nil {
@@ -709,6 +745,132 @@ func TestDispatchWaitsForProcessFlock(t *testing.T) {
 	}
 }
 
+func TestDispatchRoutingResolution(t *testing.T) {
+	writeRouting := func(t *testing.T, spine, body string) {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(filepath.Dir(spine), "routing.md"), []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	t.Run("canonical_route_stamps_resolved_harness_and_binding", func(t *testing.T) {
+		spine := initSpine(t)
+		writeRouting(t, spine, defaultRoutingMarkdown)
+		id := taskAdd(t, spine, "already edited")
+		db := openDB(t, spine)
+		if _, err := db.Exec(`UPDATE tasks SET status='seeded' WHERE id=?`, id); err != nil {
+			t.Fatal(err)
+		}
+		res := runMC(t, spineEnv(spine), "", "dispatch")
+		if res.code != 0 {
+			t.Fatalf("dispatch failed: %s", res.stderr)
+		}
+		if res.json["role"] != "worker" || res.json["harness"] != "claude-sdk" || res.json["model_binding"] != "minimax" {
+			t.Fatalf("resolved spawn = %v", res.json)
+		}
+		run := res.json["run_id"].(string)
+		if got := queryStr(t, db, `SELECT binding FROM runs WHERE id=?`, run); got != "claude-sdk/minimax" {
+			t.Fatalf("runs.binding = %q", got)
+		}
+	})
+
+	t.Run("missing_file_fails_before_claim", func(t *testing.T) {
+		spine := initSpine(t)
+		if err := os.Remove(filepath.Join(filepath.Dir(spine), "routing.md")); err != nil {
+			t.Fatal(err)
+		}
+		taskAdd(t, spine, "must not dispatch")
+		res := runMC(t, spineEnv(spine), "", "dispatch")
+		if res.code != 2 || !strings.Contains(res.stderr, "routing.md") {
+			t.Fatalf("exit=%d stderr=%q", res.code, res.stderr)
+		}
+		db := openDB(t, spine)
+		if n := queryInt(t, db, `SELECT COUNT(*) FROM runs`); n != 0 {
+			t.Fatalf("missing routing opened %d runs", n)
+		}
+	})
+
+	t.Run("unresolved_binding_fails_before_claim", func(t *testing.T) {
+		spine := initSpine(t)
+		writeRouting(t, spine, strings.Replace(defaultRoutingMarkdown,
+			"| worker | claude-sdk | minimax |", "| worker | claude-sdk | missing |", 1))
+		taskAdd(t, spine, "must not dispatch")
+		res := runMC(t, spineEnv(spine), "", "dispatch")
+		if res.code != 1 || !strings.Contains(res.stderr, "unresolved binding") {
+			t.Fatalf("exit=%d stderr=%q", res.code, res.stderr)
+		}
+		db := openDB(t, spine)
+		if n := queryInt(t, db, `SELECT COUNT(*) FROM runs`); n != 0 {
+			t.Fatalf("unresolved routing opened %d runs", n)
+		}
+	})
+
+	t.Run("producer_judge_same_family_fails_before_claim", func(t *testing.T) {
+		spine := initSpine(t)
+		writeRouting(t, spine, strings.Replace(defaultRoutingMarkdown,
+			"| worker | claude-sdk | minimax |", "| worker | codex | chatgpt |", 1))
+		taskAdd(t, spine, "must not dispatch")
+		res := runMC(t, spineEnv(spine), "", "dispatch")
+		if res.code != 1 || !strings.Contains(res.stderr, "decorrelated") {
+			t.Fatalf("exit=%d stderr=%q", res.code, res.stderr)
+		}
+		db := openDB(t, spine)
+		if n := queryInt(t, db, `SELECT COUNT(*) FROM runs`); n != 0 {
+			t.Fatalf("invalid decorrelation opened %d runs", n)
+		}
+	})
+
+	t.Run("explicit_test_fake_route_propagates_without_fallback", func(t *testing.T) {
+		spine := initSpine(t)
+		taskAdd(t, spine, "fake route")
+		res := runMC(t, spineEnv(spine), "", "dispatch")
+		if res.code != 0 || res.json["harness"] != "fake" || res.json["model_binding"] != "fake" {
+			t.Fatalf("fake dispatch code=%d json=%v stderr=%q", res.code, res.json, res.stderr)
+		}
+	})
+
+	t.Run("invalid_routing_does_not_block_pending_land", func(t *testing.T) {
+		spine := initSpine(t)
+		id := taskAdd(t, spine, "already verified")
+		packageTask(t, spine, id, "mc/task-routing-land")
+		res := runMC(t, spineEnv(spine), "", "packet", "decide", fmt.Sprint(id), "--approve")
+		if res.code != 0 {
+			t.Fatalf("approve fixture: %s", res.stderr)
+		}
+		writeRouting(t, spine, "not a routing table\n")
+		res = runMC(t, spineEnv(spine), "", "dispatch")
+		if res.code != 0 || res.json["action"] != "land" {
+			t.Fatalf("pending land under broken routing code=%d json=%v stderr=%q", res.code, res.json, res.stderr)
+		}
+	})
+
+	t.Run("relative_MC_HOME_is_refused", func(t *testing.T) {
+		spine := initSpine(t)
+		taskAdd(t, spine, "absolute home only")
+		res := runMC(t, []string{"MC_SPINE=" + spine, "MC_HOME=relative/home"}, "", "dispatch")
+		if res.code != 2 || !strings.Contains(res.stderr, "must be absolute") {
+			t.Fatalf("exit=%d stderr=%q", res.code, res.stderr)
+		}
+	})
+
+	t.Run("unset_MC_HOME_uses_only_default_home", func(t *testing.T) {
+		spine := initSpine(t)
+		taskAdd(t, spine, "default home")
+		home := t.TempDir()
+		root := filepath.Join(home, ".mission-control")
+		if err := os.MkdirAll(root, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(root, "routing.md"), []byte(defaultRoutingMarkdown), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		res := runMC(t, []string{"MC_SPINE=" + spine, "HOME=" + home}, "", "dispatch")
+		if res.code != 0 || res.json["harness"] != "codex" || res.json["model_binding"] != "chatgpt" {
+			t.Fatalf("default-home route code=%d json=%v stderr=%q", res.code, res.json, res.stderr)
+		}
+	})
+}
+
 func TestDispatchCASSingleWinner(t *testing.T) {
 	spine := initSpine(t)
 	taskAdd(t, spine, "contended task")
@@ -721,7 +883,7 @@ func TestDispatchCASSingleWinner(t *testing.T) {
 		go func(i int) {
 			defer wg.Done()
 			cmd := exec.Command(mcBin, "dispatch")
-			cmd.Env = append(os.Environ(), "MC_SPINE="+spine)
+			cmd.Env = append(os.Environ(), spineEnv(spine)...)
 			var outBuf, errBuf bytes.Buffer
 			cmd.Stdout = &outBuf
 			cmd.Stderr = &errBuf

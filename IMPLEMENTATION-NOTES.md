@@ -372,3 +372,18 @@ Entry template:
   reverse if §18 later assigns the flag a non-writing meaning.
 - Spec impact: §18 should remove or define `--correction-count`
 - Needs your decision: no
+
+## 2026-07-12 — Routing closure crosses the Phase 2 wave-1 directory fence
+- Where: Phase 1b Ambiguity A5; Phase 2 takeover review; spec §9.1/§16.2;
+  phase2-contract §7 said resident/runner were untouched in wave 1
+- Gap: the wave-1 contract omitted the Phase 1-explicit routing deferral, and
+  its directory fence would leave `mc dispatch` hardcoding fake plus the
+  resident hardcoding fake into run.json — unresolved routing and a false
+  permanent runtime locator.
+- Choice: the spec wins: resolve the strict ADR-007 routing table in `mc`
+  before lease claim, carry harness/model_binding in the spawn effect, and
+  make the resident copy those resolved fields. The fake family exists only
+  in explicitly build-tagged CLI/E2E binaries; production cannot resolve or
+  fall back to it. Runs store the immutable `harness/binding` locator.
+- Spec impact: none; phase2-contract §7's ownership fence was incomplete
+- Needs your decision: no

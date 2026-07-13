@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"os"
 	"path/filepath"
 	"reflect"
 	"testing"
@@ -29,6 +30,20 @@ func dvSpine(t *testing.T, initArgs ...func(*InitArgs)) *sql.DB {
 	}
 	if _, err := Init(a); err != nil {
 		t.Fatalf("init spine: %v", err)
+	}
+	t.Setenv("MC_HOME", filepath.Dir(a.Spine))
+	if err := os.WriteFile(filepath.Join(filepath.Dir(a.Spine), "routing.md"), []byte(`# test routing
+| role | harness | binding |
+| --- | --- | --- |
+| strategist | claude-sdk | claude |
+| editor | codex | chatgpt |
+| worker | claude-sdk | minimax |
+| verifier | codex | chatgpt |
+| packager | claude-sdk | minimax |
+| refiner | codex | chatgpt |
+| homie | claude-sdk | claude |
+`), 0o600); err != nil {
+		t.Fatalf("write routing.md: %v", err)
 	}
 	db, err := OpenSpine(a.Spine)
 	if err != nil {
@@ -218,7 +233,7 @@ func TestDispatchSQLDifferentialActions(t *testing.T) {
 		if err := db.QueryRow(`SELECT binding, pool_snapshot FROM runs WHERE id=?`, runID).Scan(&binding, &pool); err != nil {
 			t.Fatal(err)
 		}
-		if binding != "fake" || pool != "[1]" {
+		if binding != "codex/chatgpt" || pool != "[1]" {
 			t.Fatalf("run binding/pool = %q/%q", binding, pool)
 		}
 	})

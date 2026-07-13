@@ -281,6 +281,19 @@ func setup(t *testing.T) *fixture {
 			t.Fatal(err)
 		}
 	}
+	if err := os.WriteFile(filepath.Join(f.home, "routing.md"), []byte(`# fake E2E routing
+| role | harness | binding |
+| --- | --- | --- |
+| strategist | fake | fake |
+| editor | fake | fake |
+| worker | fake | fake |
+| verifier | fake | fake |
+| packager | fake | fake |
+| refiner | fake | fake |
+| homie | fake | fake |
+`), 0o600); err != nil {
+		t.Fatal(err)
+	}
 
 	repoRoot, err := filepath.Abs("../..")
 	if err != nil {
@@ -311,7 +324,9 @@ func setup(t *testing.T) *fixture {
 	f.docker("run", "-d", "--rm", "--name", f.helper,
 		"--label", "mc-managed", "--label", "mc-tier=helper",
 		"-v", f.volume+":/mc/spine",
+		"-v", f.home+":/mc/home:ro",
 		"-e", "MC_SPINE="+spineDBPath,
+		"-e", "MC_HOME=/mc/home",
 		image, "sleep", "infinity")
 	t.Cleanup(func() {
 		// Reap any straggler agent containers this run spawned, then the helper.

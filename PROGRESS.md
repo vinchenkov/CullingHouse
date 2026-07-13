@@ -346,3 +346,21 @@ with authoritative routing.md parsing/validation; unresolved roles or invalid
 producer/judge decorrelation must fail before lease claim/effect, while the
 test-only fake binding remains expressible through test config. Initiative
 wave remains Parked. Then adversarially review wave 1 against its contract.
+
+- 2026-07-12 — **Phase 2 wave-1 routing green.** ADR-007 pins one strict
+  `$MC_HOME/routing.md` table and an injected canonical binding registry.
+  Spawn validates every role/reference plus Strategist↔Editor and
+  Worker↔Verifier decorrelation before claim; missing/invalid config opens no
+  Run, while pending land/reap-class reconciliation remains usable. Resolved
+  harness/model binding propagates through effect → run.json and the Run keeps
+  `harness/binding`. Production excludes fake; only build-tagged CLI/fake-E2E
+  binaries accept explicitly named fake routes. Canonical, failure, MC_HOME,
+  build-tag fake, and resident propagation tests green; Docker-tag suite
+  compiles without running Docker.
+
+NEXT: Adversarially review Phase 2 wave 1 (contract + domain/verbs/dispatch
+adapter/routing) before declaring the wave complete. Prioritize transaction
+atomicity, initiative drain/plan-review boundaries, carried correction/refine
+briefs and exception labels, all terminal caller/role/subject fences, and
+route snapshot truth. Fix confirmed findings red-first. Initiative wave CLI
+remains Parked pending the operator's durable plan-review representation.

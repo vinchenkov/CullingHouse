@@ -75,8 +75,10 @@ export type Effect =
       run_id: string;
       role: string;
       subject_id: number | null;
-      worksource: string;
+      worksource: string | null;
       pool_ids: number[];
+      harness: string;
+      model_binding: string;
       session_path?: string;
       heartbeat_interval_s: number;
     }

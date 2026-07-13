@@ -11,6 +11,7 @@ import (
 
 	"mc/dispatch"
 	"mc/domain"
+	"mc/routing"
 )
 
 // Dispatch is the one caller of dispatch.Decide (contract §3; §10; Inv. 2/3).
@@ -287,7 +288,11 @@ func applyAction(ctx context.Context, q Q, now time.Time, a dispatch.Action, tun
 		return map[string]any{"action": "idle", "reason": string(a.Idle)}, nil
 
 	case dispatch.KindSpawn:
-		return applySpawn(ctx, q, now, a.Spawn, tun)
+		route, err := resolveSpawnRoute(a.Spawn.Role)
+		if err != nil {
+			return nil, err
+		}
+		return applySpawn(ctx, q, now, a.Spawn, tun, route)
 
 	case dispatch.KindReap:
 		// The reap decision's charge/block computation is Decide's; the write
@@ -333,7 +338,7 @@ func applyAction(ctx context.Context, q Q, now time.Time, a dispatch.Action, tun
 
 // applySpawn is the claim-and-spawn behind lease.Claim: CAS the free lock +
 // INSERT the runs row (Inv. 4), one transaction.
-func applySpawn(ctx context.Context, q Q, now time.Time, sp *dispatch.Spawn, tun tunables) (map[string]any, error) {
+func applySpawn(ctx context.Context, q Q, now time.Time, sp *dispatch.Spawn, tun tunables, route routing.Route) (map[string]any, error) {
 	runID, err := newRunID()
 	if err != nil {
 		return nil, err
@@ -351,14 +356,12 @@ func applySpawn(ctx context.Context, q Q, now time.Time, sp *dispatch.Spawn, tun
 		}
 	}
 
-	// binding='fake': routing.md resolution is later-phase work; the fake
-	// family is the test-config-only binding (phase1b contract Ambiguity A5).
 	claim, err := domain.Claim(ctx, q, now, domain.ClaimArgs{
 		RunID:               runID,
 		Owner:               owner,
 		SubjectID:           sp.SubjectID,
 		SessionPath:         sessionPath,
-		Binding:             "fake",
+		Binding:             route.HistoricalBinding(),
 		PoolSnapshot:        pool,
 		HardDeadlineMinutes: tun.hardDeadlineMinutes,
 	})
@@ -387,5 +390,41 @@ func applySpawn(ctx context.Context, q Q, now time.Time, sp *dispatch.Spawn, tun
 		"pool_ids":             poolIDs,
 		"session_path":         sessionPath,
 		"heartbeat_interval_s": tun.heartbeatIntervalS,
+		"harness":              route.Harness,
+		"model_binding":        route.Binding,
 	}, nil
+}
+
+// resolveSpawnRoute reads the one authoritative role map. It is deliberately
+// called only for Spawn: reap/land/reenter reconciliation must remain usable
+// while routing is being repaired. Parse/validation completes before
+// lease.Claim, so an invalid route opens no Run and returns no spawn effect.
+func resolveSpawnRoute(role dispatch.Role) (routing.Route, error) {
+	home := os.Getenv("MC_HOME")
+	if home == "" {
+		userHome, err := os.UserHomeDir()
+		if err != nil {
+			return routing.Route{}, Usagef("resolve default MC_HOME for routing.md: %v (run: mc onboard routing)", err)
+		}
+		home = filepath.Join(userHome, ".mission-control")
+	}
+	if !filepath.IsAbs(home) {
+		return routing.Route{}, Usagef("MC_HOME must be absolute to resolve routing.md, got %q (run: mc onboard routing)", home)
+	}
+	path := filepath.Join(filepath.Clean(home), "routing.md")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return routing.Route{}, Usagef("read routing.md at %q: %v (run: mc onboard routing)", path, err)
+	}
+	registry, allowFakeDecorrelation := routing.ActiveRegistry()
+	table, err := routing.Parse(data, registry, allowFakeDecorrelation)
+	if err != nil {
+		return routing.Route{}, Domainf("invalid routing.md at %q: %v (run: mc onboard routing)", path, err)
+	}
+	base := baseRole(string(role))
+	resolved, err := table.Resolve(base)
+	if err != nil {
+		return routing.Route{}, Domainf("invalid routing.md at %q: %v (run: mc onboard routing)", path, err)
+	}
+	return resolved, nil
 }
