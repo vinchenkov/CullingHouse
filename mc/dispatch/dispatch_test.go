@@ -725,6 +725,19 @@ func TestStep3_EditorBriefSnapshotsEntirePool(t *testing.T) {
 	}
 }
 
+func TestStep3_PausedWorksourceIsInvisible(t *testing.T) {
+	paused := tk(1, StatusProposed)
+	paused.Priority = -1
+	paused.WorksourceStatus = "paused"
+	active := tk(2, StatusProposed)
+	active.WorksourceStatus = "active"
+	a := decide(t, recs([]Task{paused, active}, nil), freeLock())
+	wantSpawn(t, a, RoleEditor, pi64(2))
+	if want := []int64{2}; !reflect.DeepEqual(a.Spawn.ProposedPool, want) {
+		t.Fatalf("paused Worksource leaked into Editor pool: %v", a.Spawn.ProposedPool)
+	}
+}
+
 func TestStep3_FurthestFirst(t *testing.T) {
 	// verified (4) > worked (3) > seeded (2) > proposed (1).
 	rec := recs([]Task{

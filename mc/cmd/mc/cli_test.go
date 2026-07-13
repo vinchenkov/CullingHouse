@@ -439,6 +439,66 @@ func TestInitiativeAdd(t *testing.T) {
 	})
 }
 
+func TestWorksourceLifecycle(t *testing.T) {
+	spine := initSpine(t)
+	add := runMC(t, spineEnv(spine), "", "worksource", "add", "ws-two",
+		"--title", "Second Worksource", "--kind", "repo",
+		"--sandbox-profile", "default", "--directive", "raise leverage")
+	if add.code != 0 {
+		t.Fatalf("worksource add failed: %s", add.stderr)
+	}
+	bad := runMC(t, spineEnv(spine), "", "worksource", "add", "bad-profile",
+		"--title", "Bad", "--kind", "repo", "--sandbox-profile", "missing")
+	if bad.code != 1 {
+		t.Fatalf("missing profile exit=%d stderr=%q", bad.code, bad.stderr)
+	}
+
+	pausedTask := runMC(t, spineEnv(spine), "", "task", "add", "paused task",
+		"--worksource", "ws-two", "--priority", "-1")
+	if pausedTask.code != 0 {
+		t.Fatalf("paused fixture add: %s", pausedTask.stderr)
+	}
+	activeID := taskAdd(t, spine, "active task")
+	pause := runMC(t, spineEnv(spine), "", "worksource", "pause", "ws-two")
+	if pause.code != 0 {
+		t.Fatalf("pause failed: %s", pause.stderr)
+	}
+	eff := dispatchExpect(t, spine, "spawn")
+	pool := eff["pool_ids"].([]any)
+	if len(pool) != 1 || int64(pool[0].(float64)) != activeID {
+		t.Fatalf("paused Worksource leaked into Editor pool: %v", pool)
+	}
+
+	run := eff["run_id"].(string)
+	pipelineEnv := runJSONEnv(t, spine, run, "pipeline", "editor")
+	listed := runMC(t, pipelineEnv, "", "worksource", "list")
+	if listed.code != 0 || len(listed.json["worksources"].([]any)) != 2 {
+		t.Fatalf("pipeline list code=%d json=%v stderr=%q", listed.code, listed.json, listed.stderr)
+	}
+	for _, args := range [][]string{
+		{"worksource", "pause", "ws-test"},
+		{"worksource", "archive", "ws-test"},
+		{"worksource", "add", "forged", "--title", "Forged", "--kind", "repo"},
+	} {
+		denied := runMC(t, pipelineEnv, "", args...)
+		if denied.code != 1 || !strings.Contains(denied.stderr, "operator verb") {
+			t.Fatalf("pipeline %v exit=%d stderr=%q", args, denied.code, denied.stderr)
+		}
+	}
+
+	archive := runMC(t, spineEnv(spine), "", "worksource", "archive", "ws-two")
+	if archive.code != 0 {
+		t.Fatalf("archive failed: %s", archive.stderr)
+	}
+	db := openDB(t, spine)
+	if got := queryStr(t, db, `SELECT status FROM worksources WHERE id='ws-two'`); got != "archived" {
+		t.Fatalf("worksource status = %q", got)
+	}
+	if got := queryInt(t, db, `SELECT COUNT(*) FROM worksources WHERE id='bad-profile'`); got != 0 {
+		t.Fatalf("invalid profile left %d worksource rows", got)
+	}
+}
+
 func TestPacketListEmpty(t *testing.T) {
 	spine := initSpine(t)
 	res := runMC(t, spineEnv(spine), "", "packet", "list")

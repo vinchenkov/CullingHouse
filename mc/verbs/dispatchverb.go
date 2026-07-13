@@ -190,10 +190,10 @@ func loadLock(ctx context.Context, q Q) (dispatch.Lock, tunables, error) {
 func loadRecords(ctx context.Context, q Q) (dispatch.Records, error) {
 	rec := dispatch.Records{}
 	rows, err := q.QueryContext(ctx, `
-		SELECT id, title, scope, initiative_id, priority, created_at, status,
+		SELECT t.id, t.title, t.scope, t.initiative_id, t.priority, t.created_at, t.status,
 		       blocked, dispatch_retries, decision, decided_at, archived,
-		       worksource, branch, verified_sha, target_ref
-		FROM tasks`)
+		       worksource, branch, verified_sha, target_ref, w.status
+		FROM tasks t JOIN worksources w ON w.id = t.worksource`)
 	if err != nil {
 		return rec, err
 	}
@@ -211,7 +211,7 @@ func loadRecords(ctx context.Context, q Q) (dispatch.Records, error) {
 		if err := rows.Scan(&t.ID, &t.Title, &scope, &initiativeID, &t.Priority,
 			&createdAt, &status, &blocked, &t.DispatchRetries, &decision,
 			&decidedAt, &archived, &t.Worksource, &branch, &verifiedSHA,
-			&target); err != nil {
+			&target, &t.WorksourceStatus); err != nil {
 			return rec, err
 		}
 		t.Scope = dispatch.Scope(scope)

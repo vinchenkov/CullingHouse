@@ -85,19 +85,20 @@ const (
 // dispatch reads. Proposals, ordinary tasks, initiatives and wave children
 // are all Task rows; Scope/Status/InitiativeID say which.
 type Task struct {
-	ID              int64
-	Title           string
-	Scope           Scope
-	InitiativeID    *int64 // set on wave children only (substrate forbids nesting)
-	Priority        int    // -1 = expedited, 0–3 = P0–P3; lower wins
-	CreatedAt       time.Time
-	Status          Status
-	Blocked         bool // dispatchability flag, deliberately not a status (§5, §6)
-	DispatchRetries int  // infra-death budget; decremented only by the reaper (§10)
-	Decision        TaskDecision
-	DecidedAt       *time.Time
-	Archived        bool
-	Worksource      string
+	ID               int64
+	Title            string
+	Scope            Scope
+	InitiativeID     *int64 // set on wave children only (substrate forbids nesting)
+	Priority         int    // -1 = expedited, 0–3 = P0–P3; lower wins
+	CreatedAt        time.Time
+	Status           Status
+	Blocked          bool // dispatchability flag, deliberately not a status (§5, §6)
+	DispatchRetries  int  // infra-death budget; decremented only by the reaper (§10)
+	Decision         TaskDecision
+	DecidedAt        *time.Time
+	Archived         bool
+	Worksource       string
+	WorksourceStatus string // empty in hand-built legacy fixtures means active
 
 	// Landing inputs (§7 Landing): a task whose record carries a branch gets
 	// a durable landing-pending mark at approve; the land effect carries
@@ -476,7 +477,7 @@ func consoleDue(rec Records, cfg Config, clk Clock) bool {
 func nextLanding(rec Records) (Task, bool) {
 	var cand []Task
 	for _, t := range rec.Tasks {
-		if t.LandingPending() {
+		if worksourceActive(t) && t.LandingPending() {
 			cand = append(cand, t)
 		}
 	}
@@ -517,7 +518,7 @@ func inFlightRefinement(rec Records) (Task, bool) {
 	}
 	var cand []Task
 	for _, t := range rec.Tasks {
-		if t.Archived || t.Blocked || t.Status == StatusPackaged || t.Status.Rank() < 0 {
+		if !worksourceActive(t) || t.Archived || t.Blocked || t.Status == StatusPackaged || t.Status.Rank() < 0 {
 			continue
 		}
 		linked := live[t.ID] || (t.InitiativeID != nil && live[*t.InitiativeID])
@@ -576,7 +577,7 @@ func refinementStart(rec Records) (Task, bool) {
 		if t.Decision != DecisionNone { // decided packets are out of the refinement pool (§10 step 0c)
 			continue
 		}
-		if t.Blocked || t.Archived { // NOTE(S6.2)
+		if !worksourceActive(*t) || t.Blocked || t.Archived { // NOTE(S6.2)
 			continue
 		}
 		if t.Status != StatusPackaged {
@@ -612,7 +613,7 @@ func refinementStart(rec Records) (Task, bool) {
 func nextDispatch(rec Records) (Task, bool) {
 	var cand []Task
 	for _, t := range rec.Tasks {
-		if t.Archived || t.Blocked || t.Status.Rank() <= 0 {
+		if !worksourceActive(t) || t.Archived || t.Blocked || t.Status.Rank() <= 0 {
 			continue
 		}
 		if t.Scope == ScopeInitiative && hasOpenChildren(rec, t.ID) {
@@ -684,6 +685,12 @@ func findTask(rec Records, id int64) *Task {
 	return nil
 }
 
+func worksourceActive(t Task) bool {
+	// Empty preserves hand-built Phase-0/1 fixtures; the SQL loader always
+	// supplies the authoritative status.
+	return t.WorksourceStatus == "" || t.WorksourceStatus == "active"
+}
+
 func hasOpenChildren(rec Records, initiativeID int64) bool {
 	for _, c := range rec.Tasks {
 		if c.InitiativeID != nil && *c.InitiativeID == initiativeID && !c.Archived {
@@ -698,7 +705,7 @@ func hasOpenChildren(rec Records, initiativeID int64) bool {
 func proposedPool(rec Records) []int64 {
 	var ids []int64
 	for _, t := range rec.Tasks {
-		if t.Status == StatusProposed && !t.Archived && !t.Blocked {
+		if worksourceActive(t) && t.Status == StatusProposed && !t.Archived && !t.Blocked {
 			ids = append(ids, t.ID)
 		}
 	}

@@ -64,6 +64,19 @@ CREATE TABLE worksources (
                     CHECK (status IN ('active', 'paused', 'archived'))
 );
 
+CREATE TRIGGER worksources_archived_terminal
+BEFORE UPDATE OF status ON worksources
+WHEN OLD.status = 'archived' AND NEW.status <> 'archived'
+BEGIN
+    SELECT RAISE(ABORT, 'archived Worksource status is terminal (§5)');
+END;
+
+CREATE TRIGGER worksources_no_delete
+BEFORE DELETE ON worksources
+BEGIN
+    SELECT RAISE(ABORT, 'Worksource records are never deleted (§5)');
+END;
+
 ------------------------------------------------------------------------------
 -- tasks — the one work table (spec §5): proposals, ordinary tasks,
 -- initiatives, and wave children are all rows here.

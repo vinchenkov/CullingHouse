@@ -672,3 +672,16 @@ initiative-wave terminal; these operator record verbs do not depend on it.
 NEXT: TDD `mc worksource add|list|pause|archive`, including active-only
 dispatch visibility and immutable historical rows. Then implement operator
 interrupt as cancel+lease-clear+exact stop effect.
+
+- 2026-07-12 — **Phase 2 wave 2 Worksource lifecycle green.** Add validates
+  kind/seeding mode and any sandbox-profile reference; list remains open to
+  pipeline reads; pause/archive are operator or allowlisted-Homie writes and
+  pipeline attempts are inert. SQL dispatch now carries authoritative
+  Worksource status and excludes paused/archived tasks from landing,
+  refinement, with-room selection, and Editor pool snapshots. Archive is
+  terminal and Worksource rows cannot be deleted. Complete fast lane green.
+
+NEXT: Implement `mc task interrupt` as one operator transaction: cancel the
+live task with reason `operator_interrupt`, end the matching Run, clear only
+its lease, and return the exact container-stop effect. Add stale/non-live and
+pipeline-provenance negatives, then resident effect coverage.

@@ -112,6 +112,8 @@ func dispatchVerb(args []string, stdin io.Reader) (any, error) {
 		return cmdTask(rest)
 	case "initiative":
 		return cmdInitiative(rest)
+	case "worksource":
+		return cmdWorksource(rest)
 	case "packet":
 		return cmdPacket(rest)
 	case "dispatch":
@@ -344,6 +346,60 @@ func cmdInitiative(args []string) (any, error) {
 	return withSpine(func(db *sql.DB) (any, error) {
 		return verbs.InitiativeAdd(db, id, title, *worksource, *charter, pri)
 	})
+}
+
+func cmdWorksource(args []string) (any, error) {
+	if len(args) == 0 {
+		return nil, verbs.Usagef("usage: mc worksource add|list|pause|archive …")
+	}
+	switch args[0] {
+	case "list":
+		if len(args) != 1 {
+			return nil, verbs.Usagef("usage: mc worksource list")
+		}
+		return withSpine(func(db *sql.DB) (any, error) { return verbs.WorksourceList(db) })
+	case "add":
+		worksourceID, rest, err := positional("mc worksource add", args[1:])
+		if err != nil {
+			return nil, err
+		}
+		fs := newFlags("mc worksource add")
+		a := verbs.WorksourceAddArgs{ID: worksourceID}
+		fs.StringVar(&a.Title, "title", "", "display title")
+		fs.StringVar(&a.Kind, "kind", "", "repo|personal|transient")
+		fs.StringVar(&a.Jurisdiction, "jurisdiction", "", "jurisdiction description")
+		fs.StringVar(&a.SandboxProfile, "sandbox-profile", "", "sandbox profile id")
+		fs.StringVar(&a.Directive, "directive", "", "standing directive")
+		fs.StringVar(&a.SeedingMode, "seeding-mode", "propose-only", "propose-only|auto")
+		if err := parse(fs, rest); err != nil {
+			return nil, err
+		}
+		id, err := verbs.LoadIdentity()
+		if err != nil {
+			return nil, err
+		}
+		return withSpine(func(db *sql.DB) (any, error) { return verbs.WorksourceAdd(db, id, a) })
+	case "pause", "archive":
+		worksourceID, rest, err := positional("mc worksource "+args[0], args[1:])
+		if err != nil {
+			return nil, err
+		}
+		if len(rest) != 0 {
+			return nil, verbs.Usagef("mc worksource %s: unexpected argument %q", args[0], rest[0])
+		}
+		id, err := verbs.LoadIdentity()
+		if err != nil {
+			return nil, err
+		}
+		target := "paused"
+		if args[0] == "archive" {
+			target = "archived"
+		}
+		return withSpine(func(db *sql.DB) (any, error) {
+			return verbs.WorksourceSetStatus(db, id, worksourceID, target)
+		})
+	}
+	return nil, verbs.Usagef("unknown subverb: mc worksource %s", args[0])
 }
 
 func cmdPacket(args []string) (any, error) {

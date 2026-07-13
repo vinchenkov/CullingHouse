@@ -62,6 +62,15 @@ func TestPragmasAndSingletons(t *testing.T) {
 	})
 }
 
+func TestWorksourceArchiveIsHistorical(t *testing.T) {
+	db := openSpine(t)
+	mustExec(t, db, `INSERT INTO worksources (id, title, kind) VALUES ('history', 'History', 'repo')`)
+	mustExec(t, db, `UPDATE worksources SET status='paused' WHERE id='history'`)
+	mustExec(t, db, `UPDATE worksources SET status='archived' WHERE id='history'`)
+	wantAbort(t, db, `UPDATE worksources SET status='active' WHERE id='history'`)
+	wantAbort(t, db, `DELETE FROM worksources WHERE id='history'`)
+}
+
 // ---------------------------------------------------------------------------
 // The full state-transition matrix, both scopes (spec §6, §6.1): every legal
 // edge commits, every illegal edge aborts — all 5x5 status pairs.
