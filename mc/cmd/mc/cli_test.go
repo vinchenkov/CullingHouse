@@ -15,7 +15,9 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
+	"time"
 
 	"mc/substrate"
 )
@@ -644,6 +646,68 @@ func TestPipelineWalk(t *testing.T) {
 // ---------------------------------------------------------------------------
 // CAS claim: two concurrent claimants, exactly one winner (§10 fencing).
 // ---------------------------------------------------------------------------
+
+func TestDispatchWaitsForProcessFlock(t *testing.T) {
+	spine := initSpine(t)
+	taskAdd(t, spine, "flock-serialized task")
+	lockPath := filepath.Join(filepath.Dir(spine), "mc.dispatch.lock")
+	lockFile, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lockFile.Close()
+	if err := syscall.Flock(int(lockFile.Fd()), syscall.LOCK_EX); err != nil {
+		t.Fatal(err)
+	}
+	locked := true
+	defer func() {
+		if locked {
+			_ = syscall.Flock(int(lockFile.Fd()), syscall.LOCK_UN)
+		}
+	}()
+
+	cmd := exec.Command(mcBin, "dispatch")
+	cmd.Env = append(os.Environ(), "MC_SPINE="+spine)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &stdout, &stderr
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() { done <- cmd.Wait() }()
+
+	select {
+	case err := <-done:
+		t.Fatalf("dispatch exited while mc.dispatch.lock was held: err=%v stdout=%q stderr=%q", err, stdout.String(), stderr.String())
+	case <-time.After(150 * time.Millisecond):
+		// Still blocked before evaluation: no Run row can have opened.
+	}
+	db := openDB(t, spine)
+	if n := queryInt(t, db, `SELECT COUNT(*) FROM runs`); n != 0 {
+		t.Fatalf("dispatch evaluated while process flock was held: runs=%d", n)
+	}
+	if err := syscall.Flock(int(lockFile.Fd()), syscall.LOCK_UN); err != nil {
+		t.Fatal(err)
+	}
+	locked = false
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("dispatch after flock release: %v stderr=%q", err, stderr.String())
+		}
+	case <-time.After(3 * time.Second):
+		_ = cmd.Process.Kill()
+		t.Fatal("dispatch did not resume after process flock release")
+	}
+	var effect map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &effect); err != nil {
+		t.Fatalf("dispatch output %q: %v", stdout.String(), err)
+	}
+	if effect["action"] != "spawn" {
+		t.Fatalf("post-flock effect = %v, want spawn", effect)
+	}
+}
 
 func TestDispatchCASSingleWinner(t *testing.T) {
 	spine := initSpine(t)

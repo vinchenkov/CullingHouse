@@ -3,6 +3,9 @@ package verbs
 import (
 	"context"
 	"database/sql"
+	"os"
+	"path/filepath"
+	"syscall"
 	"time"
 	_ "time/tzdata" // the console's IANA zones (§16.3) with no host dependency
 
@@ -17,8 +20,17 @@ import (
 // return the effect JSON. A losing racer aborts before effect data (§10
 // fencing): claim is CAS on the free lock row.
 func Dispatch(db *sql.DB) (any, error) {
+	processLock, err := acquireDispatchProcessLock(db)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		_ = syscall.Flock(int(processLock.Fd()), syscall.LOCK_UN)
+		_ = processLock.Close()
+	}()
+
 	var effect map[string]any
-	err := inTx(db, func(ctx context.Context, q Q) error {
+	err = inTx(db, func(ctx context.Context, q Q) error {
 		now, err := spineNow(ctx, q)
 		if err != nil {
 			return err
@@ -57,6 +69,47 @@ func Dispatch(db *sql.DB) (any, error) {
 		return nil, err
 	}
 	return effect, nil
+}
+
+// acquireDispatchProcessLock takes the §10 `mc.dispatch` flock before any
+// durable-state evaluation. The lock file lives beside the spine bytes, so it
+// is arbitrated by the same container-runtime kernel (Inv. 24). BEGIN
+// IMMEDIATE + the lease CAS remain the correctness fence; this process lock
+// prevents multiple host invocations from wasting concurrent evaluations.
+func acquireDispatchProcessLock(db *sql.DB) (*os.File, error) {
+	rows, err := db.Query(`PRAGMA database_list`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	spinePath := ""
+	for rows.Next() {
+		var seq int
+		var name, path string
+		if err := rows.Scan(&seq, &name, &path); err != nil {
+			return nil, err
+		}
+		if name == "main" {
+			spinePath = path
+			break
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if spinePath == "" {
+		return nil, Domainf("mc dispatch requires a file-backed main spine for the §10 process flock")
+	}
+	lockPath := filepath.Join(filepath.Dir(spinePath), "mc.dispatch.lock")
+	f, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		return nil, Domainf("open dispatch process flock %q: %v", lockPath, err)
+	}
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX); err != nil {
+		_ = f.Close()
+		return nil, Domainf("acquire dispatch process flock %q: %v", lockPath, err)
+	}
+	return f, nil
 }
 
 // tunables are the lock row's stored knobs (§16.3; contract §2 mc init;

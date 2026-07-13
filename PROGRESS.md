@@ -331,3 +331,18 @@ NEXT: Close the two omitted Phase 2 wave-1 obligations identified at takeover:
 loser/no-effect coverage (§10), then (2) parse authoritative routing.md,
 validate role bindings/decorrelation, stamp the resolved binding, and refuse
 unresolved routing before lease claim. Initiative wave remains Parked.
+
+- 2026-07-12 — **Process-level dispatch flock green.** `verbs.Dispatch`
+  resolves the file-backed main spine, takes `mc.dispatch.lock` beside it
+  before reading any records, and holds it through the transaction/effect
+  decision; BEGIN IMMEDIATE + lease CAS remain the durable correctness fence.
+  Black-box subprocess test proves a dispatch cannot evaluate/open a Run while
+  another process holds the flock, then resumes with one spawn on release;
+  the existing four-claimant test remains exactly one spawn/three lease-held
+  idles. Go fast lane green.
+
+NEXT: Finish Phase 2 wave-1 routing: replace `binding='fake'` in applySpawn
+with authoritative routing.md parsing/validation; unresolved roles or invalid
+producer/judge decorrelation must fail before lease claim/effect, while the
+test-only fake binding remains expressible through test config. Initiative
+wave remains Parked. Then adversarially review wave 1 against its contract.
