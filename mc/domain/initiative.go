@@ -49,6 +49,17 @@ func BirthWave(ctx context.Context, q Q, initiativeID int64, children []WaveChil
 			"wave children are born only into a live, still-seeded initiative (§6.1); initiative %d is %q",
 			initiativeID, r.Status)
 	}
+	var open int
+	if err := q.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM tasks WHERE initiative_id = ? AND archived = 0`,
+		initiativeID).Scan(&open); err != nil {
+		return nil, err
+	}
+	if open > 0 {
+		return nil, Errf(CodeStrictDrain,
+			"initiative %d already has %d open children; the current wave must drain before the next wave is born (§6.1)",
+			initiativeID, open)
+	}
 
 	ids := make([]int64, 0, len(children))
 	for _, c := range children {

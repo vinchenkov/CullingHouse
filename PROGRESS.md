@@ -364,3 +364,16 @@ atomicity, initiative drain/plan-review boundaries, carried correction/refine
 briefs and exception labels, all terminal caller/role/subject fences, and
 route snapshot truth. Fix confirmed findings red-first. Initiative wave CLI
 remains Parked pending the operator's durable plan-review representation.
+
+- 2026-07-12 — **Phase 2 adversarial review: overlapping waves closed.** A
+  new domain regression first proved that `BirthWave` could append another
+  wave while the initiative still had open children. The aggregate now names
+  the §6.1 strict-drain refusal before inserting anything; the full Go fast
+  lane is green. (The substrate cannot distinguish successive inserts in one
+  legitimate multi-child wave because a wave deliberately has no record;
+  the sole-writer `mc` aggregate is the atomic boundary.)
+
+NEXT: Continue confirmed Phase 2 wave-1 findings red-first: make reap derive
+its subject from the fenced lease, then require a live packet and complete
+landing fence for packet decisions/re-entry. Initiative wave CLI remains
+Parked pending the operator's durable plan-review representation.

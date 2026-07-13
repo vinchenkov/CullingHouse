@@ -62,6 +62,23 @@ func TestBirthWave(t *testing.T) {
 		})
 	})
 
+	t.Run("next_wave_requires_previous_wave_drained", func(t *testing.T) {
+		db := openSpine(t)
+		init := mkTask(t, db, "initiative", "seeded")
+		mustTx(t, db, func(ctx context.Context, q domain.Q) error {
+			_, err := domain.BirthWave(ctx, q, init, []domain.WaveChild{{Title: "open child"}})
+			return err
+		})
+		before := oneInt(t, db, `SELECT COUNT(*) FROM tasks WHERE initiative_id = ?`, init)
+		wantCode(t, db, domain.CodeStrictDrain, func(ctx context.Context, q domain.Q) error {
+			_, err := domain.BirthWave(ctx, q, init, []domain.WaveChild{{Title: "overlapping child"}})
+			return err
+		})
+		if got := oneInt(t, db, `SELECT COUNT(*) FROM tasks WHERE initiative_id = ?`, init); got != before {
+			t.Fatalf("overlapping wave inserted children: %d → %d", before, got)
+		}
+	})
+
 	// Whole wave or nothing (constraint a): an invalid child anywhere in the
 	// batch aborts before any insert lands.
 	t.Run("invalid_child_aborts_whole_wave", func(t *testing.T) {
