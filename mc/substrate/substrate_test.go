@@ -919,6 +919,53 @@ func TestOutboxPayloadIsJSONObject(t *testing.T) {
 	mustExec(t, db, `INSERT INTO outbox (kind, surface, payload) VALUES ('health', 'dashboard', '{"status":"ok"}')`)
 }
 
+// Takeover finding — the outbox was the only communication table without a
+// substrate fence: §15.5 "nothing pushed is ever lost" and ack idempotency
+// lived solely in verbs code. Content is immutable, rows never delete, and
+// delivered_at moves NULL→value exactly once.
+func TestOutboxDeliveryBookkeepingIsFenced(t *testing.T) {
+	db := openSpine(t)
+	mustExec(t, db, `INSERT INTO outbox (kind, surface, payload) VALUES ('health', 'dashboard', '{"status":"ok"}')`)
+
+	wantAbort(t, db, `DELETE FROM outbox`)
+	wantAbort(t, db, `UPDATE outbox SET kind = 'console'`)
+	wantAbort(t, db, `UPDATE outbox SET surface = 'cli'`)
+	wantAbort(t, db, `UPDATE outbox SET channel_ref = 'c9'`)
+	wantAbort(t, db, `UPDATE outbox SET payload = '{"forged":true}'`)
+	wantAbort(t, db, `UPDATE outbox SET created_at = datetime('now', '+1 hour')`)
+
+	// delivered_at is one-way and set-once (ack replay preserves the original).
+	mustExec(t, db, `UPDATE outbox SET delivered_at = datetime('now')`)
+	wantAbort(t, db, `UPDATE outbox SET delivered_at = NULL`)
+	wantAbort(t, db, `UPDATE outbox SET delivered_at = datetime('now', '+1 hour')`)
+	wantAbort(t, db, `DELETE FROM outbox`)
+}
+
+// Takeover finding — conversation rows had no active-session backstop: the
+// domain layer refuses, but a resurrected runner replaying a reply append
+// onto an ended/reaped session met no storage rejection (schema contract:
+// "a bug in mc cannot write an illegal state").
+func TestConversationRowsRequireActiveSession(t *testing.T) {
+	db := openSpine(t)
+	mkHomieSession(t, db, "h-conv")
+	mustExec(t, db,
+		`INSERT INTO conversation_messages (session_id, seq, direction, surface, body)
+		 VALUES ('h-conv', 1, 'inbound', 'discord', 'hello')`)
+
+	mustExec(t, db, `UPDATE homie_sessions SET status = 'ended' WHERE id = 'h-conv'`)
+	wantAbort(t, db,
+		`INSERT INTO conversation_messages (session_id, seq, direction, surface, body)
+		 VALUES ('h-conv', 2, 'reply', 'homie', 'ghost turn')`)
+	mustExec(t, db, `UPDATE homie_sessions SET status = 'reaped' WHERE id = 'h-conv'`)
+	wantAbort(t, db,
+		`INSERT INTO conversation_messages (session_id, seq, direction, surface, body)
+		 VALUES ('h-conv', 2, 'inbound', 'discord', 'ghost inbound')`)
+	// The permanent transcript survives the session ending untouched.
+	if n := oneInt(t, db, `SELECT COUNT(*) FROM conversation_messages WHERE session_id = 'h-conv'`); n != 1 {
+		t.Fatalf("transcript rows = %d, want 1", n)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Phase 2 additive columns (phase2-contract §5) — new-column coverage only;
 // every case above is Phase 1a/1b and stays untouched.

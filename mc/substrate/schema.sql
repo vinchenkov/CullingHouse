@@ -853,6 +853,19 @@ BEGIN
     SELECT RAISE(ABORT, 'conversation rows are append-only (§15.4)');
 END;
 
+-- A transcript grows only while its session lives: a resurrected runner
+-- replaying a claim/reply append onto an ended or reaped session must meet
+-- a storage rejection, not just the domain layer's.
+CREATE TRIGGER conversation_requires_active_session
+BEFORE INSERT ON conversation_messages
+WHEN NOT EXISTS (
+    SELECT 1 FROM homie_sessions s
+    WHERE s.id = NEW.session_id AND s.status = 'active'
+)
+BEGIN
+    SELECT RAISE(ABORT, 'conversation rows require an active Homie session (§15.4)');
+END;
+
 ------------------------------------------------------------------------------
 -- outbox — the one system→operator interconnect (spec §15.5). Delivery
 -- bookkeeping only; the durable conversation row is never removed by
@@ -873,3 +886,32 @@ CREATE TABLE outbox (
 );
 
 CREATE INDEX outbox_undelivered ON outbox (surface, id) WHERE delivered_at IS NULL;
+
+-- §15.5 "nothing pushed is ever lost": outbox rows are delivery history —
+-- content immutable, never deleted, delivered_at stamped exactly once
+-- (ack replay preserves the original timestamp).
+CREATE TRIGGER outbox_no_delete
+BEFORE DELETE ON outbox
+BEGIN
+    SELECT RAISE(ABORT, 'outbox rows are delivery history and are never deleted (§15.5)');
+END;
+
+CREATE TRIGGER outbox_content_immutable
+BEFORE UPDATE ON outbox
+WHEN NEW.id <> OLD.id
+  OR NEW.kind <> OLD.kind
+  OR NEW.session_id IS NOT OLD.session_id
+  OR NEW.surface <> OLD.surface
+  OR NEW.channel_ref IS NOT OLD.channel_ref
+  OR NEW.payload <> OLD.payload
+  OR NEW.created_at <> OLD.created_at
+BEGIN
+    SELECT RAISE(ABORT, 'outbox content is immutable; only delivery bookkeeping advances (§15.5)');
+END;
+
+CREATE TRIGGER outbox_delivered_once
+BEFORE UPDATE OF delivered_at ON outbox
+WHEN OLD.delivered_at IS NOT NULL AND NEW.delivered_at IS NOT OLD.delivered_at
+BEGIN
+    SELECT RAISE(ABORT, 'delivered_at is set exactly once; replays preserve the original (§15.5)');
+END;
