@@ -60,6 +60,7 @@ const (
 	CodeNotFound           = "not-found"
 	CodeNotBlocked         = "not-blocked"
 	CodeBlockedChild       = "blocked-child"
+	CodeBlocked            = "blocked"
 	CodeReasonRequired     = "reason-required"
 	CodeSaturated          = "saturated"
 	CodeEmptyWave          = "empty-wave"

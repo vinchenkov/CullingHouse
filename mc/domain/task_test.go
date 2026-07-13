@@ -52,6 +52,18 @@ func TestPromote(t *testing.T) {
 			return domain.Promote(ctx, q, 999)
 		})
 	})
+
+	t.Run("blocked_proposal_refused", func(t *testing.T) {
+		db := openSpine(t)
+		id := mkTask(t, db, "task", "proposed")
+		mustTx(t, db, func(ctx context.Context, q domain.Q) error {
+			return domain.Block(ctx, q, id, "operator hold")
+		})
+		wantCode(t, db, domain.CodeBlocked, func(ctx context.Context, q domain.Q) error {
+			return domain.Promote(ctx, q, id)
+		})
+		wantAbort(t, db, `UPDATE tasks SET status = 'seeded' WHERE id = ?`, id)
+	})
 }
 
 func TestRejectProposal(t *testing.T) {
@@ -89,6 +101,18 @@ func TestRejectProposal(t *testing.T) {
 		wantCode(t, db, domain.CodeIllegalTransition, func(ctx context.Context, q domain.Q) error {
 			return domain.RejectProposal(ctx, q, id, "r")
 		})
+	})
+
+	t.Run("blocked_proposal_refused", func(t *testing.T) {
+		db := openSpine(t)
+		id := mkTask(t, db, "task", "proposed")
+		mustTx(t, db, func(ctx context.Context, q domain.Q) error {
+			return domain.Block(ctx, q, id, "operator hold")
+		})
+		wantCode(t, db, domain.CodeBlocked, func(ctx context.Context, q domain.Q) error {
+			return domain.RejectProposal(ctx, q, id, "stale Editor verdict")
+		})
+		wantAbort(t, db, `UPDATE tasks SET decision = 'rejected', decided_at = datetime('now'), archived = 1 WHERE id = ?`, id)
 	})
 }
 

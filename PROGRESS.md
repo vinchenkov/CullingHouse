@@ -482,3 +482,14 @@ NEXT: Exclude blocked proposals from Editor pool snapshots and refuse stale
 Editor verdicts against a concurrently blocked proposal at the aggregate
 boundary. Then address saturated operator-directed recovery and runtime route
 truth. Initiative wave CLI remains Parked.
+
+- 2026-07-12 — **Phase 2 adversarial review: blocked proposals made invisible.**
+  Red pure-dispatch and aggregate/backstop tests proved a blocked proposal
+  entered the Editor's exact-coverage snapshot and could still be promoted or
+  rejected. Pool construction now excludes it, while domain and substrate
+  reject stale Editor writes until operator unblock. Complete fast lane green.
+
+NEXT: Restore the valid saturated → operator-revise → genuine-deepening
+recovery while keeping saturated packets out of automatic refinement. Then
+make the fake-only resident fail closed for canonical runtime routes and begin
+the missing immutable spawn-brief carriers. Initiative wave CLI remains Parked.

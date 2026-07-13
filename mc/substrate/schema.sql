@@ -174,6 +174,22 @@ BEGIN
     SELECT RAISE(ABORT, 'illegal status transition (§6)');
 END;
 
+-- Blocking removes a proposal from Editor jurisdiction until the operator
+-- unblocks it (§6). A stale pool snapshot cannot promote or reject it.
+CREATE TRIGGER blocked_proposals_cannot_promote
+BEFORE UPDATE OF status ON tasks
+WHEN OLD.status = 'proposed' AND OLD.blocked = 1 AND NEW.status = 'seeded'
+BEGIN
+    SELECT RAISE(ABORT, 'a blocked proposal cannot be promoted (§6)');
+END;
+
+CREATE TRIGGER blocked_proposals_cannot_reject
+BEFORE UPDATE OF decision ON tasks
+WHEN OLD.status = 'proposed' AND OLD.blocked = 1 AND NEW.decision = 'rejected'
+BEGIN
+    SELECT RAISE(ABORT, 'a blocked proposal cannot be rejected by Editor (§6)');
+END;
+
 -- Archived rows are terminal: no status movement ever again (NOTE(P1.4)).
 CREATE TRIGGER tasks_archived_are_terminal
 BEFORE UPDATE OF status ON tasks

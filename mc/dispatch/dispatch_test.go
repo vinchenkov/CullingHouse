@@ -714,6 +714,7 @@ func TestStep3_EditorBriefSnapshotsEntirePool(t *testing.T) {
 		tk(2, StatusProposed, initiative()),
 		tk(3, StatusProposed, archived(), decided(DecisionRejected, at(-10))),
 		tk(4, StatusProposed),
+		tk(5, StatusProposed, blocked()),
 	}, nil)
 	a := decide(t, rec, freeLock())
 	if a.Kind != KindSpawn || a.Spawn.Role != RoleEditor {

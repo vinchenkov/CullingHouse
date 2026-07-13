@@ -20,6 +20,10 @@ func Promote(ctx context.Context, q Q, taskID int64) error {
 	if err := requireLive(r); err != nil {
 		return err
 	}
+	if r.Blocked {
+		return Errf(CodeBlocked,
+			"blocked proposal %d is outside the Editor snapshot until unblocked (§6)", taskID)
+	}
 	if r.Status != "proposed" {
 		return Errf(CodeIllegalTransition,
 			"only proposed rows promote (§6); task %d is %q", taskID, r.Status)
@@ -42,6 +46,10 @@ func RejectProposal(ctx context.Context, q Q, taskID int64, reason string) error
 	}
 	if err := requireLive(r); err != nil {
 		return err
+	}
+	if r.Blocked {
+		return Errf(CodeBlocked,
+			"blocked proposal %d is outside the Editor snapshot until unblocked (§6)", taskID)
 	}
 	if r.Status != "proposed" {
 		return Errf(CodeIllegalTransition,

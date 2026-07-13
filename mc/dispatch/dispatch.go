@@ -698,7 +698,7 @@ func hasOpenChildren(rec Records, initiativeID int64) bool {
 func proposedPool(rec Records) []int64 {
 	var ids []int64
 	for _, t := range rec.Tasks {
-		if t.Status == StatusProposed && !t.Archived {
+		if t.Status == StatusProposed && !t.Archived && !t.Blocked {
 			ids = append(ids, t.ID)
 		}
 	}
