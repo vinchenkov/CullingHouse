@@ -636,3 +636,16 @@ NEXT: TDD wave 2 slice 1: enforce ADR-001 D6 provenance on every existing
 verb before it opens/mutates the spine, with pipeline attempts at init,
 dispatch, task add, packet decide, task unblock, and land report proven
 bit-for-bit inert. Then add structured error JSON.
+
+- 2026-07-12 — **Phase 2 wave 2 provenance slice 1 green.** Existing
+  host/operator writes now load identity and reject pipeline callers before
+  opening or mutating state: init, dispatch, task add, packet decide, task
+  unblock, and land report. Homie admission is explicit and requires the
+  verb in the immutable run.json allowlist; host remains the no-run.json
+  scope. The process matrix proves no forged task/decision/landing/init bytes
+  and an unchanged lease. Complete fast lane green.
+
+NEXT: Add the wave-2 structured error envelope while preserving exit codes,
+stderr diagnostics, and self-delegation byte fidelity. Then extend the scope
+matrix as new operator/Homie/transport verbs land. Runner-private vs model
+capability enforcement remains a Phase 3 structural-boundary mechanism.

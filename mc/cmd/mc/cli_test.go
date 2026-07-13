@@ -1279,6 +1279,8 @@ func TestRoleScopeEnforcement(t *testing.T) {
 	taskID := taskAdd(t, spine, "scoped work")
 	eff := dispatchExpect(t, spine, "spawn") // editor
 	run := eff["run_id"].(string)
+	editorEnv := runJSONEnv(t, spine, run, "pipeline", "editor")
+	forbiddenInit := filepath.Join(t.TempDir(), "pipeline-must-not-init.db")
 
 	batch := fmt.Sprintf(`{"verdicts":[{"task":%d,"decision":"promote","reason":"ok"}]}`, taskID)
 	tests := []struct {
@@ -1309,6 +1311,16 @@ func TestRoleScopeEnforcement(t *testing.T) {
 				"--outcome", "pass", "--evidence", "e", "--sha", "s"}, "", "role mismatch"},
 		{"strategist_wrong_role", runJSONEnv(t, spine, run, "pipeline", "worker"),
 			[]string{"strategist", "propose", "--run", run, "--batch", "-"}, `{"proposals":[]}`, "role mismatch"},
+		{"pipeline_init_denied", editorEnv,
+			[]string{"init", "--spine", forbiddenInit, "--worksource", "forged"}, "", "host"},
+		{"pipeline_dispatch_denied", editorEnv,
+			[]string{"dispatch"}, "", "host"},
+		{"pipeline_task_add_denied", editorEnv,
+			[]string{"task", "add", "forged operator task", "--worksource", "ws-test"}, "", "operator verb"},
+		{"pipeline_packet_decide_denied", editorEnv,
+			[]string{"packet", "decide", fmt.Sprint(taskID), "--cancel", "--reason", "forged"}, "", "operator verb"},
+		{"pipeline_land_report_denied", editorEnv,
+			[]string{"land", "report", fmt.Sprint(taskID), "--status", "success"}, "", "host"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -1330,6 +1342,12 @@ func TestRoleScopeEnforcement(t *testing.T) {
 	}
 	if got := queryStr(t, db, `SELECT run_id FROM lock WHERE id = 1`); got != run {
 		t.Fatalf("refused calls disturbed the lease: %q", got)
+	}
+	if got := queryInt(t, db, `SELECT COUNT(*) FROM tasks`); got != 1 {
+		t.Fatalf("pipeline operator-verb attempts changed task count to %d", got)
+	}
+	if _, err := os.Stat(forbiddenInit); !os.IsNotExist(err) {
+		t.Fatalf("pipeline init created %s", forbiddenInit)
 	}
 }
 

@@ -20,7 +20,10 @@ import (
 //     keeps its slot (Inv. 11).
 //   - cancel: decision='cancelled' + archive via task.Cancel; for an
 //     initiative the substrate cascade cancels open children (§6.1).
-func PacketDecide(db *sql.DB, task int64, decision, reason string) (any, error) {
+func PacketDecide(db *sql.DB, id *RunIdentity, task int64, decision, reason string) (any, error) {
+	if err := RequireOperatorVerb(id, "packet.decide"); err != nil {
+		return nil, err
+	}
 	switch decision {
 	case "approve":
 		if reason != "" {

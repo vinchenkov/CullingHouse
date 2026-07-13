@@ -10,7 +10,10 @@ import (
 // TaskAdd files human-seeded work into the proposed pool as origin:user
 // (§18, contract §2). target_ref defaults to 'main' at add time (contract
 // Ambiguity A4).
-func TaskAdd(db *sql.DB, title, worksource, description string, priority *int) (any, error) {
+func TaskAdd(db *sql.DB, id *RunIdentity, title, worksource, description string, priority *int) (any, error) {
+	if err := RequireOperatorVerb(id, "task.add"); err != nil {
+		return nil, err
+	}
 	if title == "" {
 		return nil, Usagef("mc task add requires a title")
 	}
@@ -99,8 +102,8 @@ func TaskBlock(db *sql.DB, id *RunIdentity, task int64, reason string) (any, err
 // verb, denied to pipeline runs (deny rule 1) — resuming work is the
 // operator's judgment.
 func TaskUnblock(db *sql.DB, id *RunIdentity, task int64) (any, error) {
-	if id != nil {
-		return nil, Domainf("mc task unblock is an operator verb, denied to pipeline runs (§18 deny rule 1)")
+	if err := RequireOperatorVerb(id, "task.unblock"); err != nil {
+		return nil, err
 	}
 	err := inTx(db, func(ctx context.Context, q Q) error {
 		return domain.Unblock(ctx, q, task)

@@ -120,10 +120,39 @@ func baseRole(role string) string {
 // RunIdentity is the read-only launch envelope identity (§11.5, ADR-001 D2):
 // tier and role are read only from run.json, never from arguments.
 type RunIdentity struct {
-	RunID   string `json:"run_id"`
-	Tier    string `json:"tier"`
-	Role    string `json:"role"`
-	PoolIDs []int  `json:"pool_ids"`
+	RunID         string   `json:"run_id"`
+	Tier          string   `json:"tier"`
+	Role          string   `json:"role"`
+	PoolIDs       []int    `json:"pool_ids"`
+	VerbAllowlist []string `json:"verb_allowlist"`
+}
+
+// RequireHostScope fences host-effect and resident-only verbs before they
+// open or mutate the spine (ADR-001 D6). Scope is derived only from run.json
+// presence; a flag can never counterfeit it.
+func RequireHostScope(id *RunIdentity, verb string) error {
+	if id != nil {
+		return Domainf("%s is host scope only; run.json callers are refused (ADR-001 D6)", verb)
+	}
+	return nil
+}
+
+// RequireOperatorVerb admits the host and a Homie only when the verb was
+// frozen into that session's allowlist. Pipeline identities are categorically
+// denied operator provenance (spec §18 deny rule 1).
+func RequireOperatorVerb(id *RunIdentity, verb string) error {
+	if id == nil {
+		return nil
+	}
+	if id.Tier == "homie" {
+		for _, allowed := range id.VerbAllowlist {
+			if allowed == verb {
+				return nil
+			}
+		}
+		return Domainf("Homie session is not allowed operator verb %s (§15.3)", verb)
+	}
+	return Domainf("%s is an operator verb, denied to pipeline runs (§18 deny rule 1)", verb)
 }
 
 // RunJSONPath resolves the run.json location: the fixed in-container mount

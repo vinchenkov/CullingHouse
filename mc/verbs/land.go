@@ -10,7 +10,10 @@ import (
 // untouched — landing holds no lease (§7). failure: blocked=1 with the
 // landing reason, nothing archived, the slot stays held (write implemented;
 // broader tests are [P2] per contract §2).
-func LandReport(db *sql.DB, task int64, status, reason string) (any, error) {
+func LandReport(db *sql.DB, id *RunIdentity, task int64, status, reason string) (any, error) {
+	if err := RequireHostScope(id, "mc land report"); err != nil {
+		return nil, err
+	}
 	if status != "success" && status != "failure" {
 		return nil, Usagef("mc land report requires --status success|failure")
 	}

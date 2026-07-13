@@ -98,6 +98,13 @@ func dispatchVerb(args []string, stdin io.Reader) (any, error) {
 	case "packet":
 		return cmdPacket(rest)
 	case "dispatch":
+		id, err := verbs.LoadIdentity()
+		if err != nil {
+			return nil, err
+		}
+		if err := verbs.RequireHostScope(id, "mc dispatch"); err != nil {
+			return nil, err
+		}
 		return withSpine(func(db *sql.DB) (any, error) { return verbs.Dispatch(db) })
 	case "complete":
 		return cmdComplete(rest)
@@ -180,6 +187,13 @@ func positionalID(name string, args []string) (int64, []string, error) {
 }
 
 func cmdInit(args []string) (any, error) {
+	id, err := verbs.LoadIdentity()
+	if err != nil {
+		return nil, err
+	}
+	if err := verbs.RequireHostScope(id, "mc init"); err != nil {
+		return nil, err
+	}
 	fs := newFlags("mc init")
 	a := verbs.InitArgs{}
 	consoleHour, consoleMinute, consoleTZ := -1, -1, ""
@@ -234,8 +248,12 @@ func cmdTask(args []string) (any, error) {
 		if *priority != -100 {
 			pri = priority
 		}
+		idn, err := verbs.LoadIdentity()
+		if err != nil {
+			return nil, err
+		}
 		return withSpine(func(db *sql.DB) (any, error) {
-			return verbs.TaskAdd(db, title, *worksource, *description, pri)
+			return verbs.TaskAdd(db, idn, title, *worksource, *description, pri)
 		})
 	case "get":
 		if len(args) != 2 {
@@ -312,8 +330,12 @@ func cmdPacket(args []string) (any, error) {
 		if n != 1 {
 			return nil, verbs.Usagef("mc packet decide requires exactly one of --approve, --revise, --cancel")
 		}
+		idn, err := verbs.LoadIdentity()
+		if err != nil {
+			return nil, err
+		}
 		return withSpine(func(db *sql.DB) (any, error) {
-			return verbs.PacketDecide(db, task, decision, *reason)
+			return verbs.PacketDecide(db, idn, task, decision, *reason)
 		})
 	case "list":
 		return withSpine(func(db *sql.DB) (any, error) { return verbs.PacketList(db) })
@@ -486,7 +508,11 @@ func cmdLand(args []string) (any, error) {
 	if err := parse(fs, rest); err != nil {
 		return nil, err
 	}
+	id, err := verbs.LoadIdentity()
+	if err != nil {
+		return nil, err
+	}
 	return withSpine(func(db *sql.DB) (any, error) {
-		return verbs.LandReport(db, task, *status, *reason)
+		return verbs.LandReport(db, id, task, *status, *reason)
 	})
 }
