@@ -53,7 +53,10 @@ FAST SUITE: mc/check.sh (gofmt+vet+go test ./... — includes substrate + promot
     - [x] workspace bytes / before commit; git commit / before complete
     - [x] operator approve / before land; merge success / cleanup or report gap
     - [x] message/outbox insert / delivery
-  - [ ] Nightly randomized/metamorphic/lifecycle properties + planted mutants
+  - [~] Nightly randomized/metamorphic/lifecycle properties + planted mutants
+    - [x] bounded generator honesty + exact five-mutant fast gate
+    - [x] tagged dispatch state fuzzer + ineligible-row metamorphism
+    - [ ] tagged twin-spine lifecycle random walk
 - [ ] Phase 3 — Boundary conformance (Docker)
 - [ ] Phase 4 — E2E control loops (six scenario families)
 - [ ] Phase 5 — Real-subscription acceptance (operator-scheduled)
@@ -1118,3 +1121,28 @@ TDD bounded fast generator-honesty floors and the complete named planted-
 mutant gate (blocked filter, packet archive, budgets, lease token, WIP cap).
 Initiative wave CLI remains Parked pending the durable plan-review
 representation.
+
+- 2026-07-13 — **Property generator, dispatch, and fast mutation gates
+  green.** The new test-only `mc/property` package shares one reproducible
+  corpus between the untagged fast gates and `nightly`-tagged runtime tests.
+  The bounded observer derives, rather than trusts, floors for every declared
+  legal status/scope/decision, packet/scope, decision/packet/scope, blocked,
+  and six-shape lease bucket. Its exact registry kills all five contract
+  mutants with exercised witnesses: dropped blocked filtering, ignored packet
+  archive, blurred budgets, weakened lease fencing, and a missing WIP cap in
+  both enforcement layers. The tagged dispatch run proves action-union
+  cardinality, determinism, deep purity (including pointer fields and nil
+  slice identity), and 4,096 query-scoped ineligible-row insertions across
+  blocked, archived, paused-Worksource, and archived-packet history. Tagged
+  dispatch totals: 16,384 generated states + 4,096 metamorphic cases green.
+  Complete fast lane green (Go gofmt/vet/all packages including the bounded
+  property gates; fake 43, agent-runner 13, runner/image 40, resident 42).
+
+NEXT: TDD the remaining `nightly` twin-spine lifecycle random walk. Drive
+every exported stateful `mc/domain` operation against one domain spine and
+the corresponding canonical raw SQL against a second spine under matched
+`BEGIN IMMEDIATE` transactions; normalize timestamps, compare acceptance and
+state, and audit the trigger invariants after every step. Include valid and
+classified invalid intents, rejection rollback, all task/verdict/packet/wave/
+budget/lease arms, and fixed seed+step replay. Initiative wave CLI remains
+Parked pending the durable plan-review representation.
