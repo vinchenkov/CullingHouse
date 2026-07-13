@@ -1294,6 +1294,10 @@ func TestEditorDecideCoverage(t *testing.T) {
 		{"unknown_decision",
 			fmt.Sprintf(`{"verdicts":[{"task":%d,"decision":"defer","reason":"r"},{"task":%d,"decision":"promote","reason":"r"}]}`, t1, t2), 1, "unknown decision"},
 		{"bad_json", `{"verdicts": nope}`, 1, "bad batch payload"},
+		{"unknown_field_rejected",
+			fmt.Sprintf(`{"verdicts":[{"task":%d,"decision":"promote","reason":"r"},{"task":%d,"decision":"reject","reason":"r"}],"surprise":true}`, t1, t2), 1, "bad batch payload"},
+		{"trailing_json_rejected",
+			fmt.Sprintf(`{"verdicts":[{"task":%d,"decision":"promote","reason":"r"},{"task":%d,"decision":"reject","reason":"r"}]} {}`, t1, t2), 1, "bad batch payload"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -1368,6 +1372,35 @@ func TestStrategistProposeInserts(t *testing.T) {
 			t.Fatalf("exit = %d, want 1", res.code)
 		}
 	})
+}
+
+func TestStrategistProposeStrictBatchJSON(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		batch string
+	}{
+		{name: "unknown_nested_field", batch: `{"proposals":[{"worksource":"ws-test","title":"idea","surprise":true}]}`},
+		{name: "trailing_value", batch: `{"proposals":[]} {}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			spine := initSpine(t)
+			eff := dispatchExpect(t, spine, "spawn")
+			run := eff["run_id"].(string)
+			env := runJSONEnv(t, spine, run, "pipeline", "strategist(propose)")
+			res := runMC(t, env, tc.batch,
+				"strategist", "propose", "--run", run, "--batch", "-")
+			if res.code != 1 || !strings.Contains(res.stderr, "bad batch payload") {
+				t.Fatalf("exit = %d stderr %q", res.code, res.stderr)
+			}
+			db := openDB(t, spine)
+			if got := queryInt(t, db, `SELECT COUNT(*) FROM tasks`); got != 0 {
+				t.Fatalf("invalid JSON inserted %d tasks", got)
+			}
+			if got := queryStr(t, db, `SELECT run_id FROM lock WHERE id = 1`); got != run {
+				t.Fatalf("invalid JSON disturbed lease: %q", got)
+			}
+		})
+	}
 }
 
 func workerFixture(t *testing.T, title string) (string, int64, string, []string) {

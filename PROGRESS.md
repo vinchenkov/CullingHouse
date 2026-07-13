@@ -444,3 +444,15 @@ Parked.
 NEXT: Close strict single-document batch parsing and exact Strategist mode /
 subject-shape fencing red-first, then fix invalid-console-TZ reap precedence
 and blocked-proposal Editor visibility. Initiative wave CLI remains Parked.
+
+- 2026-07-12 — **Phase 2 adversarial review: batch parsing is truly full.**
+  Red Editor and Strategist process tests proved a valid first JSON document
+  could commit while trailing JSON or unknown fields were ignored. All three
+  batch terminals now share one strict single-document decoder: unknown keys
+  and any second value/garbage fail before the transaction. Regressions assert
+  pool/tasks and lease remain untouched. Full Go fast lane green.
+
+NEXT: Add exact Strategist mode plus subject-shape fences for propose and the
+implemented-but-parked initiative terminal. Then fix invalid-console-TZ reap
+precedence and blocked-proposal Editor visibility. Initiative wave CLI remains
+Parked pending durable plan-review representation.

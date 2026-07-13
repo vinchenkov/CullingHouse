@@ -21,6 +21,22 @@ type EditorVerdicts struct {
 	} `json:"verdicts"`
 }
 
+func decodeStrictJSON(r io.Reader, dst any) error {
+	dec := json.NewDecoder(r)
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(dst); err != nil {
+		return err
+	}
+	var trailing json.RawMessage
+	if err := dec.Decode(&trailing); err != io.EOF {
+		if err == nil {
+			return fmt.Errorf("trailing JSON value after the batch document")
+		}
+		return fmt.Errorf("trailing data after the batch document: %w", err)
+	}
+	return nil
+}
+
 // EditorDecide applies the Editor's batch verdict pass (ADR-001 D4): parse
 // fully, validate fully, commit in one transaction (constraint a). promote →
 // proposed → seeded; reject → decision='rejected' + archive, reason
@@ -35,7 +51,7 @@ func EditorDecide(db *sql.DB, id *RunIdentity, run string, batch io.Reader) (any
 		return nil, err
 	}
 	var payload EditorVerdicts
-	if err := json.NewDecoder(batch).Decode(&payload); err != nil {
+	if err := decodeStrictJSON(batch, &payload); err != nil {
 		return nil, Domainf("mc editor decide: bad batch payload: %v", err)
 	}
 	allReject := true
@@ -170,7 +186,7 @@ func StrategistPropose(db *sql.DB, id *RunIdentity, run string, batch io.Reader)
 		return nil, err
 	}
 	var payload StrategistProposals
-	if err := json.NewDecoder(batch).Decode(&payload); err != nil {
+	if err := decodeStrictJSON(batch, &payload); err != nil {
 		return nil, Domainf("mc strategist propose: bad batch payload: %v", err)
 	}
 	for i, p := range payload.Proposals {
@@ -235,7 +251,7 @@ func StrategistWave(db *sql.DB, id *RunIdentity, run string, initiative int64, b
 		return nil, err
 	}
 	var payload StrategistWaveChildren
-	if err := json.NewDecoder(batch).Decode(&payload); err != nil {
+	if err := decodeStrictJSON(batch, &payload); err != nil {
 		return nil, Domainf("mc strategist wave: bad batch payload: %v", err)
 	}
 	children := make([]domain.WaveChild, 0, len(payload.Children))
