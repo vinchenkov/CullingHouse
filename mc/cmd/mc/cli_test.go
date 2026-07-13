@@ -190,7 +190,9 @@ func TestInit(t *testing.T) {
 		spine := initSpine(t,
 			"--timeout-minutes", "5", "--grace-minutes", "1",
 			"--heartbeat-interval-s", "1", "--spawn-grace-s", "5",
-			"--hard-deadline-minutes", "120")
+			"--hard-deadline-minutes", "120",
+			"--console-hour", "9", "--console-minute", "30",
+			"--console-tz", "America/Los_Angeles")
 		db := openDB(t, spine)
 		if n := queryInt(t, db, `SELECT COUNT(*) FROM meta`); n != 1 {
 			t.Fatalf("meta rows = %d, want 1", n)
@@ -209,6 +211,42 @@ func TestInit(t *testing.T) {
 			if got := queryInt(t, db, `SELECT `+col+` FROM lock WHERE id = 1`); got != want {
 				t.Fatalf("lock.%s = %d, want %d", col, got, want)
 			}
+		}
+		if got := queryStr(t, db, `SELECT console_hour || ':' || console_minute || '/' || console_tz FROM lock WHERE id = 1`); got != "9:30/America/Los_Angeles" {
+			t.Fatalf("console schedule = %q", got)
+		}
+	})
+
+	t.Run("console_schedule_validates_before_provisioning", func(t *testing.T) {
+		for _, tc := range []struct {
+			name  string
+			flags []string
+		}{
+			{"partial", []string{"--console-hour", "9"}},
+			{"hour", []string{"--console-hour", "24", "--console-minute", "0", "--console-tz", "UTC"}},
+			{"minute", []string{"--console-hour", "9", "--console-minute", "60", "--console-tz", "UTC"}},
+			{"timezone", []string{"--console-hour", "9", "--console-minute", "0", "--console-tz", "Mars/Olympus"}},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				spine := filepath.Join(t.TempDir(), "spine.db")
+				args := []string{"init", "--spine", spine, "--worksource", "ws-test", "--workspace-root", "/tmp/ws-test"}
+				args = append(args, tc.flags...)
+				res := runMC(t, nil, "", args...)
+				if res.code != 2 {
+					t.Fatalf("exit=%d stderr=%q, want usage error before provisioning", res.code, res.stderr)
+				}
+				if _, err := os.Stat(spine); !os.IsNotExist(err) {
+					t.Fatalf("invalid schedule created spine: stat err=%v", err)
+				}
+			})
+		}
+	})
+
+	t.Run("midnight_is_an_explicit_schedule_not_the_unset_sentinel", func(t *testing.T) {
+		spine := initSpine(t, "--console-hour", "0", "--console-minute", "0", "--console-tz", "UTC")
+		db := openDB(t, spine)
+		if got := queryStr(t, db, `SELECT console_hour || ':' || console_minute || '/' || console_tz FROM lock WHERE id = 1`); got != "0:0/UTC" {
+			t.Fatalf("midnight schedule = %q", got)
 		}
 	})
 

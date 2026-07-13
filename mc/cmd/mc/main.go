@@ -178,6 +178,7 @@ func positionalID(name string, args []string) (int64, []string, error) {
 func cmdInit(args []string) (any, error) {
 	fs := newFlags("mc init")
 	a := verbs.InitArgs{}
+	consoleHour, consoleMinute, consoleTZ := -1, -1, ""
 	fs.StringVar(&a.Spine, "spine", "", "spine path to provision")
 	fs.StringVar(&a.Worksource, "worksource", "", "worksource id")
 	fs.StringVar(&a.WorkspaceRoot, "workspace-root", "", "workspace root path")
@@ -186,8 +187,21 @@ func cmdInit(args []string) (any, error) {
 	fs.IntVar(&a.HeartbeatIntervalS, "heartbeat-interval-s", 0, "heartbeat interval")
 	fs.IntVar(&a.SpawnGraceS, "spawn-grace-s", 0, "first-heartbeat watchdog")
 	fs.IntVar(&a.HardDeadlineMinutes, "hard-deadline-minutes", 0, "non-renewable hard deadline")
+	fs.IntVar(&consoleHour, "console-hour", -1, "Daily Console delivery hour (0..23)")
+	fs.IntVar(&consoleMinute, "console-minute", -1, "Daily Console delivery minute (0..59)")
+	fs.StringVar(&consoleTZ, "console-tz", "", "Daily Console IANA timezone")
 	if err := parse(fs, args); err != nil {
 		return nil, err
+	}
+	consoleSet := consoleHour != -1 || consoleMinute != -1 || consoleTZ != ""
+	if consoleSet {
+		if consoleHour == -1 || consoleMinute == -1 || consoleTZ == "" {
+			return nil, verbs.Usagef("mc init console schedule requires --console-hour, --console-minute, and --console-tz together")
+		}
+		a.ConsoleScheduleSet = true
+		a.ConsoleHour = consoleHour
+		a.ConsoleMinute = consoleMinute
+		a.ConsoleTZ = consoleTZ
 	}
 	if a.Spine == "" {
 		a.Spine = os.Getenv("MC_SPINE")

@@ -307,3 +307,14 @@ tunables and the contract-promised `mc/verbs/dispatchverb_test.go`
 differential suite (real SQL projection/action application versus pure
 dispatch). Then implement the §10 process-level dispatch flock and validated
 routing.md binding resolution. Initiative wave remains isolated under Parked.
+
+- 2026-07-12 — **Stored Daily Console schedule is CLI-configurable.** `mc
+  init` now accepts the all-or-none `--console-hour/--console-minute/
+  --console-tz` triple, validates ranges and embedded IANA zones before
+  creating the spine, persists the three lock-row tunables, and distinguishes
+  explicit midnight from the hour-24 unset sentinel. Go fast lane green.
+
+NEXT: Add the contract-promised `mc/verbs/dispatchverb_test.go` differential
+suite: every dispatch Action kind through real SQL load/apply, nullable lock/
+task fields, Daily Console activity loading, and re-enter mutation. Then the
+process flock and routing.md resolution remain before wave-1 review closure.

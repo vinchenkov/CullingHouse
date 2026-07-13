@@ -6,6 +6,8 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"fmt"
+	"time"
+	_ "time/tzdata"
 
 	"mc/substrate"
 )
@@ -22,6 +24,13 @@ type InitArgs struct {
 	HeartbeatIntervalS  int
 	SpawnGraceS         int
 	HardDeadlineMinutes int
+	// Daily Console schedule (§16.3, NOTE(P2.1). ConsoleScheduleSet
+	// distinguishes an explicitly configured midnight (hour/minute zero)
+	// from the schema's hour-24 not-configured sentinel.
+	ConsoleScheduleSet bool
+	ConsoleHour        int
+	ConsoleMinute      int
+	ConsoleTZ          string
 }
 
 // Init provisions a fresh spine: applies substrate.Schema, seeds meta, one
@@ -31,6 +40,20 @@ type InitArgs struct {
 func Init(a InitArgs) (any, error) {
 	if a.Spine == "" || a.Worksource == "" || a.WorkspaceRoot == "" {
 		return nil, Usagef("mc init requires --spine, --worksource, and --workspace-root")
+	}
+	if a.ConsoleScheduleSet {
+		if a.ConsoleHour < 0 || a.ConsoleHour > 23 {
+			return nil, Usagef("mc init --console-hour must be 0..23")
+		}
+		if a.ConsoleMinute < 0 || a.ConsoleMinute > 59 {
+			return nil, Usagef("mc init --console-minute must be 0..59")
+		}
+		if a.ConsoleTZ == "" {
+			return nil, Usagef("mc init --console-tz requires an IANA timezone")
+		}
+		if _, err := time.LoadLocation(a.ConsoleTZ); err != nil {
+			return nil, Usagef("mc init --console-tz %q is not a loadable IANA timezone: %v", a.ConsoleTZ, err)
+		}
 	}
 	db, err := substrate.Open(a.Spine)
 	if err != nil {
@@ -93,6 +116,14 @@ func applyTunables(ctx context.Context, q Q, a InitArgs) error {
 		"hard_deadline_minutes": a.HardDeadlineMinutes,
 	} {
 		if err := set(col, v); err != nil {
+			return err
+		}
+	}
+	if a.ConsoleScheduleSet {
+		_, err := q.ExecContext(ctx, `
+			UPDATE lock SET console_hour = ?, console_minute = ?, console_tz = ?
+			WHERE id = 1`, a.ConsoleHour, a.ConsoleMinute, a.ConsoleTZ)
+		if err != nil {
 			return err
 		}
 	}
