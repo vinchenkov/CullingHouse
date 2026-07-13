@@ -703,6 +703,14 @@ func TestSaturationTrigger(t *testing.T) {
 	if got := oneInt(t, db, `SELECT refine_streak FROM review_packets WHERE task_id = ?`, t1); got != 3 {
 		t.Fatalf("saturated packet's streak lowered to %d", got)
 	}
+	// Operator revise makes a recovery possible. Once that same task reaches
+	// worked, the genuine verdict's streak reset also recomputes saturation.
+	mustExec(t, db, `UPDATE tasks SET status = 'seeded' WHERE id = ?`, t1)
+	mustExec(t, db, `UPDATE tasks SET status = 'worked' WHERE id = ?`, t1)
+	mustExec(t, db, `UPDATE review_packets SET refine_streak = 0 WHERE task_id = ?`, t1)
+	if got := oneInt(t, db, `SELECT saturated FROM review_packets WHERE task_id = ?`, t1); got != 0 {
+		t.Fatalf("operator-revised genuine recovery stayed saturated = %d", got)
+	}
 
 	// Hand-setting saturated on a fresh packet aborts.
 	t2 := mkTask(t, db, "task", "packaged")

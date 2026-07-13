@@ -496,6 +496,33 @@ func TestApplyVerdictDeepening(t *testing.T) {
 		}
 	})
 
+	t.Run("operator_revised_saturated_packet_can_recover", func(t *testing.T) {
+		db := openSpine(t)
+		id := mkTask(t, db, "task", "packaged")
+		mkPacket(t, db, id)
+		mustExec(t, db, `UPDATE review_packets SET refine_streak = 3 WHERE task_id = ?`, id)
+		if got := oneInt(t, db, `SELECT saturated FROM review_packets WHERE task_id = ?`, id); got != 1 {
+			t.Fatalf("fixture did not saturate")
+		}
+		mustTx(t, db, func(ctx context.Context, q domain.Q) error {
+			return domain.Reenter(ctx, q, id, "operator-requested recovery")
+		})
+		mustExec(t, db, `UPDATE tasks SET status = 'worked' WHERE id = ?`, id)
+		mkRun(t, db, "v1", "verifier", id)
+		if _, err := applyVerdict(t, db, domain.VerdictArgs{
+			TaskID: id, RunID: "v1", Outcome: "pass",
+			EvidencePath: "e", VerifiedSHA: "sha", Deepening: "genuine",
+		}); err != nil {
+			t.Fatalf("operator-revised genuine recovery: %v", err)
+		}
+		if got := oneInt(t, db, `SELECT refine_streak FROM review_packets WHERE task_id = ?`, id); got != 0 {
+			t.Fatalf("recovered streak = %d, want 0", got)
+		}
+		if got := oneInt(t, db, `SELECT saturated FROM review_packets WHERE task_id = ?`, id); got != 0 {
+			t.Fatalf("recovered packet stayed saturated = %d", got)
+		}
+	})
+
 	t.Run("churn_pass_rejected_unchanged", func(t *testing.T) {
 		db, id := roundTrip(t)
 		wantCode(t, db, domain.CodeDeepeningForbidden, func(ctx context.Context, q domain.Q) error {

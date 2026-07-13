@@ -65,10 +65,10 @@ func Birth(ctx context.Context, q Q, taskID int64, renderPath string) error {
 
 // ApplyDeepening applies one refinement round-trip's judgment to the streak
 // (§8): a genuine deepening resets it, churn increments it. Saturation is
-// trigger-computed from the streak, never written here. A saturated packet
-// never legitimately receives a genuine reset — refinement never dispatches
-// on saturated = 1 (§10 step 2b) — so that call is named illegal ahead of
-// the packets_saturated_streak_frozen backstop.
+// trigger-computed from the streak, never written here. Automatic refinement
+// never dispatches on saturated = 1 (§10 step 2b), but the operator may
+// revise one; after that task reaches worked, a genuine verdict legitimately
+// resets both streak and computed saturation.
 func ApplyDeepening(ctx context.Context, q Q, taskID int64, genuine bool) error {
 	var streak, saturated, archived int
 	err := q.QueryRowContext(ctx,
@@ -85,8 +85,14 @@ func ApplyDeepening(ctx context.Context, q Q, taskID int64, genuine bool) error 
 	}
 	if genuine {
 		if saturated == 1 {
-			return Errf(CodeSaturated,
-				"a saturated packet's streak never resets (§8, NOTE(P1.8)); it waits on the operator")
+			r, err := getTask(ctx, q, taskID)
+			if err != nil {
+				return err
+			}
+			if r.Status != "worked" || r.Decision.Valid || r.Archived {
+				return Errf(CodeSaturated,
+					"a saturated packet waits for operator revise and a completed recovery round (§8)")
+			}
 		}
 		_, err = q.ExecContext(ctx,
 			`UPDATE review_packets SET refine_streak = 0 WHERE task_id = ?`, taskID)

@@ -242,6 +242,11 @@ func ApplyVerdict(ctx context.Context, q Q, a VerdictArgs) (VerdictResult, error
 		return res, Errf(CodeDeepeningForbidden,
 			"BUDGET-SPENT on a refinement is churn by definition and requires --deepening churn (§8, A-P2-1)")
 	}
+	if rallyEnding && refinementRound {
+		if err := ApplyDeepening(ctx, q, a.TaskID, a.Deepening == "genuine"); err != nil {
+			return res, err
+		}
+	}
 
 	switch a.Outcome {
 	case "pass":
@@ -273,12 +278,6 @@ func ApplyVerdict(ctx context.Context, q Q, a VerdictArgs) (VerdictResult, error
 			return res, err
 		}
 		res = VerdictResult{Status: "verified", CorrectionCount: r.CorrectionCount, ExceptionLabeled: true}
-	}
-
-	if rallyEnding && refinementRound {
-		if err := ApplyDeepening(ctx, q, a.TaskID, a.Deepening == "genuine"); err != nil {
-			return res, err
-		}
 	}
 
 	// The verdict record, on the Verifier's own runs row (NOTE(P2.2)).

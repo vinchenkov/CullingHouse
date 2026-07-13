@@ -493,3 +493,17 @@ NEXT: Restore the valid saturated → operator-revise → genuine-deepening
 recovery while keeping saturated packets out of automatic refinement. Then
 make the fake-only resident fail closed for canonical runtime routes and begin
 the missing immutable spawn-brief carriers. Initiative wave CLI remains Parked.
+
+- 2026-07-12 — **Phase 2 adversarial review: operator saturation recovery fixed.**
+  A red end-to-end aggregate regression proved saturation was permanent even
+  after operator revise. The packet lattice now allows a streak decrease only
+  while its live owning task is at `worked` in the operator-requested recovery
+  round; the substrate recomputes `saturated=0` below threshold. Packaged
+  saturated packets still reject direct resets and remain excluded from
+  automatic step-(2b) selection. Complete fast lane green.
+
+NEXT: Make the current fake-only resident/runner fail closed on canonical
+runtime routes so recorded binding can never lie about executed adapter. Then
+assemble immutable spawn briefs carrying Editor records, Strategist dedupe,
+refine/correction notes, and Packager exception evidence. Initiative wave CLI
+remains Parked.

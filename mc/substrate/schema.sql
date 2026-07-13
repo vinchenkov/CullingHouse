@@ -510,15 +510,26 @@ BEGIN
     UPDATE review_packets SET saturated = 1 WHERE task_id = NEW.task_id;
 END;
 
--- A saturated packet's streak never decreases (§8): refinement never
--- dispatches on saturated = 1 (§10 step 2b), so no genuine-deepening reset
--- can legitimately occur there — a streak decrease is only ever the first
--- half of a two-step hand-clear (NOTE(P1.8)).
+-- A saturated packet is excluded from automatic refinement. Its streak can
+-- decrease only after operator revise has carried the owning task through a
+-- recovery round to worked; the verdict then recomputes saturation from the
+-- new streak (§8).
 CREATE TRIGGER packets_saturated_streak_frozen
 BEFORE UPDATE OF refine_streak ON review_packets
 WHEN OLD.saturated = 1 AND NEW.refine_streak < OLD.refine_streak
+  AND NOT EXISTS (
+      SELECT 1 FROM tasks t
+      WHERE t.id = OLD.task_id AND t.status = 'worked'
+        AND t.decision IS NULL AND t.archived = 0)
 BEGIN
     SELECT RAISE(ABORT, 'saturated is computed, never hand-set (§8)');
+END;
+
+CREATE TRIGGER packets_unsaturate
+AFTER UPDATE OF refine_streak ON review_packets
+WHEN NEW.refine_streak < 3 AND NEW.saturated = 1
+BEGIN
+    UPDATE review_packets SET saturated = 0 WHERE task_id = NEW.task_id;
 END;
 
 -- Hand-setting saturated out of line with the streak aborts, in both
