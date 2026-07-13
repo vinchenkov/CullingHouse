@@ -400,3 +400,20 @@ Entry template:
   This preserves trace truth and is trivially removed adapter-by-adapter.
 - Spec impact: none; this is the fail-closed state between ordered phases
 - Needs your decision: no
+
+## 2026-07-12 — Phase 2 Console targets the core dashboard pending surface config
+- Where: Phase 2 `mc console publish`; spec §14/§15.5/§16.3;
+  phase2-contract A-P2-5
+- Gap: Console publication must resolve alert-class routing inside trusted
+  code, but the authoritative `config.toml` and onboarding surface layer do
+  not land until Phase 5. Letting the Strategist pass destinations would move
+  policy into an untrusted role.
+- Choice: resolve the always-enabled dashboard as the sole Phase-2 Console
+  destination. The resolver is private to `mc`; Phase 5 replaces it with the
+  configured enabled-surface route without changing the terminal or outbox
+  schema. Conservative: it delivers through the required core surface,
+  preserves the policy boundary, and cannot accidentally send to an
+  unconfigured Discord destination.
+- Spec impact: temporary staging only; full §16.3 alert-class expansion lands
+  with `config.toml`/onboarding
+- Needs your decision: no

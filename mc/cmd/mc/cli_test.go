@@ -1710,6 +1710,141 @@ func TestStrategistProposeModeAndSubjectFence(t *testing.T) {
 	})
 }
 
+func TestConsolePublish(t *testing.T) {
+	newConsoleRun := func(t *testing.T) (string, string, []string, *sql.DB) {
+		t.Helper()
+		spine := initSpine(t,
+			"--console-hour", "0", "--console-minute", "0", "--console-tz", "UTC")
+		eff := dispatchExpect(t, spine, "spawn")
+		if eff["role"] != "strategist(console)" || eff["subject_id"] != nil {
+			t.Fatalf("console dispatch = %v, want subjectless strategist(console)", eff)
+		}
+		run := eff["run_id"].(string)
+		return spine, run,
+			runJSONEnv(t, spine, run, "pipeline", "strategist(console)"),
+			openDB(t, spine)
+	}
+
+	t.Run("publishes_event_and_dashboard_outbox_atomically", func(t *testing.T) {
+		spine, run, env, db := newConsoleRun(t)
+		content := "outputs/daily-console.html"
+		res := runMC(t, env, "", "console", "publish", "--run", run, "--content", content)
+		if res.code != 0 {
+			t.Fatalf("console publish failed: %s", res.stderr)
+		}
+		if res.json["content_path"] != content || res.json["destinations"] != float64(1) {
+			t.Fatalf("console publish result = %v", res.json)
+		}
+		if got := queryStr(t, db, `SELECT actor || '/' || kind || '/' || subject || '/' || detail
+			FROM activity WHERE kind = 'daily.briefing'`); got != "strategist(console)/daily.briefing/"+run+"/"+content {
+			t.Fatalf("daily briefing event = %q", got)
+		}
+		if got := queryStr(t, db, `SELECT kind || '/' || surface || '/' || COALESCE(channel_ref, '<null>') || '/' || payload
+			FROM outbox`); got != `console/dashboard/<null>/{"content_path":"`+content+`"}` {
+			t.Fatalf("console outbox row = %q", got)
+		}
+		if got := queryStr(t, db, `SELECT outcome FROM runs WHERE id = ?`, run); got != "completed" {
+			t.Fatalf("console run outcome = %q", got)
+		}
+		if got := queryStr(t, db, `SELECT run_id FROM lock WHERE id = 1`); got != "<NULL>" {
+			t.Fatalf("console lease not released: %q", got)
+		}
+
+		// The event is the same-day suppression record: the next tick must not
+		// dispatch a second Console even though the schedule remains due.
+		if eff := dispatch(t, spine); eff["role"] == "strategist(console)" {
+			t.Fatalf("same-day event did not suppress a second Console: %v", eff)
+		}
+	})
+
+	t.Run("scope_subject_and_content_fail_closed", func(t *testing.T) {
+		for _, tc := range []struct {
+			name    string
+			role    string
+			content string
+			subject bool
+			host    bool
+			stale   bool
+			want    int
+			msg     string
+		}{
+			{name: "wrong_mode", role: "strategist(propose)", content: "outputs/c.html", want: 1, msg: "role mismatch"},
+			{name: "host_scope", content: "outputs/c.html", host: true, want: 1, msg: "pipeline run identity"},
+			{name: "caller_run_mismatch", role: "strategist(console)", content: "outputs/c.html", stale: true, want: 1, msg: "stale run"},
+			{name: "missing_content", role: "strategist(console)", want: 2, msg: "requires --content"},
+			{name: "content_traversal", role: "strategist(console)", content: "outputs/../outside.html", want: 1, msg: "beneath outputs"},
+			{name: "subject_carrying", role: "strategist(console)", content: "outputs/c.html", subject: true, want: 1, msg: "subjectless"},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				spine, run, _, db := newConsoleRun(t)
+				if tc.subject {
+					res, err := db.Exec(`INSERT INTO tasks (title, worksource, target_ref) VALUES ('fixture', 'ws-test', 'main')`)
+					if err != nil {
+						t.Fatal(err)
+					}
+					taskID, err := res.LastInsertId()
+					if err != nil {
+						t.Fatal(err)
+					}
+					if _, err := db.Exec(`UPDATE lock SET subject = ? WHERE id = 1`, taskID); err != nil {
+						t.Fatal(err)
+					}
+					if _, err := db.Exec(`UPDATE runs SET subject = ? WHERE id = ?`, taskID, run); err != nil {
+						t.Fatal(err)
+					}
+				}
+				token := run
+				if tc.stale {
+					token = "different-run"
+				}
+				args := []string{"console", "publish", "--run", token}
+				if tc.content != "" {
+					args = append(args, "--content", tc.content)
+				}
+				env := runJSONEnv(t, spine, run, "pipeline", tc.role)
+				if tc.host {
+					env = spineEnv(spine)
+				}
+				got := runMC(t, env, "", args...)
+				if got.code != tc.want || !strings.Contains(got.stderr, tc.msg) {
+					t.Fatalf("exit = %d stderr %q, want %d containing %q", got.code, got.stderr, tc.want, tc.msg)
+				}
+				if n := queryInt(t, db, `SELECT COUNT(*) FROM activity WHERE kind = 'daily.briefing'`); n != 0 {
+					t.Fatalf("failed Console wrote %d activity rows", n)
+				}
+				if n := queryInt(t, db, `SELECT COUNT(*) FROM outbox`); n != 0 {
+					t.Fatalf("failed Console wrote %d outbox rows", n)
+				}
+				if got := queryStr(t, db, `SELECT run_id FROM lock WHERE id = 1`); got != run {
+					t.Fatalf("failed Console disturbed lease: %q", got)
+				}
+			})
+		}
+	})
+
+	t.Run("outbox_failure_rolls_back_event_and_terminal", func(t *testing.T) {
+		_, run, env, db := newConsoleRun(t)
+		if _, err := db.Exec(`CREATE TRIGGER test_fail_console_outbox
+			BEFORE INSERT ON outbox WHEN NEW.kind = 'console'
+			BEGIN SELECT RAISE(ABORT, 'injected outbox failure'); END`); err != nil {
+			t.Fatal(err)
+		}
+		res := runMC(t, env, "", "console", "publish", "--run", run, "--content", "outputs/c.html")
+		if res.code != 1 || !strings.Contains(res.stderr, "injected outbox failure") {
+			t.Fatalf("exit = %d stderr %q", res.code, res.stderr)
+		}
+		if n := queryInt(t, db, `SELECT COUNT(*) FROM activity WHERE kind = 'daily.briefing'`); n != 0 {
+			t.Fatalf("failed atomic publish left %d events", n)
+		}
+		if got := queryStr(t, db, `SELECT COALESCE(outcome, '<null>') FROM runs WHERE id = ?`, run); got != "<null>" {
+			t.Fatalf("failed atomic publish ended run: %q", got)
+		}
+		if got := queryStr(t, db, `SELECT run_id FROM lock WHERE id = 1`); got != run {
+			t.Fatalf("failed atomic publish released lease: %q", got)
+		}
+	})
+}
+
 func workerFixture(t *testing.T, title string) (string, int64, string, []string) {
 	t.Helper()
 	spine := initSpine(t)

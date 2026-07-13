@@ -699,3 +699,19 @@ NEXT: TDD Console publication over existing activity/outbox tables: exact
 Strategist(console), subjectless own-run fence, content path required,
 same-day event + destination rows + Run end/lease release atomically. Keep
 the broader Homie/outbox transport surface as the following slice.
+
+- 2026-07-12 — **Phase 2 wave 2 Console publication green.** The exact
+  Strategist(console) terminal now requires its own subjectless run and a
+  normalized `outputs/` content path. One transaction writes the
+  `daily.briefing` suppression event, fans a small path payload to the trusted
+  Console destinations, ends the Run, and releases the lease. The always-on
+  dashboard is the Phase-2 destination; Phase 5's deferred `config.toml`
+  layer expands that private resolver to every configured surface. Wrong
+  mode, host scope, caller-run mismatch, subject-carrying lease, traversal,
+  and missing content are inert; an injected outbox abort proves the event,
+  terminal, and lease roll back together. Complete fast lane green.
+
+NEXT: TDD the first Homie registry slice: `mc homie start|bind|list` with
+host/allowlisted-Homie provenance, immutable session identity/locators,
+active-binding uniqueness, and no pipeline lease. Return only durable
+state/effect data; conversation send/history and runner transport follow.

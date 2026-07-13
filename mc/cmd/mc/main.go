@@ -131,6 +131,8 @@ func dispatchVerb(args []string, stdin io.Reader) (any, error) {
 		return cmdEditor(rest, stdin)
 	case "strategist":
 		return cmdStrategist(rest, stdin)
+	case "console":
+		return cmdConsole(rest)
 	case "verifier":
 		return cmdVerifier(rest)
 	case "heartbeat":
@@ -548,6 +550,31 @@ func cmdStrategist(args []string, stdin io.Reader) (any, error) {
 		return nil, err
 	}
 	return withSpine(func(db *sql.DB) (any, error) { return verbs.StrategistPropose(db, id, *run, r) })
+}
+
+func cmdConsole(args []string) (any, error) {
+	if len(args) == 0 || args[0] != "publish" {
+		return nil, verbs.Usagef("usage: mc console publish --run <id> --content <path>")
+	}
+	fs := newFlags("mc console publish")
+	run := fs.String("run", "", "fencing token")
+	content := fs.String("content", "", "rendered Console path beneath outputs/")
+	if err := parse(fs, args[1:]); err != nil {
+		return nil, err
+	}
+	if *run == "" {
+		return nil, verbs.Usagef("mc console publish requires --run")
+	}
+	if *content == "" {
+		return nil, verbs.Usagef("mc console publish requires --content")
+	}
+	id, err := verbs.LoadIdentity()
+	if err != nil {
+		return nil, err
+	}
+	return withSpine(func(db *sql.DB) (any, error) {
+		return verbs.ConsolePublish(db, id, *run, *content)
+	})
 }
 
 func cmdVerifier(args []string) (any, error) {
