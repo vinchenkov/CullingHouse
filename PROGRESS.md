@@ -39,7 +39,16 @@ FAST SUITE: mc/check.sh (gofmt+vet+go test ./... — includes substrate + promot
         RW-alias/Inv. 26, mc-land silent checkout, mc-land missing
         merge --abort, register-session lease-fence race), 4 refuted with
         documented reasons; fast lane + Docker e2e re-green
-- [ ] Phase 2 — Dispatch + domain correctness
+- [~] Phase 2 — Dispatch + domain correctness
+  - [x] Wave 1 unparked acceptance: dispatch table + SQL differential;
+        domain aggregates; completion/fencing/two budgets; process flock +
+        independent CAS; strict role/runner identity; immutable routing,
+        directives, and claimed-state briefs; adversarial review closed
+  - [!] Strategist wave CLI: isolated under Parked (durable holistic Editor
+        plan-review representation is operator/spec input)
+  - [ ] Wave 2 full §18 verb/error/scope surface
+  - [ ] Split-brain kill-point convergence suite
+  - [ ] Nightly randomized/metamorphic/lifecycle properties + planted mutants
 - [ ] Phase 3 — Boundary conformance (Docker)
 - [ ] Phase 4 — E2E control loops (six scenario families)
 - [ ] Phase 5 — Real-subscription acceptance (operator-scheduled)
@@ -593,3 +602,25 @@ NEXT: Perform the final Phase 2 wave-1 contract/spec diff, record the parked
 and wave-2 deferrals precisely, and advance the ledger only for acceptance
 sets that are actually green. Initiative wave CLI remains Parked pending the
 durable holistic plan-review representation.
+
+- 2026-07-12 — **Phase 2 wave-1 final contract/spec diff complete.** Every
+  unparked wave-1 acceptance set is green: dispatch's taken/not-taken and
+  invisibility table, SQL adapter differential, all six domain aggregate
+  suites, completion/fencing/two-budget ownership, strict batch/role/lifecycle
+  boundaries, atomic rollbacks, CAS+flock, route truth, and immutable
+  directives/briefs. Docker-tag and `test_fake_routing` builds also compile.
+  The spec-over-contract fixes that crossed wave-1 directory/schema fences
+  are recorded in IMPLEMENTATION-NOTES/ADRs. The only omitted wave-1 terminal
+  is `mc strategist wave`, explicitly Parked because implementing the ADR as
+  written would violate the spec's mandatory holistic Editor review.
+
+  Phase 2 is not complete: handoff Part 3 still requires (1) the full §18
+  happy/error/scope surface (`console`, worksource/initiative/operator,
+  doctor/backup/reset/onboard, Homie/outbox, structured error JSON), (2) the
+  split-brain kill-point convergence suite, and (3) nightly dispatch/
+  metamorphic/lifecycle properties with generator-honesty/planted-mutant
+  gates. These are Wave 2, not silently counted green.
+
+NEXT: Author the Phase 2 wave-2 acceptance contract from handoff Part 3 and
+spec §18, preserving the parked initiative-wave line. Then TDD the full CLI
+verb/error/scope matrix before split-brain and nightly suites.
