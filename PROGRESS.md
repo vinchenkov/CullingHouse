@@ -128,7 +128,12 @@ FAST SUITE: mc/check.sh (gofmt+vet+go test ./... — includes substrate + promot
   with no state/slot for the Editor's mandatory holistic plan review. Decision
   request: choose a durable representation/dispatch step for reviewed-vs-
   unreviewed wave children. This blocks only the `strategist wave` CLI line;
-  other Phase 2 work continues.
+  other Phase 2 work continues. **2026-07-13 addendum (takeover review):**
+  until this resolves, a promoted `initiative add` proposal dead-ends —
+  Strategist(initiative) can only declare done with zero children (strict
+  drain passes trivially) or block out. The hole itself stays sealed (`wave`
+  is not CLI-wired), but avoid filing initiatives until decided; see
+  IMPLEMENTATION-NOTES 2026-07-13.
 
 ## Chronology
 
@@ -791,3 +796,54 @@ NEXT: Design and TDD the Homie-runner capability seam, then extend
 `mc homie resume <session> --from <surface:channel_ref>` as a record-only
 status/binding transition. Require the immutable locator pair for native
 continue mode; keep any conversation-row fallback explicit and audited.
+
+- 2026-07-13 — Claude Code takeover from quota-interrupted Codex session.
+  Resume ritual found the outbox delivery cursor slice (ADR-011,
+  mc/verbs/outbox.go, schema surface CHECK, CLI tests, ledger entry)
+  complete but UNCOMMITTED — Codex died on quota after going green but
+  before committing. Nothing discarded: full fast lane re-verified green
+  (Go all packages; fake 43, agent-runner 13, runner/image 2, resident 32)
+  and the slice committed as 2f85fbe, pushed. Cross-harness adversarial
+  takeover review launched per AGENTS.md §2 before any code edit: six
+  read-only lens agents over the Codex range (wave-2 provenance/scope +
+  structured errors; operator record verbs; Console publication; Homie
+  registry/messaging; outbox cursor — extra scrutiny, never reviewed even
+  once; plus a decorrelated spot-check of four wave-1 self-review closure
+  claims: CAS, runner lifecycle authority, brief immutability, route truth).
+
+NEXT: Collect and adversarially verify the takeover-review findings,
+record confirmed/refuted in IMPLEMENTATION-NOTES.md, fix confirmed defects
+red-first, re-green the full fast lane, then resume wave 2 at the
+Homie-runner capability seam / register-session / homie resume slice above.
+
+- 2026-07-13 — **Takeover review closed: 2 majors + 5 fix-class minors, all
+  FIXED red-first** (a329c1a..63f7c8e, each committed at green). Majors:
+  (1) Homie `worksource pause|archive` checked the status value against the
+  frozen verb-name allowlist — the spec-§15.3 cell was dead and untested;
+  (2) `nextLanding` gated on Worksource `active` with no spec license —
+  approved work in a paused/archived Worksource stranded forever, its packet
+  burning an Inv. 18 slot (three rows wedged dispatch at queue-saturated).
+  Also fixed: task/initiative add now refuse inactive Worksources (new slug
+  `worksource-inactive`); land report + outbox poll|ack scope-check before
+  spine open; zero-args and delegation-failure now emit the JSON envelope;
+  outbox gained no-delete/immutable/delivered-once substrate triggers and
+  conversation rows an active-session INSERT fence; untagged ActiveRegistry
+  regression test added (whole CLI suite builds tagged — a fake-family
+  regression failed zero tests); weak review-claim assertions strengthened
+  (full-column outbox snapshot, lease-release rollback injection, CAS
+  lock↔run pairing). Wave-1 spot-check: all four Codex self-review claims
+  HOLD on behavior. Nine informational entries appended to
+  IMPLEMENTATION-NOTES (TZ blast radius, cross-midnight Console edge,
+  content-path serving-seam obligation, id-disjointness backstop, initiative
+  dead-end → Parked addendum, Homie-interrupt orphan window, worksource-add
+  advisory deferral, image build-tag obligation); ADR-011's agent-exclusion
+  wording corrected to best-effort-until-P3. Complete fast lane green
+  (Go all packages; fake 43, agent-runner 13, runner/image 2, resident 32).
+
+NEXT: Resume Phase 2 wave 2 at the Homie-runner capability seam: design the
+seam (ADR), extend `mc run register-session` to the exact own Homie session,
+and add host-only `mc homie resume <session> --from <surface:channel_ref>`
+as a record-only status/binding transition requiring the immutable locator
+pair for native continue mode; conversation-row fallback stays explicit and
+audited. Then runner claim/reply transport. Initiative wave CLI remains
+Parked pending the durable plan-review representation.

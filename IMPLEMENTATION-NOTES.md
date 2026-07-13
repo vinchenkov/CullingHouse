@@ -431,3 +431,136 @@ Entry template:
   current session ends. This is the fail-closed, least-invented reading.
 - Spec impact: §15.4 could state the global uniqueness explicitly
 - Needs your decision: no
+
+## 2026-07-13 — Cross-harness takeover review of the Codex wave-2 surface
+- Where: AGENTS.md §2 takeover review of 99b0a9a..2f85fbe (wave-2 surface +
+  spot-check of four wave-1 self-review claims); six decorrelated lenses
+- Gap: two majors and a set of backstop/ordering gaps survived the outgoing
+  session's own review: (1) the Homie `worksource pause|archive` allowlist
+  cell checked the status value (`worksource.paused/.archived`) instead of
+  the frozen verb name — the spec-§15.3 capability was unreachable and
+  untested; (2) `nextLanding` gated on Worksource `active`, but §10 (0c) has
+  no status qualifier — with archive terminal and no unpause verb, approved
+  work stranded forever and its packet burned an Inv. 18 slot (three rows
+  wedged dispatch at queue-saturated); (3) task/initiative add accepted
+  paused/archived Worksources, silently filing permanently-invisible rows;
+  (4) `land report` and `outbox poll|ack` opened/created the spine before
+  their scope check (contract §1 ordering); (5) zero-args and wrapper-only
+  delegation failures skipped the stdout JSON envelope; (6) the outbox had
+  no substrate fences and conversation rows had no active-session INSERT
+  backstop; (7) no test exercised the untagged `ActiveRegistry()`.
+- Choice: all fixed red-first in a329c1a..63f7c8e (landing ungated — the
+  spec's text; intake refused with new stable slug `worksource-inactive`;
+  scope preflights hoisted to match dispatch/init; envelopes completed;
+  no-delete/immutability/delivered-at-set-once outbox triggers plus a
+  conversation active-session trigger; untagged-registry regression test;
+  weak review-claim assertions strengthened). Wave-1 spot-check: all four
+  claims (CAS, runner lifecycle authority, brief immutability, route truth)
+  HOLD on behavior.
+- Spec impact: §5 could state pause/archive intake+selection semantics and
+  that landing is exempt; §15.4 could pin conversation-append liveness
+- Needs your decision: no
+
+## 2026-07-13 — Corrupt stored Console timezone halts all free-lock dispatch
+- Where: takeover review of `verbs.Dispatch` step (0b); spec §10/§14
+- Gap: Codex made `time.LoadLocation` failure on the stored `console_tz`
+  abort the whole free-lock dispatch (no spawn/land/re-enter), not just the
+  Console carve-out; the blast radius was never logged. Reachability is
+  low (init validates the zone; tzdata is compiled in), and step-(0) reap
+  precedence is preserved, so a stale lease can never wedge.
+- Choice: keep the whole-dispatch fail-closed abort (a corrupt spine row is
+  evidence of deeper corruption; halting is the conservative read) and log
+  it here rather than silently narrowing to skip-Console-only.
+- Spec impact: none
+- Needs your decision: no
+
+## 2026-07-13 — Cross-midnight Console publish consumes the next day
+- Where: takeover review of `consoleDue`/`ConsolePublish`; spec §14
+- Gap: suppression keys on the event's local calendar day. A dispatch just
+  before local midnight whose run commits just after it stamps
+  `daily.briefing` on day D+1, suppressing D+1's delivery (operator gets
+  day-D content stamped D+1, then nothing until D+2). This follows §14's
+  literal same-day rule; the edge is spec-inherent, untested, and at most
+  one day of latency, self-healing.
+- Choice: log-and-go; no code change. Pinning commit-time vs dispatch-time
+  day semantics is a spec question not worth inventing an answer to.
+- Spec impact: §14 could pin which instant's calendar day suppresses
+- Needs your decision: no
+
+## 2026-07-13 — Console content path is lexically validated; serving seam owes containment
+- Where: takeover review of `ConsolePublish` path validation; spec §15.5
+- Gap: `outputs/`-relative validation is string-only (traversal/absolute
+  forms are all refused) but nothing resolves against the real file plane —
+  a symlink planted inside `outputs/` by the publishing container would pass
+  and be followed later by whatever serves `content_path`. No delivery-side
+  component exists yet (dashboard is Phase 3+), so there is no exploit today.
+- Choice: record the obligation now: every consumer of an outbox
+  `content_path` must resolve-and-contain under `MC_HOME` before serving.
+  The payload is implicitly MC_HOME-relative; that convention is now named.
+- Spec impact: none (implementation obligation)
+- Needs your decision: no
+
+## 2026-07-13 — Homie/pipeline id disjointness is mint-time only
+- Where: takeover review of `mc homie start` id mint; ADR-009
+- Gap: `h-` prefix disjointness from 16-hex pipeline run ids holds through
+  `mc`'s generators, but neither `homie_sessions.id` nor `runs.id` carries a
+  schema CHECK pinning its shape — ADR-009's "disjoint" claim has no
+  storage backstop. No mc code path can collide them today.
+- Choice: log-and-go (informational). Prefix CHECKs are cheap but invent
+  schema the spec doesn't ask for; revisit if a second writer ever appears.
+- Spec impact: none
+- Needs your decision: no
+
+## 2026-07-13 — A promoted operator initiative dead-ends while the wave verb is parked
+- Where: takeover review of `initiative add` + dispatch; parked
+  initiative-wave line (ADR-001 open question 1)
+- Gap: nothing gates Editor promotion of an `initiative`-scope proposal, so
+  dispatch will spawn Strategist(initiative) whose only wired terminals are
+  a zero-children done-declaration (strict drain passes trivially) or
+  blocking out. A live harness could ship a bogus zero-wave arc packet
+  through the ordinary review chain. The parked hole itself stays sealed —
+  `strategist wave` is not CLI-wired, so no child can bypass Editor review.
+- Choice: log and extend the Parked entry rather than inventing a promotion
+  gate: the operator's plan-review decision will define the wave lattice,
+  and a zero-wave arc still crosses Verifier and operator approval before
+  anything lands. Operators should simply not file initiatives until the
+  parked decision resolves.
+- Spec impact: none
+- Needs your decision: no (folded into the existing Parked decision request)
+
+## 2026-07-13 — Homie-issued interrupt leaves the container to the future orphan sweep
+- Where: takeover review of `mc task interrupt`; spec §15.3/§11.6
+- Gap: the returned stop-container effect is actionable only when the
+  resident invokes the verb; §15.3's sanctioned Homie path strands the
+  effect inside the Homie container, so the interrupted pipeline container
+  keeps running (records-level Inv. 1 holds; container-level §11.1 does not)
+  until the §11.6 orphan sweep lands. The skeleton resident has no sweep yet.
+- Choice: log the interim window as a named deferral riding the existing
+  Phase 3 resident-hardening line; no interim mechanism invented.
+- Spec impact: none (§11.6 already owns the answer)
+- Needs your decision: no
+
+## 2026-07-13 — Worksource add ships without the §5 connect-time advisory
+- Where: takeover review of `mc worksource add`; spec §5/§18
+- Gap: §5's connect-time secrets advisory and the non-repo git-init/read-only
+  flow are onboarding-section-6 machinery; the standalone verb currently
+  records the row only. §18 calls standalone add "reusable" beyond
+  onboarding, so the obligation attaches to the verb eventually.
+- Choice: defer to the §17 onboarding/`install.sh` deliverable where the
+  interactive flow lives; the bare record verb stays record-only until then.
+- Spec impact: none
+- Needs your decision: no
+
+## 2026-07-13 — The only image build path bakes the fake-routing tag
+- Where: takeover review follow-on to the untagged-registry gap;
+  runner/image/build.sh
+- Gap: `build.sh` compiles the in-container `mc` with
+  `-tags test_fake_routing` — correct for the `mc-fake-e2e` image it
+  produces, but it is currently the only image recipe, and a Phase 3+
+  production image derived from it would ship the fake family inside the
+  container's mc.
+- Choice: record the obligation: the Phase 3 production image gets its own
+  untagged build path, and the fake tag stays confined to images named for
+  it. The new untagged `ActiveRegistry` regression test pins the binary side.
+- Spec impact: none
+- Needs your decision: no

@@ -36,4 +36,10 @@ second delivery table.
 - De-duplication at the external API boundary may use the durable outbox id;
   acknowledgement never removes the conversation/event record.
 - Homie agents and pipeline containers cannot poll or ack, so outbound rows
-  are not an agent-controlled egress channel (§18 deny rule 3).
+  are not an agent-controlled egress channel (§18 deny rule 3). Until Phase 3
+  bakes run.json into the container image, this exclusion is enforced by
+  run.json presence plus the documented `MC_RUN_JSON` test seam (deviation
+  D-mc-3) — best-effort against a process that controls its own env, made
+  structural at the Phase 3 boundary. Within host scope, `--surface` is a
+  claim: any host-side delivery loop may ack any surface's rows, matching
+  ADR-001 D6's single host cell.
