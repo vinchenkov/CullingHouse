@@ -321,15 +321,18 @@ CREATE TRIGGER initiatives_archive_cascade
 AFTER UPDATE OF archived ON tasks
 WHEN NEW.scope = 'initiative' AND OLD.archived = 0 AND NEW.archived = 1
 BEGIN
-    UPDATE review_packets
-    SET archived = 1
-    WHERE archived = 0
-      AND task_id IN (SELECT id FROM tasks WHERE initiative_id = NEW.id AND archived = 0);
     UPDATE tasks
     SET decision   = COALESCE(decision, 'cancelled'),
         decided_at = COALESCE(decided_at, datetime('now')),
         archived   = 1
     WHERE initiative_id = NEW.id AND archived = 0;
+    -- Keep the lattice recursive_triggers-agnostic: write the downstream
+    -- packet effect explicitly, but only after its owning child is archived
+    -- so packets_archive_requires_task_archive remains true.
+    UPDATE review_packets
+    SET archived = 1
+    WHERE archived = 0
+      AND task_id IN (SELECT id FROM tasks WHERE initiative_id = NEW.id AND archived = 1);
 END;
 
 -- Archiving any task archives its packet: the packet's life ends with the
@@ -397,13 +400,26 @@ BEGIN
     SELECT RAISE(ABORT, 'review WIP cap: at most 3 unarchived packets (Inv. 18)');
 END;
 
--- Un-archiving must respect the same cap (fail-closed, NOTE(P1.3)).
-CREATE TRIGGER packets_wip_cap_on_unarchive
+-- A packet holds its queue slot until the owning task is operator-decided and
+-- archived (Inv. 11/18). Task-archive cascade triggers are the only legal
+-- writer of packet.archived; a direct packet update could otherwise evade
+-- backpressure while leaving undecided work live.
+CREATE TRIGGER packets_archive_requires_task_archive
+BEFORE UPDATE OF archived ON review_packets
+WHEN OLD.archived = 0 AND NEW.archived = 1
+  AND NOT EXISTS (
+      SELECT 1 FROM tasks t WHERE t.id = NEW.task_id AND t.archived = 1)
+BEGIN
+    SELECT RAISE(ABORT, 'packet archive requires its owning task to be archived (Inv. 11)');
+END;
+
+-- Archival is one-way. No spec flow resurrects a packet or reuses its spent
+-- queue slot; refinement keeps the original packet live throughout (§8).
+CREATE TRIGGER packets_never_unarchive
 BEFORE UPDATE OF archived ON review_packets
 WHEN OLD.archived = 1 AND NEW.archived = 0
-  AND (SELECT COUNT(*) FROM review_packets WHERE archived = 0) >= 3
 BEGIN
-    SELECT RAISE(ABORT, 'review WIP cap: at most 3 unarchived packets (Inv. 18)');
+    SELECT RAISE(ABORT, 'a review packet can never be unarchived (Inv. 11)');
 END;
 
 -- Saturation is computed, never hand-set (§8): refine_streak >= 3 saturates.

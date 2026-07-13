@@ -37,6 +37,7 @@ interface RunResult {
 async function runRunner(opts: {
   behavior: unknown;
   mcExit?: number;
+  delayRegistration?: boolean;
 }): Promise<RunResult> {
   const root = mkdtempSync(join(tmpdir(), "mc-runner-test-"));
   roots.push(root);
@@ -73,7 +74,11 @@ async function runRunner(opts: {
   const mcStub = join(binDir, "mc");
   writeFileSync(
     mcStub,
-    `#!/bin/sh\necho "$@" >> "${mcLog}"\n` +
+    `#!/bin/sh\n` +
+      (opts.delayRegistration
+        ? `if [ "$1 $2" = "run register-session" ]; then sleep 0.2; fi\n`
+        : "") +
+      `echo "$@" >> "${mcLog}"\n` +
       (opts.mcExit ? `echo "stub mc: scripted failure" >&2\nexit ${opts.mcExit}\n` : "exit 0\n"),
   );
   chmodSync(mcStub, 0o755);
@@ -123,6 +128,17 @@ describe("agent runner process behaviors (contract §4, spec §11.5)", () => {
     ]);
     // Heartbeating begins only after session-start (§10), immediately.
     expect(res.mcCalls).toContain("heartbeat proc-test-run");
+  }, 20_000);
+
+  test("awaits locator registration when the harness exits immediately", async () => {
+    const res = await runRunner({
+      behavior: { steps: [{ do: "succeed", output: "ok" }] },
+      delayRegistration: true,
+    });
+    expect(res.exitCode).toBe(0);
+    expect(res.mcCalls.filter((c) => c.startsWith("run register-session"))).toEqual([
+      "run register-session proc-test-run --native-ref fake-session --file native.jsonl",
+    ]);
   }, 20_000);
 
   test("failing mc calls are logged and never fatal; harness exit still passes through", async () => {

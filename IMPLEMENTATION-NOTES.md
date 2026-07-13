@@ -301,3 +301,74 @@ Entry template:
   mc-run-<run_id>" (or define the subjectless form)
 - Needs your decision: no (log-and-go; flag if you want the spec's literal
   pattern for worksource-bearing runs)
+
+## 2026-07-12 — Codex takeover audit found four Phase 1 invariant defects
+- Where: cross-harness takeover review required by AGENTS.md §2, before
+  building on Phase 1; spec §7/§9/§18 and Inv. 4/10/11/18/25/26
+- Gap: the outgoing implementation was green by its existing tests but (1)
+  role terminals compared the caller-supplied `--run` only to the live lease,
+  never to `run.json`'s caller identity; (2) `mc-land` could merge main and
+  then fail during cleanup, causing the resident to report a false landing
+  failure; (3) the runner fire-and-forgot permanent session-locator
+  registration before `process.exit`; and (4) raw packet archive/unarchive
+  could free and resurrect queue slots independently of task decisions.
+- Choice: stop the Phase 2 spine and repair all four red-first before relying
+  on Phase 1: bind every terminal token to the caller identity before lease
+  fencing; make pre-merge checks fail closed and treat post-merge cleanup as
+  cleanup debt rather than a failed merge; await locator registration before
+  runner exit; and enforce packet archival as a one-way consequence of owning
+  task archival. These are the smallest changes that restore the written
+  invariants and are straightforward to reverse locally.
+- Spec impact: none (the implementation and its tests were wrong; the spec is
+  explicit)
+- Needs your decision: no
+
+## 2026-07-12 — Phase 2 wave-1 adds three temporary carrier fields
+- Where: Phase 2 domain layer; spec §7/§8/§10/§16.3; NOTE(P2.1–P2.3)
+- Gap: the spec requires a stored Daily Console schedule, durable Verifier
+  evidence/correction/deepening records, and revise/refine notes in the next
+  brief, but does not assign physical columns; the final config/onboarding
+  layer does not exist yet.
+- Choice: add `lock.console_hour/console_minute/console_tz` with hour 24 as a
+  fail-closed not-configured sentinel; add verdict/evidence/correction/
+  deepening fields to the Verifier's permanent `runs` row; add overwrite-only
+  `tasks.refine_notes`, cleared on packaging. This keeps each terminal one
+  transaction and avoids a new table. Onboarding later absorbs the console
+  values into the §16.3 config source.
+- Spec impact: none for verdict/notes storage; §16.3's file-backed schedule is
+  temporarily implemented in the lock row until onboarding lands
+- Needs your decision: no
+
+## 2026-07-12 — Refinement judgment applies at the rally-ending verdict
+- Where: Phase 2 task/packet aggregates; spec §8; ADR-001 open question 2
+- Gap: §8 defines genuine deepening versus churn but does not pin the exact
+  transaction that updates `refine_streak`.
+- Choice: derive a refinement round from the task's live packet and apply the
+  streak at PASS/BUDGET-SPENT, where the Verifier supplies `--deepening` and
+  the rally ends. CORRECT does not update the streak; BUDGET-SPENT is always
+  churn. This needs no carrier column and keeps judgment with the Verifier.
+- Spec impact: none
+- Needs your decision: no
+
+## 2026-07-12 — Refiner re-entry uses `mc complete --status seeded`
+- Where: Phase 2 CLI/domain integration; spec §8/§18; ADR-001 D4 pattern
+- Gap: §8 gives Refiner one terminal action (scope a deepening and re-enter
+  packaged→seeded), but §18 and ADR-001 name no dedicated role-side verb.
+- Choice: use `mc complete <task> --status seeded --outputs <scope>` with a
+  Refiner role fence. It is the same subject-status terminal pattern as an
+  initiative done-declaration and keeps re-entry in one transaction.
+- Spec impact: §18 should explicitly include the seeded Refiner arm
+- Needs your decision: no
+
+## 2026-07-12 — `mc complete --correction-count` is accepted grammar with no writer
+- Where: Phase 2 two-budget ownership; spec §7/§10/§18; ADR-001 verifier
+  verdict design
+- Gap: §18 lists `--correction-count` under `mc complete`, while the delegated
+  role verb makes `mc verifier verdict` the sole quality-budget writer.
+  Implementing both would blur the two-budget ownership and allow competing
+  correction arithmetic.
+- Choice: parse but reject `--correction-count`; all correction changes go
+  through the fenced Verifier outcome. Conservative by Inv. 10 and easiest to
+  reverse if §18 later assigns the flag a non-writing meaning.
+- Spec impact: §18 should remove or define `--correction-count`
+- Needs your decision: no

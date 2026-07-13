@@ -4,7 +4,7 @@
 LAST GREEN SHA: (this commit)
 PHASES PASSING: Phase 0 COMPLETE (S1–S8 all green, no fallback ADRs; only operator-leg deferrals remain); Phase 1 COMPLETE (1a substrate 155; 1b walking skeleton reviewed-and-fixed — fake-harness 43, agent-runner 11, resident 29, dispatch + cmd/mc suites; Docker e2e PASS ×4 total)
 KNOWN-FAILING: (none)
-FAST SUITE: mc/check.sh (gofmt+vet+go test ./... — includes substrate + promoted dispatch) + runner/fake-harness/check.sh + runner/agent-runner/check.sh + resident/check.sh. Docker e2e (phase-completion lane): cd mc && mise exec -- go test -tags docker_e2e -timeout 15m ./e2e/...
+FAST SUITE: mc/check.sh (gofmt+vet+go test ./... — includes substrate + promoted dispatch) + runner/fake-harness/check.sh + runner/agent-runner/check.sh + runner/image/check.sh + resident/check.sh. Docker e2e (phase-completion lane): cd mc && mise exec -- go test -tags docker_e2e -timeout 15m ./e2e/...
 
 ## Phases
 
@@ -113,6 +113,13 @@ FAST SUITE: mc/check.sh (gofmt+vet+go test ./... — includes substrate + promot
   memory notes were not seeded (memory dir empty). The three §4.3 priors are
   reconstructed as one-line notes in `docs/priors/` marked RECONSTRUCTED.
   If original POC material exists, drop it into `docs/priors/`.
+- **Initiative wave holistic Editor review** (spec §3/§6.1, ADR-001 open
+  question 1, phase2-contract A-P2-7): children are required to be born
+  `seeded`, but the current dispatch table would send them straight to Worker
+  with no state/slot for the Editor's mandatory holistic plan review. Decision
+  request: choose a durable representation/dispatch step for reviewed-vs-
+  unreviewed wave children. This blocks only the `strategist wave` CLI line;
+  other Phase 2 work continues.
 
 ## Chronology
 
@@ -235,3 +242,54 @@ Kickoff (next session, either harness): "Continue the Mission Control
 implementation from commit `<current main tip>`, phase `P-2`. Follow the
 session protocol in AGENTS.md; read PROGRESS.md; do not invent scope; stop
 rather than guess missing operator inputs."
+
+- 2026-07-12 — Codex takeover from quota-interrupted Claude Code session.
+  Resume ritual found commit 2be0e47 clean and pushed but **mid-red and
+  unledgered**: it contains the Phase 2 wave-1 contract, domain aggregates,
+  dispatch gap tests, schema additions, and verb rewiring (+4358/-304), while
+  `cmd/mc` and its CLI tests remain on the Phase 1 signatures/deferred arms.
+  Fast-lane truth at takeover: domain/dispatch/substrate focused Go suites
+  green; fake-harness 43, agent-runner 11, resident 29 green; full Go lane
+  compile-fails at the stale VerifierVerdict call above. Cross-harness
+  adversarial takeover review launched before any code edit, per AGENTS.md
+  §2; uncommitted work was absent and nothing was discarded.
+
+NEXT: Complete the cross-harness audit of 2be0e47, record confirmed findings
+in IMPLEMENTATION-NOTES.md, then restore the CLI boundary with the smallest
+TDD integration slice (VerifierVerdict args first) and re-run the full fast
+lane before advancing any Phase 2 wave marker.
+
+- 2026-07-12 — **Cross-harness takeover review closure, four Phase 1 defects
+  fixed red-first.** (1) Every role terminal now binds `--run` to the caller's
+  immutable run.json identity before checking the live lease; the old
+  same-role/new-holder attack leaves task and lease untouched. (2) the agent
+  runner awaits native-session locator registration even when the harness
+  exits immediately (12 runner tests green). (3) packet archive is now a
+  one-way consequence of owning-task archive; direct slot freeing/resurrection
+  aborts at the substrate, including initiative cascades. (4) mc-land
+  preflights dirty/locked worktrees before main moves and treats unexpected
+  post-merge cleanup residue as logged debt, never a false landing failure (2
+  new Docker-free mc-land tests; resident 30 green). Focused Go suites green.
+  The full Go lane now reaches only the expected stale Phase 2 CLI assertions
+  listed in KNOWN-FAILING.
+
+NEXT: Resume Phase 2 wave-1 integration red-first: replace the stale packet,
+Editor, and Verifier deferred-arm CLI tests with real happy/error-path tests,
+wire the already-built verb APIs through cmd/mc, and restore the full fast
+suite before taking the next Phase 2 seam.
+
+- 2026-07-12 — **Green recovery boundary after Codex takeover.** Phase 2 CLI
+  now drives packet revise/cancel, mixed Editor promote/reject, and Verifier
+  PASS/CORRECT/BUDGET-SPENT plus refinement-deepening validation through the
+  real binary; old deferred tests replaced with isolated happy/error paths.
+  The Verifier API compile break is closed. Complete expanded fast lane green:
+  Go all packages; fake-harness 43; agent-runner 12; mc-land 2; resident 30.
+  Phase 2 storage/verb interpretations missing from 2be0e47 are now logged;
+  the initiative-wave plan-review hole is parked and only that line is held.
+
+NEXT: Continue Phase 2 wave 1 at the next independent red-green slice:
+`mc complete` seeded/needs-operator/infra + task block/unblock (keep
+`--correction-count` rejected), then console init tunables and the promised
+verbs/dispatch loader differential suite. Before wave-1 closure, add the
+spec-required process flock and replace hardcoded fake binding with validated
+routing.md resolution. Do not wire `strategist wave` until its Parked decision.

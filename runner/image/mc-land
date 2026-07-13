@@ -18,7 +18,8 @@ branch=$1
 sha=$2
 target=$3
 
-cd /workspace/source
+workspace=${MC_LAND_WORKSPACE:-/workspace/source}
+cd "$workspace"
 
 # Step 1 — the SHA fence: only the exact reviewed commit can land (§7).
 actual=$(git rev-parse "refs/heads/$branch")
@@ -40,6 +41,36 @@ if [ "$head" != "$target" ]; then
     echo "mc-land: HEAD fence: primary checkout is on ${head:-a detached HEAD}, not $target (§6.2, §7 step 2)" >&2
     exit 1
 fi
+
+# Resolve and preflight the exact task worktree before the irreversible merge.
+# A dirty worktree means the reviewed branch is no longer the whole execution
+# state; refuse while main is untouched instead of discovering it during
+# post-merge removal and falsely reporting that the merge failed.
+wt=$(git worktree list --porcelain \
+     | awk -v ref="refs/heads/$branch" '$1=="worktree"{w=$2} $1=="branch"&&$2==ref{print w}')
+if [ -n "$wt" ]; then
+    if ! git -C "$wt" diff --quiet --ignore-submodules -- \
+       || ! git -C "$wt" diff --cached --quiet --ignore-submodules -- \
+       || [ -n "$(git -C "$wt" ls-files --others --exclude-standard)" ]; then
+        echo "mc-land: task worktree $wt is dirty; refusing before main moves (§7 nothing half-lands)" >&2
+        exit 1
+    fi
+    locked=$(git worktree list --porcelain \
+        | awk -v ref="refs/heads/$branch" '
+            BEGIN { RS=""; FS="\n" }
+            { on_ref=0; is_locked=0
+              for (i=1; i<=NF; i++) {
+                if ($i == "branch " ref) on_ref=1
+                if ($i ~ /^locked( |$)/) is_locked=1
+              }
+              if (on_ref && is_locked) print "locked"
+            }')
+    if [ -n "$locked" ]; then
+        echo "mc-land: task worktree $wt is locked; refusing before main moves (§7 nothing half-lands)" >&2
+        exit 1
+    fi
+fi
+
 if ! git -c user.name='mission control' -c user.email='mc@mission-control.invalid' \
         merge --no-ff -m "Land $branch ($sha) into $target" "$sha"; then
     # §7: "Nonzero … → git merge --abort where applicable, nothing
@@ -50,11 +81,22 @@ if ! git -c user.name='mission control' -c user.email='mc@mission-control.invali
     exit 1
 fi
 
-# Step 3 — remove the worktree and branch by exact path (§7): resolve the
-# worktree registered on this branch, never a guessed path.
-wt=$(git worktree list --porcelain \
-     | awk -v ref="refs/heads/$branch" '$1=="worktree"{w=$2} $1=="branch"&&$2==ref{print w}')
+# Step 3 — remove the preflighted worktree and branch by exact path (§7).
+# Once main has moved, a cleanup error is no longer a landing failure: report
+# success so canonical state tells the truth, and surface the residue as
+# cleanup debt for the orphan/health path to finish.
+cleanup_debt=0
 if [ -n "$wt" ]; then
-    git worktree remove "$wt"
+    if ! git worktree remove "$wt"; then
+        echo "mc-land: cleanup debt: landed $sha but could not remove worktree $wt" >&2
+        cleanup_debt=1
+    fi
 fi
-git branch -d "$branch"
+if ! git branch -d "$branch"; then
+    echo "mc-land: cleanup debt: landed $sha but could not delete branch $branch" >&2
+    cleanup_debt=1
+fi
+if [ "$cleanup_debt" -ne 0 ]; then
+    echo "mc-land: landing succeeded with cleanup debt; main already contains $sha" >&2
+fi
+exit 0

@@ -57,6 +57,9 @@ func Complete(db *sql.DB, id *RunIdentity, a CompleteArgs) (any, error) {
 	if a.Run == "" {
 		return nil, Usagef("mc complete requires --run (the fencing token, §10)")
 	}
+	if err := requireOwnRun(id, a.Run); err != nil {
+		return nil, err
+	}
 	switch a.Status {
 	case "", "worked", "packaged", "seeded":
 	default:

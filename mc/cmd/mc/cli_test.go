@@ -668,7 +668,7 @@ func TestDispatchReap(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// mc packet decide — validation table (§7 asymmetry; [P2] arms rejected).
+// mc packet decide — validation + Phase 2 revise/cancel arms (§7).
 // ---------------------------------------------------------------------------
 
 func TestPacketDecideValidation(t *testing.T) {
@@ -685,12 +685,8 @@ func TestPacketDecideValidation(t *testing.T) {
 			[]string{"packet", "decide", fmt.Sprint(taskID), "--approve", "--reason", "no"}, 1, "forbidden"},
 		{"revise_without_reason",
 			[]string{"packet", "decide", fmt.Sprint(taskID), "--revise"}, 1, "required"},
-		{"revise_with_reason_deferred",
-			[]string{"packet", "decide", fmt.Sprint(taskID), "--revise", "--reason", "tighten"}, 1, "deferred"},
 		{"cancel_without_reason",
 			[]string{"packet", "decide", fmt.Sprint(taskID), "--cancel"}, 1, "required"},
-		{"cancel_with_reason_deferred",
-			[]string{"packet", "decide", fmt.Sprint(taskID), "--cancel", "--reason", "drop"}, 1, "deferred"},
 		{"no_flag_is_usage",
 			[]string{"packet", "decide", fmt.Sprint(taskID)}, 2, ""},
 		{"two_flags_is_usage",
@@ -711,6 +707,45 @@ func TestPacketDecideValidation(t *testing.T) {
 			}
 		})
 	}
+
+	packaged := func(t *testing.T, title string) (string, int64, *sql.DB) {
+		t.Helper()
+		s := initSpine(t)
+		id := taskAdd(t, s, title)
+		packageTask(t, s, id, "")
+		db := openDB(t, s)
+		return s, id, db
+	}
+
+	t.Run("revise_reenters_same_task_and_keeps_packet_live", func(t *testing.T) {
+		s, id, db := packaged(t, "revise me")
+		res := runMC(t, spineEnv(s), "", "packet", "decide", fmt.Sprint(id),
+			"--revise", "--reason", "tighten evidence")
+		if res.code != 0 {
+			t.Fatalf("revise failed: %s", res.stderr)
+		}
+		if got := queryStr(t, db, `SELECT status || '/' || refine_notes FROM tasks WHERE id = ?`, id); got != "seeded/tighten evidence" {
+			t.Fatalf("re-entered task = %q", got)
+		}
+		if got := queryInt(t, db, `SELECT archived FROM review_packets WHERE task_id = ?`, id); got != 0 {
+			t.Fatalf("revise freed packet slot: archived=%d", got)
+		}
+	})
+
+	t.Run("cancel_archives_task_and_packet", func(t *testing.T) {
+		s, id, db := packaged(t, "cancel me")
+		res := runMC(t, spineEnv(s), "", "packet", "decide", fmt.Sprint(id),
+			"--cancel", "--reason", "no longer useful")
+		if res.code != 0 {
+			t.Fatalf("cancel failed: %s", res.stderr)
+		}
+		if got := queryStr(t, db, `SELECT decision || '/' || archived FROM tasks WHERE id = ?`, id); got != "cancelled/1" {
+			t.Fatalf("cancelled task = %q", got)
+		}
+		if got := queryInt(t, db, `SELECT archived FROM review_packets WHERE task_id = ?`, id); got != 1 {
+			t.Fatalf("cancel did not archive packet: %d", got)
+		}
+	})
 }
 
 // packageTask drives a fresh task through editor→worker→verifier→packager via
@@ -877,6 +912,8 @@ func TestRoleScopeEnforcement(t *testing.T) {
 			[]string{"editor", "decide", "--run", run, "--batch", "-"}, batch, "pipeline-tier"},
 		{"stale_run_refused", runJSONEnv(t, spine, run, "pipeline", "editor"),
 			[]string{"editor", "decide", "--run", "old-run", "--batch", "-"}, batch, "stale run"},
+		{"caller_run_id_mismatch_refused", runJSONEnv(t, spine, "old-run", "pipeline", "editor"),
+			[]string{"editor", "decide", "--run", run, "--batch", "-"}, batch, "caller run mismatch"},
 		{"complete_without_identity", spineEnv(spine),
 			[]string{"complete", fmt.Sprint(taskID), "--run", run, "--status", "worked"}, "", "pipeline run identity"},
 		{"verifier_wrong_role", runJSONEnv(t, spine, run, "pipeline", "editor"),
@@ -926,8 +963,6 @@ func TestEditorDecideCoverage(t *testing.T) {
 			fmt.Sprintf(`{"verdicts":[{"task":%d,"decision":"promote","reason":"r"}]}`, t1), 1, "exactly"},
 		{"superset_rejected",
 			fmt.Sprintf(`{"verdicts":[{"task":%d,"decision":"promote","reason":"r"},{"task":%d,"decision":"promote","reason":"r"},{"task":99,"decision":"promote","reason":"r"}]}`, t1, t2), 1, "exactly"},
-		{"reject_arm_deferred",
-			fmt.Sprintf(`{"verdicts":[{"task":%d,"decision":"reject","reason":"weak"},{"task":%d,"decision":"promote","reason":"r"}]}`, t1, t2), 1, "deferred"},
 		{"unknown_decision",
 			fmt.Sprintf(`{"verdicts":[{"task":%d,"decision":"defer","reason":"r"},{"task":%d,"decision":"promote","reason":"r"}]}`, t1, t2), 1, "unknown decision"},
 		{"bad_json", `{"verdicts": nope}`, 1, "bad batch payload"},
@@ -947,15 +982,18 @@ func TestEditorDecideCoverage(t *testing.T) {
 		t.Fatalf("failed batches half-applied: %d seeded", n)
 	}
 
-	// The exact batch promotes the whole pool in one transaction.
+	// The exact mixed batch promotes and rejects atomically.
 	res := runMC(t, env,
-		fmt.Sprintf(`{"verdicts":[{"task":%d,"decision":"promote","reason":"r"},{"task":%d,"decision":"promote","reason":"r"}]}`, t1, t2),
+		fmt.Sprintf(`{"verdicts":[{"task":%d,"decision":"promote","reason":"r"},{"task":%d,"decision":"reject","reason":"weak"}]}`, t1, t2),
 		"editor", "decide", "--run", run, "--batch", "-")
 	if res.code != 0 {
 		t.Fatalf("exact batch failed: %s", res.stderr)
 	}
-	if n := queryInt(t, db, `SELECT COUNT(*) FROM tasks WHERE status = 'seeded'`); n != 2 {
-		t.Fatalf("seeded = %d, want 2", n)
+	if n := queryInt(t, db, `SELECT COUNT(*) FROM tasks WHERE status = 'seeded'`); n != 1 {
+		t.Fatalf("seeded = %d, want 1", n)
+	}
+	if got := queryStr(t, db, `SELECT decision || '/' || archived FROM tasks WHERE id = ?`, t2); got != "rejected/1" {
+		t.Fatalf("rejected task = %q", got)
 	}
 }
 
@@ -1004,37 +1042,116 @@ func TestStrategistProposeInserts(t *testing.T) {
 	})
 }
 
-func TestVerifierVerdictValidation(t *testing.T) {
+func verifierFixture(t *testing.T, title string) (string, int64, string, []string) {
+	t.Helper()
 	spine := initSpine(t)
-	taskID := taskAdd(t, spine, "to verify")
-	eff := dispatchExpect(t, spine, "spawn") // editor holds the lease
-	run := eff["run_id"].(string)
-	env := runJSONEnv(t, spine, run, "pipeline", "verifier")
+	taskID := taskAdd(t, spine, title)
 
-	tests := []struct {
+	eff := dispatchExpect(t, spine, "spawn")
+	editorRun := eff["run_id"].(string)
+	res := runMC(t, runJSONEnv(t, spine, editorRun, "pipeline", "editor"),
+		fmt.Sprintf(`{"verdicts":[{"task":%d,"decision":"promote","reason":"ok"}]}`, taskID),
+		"editor", "decide", "--run", editorRun, "--batch", "-")
+	if res.code != 0 {
+		t.Fatalf("promote fixture failed: %s", res.stderr)
+	}
+
+	eff = dispatchExpect(t, spine, "spawn")
+	workerRun := eff["run_id"].(string)
+	res = runMC(t, runJSONEnv(t, spine, workerRun, "pipeline", "worker"), "",
+		"complete", fmt.Sprint(taskID), "--run", workerRun, "--status", "worked")
+	if res.code != 0 {
+		t.Fatalf("worker fixture failed: %s", res.stderr)
+	}
+
+	eff = dispatchExpect(t, spine, "spawn")
+	verifierRun := eff["run_id"].(string)
+	return spine, taskID, verifierRun,
+		runJSONEnv(t, spine, verifierRun, "pipeline", "verifier")
+}
+
+func TestVerifierVerdictValidation(t *testing.T) {
+	t.Run("correct_requires_correction_file", func(t *testing.T) {
+		spine, taskID, run, env := verifierFixture(t, "correct needs feedback")
+		_ = spine
+		res := runMC(t, env, "", "verifier", "verdict", fmt.Sprint(taskID), "--run", run,
+			"--outcome", "correct", "--evidence", "e", "--sha", "s")
+		if res.code != 1 || !strings.Contains(res.stderr, "--correction") {
+			t.Fatalf("exit = %d stderr %q", res.code, res.stderr)
+		}
+	})
+
+	t.Run("correct_reenters_and_records_verdict", func(t *testing.T) {
+		spine, taskID, run, env := verifierFixture(t, "correct once")
+		res := runMC(t, env, "", "verifier", "verdict", fmt.Sprint(taskID), "--run", run,
+			"--outcome", "correct", "--evidence", "e.md", "--sha", "s",
+			"--correction", "corrections/c1.md")
+		if res.code != 0 {
+			t.Fatalf("correct failed: %s", res.stderr)
+		}
+		db := openDB(t, spine)
+		if got := queryStr(t, db, `SELECT status || '/' || correction_count FROM tasks WHERE id = ?`, taskID); got != "seeded/1" {
+			t.Fatalf("correct result = %q", got)
+		}
+		if got := queryStr(t, db, `SELECT verdict_outcome || '/' || correction_path FROM runs WHERE id = ?`, run); got != "correct/corrections/c1.md" {
+			t.Fatalf("verdict record = %q", got)
+		}
+	})
+
+	t.Run("budget_spent_requires_exhausted_rally", func(t *testing.T) {
+		_, taskID, run, env := verifierFixture(t, "budget remains")
+		res := runMC(t, env, "", "verifier", "verdict", fmt.Sprint(taskID), "--run", run,
+			"--outcome", "budget-spent", "--evidence", "e", "--sha", "s")
+		if res.code != 1 || !strings.Contains(res.stderr, "correction_count = 3") {
+			t.Fatalf("exit = %d stderr %q", res.code, res.stderr)
+		}
+	})
+
+	t.Run("budget_spent_ships_exception_labeled", func(t *testing.T) {
+		spine, taskID, run, env := verifierFixture(t, "budget exhausted")
+		db := openDB(t, spine)
+		if _, err := db.Exec(`UPDATE tasks SET correction_count = 3 WHERE id = ?`, taskID); err != nil {
+			t.Fatal(err)
+		}
+		res := runMC(t, env, "", "verifier", "verdict", fmt.Sprint(taskID), "--run", run,
+			"--outcome", "budget-spent", "--evidence", "e", "--sha", "verified")
+		if res.code != 0 || res.json["exception_labeled"] != true {
+			t.Fatalf("budget-spent result code=%d json=%v stderr=%q", res.code, res.json, res.stderr)
+		}
+		if got := queryStr(t, db, `SELECT status || '/' || verified_sha FROM tasks WHERE id = ?`, taskID); got != "verified/verified" {
+			t.Fatalf("budget-spent task = %q", got)
+		}
+	})
+
+	t.Run("deepening_forbidden_outside_refinement", func(t *testing.T) {
+		_, taskID, run, env := verifierFixture(t, "not a refinement")
+		res := runMC(t, env, "", "verifier", "verdict", fmt.Sprint(taskID), "--run", run,
+			"--outcome", "pass", "--evidence", "e", "--sha", "s", "--deepening", "genuine")
+		if res.code != 1 || !strings.Contains(res.stderr, "only legal") {
+			t.Fatalf("exit = %d stderr %q", res.code, res.stderr)
+		}
+	})
+
+	for _, tc := range []struct {
 		name string
-		args []string
-		want int
+		args func(taskID int64, run string) []string
 		msg  string
 	}{
-		{"correct_deferred", []string{"verifier", "verdict", fmt.Sprint(taskID), "--run", run,
-			"--outcome", "correct", "--evidence", "e", "--sha", "s"}, 1, "deferred"},
-		{"budget_spent_deferred", []string{"verifier", "verdict", fmt.Sprint(taskID), "--run", run,
-			"--outcome", "budget-spent", "--evidence", "e", "--sha", "s"}, 1, "deferred"},
-		{"deepening_deferred", []string{"verifier", "verdict", fmt.Sprint(taskID), "--run", run,
-			"--outcome", "pass", "--evidence", "e", "--sha", "s", "--deepening", "genuine"}, 1, "deferred"},
-		{"missing_sha_usage", []string{"verifier", "verdict", fmt.Sprint(taskID), "--run", run,
-			"--outcome", "pass", "--evidence", "e"}, 2, "--sha"},
-		{"missing_evidence_usage", []string{"verifier", "verdict", fmt.Sprint(taskID), "--run", run,
-			"--outcome", "pass", "--sha", "s"}, 2, "--evidence"},
-		{"bad_outcome_usage", []string{"verifier", "verdict", fmt.Sprint(taskID), "--run", run,
-			"--outcome", "maybe", "--evidence", "e", "--sha", "s"}, 2, "--outcome"},
-	}
-	for _, tc := range tests {
+		{"missing_sha_usage", func(id int64, run string) []string {
+			return []string{"verifier", "verdict", fmt.Sprint(id), "--run", run, "--outcome", "pass", "--evidence", "e"}
+		}, "--sha"},
+		{"missing_evidence_usage", func(id int64, run string) []string {
+			return []string{"verifier", "verdict", fmt.Sprint(id), "--run", run, "--outcome", "pass", "--sha", "s"}
+		}, "--evidence"},
+		{"bad_outcome_usage", func(id int64, run string) []string {
+			return []string{"verifier", "verdict", fmt.Sprint(id), "--run", run, "--outcome", "maybe", "--evidence", "e", "--sha", "s"}
+		}, "--outcome"},
+	} {
 		t.Run(tc.name, func(t *testing.T) {
-			res := runMC(t, env, "", tc.args...)
-			if res.code != tc.want || !strings.Contains(res.stderr, tc.msg) {
-				t.Fatalf("exit = %d stderr %q, want %d containing %q", res.code, res.stderr, tc.want, tc.msg)
+			_, taskID, run, env := verifierFixture(t, tc.name)
+			res := runMC(t, env, "", tc.args(taskID, run)...)
+			if res.code != 2 || !strings.Contains(res.stderr, tc.msg) {
+				t.Fatalf("exit = %d stderr %q, want usage containing %q", res.code, res.stderr, tc.msg)
 			}
 		})
 	}

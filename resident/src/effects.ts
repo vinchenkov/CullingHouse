@@ -152,6 +152,11 @@ async function land(effect: LandEffect, deps: TickDeps): Promise<void> {
         ];
   if (res.exitCode !== 0) {
     log(`land task ${effect.task_id}: mc-land failed (exit ${res.exitCode}): ${res.stderr.trim()}`);
+  } else if (res.stderr.trim() !== "") {
+    // mc-land may have moved main successfully but left removable worktree /
+    // branch residue. Canonical state must report the landing truthfully;
+    // keep the cleanup debt visible to the resident health log.
+    log(`land task ${effect.task_id}: mc-land warning: ${res.stderr.trim()}`);
   }
   const reported = await deps.runMc(report);
   if (reported.exitCode !== 0) {

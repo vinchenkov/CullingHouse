@@ -31,6 +31,9 @@ func EditorDecide(db *sql.DB, id *RunIdentity, run string, batch io.Reader) (any
 	if err := requireRole(id, "editor"); err != nil {
 		return nil, err
 	}
+	if err := requireOwnRun(id, run); err != nil {
+		return nil, err
+	}
 	var payload EditorVerdicts
 	if err := json.NewDecoder(batch).Decode(&payload); err != nil {
 		return nil, Domainf("mc editor decide: bad batch payload: %v", err)
@@ -163,6 +166,9 @@ func StrategistPropose(db *sql.DB, id *RunIdentity, run string, batch io.Reader)
 	if err := requireRole(id, "strategist"); err != nil {
 		return nil, err
 	}
+	if err := requireOwnRun(id, run); err != nil {
+		return nil, err
+	}
 	var payload StrategistProposals
 	if err := json.NewDecoder(batch).Decode(&payload); err != nil {
 		return nil, Domainf("mc strategist propose: bad batch payload: %v", err)
@@ -225,6 +231,9 @@ func StrategistWave(db *sql.DB, id *RunIdentity, run string, initiative int64, b
 	if err := requireRole(id, "strategist"); err != nil {
 		return nil, err
 	}
+	if err := requireOwnRun(id, run); err != nil {
+		return nil, err
+	}
 	var payload StrategistWaveChildren
 	if err := json.NewDecoder(batch).Decode(&payload); err != nil {
 		return nil, Domainf("mc strategist wave: bad batch payload: %v", err)
@@ -279,6 +288,9 @@ type VerdictArgs struct {
 // carries --deepening into the packet's streak (§8, A-P2-1).
 func VerifierVerdict(db *sql.DB, id *RunIdentity, a VerdictArgs) (any, error) {
 	if err := requireRole(id, "verifier"); err != nil {
+		return nil, err
+	}
+	if err := requireOwnRun(id, a.Run); err != nil {
 		return nil, err
 	}
 	switch a.Outcome {

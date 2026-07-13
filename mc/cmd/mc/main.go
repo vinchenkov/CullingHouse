@@ -372,13 +372,10 @@ func cmdVerifier(args []string) (any, error) {
 	outcome := fs.String("outcome", "", "pass|correct|budget-spent")
 	evidence := fs.String("evidence", "", "gate-ladder evidence path")
 	sha := fs.String("sha", "", "the verified commit SHA")
-	correction := fs.String("correction", "", "deferred [P2]")
-	deepening := fs.String("deepening", "", "deferred [P2]")
+	correction := fs.String("correction", "", "correction file path (CORRECT)")
+	deepening := fs.String("deepening", "", "genuine|churn for a refinement verdict")
 	if err := parse(fs, rest); err != nil {
 		return nil, err
-	}
-	if *correction != "" || *deepening != "" {
-		return nil, verbs.Domainf("--correction/--deepening are deferred to Phase 2 (contract §2 [P2])")
 	}
 	if *run == "" {
 		return nil, verbs.Usagef("mc verifier verdict requires --run")
@@ -388,7 +385,10 @@ func cmdVerifier(args []string) (any, error) {
 		return nil, err
 	}
 	return withSpine(func(db *sql.DB) (any, error) {
-		return verbs.VerifierVerdict(db, id, task, *run, *outcome, *evidence, *sha)
+		return verbs.VerifierVerdict(db, id, verbs.VerdictArgs{
+			Task: task, Run: *run, Outcome: *outcome, Evidence: *evidence,
+			SHA: *sha, Correction: *correction, Deepening: *deepening,
+		})
 	})
 }
 

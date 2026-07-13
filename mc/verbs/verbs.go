@@ -183,6 +183,22 @@ func requireRole(id *RunIdentity, want string) error {
 	return nil
 }
 
+// requireOwnRun binds a role terminal's caller-supplied fencing token to the
+// immutable identity in run.json before the token is checked against the live
+// lease (§18 deny rule 2). Lease fencing alone is insufficient: an old
+// same-role container must never act as a newer holder merely by supplying
+// that holder's run id.
+func requireOwnRun(id *RunIdentity, runID string) error {
+	if err := requirePipeline(id); err != nil {
+		return err
+	}
+	if id.RunID == "" || id.RunID != runID {
+		return &DomainError{Code: domain.CodeStaleRun,
+			Msg: fmt.Sprintf("stale run / caller run mismatch: run.json identifies %q, --run supplies %q (§18 deny rule 2)", id.RunID, runID)}
+	}
+	return nil
+}
+
 // fenceRun verifies the --run fencing token against the live lease (§10,
 // §18 deny rule 2) — the domain's lease.Fence.
 func fenceRun(ctx context.Context, q Q, runID string) (*int64, error) {

@@ -198,6 +198,17 @@ describe("land effect", () => {
     expect(rig.logs.some((l) => l.includes("mc-land failed (exit 7)"))).toBe(true);
   });
 
+  test("successful landing surfaces post-merge cleanup debt without lying to the spine", async () => {
+    const rig = makeRig();
+    rig.docker.enqueue({ exitCode: 0, stdout: "", stderr: "mc-land: cleanup debt: branch remains" });
+    rig.mc.enqueue(ok("{}"));
+    await applyEffect(landEffect, rig.deps);
+    expect(rig.mc.calls).toEqual([
+      ["land", "report", "42", "--status", "success"],
+    ]);
+    expect(rig.logs.some((l) => l.includes("cleanup debt"))).toBe(true);
+  });
+
   test("a failed `mc land report` is logged, not thrown", async () => {
     const rig = makeRig();
     rig.docker.enqueue(ok(""));

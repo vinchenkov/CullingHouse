@@ -576,12 +576,18 @@ func TestReviewWipCap(t *testing.T) {
 	// The fourth packet aborts at birth.
 	wantAbort(t, db, `INSERT INTO review_packets (task_id) VALUES (?)`, tasks[3])
 
-	// Archiving one frees the slot; the birth then commits.
-	mustExec(t, db, `UPDATE review_packets SET archived = 1 WHERE task_id = ?`, tasks[0])
-	mkPacket(t, db, tasks[3])
-
-	// Un-archiving over the cap is refused too (fail-closed).
+	// Only the owning task's terminal decision may archive its packet and
+	// free the slot (Inv. 11). A packet can never be resurrected, even while
+	// the queue is below cap.
+	cancelTask(t, db, tasks[0])
 	wantAbort(t, db, `UPDATE review_packets SET archived = 0 WHERE task_id = ?`, tasks[0])
+
+	// Directly archiving an undecided task's live packet would evade
+	// backpressure, so the substrate refuses it.
+	wantAbort(t, db, `UPDATE review_packets SET archived = 1 WHERE task_id = ?`, tasks[1])
+
+	// The valid task decision freed one slot; the fourth birth now commits.
+	mkPacket(t, db, tasks[3])
 
 	// Exactly one packet per task, for life — even the archived one blocks a second.
 	wantAbort(t, db, `INSERT INTO review_packets (task_id) VALUES (?)`, tasks[1])

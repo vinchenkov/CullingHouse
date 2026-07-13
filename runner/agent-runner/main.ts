@@ -113,6 +113,7 @@ async function main(): Promise<number> {
 
   let heartbeatTimer: ReturnType<typeof setInterval> | undefined;
   let sessionSeen = false;
+  let registration: Promise<number> | undefined;
 
   const onEvent = (line: string) => {
     // Mirror the event stream to our own stdout (docker logs observability);
@@ -128,7 +129,7 @@ async function main(): Promise<number> {
     if (ev.event !== "session-start" || typeof ev.session_id !== "string") return;
     sessionSeen = true;
     // Register the native session locators (ADR-001 D5, §15.4) …
-    void mc([
+    registration = mc([
       "run",
       "register-session",
       run.run_id,
@@ -136,7 +137,10 @@ async function main(): Promise<number> {
       ev.session_id,
       "--file",
       NATIVE_FILENAME,
-    ]);
+    ]).catch((err) => {
+      log(`mc run register-session failed to start: ${String(err)}`);
+      return 2;
+    });
     // … and start heartbeating: only after the adapter established the
     // session (§10), immediately and then every interval. Failures are
     // logged, never fatal (a released/stale lease fences them, §10).
@@ -154,6 +158,11 @@ async function main(): Promise<number> {
 
   const code = await proc.exited;
   if (heartbeatTimer !== undefined) clearInterval(heartbeatTimer);
+  // The native-session locators are part of the permanent run record
+  // (Inv. 26). A fast harness may exit in the same turn that emitted
+  // session-start, so retain and await this one write before process.exit.
+  // A rejected/nonzero mc call remains nonfatal; mc() already logs it.
+  if (registration !== undefined) await registration;
   log(`harness exited ${code}${sessionSeen ? "" : " (no session-start seen)"}`);
   return code;
 }
