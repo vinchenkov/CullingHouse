@@ -564,3 +564,29 @@ Entry template:
   it. The new untagged `ActiveRegistry` regression test pins the binary side.
 - Spec impact: none
 - Needs your decision: no
+
+## 2026-07-13 — Quota-boundary onboarding was red and weakened §16.4/§17
+- Where: cross-harness takeover review of 76b3694; Phase 2 wave-2
+  operational-verb slice; spec §16.1/§16.4/§17; AGENTS.md §2
+- Gap: the pushed commit did not compile and omitted its CLI dispatcher and
+  cited ADR. Its initial schema and meta writes were not one transaction;
+  it created MC_HOME and opened a foreign spine with WAL pragmas before
+  validating meta; it neither wrote nor compared the deployment UUID
+  mirror; its lexical git fence rejected the spec-permitted ignored-root
+  case but could be bypassed through a symlink; an inputless surfaces
+  section reported success while preserving the hour-24 disabled-Console
+  sentinel; identical explicit tunable/surface replays rewrote state; and
+  first-Worksource setup could silently reuse a `default` sandbox profile
+  whose workspace root disagreed with the requested one.
+- Choice: treat 76b3694 as a red quota checkpoint, not an accepted slice.
+  Keep the Phase-2 direct-file spine and explicit runtime-auth/container/
+  supervision doubles delegated by the wave-2 contract, but close every
+  deterministic local-state defect red-first: read existing spines without
+  mutation, atomically create schema+meta, persist/compare the UUID mirror,
+  resolve symlinks and honor `git check-ignore`, require the dual-input
+  Console schedule until configured, skip identical writes, and refuse a
+  conflicting profile. This preserves the fail-closed posture, tracks the
+  spec most closely, and leaves the named-volume effects reversible for
+  their scheduled phase.
+- Spec impact: none; ADR-015 names the intentionally staged Phase-2 effects
+- Needs your decision: no

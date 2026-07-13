@@ -157,7 +157,8 @@ type doctorFinding struct {
 }
 
 // Doctor validates what Phase 2 can validate — MC_HOME shape, spine
-// identity/schema, routing, worksource/sandbox references — and reports the
+// identity/schema + MC_HOME mirror, routing, configured surfaces, and
+// worksource/sandbox references — and reports the
 // Phase 3/5 probes (container runtime, gateway, runtime auth, supervision)
 // as deferred so the finding surface is total from the start. Every finding
 // names its repairing onboarding section (§17). Doctor mutates nothing and
@@ -187,6 +188,7 @@ func Doctor(id *RunIdentity, spine string) (any, error) {
 	}
 
 	spineOK := false
+	spineUUID := ""
 	switch {
 	case spine == "":
 		add("spine", "fail", "MC_SPINE is not set", "home")
@@ -209,8 +211,28 @@ func Doctor(id *RunIdentity, spine string) (any, error) {
 				default:
 					add("spine", "ok", fmt.Sprintf("deployment %s schema %d", uuid, version), "home")
 					spineOK = true
+					spineUUID = uuid
 				}
 			}()
+		}
+	}
+
+	switch {
+	case err != nil:
+		add("deployment-identity", "fail", "not checked: MC_HOME unresolved", "home")
+	case !spineOK:
+		add("deployment-identity", "fail", "not checked: spine unavailable", "home")
+	default:
+		mirrored, exists, mirrorErr := readDeploymentMirror(home)
+		switch {
+		case mirrorErr != nil:
+			add("deployment-identity", "fail", mirrorErr.Error(), "home")
+		case !exists:
+			add("deployment-identity", "fail", fmt.Sprintf("%s is missing; run the home repair section (§16.4)", filepath.Join(home, deploymentUUIDFilename)), "home")
+		case mirrored != spineUUID:
+			add("deployment-identity", "fail", fmt.Sprintf("MC_HOME identity %s does not match spine identity %s — restore the matching backup (§16.4)", mirrored, spineUUID), "home")
+		default:
+			add("deployment-identity", "ok", fmt.Sprintf("MC_HOME and spine agree on %s", spineUUID), "home")
 		}
 	}
 
@@ -244,20 +266,44 @@ func Doctor(id *RunIdentity, spine string) (any, error) {
 		add("worksources", "fail", "not checked: spine unavailable", "worksource")
 	}
 
+	if spineOK {
+		db, openErr := substrate.Open(spine)
+		if openErr != nil {
+			add("surfaces", "fail", fmt.Sprintf("open spine: %v", openErr), "surfaces")
+		} else {
+			func() {
+				defer db.Close()
+				var hour, minute int
+				var tz string
+				queryErr := db.QueryRow(`SELECT console_hour, console_minute, console_tz FROM lock WHERE id = 1`).Scan(&hour, &minute, &tz)
+				switch {
+				case queryErr != nil:
+					add("surfaces", "fail", fmt.Sprintf("read Daily Console schedule: %v", queryErr), "surfaces")
+				case hour == 24:
+					add("surfaces", "fail", "Daily Console schedule is not configured", "surfaces")
+				default:
+					_, tzErr := time.LoadLocation(tz)
+					if hour < 0 || hour > 23 || minute < 0 || minute > 59 || tzErr != nil {
+						add("surfaces", "fail", fmt.Sprintf("invalid Daily Console schedule %02d:%02d %s", hour, minute, tz), "surfaces")
+					} else {
+						add("surfaces", "ok", fmt.Sprintf("Daily Console at %02d:%02d %s", hour, minute, tz), "surfaces")
+					}
+				}
+			}()
+		}
+	} else {
+		add("surfaces", "fail", "not checked: spine unavailable", "surfaces")
+	}
+
 	if err != nil {
 		add("routing", "fail", "not checked: MC_HOME unresolved", "routing")
 	} else {
 		path := filepath.Join(home, "routing.md")
-		data, readErr := os.ReadFile(path)
-		if readErr != nil {
-			add("routing", "fail", fmt.Sprintf("read routing.md at %q: %v", path, readErr), "routing")
+		registry, allowFakeDecorrelation := routing.ActiveRegistry()
+		if routeErr := validateRoutingPath(path, registry, allowFakeDecorrelation); routeErr != nil {
+			add("routing", "fail", routeErr.Error(), "routing")
 		} else {
-			registry, allowFakeDecorrelation := routing.ActiveRegistry()
-			if _, parseErr := routing.Parse(data, registry, allowFakeDecorrelation); parseErr != nil {
-				add("routing", "fail", fmt.Sprintf("invalid routing.md at %q: %v", path, parseErr), "routing")
-			} else {
-				add("routing", "ok", path, "routing")
-			}
+			add("routing", "ok", path, "routing")
 		}
 	}
 

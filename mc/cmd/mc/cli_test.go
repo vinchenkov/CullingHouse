@@ -3923,16 +3923,32 @@ func TestDoctor(t *testing.T) {
 		}
 		return out
 	}
+	prepareIdentityAndSurfaces := func(t *testing.T, spine string) string {
+		t.Helper()
+		db := openDB(t, spine)
+		uuid := queryStr(t, db, `SELECT deployment_uuid FROM meta WHERE id = 1`)
+		if _, err := db.Exec(`UPDATE lock SET console_hour = 8, console_minute = 0, console_tz = 'UTC' WHERE id = 1`); err != nil {
+			db.Close()
+			t.Fatal(err)
+		}
+		db.Close()
+		if err := os.WriteFile(filepath.Join(filepath.Dir(spine), "deployment.uuid"), []byte(uuid+"\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return uuid
+	}
 
 	t.Run("healthy_deployment_reports_ok_and_defers_phase3_probes", func(t *testing.T) {
 		spine := initSpine(t)
+		prepareIdentityAndSurfaces(t, spine)
 		res := runMC(t, spineEnv(spine), "", "doctor")
 		if res.code != 0 || res.json["ok"] != true {
 			t.Fatalf("doctor = code %d json %v stderr %q", res.code, res.json, res.stderr)
 		}
 		findings := findingByCheck(t, res)
 		for check, wantStatus := range map[string]string{
-			"mc-home": "ok", "spine": "ok", "routing": "ok", "worksources": "ok",
+			"mc-home": "ok", "spine": "ok", "deployment-identity": "ok",
+			"routing": "ok", "worksources": "ok", "surfaces": "ok",
 			"container-runtime": "deferred", "gateway": "deferred",
 			"runtime-auth": "deferred", "supervision": "deferred",
 		} {
@@ -3950,6 +3966,7 @@ func TestDoctor(t *testing.T) {
 
 	t.Run("failures_name_their_repairing_section_without_mutation", func(t *testing.T) {
 		spine := initSpine(t)
+		prepareIdentityAndSurfaces(t, spine)
 		taskAdd(t, spine, "doctor must not touch me")
 		db := openDB(t, spine)
 		if err := os.WriteFile(filepath.Join(filepath.Dir(spine), "routing.md"),
@@ -3969,6 +3986,34 @@ func TestDoctor(t *testing.T) {
 		}
 		if n := queryInt(t, db, `SELECT COUNT(*) FROM tasks`); n != 1 {
 			t.Fatalf("doctor mutated tasks: %d rows", n)
+		}
+	})
+
+	t.Run("identity_mismatch_and_disabled_console_are_failures", func(t *testing.T) {
+		spine := initSpine(t)
+		uuid := prepareIdentityAndSurfaces(t, spine)
+		mirror := filepath.Join(filepath.Dir(spine), "deployment.uuid")
+		if err := os.WriteFile(mirror, []byte("wrong\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		mismatch := runMC(t, spineEnv(spine), "", "doctor")
+		findings := findingByCheck(t, mismatch)
+		if mismatch.code != 0 || mismatch.json["ok"] != false || findings["deployment-identity"]["status"] != "fail" {
+			t.Fatalf("identity mismatch doctor = code %d json %v", mismatch.code, mismatch.json)
+		}
+		if err := os.WriteFile(mirror, []byte(uuid+"\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		db := openDB(t, spine)
+		if _, err := db.Exec(`UPDATE lock SET console_hour = 24, console_minute = 0, console_tz = 'UTC' WHERE id = 1`); err != nil {
+			db.Close()
+			t.Fatal(err)
+		}
+		db.Close()
+		disabled := runMC(t, spineEnv(spine), "", "doctor")
+		findings = findingByCheck(t, disabled)
+		if disabled.code != 0 || disabled.json["ok"] != false || findings["surfaces"]["status"] != "fail" || findings["surfaces"]["onboard_section"] != "surfaces" {
+			t.Fatalf("disabled Console doctor = code %d json %v", disabled.code, disabled.json)
 		}
 	})
 
@@ -4118,19 +4163,35 @@ func TestOnboard(t *testing.T) {
 		if _, err := os.Stat(home); !os.IsNotExist(err) {
 			t.Fatalf("refused onboard created MC_HOME (err %v)", err)
 		}
-		spine := initSpine(t)
-		for name, envDenied := range map[string][]string{
-			"pipeline": runJSONEnv(t, spine, "r-x", "pipeline", "worker"),
-			"homie":    homieJSONEnv(t, spine, "h-x", defaultHomieAllowlist),
+		for name, identityEnv := range map[string]func(string) []string{
+			"pipeline": func(spine string) []string {
+				return runJSONEnv(t, spine, "r-x", "pipeline", "worker")
+			},
+			"homie": func(spine string) []string {
+				return homieJSONEnv(t, spine, "h-x", defaultHomieAllowlist)
+			},
 		} {
+			deniedHome, deniedSpine, _ := freshHome(t)
+			envDenied := identityEnv(deniedSpine)
+			envDenied = append(envDenied, "MC_HOME="+deniedHome)
 			res := runMC(t, envDenied, "", "onboard", "home")
 			if res.code != 1 {
 				t.Fatalf("%s onboard exit = %d stderr %q", name, res.code, res.stderr)
+			}
+			if _, err := os.Stat(deniedHome); !os.IsNotExist(err) {
+				t.Fatalf("%s denial created MC_HOME: %v", name, err)
+			}
+			if _, err := os.Stat(deniedSpine); !os.IsNotExist(err) {
+				t.Fatalf("%s denial created the spine: %v", name, err)
 			}
 		}
 		smoke := runMC(t, env, "", "onboard", "--smoke")
 		if smoke.code != 1 || !strings.Contains(smoke.stderr, "Phase") {
 			t.Fatalf("smoke = code %d stderr %q", smoke.code, smoke.stderr)
+		}
+		bogusSmoke := runMC(t, env, "", "onboard", "bogus-section", "--smoke")
+		if bogusSmoke.code != 2 || !strings.Contains(bogusSmoke.stderr, "unknown onboarding section") {
+			t.Fatalf("bogus smoke section = code %d stderr %q", bogusSmoke.code, bogusSmoke.stderr)
 		}
 	})
 
@@ -4157,6 +4218,11 @@ func TestOnboard(t *testing.T) {
 		if uuid == "" {
 			t.Fatal("home did not seed the meta identity")
 		}
+		mirror := filepath.Join(home, "deployment.uuid")
+		mirrored, err := os.ReadFile(mirror)
+		if err != nil || strings.TrimSpace(string(mirrored)) != uuid {
+			t.Fatalf("deployment UUID mirror = %q, err %v; want %q", mirrored, err, uuid)
+		}
 		// Re-running skips; the deployment identity never changes (§16.4).
 		again := runMC(t, env, "", "onboard", "home")
 		if again.code != 0 || sectionStatus(t, again)["home"]["status"] != "ok" {
@@ -4165,14 +4231,42 @@ func TestOnboard(t *testing.T) {
 		if got := queryStr(t, db, `SELECT deployment_uuid FROM meta WHERE id = 1`); got != uuid {
 			t.Fatalf("re-run changed deployment identity %q -> %q", uuid, got)
 		}
+		after, err := os.ReadFile(mirror)
+		if err != nil || string(after) != string(mirrored) {
+			t.Fatalf("re-run changed UUID mirror from %q to %q (err %v)", mirrored, after, err)
+		}
+		if err := os.WriteFile(mirror, []byte("different-deployment\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		mismatch := runMC(t, env, "", "onboard", "home")
+		if mismatch.code != 1 || !strings.Contains(mismatch.stderr, "identity mismatch") {
+			t.Fatalf("UUID mismatch = code %d stderr %q", mismatch.code, mismatch.stderr)
+		}
+	})
+
+	t.Run("home_adoption_and_scaffold_repairs_report_done", func(t *testing.T) {
+		spine := initSpine(t)
+		home := filepath.Dir(spine)
+		env := spineEnv(spine)
+		adopt := runMC(t, env, "", "onboard", "home")
+		if adopt.code != 0 || sectionStatus(t, adopt)["home"]["status"] != "done" {
+			t.Fatalf("pre-mirror adoption = code %d json %v stderr %q", adopt.code, adopt.json, adopt.stderr)
+		}
+		if err := os.RemoveAll(filepath.Join(home, "sessions")); err != nil {
+			t.Fatal(err)
+		}
+		repair := runMC(t, env, "", "onboard", "home")
+		if repair.code != 0 || sectionStatus(t, repair)["home"]["status"] != "done" {
+			t.Fatalf("scaffold repair = code %d json %v stderr %q", repair.code, repair.json, repair.stderr)
+		}
 	})
 
 	t.Run("home_never_reinitializes_a_nonempty_spine", func(t *testing.T) {
-		home, spine, env := freshHome(t)
-		if err := os.MkdirAll(home, 0o700); err != nil {
-			t.Fatal(err)
-		}
-		raw, err := substrate.Open(spine)
+		root := t.TempDir()
+		home := filepath.Join(root, "mc-home")
+		spine := filepath.Join(root, "foreign.db")
+		env := []string{"MC_HOME=" + home, "MC_SPINE=" + spine}
+		raw, err := sql.Open("sqlite", "file:"+spine)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -4180,17 +4274,80 @@ func TestOnboard(t *testing.T) {
 			t.Fatal(err)
 		}
 		raw.Close()
+		before, err := os.ReadFile(spine)
+		if err != nil {
+			t.Fatal(err)
+		}
 		res := runMC(t, env, "", "onboard", "home")
 		if res.code != 1 || !strings.Contains(res.stderr, "restore from backup") {
 			t.Fatalf("nonempty-spine home = code %d stderr %q", res.code, res.stderr)
 		}
-		check, err := substrate.Open(spine)
+		if _, err := os.Stat(home); !os.IsNotExist(err) {
+			t.Fatalf("meta refusal scaffolded MC_HOME: %v", err)
+		}
+		after, err := os.ReadFile(spine)
+		if err != nil || !bytes.Equal(after, before) {
+			t.Fatalf("meta inspection mutated foreign spine (err %v)", err)
+		}
+		check, err := sql.Open("sqlite", "file:"+spine+"?mode=ro")
 		if err != nil {
 			t.Fatal(err)
 		}
 		defer check.Close()
 		if n := queryInt(t, check, `SELECT COUNT(*) FROM stranger`); n != 1 {
 			t.Fatalf("onboard touched the foreign spine: %d rows", n)
+		}
+		if mode := queryStr(t, check, `PRAGMA journal_mode`); mode != "delete" {
+			t.Fatalf("read-only inspection changed journal mode to %q", mode)
+		}
+	})
+
+	t.Run("home_detects_a_lost_spine_from_its_uuid_mirror", func(t *testing.T) {
+		_, spine, env := freshHome(t)
+		if res := runMC(t, env, "", "onboard", "home"); res.code != 0 {
+			t.Fatalf("home failed: %s", res.stderr)
+		}
+		for _, path := range []string{spine, spine + "-wal", spine + "-shm"} {
+			if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+				t.Fatal(err)
+			}
+		}
+		lost := runMC(t, env, "", "onboard", "home")
+		if lost.code != 1 || !strings.Contains(lost.stderr, "spine lost") || !strings.Contains(lost.stderr, "restore from backup") {
+			t.Fatalf("lost spine = code %d stderr %q", lost.code, lost.stderr)
+		}
+		if _, err := os.Stat(spine); !os.IsNotExist(err) {
+			t.Fatalf("loss path recreated the spine: %v", err)
+		}
+	})
+
+	t.Run("home_refuses_a_nonempty_zero_table_sqlite_file", func(t *testing.T) {
+		root := t.TempDir()
+		home := filepath.Join(root, "mc-home")
+		spine := filepath.Join(root, "zero-table.db")
+		db, err := sql.Open("sqlite", "file:"+spine)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := db.Exec(`PRAGMA user_version = 7`); err != nil {
+			db.Close()
+			t.Fatal(err)
+		}
+		db.Close()
+		before, err := os.ReadFile(spine)
+		if err != nil || len(before) == 0 {
+			t.Fatalf("zero-table fixture = %d bytes, err %v", len(before), err)
+		}
+		res := runMC(t, []string{"MC_HOME=" + home, "MC_SPINE=" + spine}, "", "onboard", "home")
+		if res.code != 1 || !strings.Contains(res.stderr, "non-empty") || !strings.Contains(res.stderr, "restore from backup") {
+			t.Fatalf("zero-table spine = code %d stderr %q", res.code, res.stderr)
+		}
+		after, err := os.ReadFile(spine)
+		if err != nil || !bytes.Equal(after, before) {
+			t.Fatalf("zero-table refusal mutated spine: %v", err)
+		}
+		if _, err := os.Stat(home); !os.IsNotExist(err) {
+			t.Fatalf("zero-table refusal scaffolded home: %v", err)
 		}
 	})
 
@@ -4204,6 +4361,42 @@ func TestOnboard(t *testing.T) {
 		if res.code != 1 || !strings.Contains(res.stderr, "git working tree") {
 			t.Fatalf("git-tree preflight = code %d stderr %q", res.code, res.stderr)
 		}
+		directHome := runMC(t, []string{"MC_HOME=" + home, "MC_SPINE=" + filepath.Join(home, "s.db")}, "", "onboard", "home")
+		if directHome.code != 1 || !strings.Contains(directHome.stderr, "git working tree") {
+			t.Fatalf("named home bypassed git fence = code %d stderr %q", directHome.code, directHome.stderr)
+		}
+		if _, err := os.Stat(home); !os.IsNotExist(err) {
+			t.Fatalf("denied named home wrote MC_HOME: %v", err)
+		}
+		ignoredRepo := filepath.Join(t.TempDir(), "ignored-repo")
+		if out, err := exec.Command("git", "init", "-q", ignoredRepo).CombinedOutput(); err != nil {
+			t.Fatalf("git init: %v: %s", err, out)
+		}
+		if err := os.WriteFile(filepath.Join(ignoredRepo, ".gitignore"), []byte(".mc/\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		ignoredHome := filepath.Join(ignoredRepo, ".mc")
+		ignored := runMC(t, []string{"MC_HOME=" + ignoredHome, "MC_SPINE=" + filepath.Join(ignoredHome, "s.db")}, "", "onboard", "preflight")
+		if ignored.code != 0 || sectionStatus(t, ignored)["preflight"]["status"] != "ok" {
+			t.Fatalf("ignored in-tree home = code %d stderr %q json %v", ignored.code, ignored.stderr, ignored.json)
+		}
+		if _, err := os.Stat(ignoredHome); !os.IsNotExist(err) {
+			t.Fatalf("preflight wrote ignored MC_HOME: %v", err)
+		}
+
+		targetRepo := filepath.Join(t.TempDir(), "target-repo")
+		if out, err := exec.Command("git", "init", "-q", targetRepo).CombinedOutput(); err != nil {
+			t.Fatalf("git init target: %v: %s", err, out)
+		}
+		aliasRoot := filepath.Join(t.TempDir(), "repo-alias")
+		if err := os.Symlink(targetRepo, aliasRoot); err != nil {
+			t.Fatal(err)
+		}
+		aliasedHome := filepath.Join(aliasRoot, "operator-state")
+		aliased := runMC(t, []string{"MC_HOME=" + aliasedHome, "MC_SPINE=" + filepath.Join(aliasedHome, "s.db")}, "", "onboard", "preflight")
+		if aliased.code != 1 || !strings.Contains(aliased.stderr, "git working tree") {
+			t.Fatalf("symlinked git-tree home = code %d stderr %q", aliased.code, aliased.stderr)
+		}
 		outside, _, env := freshHome(t)
 		ok := runMC(t, env, "", "onboard", "preflight")
 		if ok.code != 0 || sectionStatus(t, ok)["preflight"]["status"] != "ok" {
@@ -4214,11 +4407,35 @@ func TestOnboard(t *testing.T) {
 
 	t.Run("routing_writes_a_valid_default_once_and_validates_existing", func(t *testing.T) {
 		home, _, env := freshHome(t)
+		tooEarly := runMC(t, env, "", "onboard", "routing")
+		if tooEarly.code != 1 || !strings.Contains(tooEarly.stderr, "onboard home") {
+			t.Fatalf("routing before home = code %d stderr %q", tooEarly.code, tooEarly.stderr)
+		}
+		if _, err := os.Stat(home); !os.IsNotExist(err) {
+			t.Fatalf("routing before identity created MC_HOME: %v", err)
+		}
+		if homeRes := runMC(t, env, "", "onboard", "home"); homeRes.code != 0 {
+			t.Fatalf("home failed: %s", homeRes.stderr)
+		}
+		path := filepath.Join(home, "routing.md")
+		outside := filepath.Join(t.TempDir(), "outside-routing.md")
+		if err := os.Symlink(outside, path); err != nil {
+			t.Fatal(err)
+		}
+		redirected := runMC(t, env, "", "onboard", "routing")
+		if redirected.code != 1 || !strings.Contains(redirected.stderr, "symlink") {
+			t.Fatalf("routing symlink = code %d stderr %q", redirected.code, redirected.stderr)
+		}
+		if _, err := os.Stat(outside); !os.IsNotExist(err) {
+			t.Fatalf("routing symlink wrote outside MC_HOME: %v", err)
+		}
+		if err := os.Remove(path); err != nil {
+			t.Fatal(err)
+		}
 		res := runMC(t, env, "", "onboard", "routing")
 		if res.code != 0 || sectionStatus(t, res)["routing"]["status"] != "done" {
 			t.Fatalf("fresh routing = code %d json %v stderr %q", res.code, res.json, res.stderr)
 		}
-		path := filepath.Join(home, "routing.md")
 		written, err := os.ReadFile(path)
 		if err != nil {
 			t.Fatal(err)
@@ -4266,8 +4483,16 @@ func TestOnboard(t *testing.T) {
 		if relative.code != 2 {
 			t.Fatalf("relative workspace = code %d stderr %q", relative.code, relative.stderr)
 		}
+		workspace := filepath.Join(t.TempDir(), "ws-main")
+		if err := os.MkdirAll(workspace, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		canonicalWorkspace, err := filepath.EvalSymlinks(workspace)
+		if err != nil {
+			t.Fatal(err)
+		}
 		seeded := runMC(t, env, "", "onboard", "worksource",
-			"--worksource", "ws-main", "--workspace-root", "/tmp/ws-main")
+			"--worksource", "ws-main", "--workspace-root", workspace)
 		if seeded.code != 0 || sectionStatus(t, seeded)["worksource"]["status"] != "done" {
 			t.Fatalf("seeding worksource = code %d json %v stderr %q", seeded.code, seeded.json, seeded.stderr)
 		}
@@ -4279,16 +4504,112 @@ func TestOnboard(t *testing.T) {
 		if got := queryStr(t, db, `SELECT sandbox_profile FROM worksources WHERE id = 'ws-main'`); got != "default" {
 			t.Fatalf("worksource row = %q", got)
 		}
+		if got := queryStr(t, db, `SELECT workspace_root FROM sandbox_profiles WHERE id = 'default'`); got != canonicalWorkspace {
+			t.Fatalf("canonical workspace root = %q, want %q", got, canonicalWorkspace)
+		}
+		exact := runMC(t, env, "", "onboard", "worksource",
+			"--worksource", "ws-main", "--workspace-root", workspace)
+		if exact.code != 0 || sectionStatus(t, exact)["worksource"]["status"] != "ok" {
+			t.Fatalf("exact Worksource replay = code %d json %v stderr %q", exact.code, exact.json, exact.stderr)
+		}
+		otherWorkspace := filepath.Join(t.TempDir(), "other")
+		if err := os.MkdirAll(otherWorkspace, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		moved := runMC(t, env, "", "onboard", "worksource",
+			"--worksource", "ws-main", "--workspace-root", otherWorkspace)
+		if moved.code != 1 || !strings.Contains(moved.stderr, "already") {
+			t.Fatalf("moved Worksource replay = code %d stderr %q", moved.code, moved.stderr)
+		}
+		second := runMC(t, env, "", "onboard", "worksource",
+			"--worksource", "ws-other", "--workspace-root", otherWorkspace)
+		if second.code != 1 || !strings.Contains(second.stderr, "worksource add") {
+			t.Fatalf("second first-Worksource replay = code %d stderr %q", second.code, second.stderr)
+		}
 		skip := runMC(t, env, "", "onboard", "worksource")
 		if skip.code != 0 || sectionStatus(t, skip)["worksource"]["status"] != "ok" {
 			t.Fatalf("seeded re-run = code %d json %v", skip.code, skip.json)
+		}
+		if err := os.RemoveAll(workspace); err != nil {
+			t.Fatal(err)
+		}
+		missingRoot := runMC(t, env, "", "onboard", "worksource")
+		if missingRoot.code != 1 || !strings.Contains(missingRoot.stderr, "workspace root") {
+			t.Fatalf("missing stored workspace = code %d stderr %q", missingRoot.code, missingRoot.stderr)
+		}
+	})
+
+	t.Run("worksource_refuses_a_conflicting_default_profile", func(t *testing.T) {
+		_, spine, env := freshHome(t)
+		if res := runMC(t, env, "", "onboard", "home"); res.code != 0 {
+			t.Fatalf("home failed: %s", res.stderr)
+		}
+		db, err := substrate.Open(spine)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := db.Exec(`INSERT INTO sandbox_profiles (id, workspace_root) VALUES ('default', '/different')`); err != nil {
+			db.Close()
+			t.Fatal(err)
+		}
+		db.Close()
+		workspace := filepath.Join(t.TempDir(), "requested")
+		if err := os.MkdirAll(workspace, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		res := runMC(t, env, "", "onboard", "worksource",
+			"--worksource", "ws-main", "--workspace-root", workspace)
+		if res.code != 1 || !strings.Contains(res.stderr, "default") || !strings.Contains(res.stderr, "different") {
+			t.Fatalf("conflicting profile = code %d stderr %q", res.code, res.stderr)
+		}
+		check, err := substrate.Open(spine)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer check.Close()
+		if got := queryInt(t, check, `SELECT COUNT(*) FROM worksources`); got != 0 {
+			t.Fatalf("conflicting profile left %d Worksources", got)
+		}
+	})
+
+	t.Run("worksource_refuses_a_permissive_default_profile", func(t *testing.T) {
+		_, spine, env := freshHome(t)
+		if res := runMC(t, env, "", "onboard", "home"); res.code != 0 {
+			t.Fatalf("home failed: %s", res.stderr)
+		}
+		workspace := filepath.Join(t.TempDir(), "requested")
+		if err := os.MkdirAll(workspace, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		canonical, err := filepath.EvalSymlinks(workspace)
+		if err != nil {
+			t.Fatal(err)
+		}
+		db, err := substrate.Open(spine)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := db.Exec(`INSERT INTO sandbox_profiles (id, workspace_root, egress_policy) VALUES ('default', ?, 'open+audit')`, canonical); err != nil {
+			db.Close()
+			t.Fatal(err)
+		}
+		db.Close()
+		res := runMC(t, env, "", "onboard", "worksource",
+			"--worksource", "ws-main", "--workspace-root", workspace)
+		if res.code != 1 || !strings.Contains(res.stderr, "deny-by-default") {
+			t.Fatalf("permissive profile = code %d stderr %q", res.code, res.stderr)
 		}
 	})
 
 	t.Run("full_run_is_ordered_resumable_and_verified", func(t *testing.T) {
 		_, spine, env := freshHome(t)
+		workspace := filepath.Join(t.TempDir(), "ws-full")
+		if err := os.MkdirAll(workspace, 0o700); err != nil {
+			t.Fatal(err)
+		}
 		res := runMC(t, env, "", "onboard",
-			"--worksource", "ws-full", "--workspace-root", "/tmp/ws-full")
+			"--worksource", "ws-full", "--workspace-root", workspace,
+			"--console-hour", "8", "--console-minute", "0", "--console-tz", "America/Los_Angeles")
 		if res.code != 0 || res.json["ok"] != true {
 			t.Fatalf("full onboard = code %d json %v stderr %q", res.code, res.json, res.stderr)
 		}
@@ -4304,7 +4625,7 @@ func TestOnboard(t *testing.T) {
 		for section, want := range map[string]string{
 			"preflight": "ok", "home": "done", "runtime-auth": "deferred",
 			"routing": "done", "container": "deferred", "worksource": "done",
-			"tunables": "ok", "surfaces": "ok", "supervision": "deferred",
+			"tunables": "ok", "surfaces": "done", "supervision": "deferred",
 			"verify": "ok",
 		} {
 			if byName[section]["status"] != want {
@@ -4320,12 +4641,13 @@ func TestOnboard(t *testing.T) {
 
 		// Resumable: the identical re-run performs nothing and changes nothing.
 		again := runMC(t, env, "", "onboard",
-			"--worksource", "ws-full", "--workspace-root", "/tmp/ws-full")
+			"--worksource", "ws-full", "--workspace-root", workspace,
+			"--console-hour", "8", "--console-minute", "0", "--console-tz", "America/Los_Angeles")
 		if again.code != 0 || again.json["ok"] != true {
 			t.Fatalf("onboard re-run = code %d stderr %q", again.code, again.stderr)
 		}
 		reByName := sectionStatus(t, again)
-		for _, section := range []string{"home", "routing", "worksource"} {
+		for _, section := range []string{"home", "routing", "worksource", "surfaces"} {
 			if reByName[section]["status"] != "ok" {
 				t.Fatalf("re-run section %q = %v, want ok (skip)", section, reByName[section])
 			}
@@ -4340,19 +4662,76 @@ func TestOnboard(t *testing.T) {
 		}
 	})
 
+	t.Run("verify_refuses_an_unconfigured_console", func(t *testing.T) {
+		_, _, env := freshHome(t)
+		if res := runMC(t, env, "", "onboard", "home"); res.code != 0 {
+			t.Fatalf("home failed: %s", res.stderr)
+		}
+		if res := runMC(t, env, "", "onboard", "routing"); res.code != 0 {
+			t.Fatalf("routing failed: %s", res.stderr)
+		}
+		verify := runMC(t, env, "", "onboard", "verify")
+		if verify.code != 1 || !strings.Contains(verify.stderr, "surfaces") {
+			t.Fatalf("incomplete verify = code %d stderr %q", verify.code, verify.stderr)
+		}
+	})
+
+	t.Run("supervision_double_never_invokes_launchctl", func(t *testing.T) {
+		_, _, env := freshHome(t)
+		if res := runMC(t, env, "", "onboard", "home"); res.code != 0 {
+			t.Fatalf("home failed: %s", res.stderr)
+		}
+		binDir := t.TempDir()
+		marker := filepath.Join(t.TempDir(), "launchctl-ran")
+		fake := filepath.Join(binDir, "launchctl")
+		if err := os.WriteFile(fake, []byte("#!/bin/sh\n: > \""+marker+"\"\n"), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		env = append(env, "PATH="+binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+		res := runMC(t, env, "", "onboard", "supervision")
+		if res.code != 0 || sectionStatus(t, res)["supervision"]["status"] != "deferred" {
+			t.Fatalf("supervision double = code %d json %v stderr %q", res.code, res.json, res.stderr)
+		}
+		if _, err := os.Stat(marker); !os.IsNotExist(err) {
+			t.Fatalf("supervision double invoked launchctl: %v", err)
+		}
+	})
+
 	t.Run("tunables_and_surfaces_apply_operator_answers", func(t *testing.T) {
 		_, spine, env := freshHome(t)
 		if res := runMC(t, env, "", "onboard", "home"); res.code != 0 {
 			t.Fatalf("home failed: %s", res.stderr)
 		}
+		negative := runMC(t, env, "", "onboard", "tunables", "--timeout-minutes", "-1")
+		if negative.code != 2 {
+			t.Fatalf("negative tunable = code %d stderr %q", negative.code, negative.stderr)
+		}
 		tun := runMC(t, env, "", "onboard", "tunables", "--timeout-minutes", "7")
 		if tun.code != 0 || sectionStatus(t, tun)["tunables"]["status"] != "done" {
 			t.Fatalf("tunables = code %d json %v stderr %q", tun.code, tun.json, tun.stderr)
+		}
+		tunAgain := runMC(t, env, "", "onboard", "tunables", "--timeout-minutes", "7")
+		if tunAgain.code != 0 || sectionStatus(t, tunAgain)["tunables"]["status"] != "ok" {
+			t.Fatalf("tunable replay = code %d json %v stderr %q", tunAgain.code, tunAgain.json, tunAgain.stderr)
+		}
+		inspectTunables := runMC(t, env, "", "onboard", "tunables")
+		tunableDetail := sectionStatus(t, inspectTunables)["tunables"]["detail"].(string)
+		if inspectTunables.code != 0 || !strings.Contains(tunableDetail, "timeout_minutes=7") || strings.Contains(tunableDetail, "defaults accepted") {
+			t.Fatalf("tunable inspection = code %d detail %q", inspectTunables.code, tunableDetail)
+		}
+		missingSchedule := runMC(t, env, "", "onboard", "surfaces")
+		if missingSchedule.code != 1 || !strings.Contains(missingSchedule.stderr, "--console-hour") {
+			t.Fatalf("unconfigured surfaces = code %d stderr %q", missingSchedule.code, missingSchedule.stderr)
 		}
 		surf := runMC(t, env, "", "onboard", "surfaces",
 			"--console-hour", "8", "--console-minute", "15", "--console-tz", "America/Los_Angeles")
 		if surf.code != 0 || sectionStatus(t, surf)["surfaces"]["status"] != "done" {
 			t.Fatalf("surfaces = code %d json %v stderr %q", surf.code, surf.json, surf.stderr)
+		}
+		surfAgain := runMC(t, env, "", "onboard", "surfaces",
+			"--console-hour", "8", "--console-minute", "15", "--console-tz", "America/Los_Angeles")
+		if surfAgain.code != 0 || sectionStatus(t, surfAgain)["surfaces"]["status"] != "ok" {
+			t.Fatalf("surface replay = code %d json %v stderr %q", surfAgain.code, surfAgain.json, surfAgain.stderr)
 		}
 		db, err := substrate.Open(spine)
 		if err != nil {
@@ -4365,6 +4744,18 @@ func TestOnboard(t *testing.T) {
 		partial := runMC(t, env, "", "onboard", "surfaces", "--console-hour", "8")
 		if partial.code != 2 {
 			t.Fatalf("partial console triple = code %d stderr %q", partial.code, partial.stderr)
+		}
+		for name, flags := range map[string][]string{
+			"explicit-negative-hour": {"--console-hour=-1", "--console-minute", "0", "--console-tz", "UTC"},
+			"bad-hour":               {"--console-hour", "24", "--console-minute", "0", "--console-tz", "UTC"},
+			"bad-minute":             {"--console-hour", "8", "--console-minute", "60", "--console-tz", "UTC"},
+			"bad-timezone":           {"--console-hour", "8", "--console-minute", "0", "--console-tz", "Mars/Olympus"},
+		} {
+			args := append([]string{"onboard", "surfaces"}, flags...)
+			bad := runMC(t, env, "", args...)
+			if bad.code != 2 {
+				t.Fatalf("%s = code %d stderr %q", name, bad.code, bad.stderr)
+			}
 		}
 	})
 }

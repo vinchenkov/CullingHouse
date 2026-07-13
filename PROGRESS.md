@@ -46,7 +46,7 @@ FAST SUITE: mc/check.sh (gofmt+vet+go test ./... — includes substrate + promot
         directives, and claimed-state briefs; adversarial review closed
   - [!] Strategist wave CLI: isolated under Parked (durable holistic Editor
         plan-review representation is operator/spec input)
-  - [ ] Wave 2 full §18 verb/error/scope surface
+  - [x] Wave 2 full unparked §18 verb/error/scope surface
   - [ ] Split-brain kill-point convergence suite
   - [ ] Nightly randomized/metamorphic/lifecycle properties + planted mutants
 - [ ] Phase 3 — Boundary conformance (Docker)
@@ -930,3 +930,53 @@ tunables|surfaces|supervision|verify`, resumable/idempotent per §16.4
 effects, no launchd load ever (S7 rule). Then the deterministic split-brain
 kill-point convergence suite (contract §4). Initiative wave CLI remains
 Parked pending the durable plan-review representation.
+
+- 2026-07-13 — **Codex takeover found Claude's quota-boundary onboarding
+  commit red and incomplete.** HEAD 76b3694 is pushed but fails Go compile
+  on an unused `database/sql` import; the new CLI tests and verb were
+  committed without an `onboard` dispatcher/parser or the cited ADR-015.
+  The other four fast lanes are green (fake 43, agent-runner 13,
+  runner/image 2, resident 32). Cross-harness adversarial review also
+  confirmed acceptance defects beyond the interrupted wiring: initial
+  schema + meta were not atomic; the §16.4 UUID mirror/loss fence and
+  meta-first read-only inspection were absent; the git-tree fence rejected
+  allowed ignored roots yet missed symlink targets; the default surface
+  path silently left Daily Console disabled; explicit tunable/surface
+  replays were not skip-idempotent; and a conflicting `default` sandbox
+  profile could misbind the first Worksource. Findings recorded in
+  IMPLEMENTATION-NOTES; no implementation edit preceded the review.
+
+NEXT: Close the confirmed onboarding findings red-first: author ADR-015,
+wire the CLI, make first provisioning atomic and UUID-mirrored/meta-first,
+fix the git fence, require and idempotently persist the Console schedule,
+and harden tunable/Worksource replays. Re-green the complete fast lane and
+commit without amending 76b3694. Then begin the deterministic split-brain
+kill-point convergence suite; initiative wave CLI remains Parked.
+
+- 2026-07-13 — **Phase 2 onboarding dispatcher green; takeover review
+  closed.** ADR-015 pins the Phase-2 `mc onboard` tier and explicitly names
+  every later-phase section obligation. The CLI is host-only, supports the
+  ten ordered/named sections and dual-input flags, distinguishes
+  `done|ok|deferred`, and never loads launchd. Home reuses the read-only
+  preflight even by name; the git fence resolves symlinks and permits only
+  paths proven ignored. Existing spines are inspected read-only/meta-first;
+  schema + meta commit atomically; the UUID mirror is atomically published
+  and compared; non-empty unidentified/lost/mismatched spines refuse; an
+  injected failed fresh provision is retryable. Concurrent fresh callers
+  adopt the one committed winner instead of deleting it (30× stress + race
+  pass). Routing publishes a synced validated file atomically without
+  following symlinks. First-Worksource, tunable, and surface replay decisions
+  serialize under BEGIN IMMEDIATE; conflicting/permissive profiles refuse;
+  the Console schedule is required and doctor/verify check both it and the
+  UUID mirror. The cross-harness residual audit passes all six closure cells.
+  Complete fast lane green (Go all packages; fake 43, agent-runner 13,
+  runner/image 2, resident 32), plus Docker-tag vet and fake-routing-tag
+  compile green.
+
+NEXT: TDD the deterministic split-brain convergence suite (wave-2 contract
+§4), starting with `action selected / before effect` and `session folder /
+before run.json` through the injectable resident seams. Restart the ordinary
+loop and assert the record/lock/effect triple converges with a new run and no
+duplicate durable work; add no fault hook to `mc`. Then walk the remaining
+kill boundaries. Initiative wave CLI remains Parked pending the durable
+plan-review representation.

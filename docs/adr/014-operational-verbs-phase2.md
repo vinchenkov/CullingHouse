@@ -43,10 +43,11 @@ never appear in output or logs (handoff §4.1).
 
 Findings are `{check, status: ok|fail|deferred, detail, onboard_section}`.
 Phase 2 validates what exists without Docker: MC_HOME shape (`home`),
-spine identity — meta row, deployment UUID, schema version, with missing
-meta reported as spine loss, never repaired (`home`) — Worksource/sandbox
-profile references (`worksource`), and routing.md against the active
-registry (`routing`). The Phase 3/5 probes (container runtime capability,
+spine identity — meta row, deployment UUID, schema version, plus the
+`MC_HOME/deployment.uuid` mirror pair, with missing/mismatched identity
+reported as spine loss, never repaired (`home`) — Worksource/sandbox
+profile references (`worksource`), the Daily Console schedule (`surfaces`),
+and routing.md against the active registry (`routing`). The Phase 3/5 probes (container runtime capability,
 gateway health, per-binding runtime auth, supervision) appear as
 `deferred` findings with their repairing sections from day one, so the
 finding list's shape is total and a consumer never wonders whether a check
@@ -61,7 +62,7 @@ error envelope would swallow every finding after the first.
   the same testable functions; no host-side shell logic accrues.
 - The §16.4 loss-detection fail-closed rule for *other* verbs (refusing on
   a fresh volume where the MC_HOME UUID expects a spine) needs the volume
-  story and lands with Phase 3; doctor's spine finding carries the language
-  already.
+  story and lands with Phase 3; doctor and onboarding already validate the
+  file-tier UUID mirror pair.
 - `mc onboard`'s section dispatcher remains the §17 wizard slice; doctor's
   section names are already aligned to it.

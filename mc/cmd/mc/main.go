@@ -113,6 +113,8 @@ func dispatchVerb(args []string, stdin io.Reader) (any, error) {
 	verb := args[0]
 	rest := args[1:]
 	switch verb {
+	case "onboard":
+		return cmdOnboard(rest)
 	case "init":
 		return cmdInit(rest)
 	case "task":
@@ -247,6 +249,61 @@ func positionalID(name string, args []string) (int64, []string, error) {
 		return 0, nil, verbs.Usagef("%s: bad id %q", name, s)
 	}
 	return id, rest, nil
+}
+
+func cmdOnboard(args []string) (any, error) {
+	a := verbs.OnboardArgs{Spine: os.Getenv("MC_SPINE")}
+	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
+		a.Section = args[0]
+		args = args[1:]
+	}
+	fs := newFlags("mc onboard")
+	consoleHour, consoleMinute, consoleTZ := -1, -1, ""
+	fs.BoolVar(&a.Smoke, "smoke", false, "run the full-pipeline smoke")
+	fs.StringVar(&a.Worksource, "worksource", "", "first Worksource id")
+	fs.StringVar(&a.WorkspaceRoot, "workspace-root", "", "first Worksource root")
+	fs.IntVar(&a.TimeoutMinutes, "timeout-minutes", 0, "lease timeout")
+	fs.IntVar(&a.GraceMinutes, "grace-minutes", 0, "lease grace")
+	fs.IntVar(&a.HeartbeatIntervalS, "heartbeat-interval-s", 0, "heartbeat interval")
+	fs.IntVar(&a.SpawnGraceS, "spawn-grace-s", 0, "first-heartbeat watchdog")
+	fs.IntVar(&a.HardDeadlineMinutes, "hard-deadline-minutes", 0, "non-renewable hard deadline")
+	fs.IntVar(&consoleHour, "console-hour", -1, "Daily Console delivery hour (0..23)")
+	fs.IntVar(&consoleMinute, "console-minute", -1, "Daily Console delivery minute (0..59)")
+	fs.StringVar(&consoleTZ, "console-tz", "", "Daily Console IANA timezone")
+	if err := parse(fs, args); err != nil {
+		return nil, err
+	}
+	for _, item := range []struct {
+		name  string
+		value int
+	}{
+		{"timeout-minutes", a.TimeoutMinutes},
+		{"grace-minutes", a.GraceMinutes},
+		{"heartbeat-interval-s", a.HeartbeatIntervalS},
+		{"spawn-grace-s", a.SpawnGraceS},
+		{"hard-deadline-minutes", a.HardDeadlineMinutes},
+	} {
+		if item.value < 0 {
+			return nil, verbs.Usagef("mc onboard --%s must be non-negative", item.name)
+		}
+	}
+	provided := map[string]bool{}
+	fs.Visit(func(f *flag.Flag) { provided[f.Name] = true })
+	consoleSet := provided["console-hour"] || provided["console-minute"] || provided["console-tz"]
+	if consoleSet {
+		if !provided["console-hour"] || !provided["console-minute"] || !provided["console-tz"] {
+			return nil, verbs.Usagef("mc onboard console schedule requires --console-hour, --console-minute, and --console-tz together")
+		}
+		a.ConsoleScheduleSet = true
+		a.ConsoleHour = consoleHour
+		a.ConsoleMinute = consoleMinute
+		a.ConsoleTZ = consoleTZ
+	}
+	id, err := verbs.LoadIdentity()
+	if err != nil {
+		return nil, err
+	}
+	return verbs.Onboard(id, a)
 }
 
 func cmdInit(args []string) (any, error) {
