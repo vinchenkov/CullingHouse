@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -338,6 +339,98 @@ func TestDispatchSQLDifferentialBriefingAndSubjectlessNulls(t *testing.T) {
 	}
 	if subject.Valid || worksource.Valid || got["subject_id"] != nil || got["worksource"] != nil {
 		t.Fatalf("subjectless NULLs lost: db subject=%v ws=%v effect=%v", subject, worksource, got)
+	}
+}
+
+func TestDispatchSpawnBriefCarriesClaimedState(t *testing.T) {
+	t.Run("editor_gets_full_proposal_records", func(t *testing.T) {
+		db := dvSpine(t)
+		task := dvTask(1, dispatch.ScopeTask, dispatch.StatusProposed, 2)
+		task.Title = "contrast this proposal"
+		dvInsertTask(t, db, task)
+		dvExec(t, db, `UPDATE tasks SET description='criterion: exact output' WHERE id=1`)
+		_, got := dvDispatch(t, db, dispatch.Records{Tasks: []dispatch.Task{task}}, dispatch.Lock{}, dvConfig(24))
+		brief := fmt.Sprint(got["brief"])
+		for _, want := range []string{"contrast this proposal", "criterion: exact output", `"proposed_pool"`} {
+			if !strings.Contains(brief, want) {
+				t.Fatalf("Editor brief missing %q: %s", want, brief)
+			}
+		}
+	})
+
+	t.Run("worker_gets_refine_notes_and_latest_correction", func(t *testing.T) {
+		db := dvSpine(t)
+		task := dvTask(1, dispatch.ScopeTask, dispatch.StatusSeeded, 2)
+		dvInsertTask(t, db, task)
+		dvExec(t, db, `UPDATE tasks SET refine_notes='deepen the risk proof', correction_count=1 WHERE id=1`)
+		dvExec(t, db, `INSERT INTO runs
+			(id, tier, role, worksource, subject, verdict_outcome, evidence_path, correction_path)
+			VALUES ('prior-verifier', 'pipeline', 'verifier', 'ws-test', 1, 'correct', 'evidence/e1.md', 'corrections/c1.md')`)
+		_, got := dvDispatch(t, db, dispatch.Records{Tasks: []dispatch.Task{task}}, dispatch.Lock{}, dvConfig(24))
+		brief := fmt.Sprint(got["brief"])
+		for _, want := range []string{"deepen the risk proof", "corrections/c1.md", `"correction_count": 1`} {
+			if !strings.Contains(brief, want) {
+				t.Fatalf("Worker brief missing %q: %s", want, brief)
+			}
+		}
+	})
+
+	t.Run("packager_gets_budget_spent_exception_and_evidence", func(t *testing.T) {
+		db := dvSpine(t)
+		task := dvTask(1, dispatch.ScopeTask, dispatch.StatusVerified, 2)
+		dvInsertTask(t, db, task)
+		dvExec(t, db, `INSERT INTO runs
+			(id, tier, role, worksource, subject, verdict_outcome, evidence_path)
+			VALUES ('budget-verifier', 'pipeline', 'verifier', 'ws-test', 1, 'budget-spent', 'evidence/unresolved.md')`)
+		_, got := dvDispatch(t, db, dispatch.Records{Tasks: []dispatch.Task{task}}, dispatch.Lock{}, dvConfig(24))
+		brief := fmt.Sprint(got["brief"])
+		for _, want := range []string{`"exception_labeled": true`, "evidence/unresolved.md", "budget-spent"} {
+			if !strings.Contains(brief, want) {
+				t.Fatalf("Packager brief missing %q: %s", want, brief)
+			}
+		}
+	})
+
+	t.Run("strategist_gets_rejected_title_dedupe_memory", func(t *testing.T) {
+		db := dvSpine(t)
+		decided := dvOld.Add(time.Hour)
+		task := dvTask(1, dispatch.ScopeTask, dispatch.StatusProposed, 2)
+		task.Title = "do not pitch this again"
+		task.Decision, task.DecidedAt, task.Archived = dispatch.DecisionRejected, &decided, true
+		dvInsertTask(t, db, task)
+		_, got := dvDispatch(t, db, dispatch.Records{Tasks: []dispatch.Task{task}}, dispatch.Lock{}, dvConfig(24))
+		brief := fmt.Sprint(got["brief"])
+		if !strings.Contains(brief, "do not pitch this again") || !strings.Contains(brief, `"dedupe_titles"`) {
+			t.Fatalf("Strategist brief lost dedupe memory: %s", brief)
+		}
+	})
+}
+
+func TestDispatchConsoleBriefCarriesQueueAndBlockedState(t *testing.T) {
+	db := dvSpine(t, func(a *InitArgs) {
+		a.ConsoleScheduleSet = true
+		a.ConsoleHour, a.ConsoleMinute, a.ConsoleTZ = 0, 0, "UTC"
+	})
+	queued := dvTask(1, dispatch.ScopeTask, dispatch.StatusPackaged, 1)
+	queued.Title = "queued decision"
+	blockedTask := dvTask(2, dispatch.ScopeTask, dispatch.StatusSeeded, 0)
+	blockedTask.Title, blockedTask.Blocked = "blocked decision", true
+	dvInsertTask(t, db, queued)
+	dvInsertTask(t, db, blockedTask)
+	dvExec(t, db, `INSERT INTO review_packets (task_id, created_at) VALUES (1, ?)`, dvOld.Format(spineTime))
+
+	_, got := dvDispatch(t, db, dispatch.Records{
+		Tasks:   []dispatch.Task{queued, blockedTask},
+		Packets: []dispatch.Packet{{TaskID: 1, CreatedAt: dvOld}},
+	}, dispatch.Lock{}, dvConfig(0))
+	if got["role"] != string(dispatch.RoleStrategistConsole) {
+		t.Fatalf("role = %v, want Console", got["role"])
+	}
+	brief := fmt.Sprint(got["brief"])
+	for _, want := range []string{`"review_queue"`, "queued decision", `"blocked_tasks"`, "blocked decision"} {
+		if !strings.Contains(brief, want) {
+			t.Fatalf("Console brief missing %q: %s", want, brief)
+		}
 	}
 }
 

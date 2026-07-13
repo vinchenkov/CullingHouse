@@ -79,6 +79,8 @@ export type Effect =
       pool_ids: number[];
       harness: string;
       model_binding: string;
+	      /** Immutable opening input rendered inside the dispatch transaction. */
+	      brief: string;
       session_path?: string;
       heartbeat_interval_s: number;
     }

@@ -349,6 +349,10 @@ func applySpawn(ctx context.Context, q Q, now time.Time, sp *dispatch.Spawn, tun
 	}
 	owner := baseRole(string(sp.Role))
 	sessionPath := "sessions/" + runID // MC_HOME-relative (§16.1)
+	brief, err := buildSpawnBrief(ctx, q, sp)
+	if err != nil {
+		return nil, err
+	}
 
 	// Editor runs snapshot the entire proposed pool at claim (§10 step 3;
 	// ADR-001 D4 coverage check reads it back).
@@ -396,6 +400,7 @@ func applySpawn(ctx context.Context, q Q, now time.Time, sp *dispatch.Spawn, tun
 		"heartbeat_interval_s": tun.heartbeatIntervalS,
 		"harness":              route.Harness,
 		"model_binding":        route.Binding,
+		"brief":                brief,
 	}, nil
 }
 

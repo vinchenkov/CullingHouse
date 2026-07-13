@@ -17,6 +17,7 @@ const spawnEffect: Effect = {
   pool_ids: [42],
   harness: "fake",
   model_binding: "fake",
+	brief: "immutable claimed-state brief",
   session_path: "sessions/run-42-worker",
   heartbeat_interval_s: 1,
 };
@@ -103,14 +104,13 @@ describe("spawn effect", () => {
       harness: "fake",
       model_binding: "fake",
       mode: "fresh",
-      brief: runJson.brief, // free text; asserted separately below
+	      brief: "immutable claimed-state brief",
       pool_ids: [42],
       heartbeat_interval_s: 1,
       harness_config: { behavior: "/mc/behaviors/worker.json" },
       mounts: { session: "/mc/session", workspace: "/workspace/source" },
     });
-    expect(typeof runJson.brief).toBe("string");
-    expect(runJson.brief.length).toBeGreaterThan(0);
+	    expect(runJson.brief).toBe(spawnEffect.brief);
   });
 
   test("subjectless spawn (strategist) writes subject_id null", async () => {
@@ -120,6 +120,7 @@ describe("spawn effect", () => {
         action: "spawn", run_id: "run-9-strategist", role: "strategist",
         subject_id: null, worksource: "ws-e2e", pool_ids: [],
         harness: "fake", model_binding: "fake",
+	        brief: "subjectless immutable brief",
         heartbeat_interval_s: 1,
       },
       rig.deps,

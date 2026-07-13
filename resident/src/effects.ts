@@ -77,6 +77,10 @@ async function spawn(effect: SpawnEffect, deps: TickDeps): Promise<void> {
 		);
 		return;
 	}
+	if (typeof effect.brief !== "string" || effect.brief.length === 0) {
+		log("spawn refused: dispatch effect carries no immutable brief (fail-closed)");
+		return;
+	}
   const behavior = config.roleBehaviors[role];
   if (behavior === undefined) {
     log(`spawn refused: no behavior mapped for role ${JSON.stringify(role)} (fail-closed)`);
@@ -100,7 +104,7 @@ async function spawn(effect: SpawnEffect, deps: TickDeps): Promise<void> {
     harness: effect.harness,
     model_binding: effect.model_binding,
     mode: "fresh",
-    brief: `Skeleton run ${run_id}: role=${role}, subject=${effect.subject_id ?? "none"}`,
+		brief: effect.brief,
     pool_ids: effect.pool_ids ?? [],
     heartbeat_interval_s: effect.heartbeat_interval_s,
     harness_config: { behavior },

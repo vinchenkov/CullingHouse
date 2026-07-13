@@ -2,7 +2,7 @@
 
 <!-- Header block: kept current by every session. -->
 LAST GREEN SHA: (this commit)
-PHASES PASSING: Phase 0 COMPLETE (S1–S8 all green, no fallback ADRs; only operator-leg deferrals remain); Phase 1 COMPLETE (1a substrate 155; 1b walking skeleton reviewed-and-fixed — fake-harness 43, agent-runner 11, resident 29, dispatch + cmd/mc suites; Docker e2e PASS ×4 total)
+PHASES PASSING: Phase 0 COMPLETE (S1–S8 all green, no fallback ADRs; only operator-leg deferrals remain); Phase 1 COMPLETE (1a substrate 155; 1b walking skeleton reviewed-and-fixed — fake-harness 43, agent-runner 13, runner/image 2, resident 31, dispatch + cmd/mc suites; Docker e2e PASS ×4 total)
 KNOWN-FAILING: (none)
 FAST SUITE: mc/check.sh (gofmt+vet+go test ./... — includes substrate + promoted dispatch) + runner/fake-harness/check.sh + runner/agent-runner/check.sh + runner/image/check.sh + resident/check.sh. Docker e2e (phase-completion lane): cd mc && mise exec -- go test -tags docker_e2e -timeout 15m ./e2e/...
 
@@ -520,3 +520,17 @@ NEXT: Assemble immutable spawn briefs in `mc` from the claimed state snapshot
 and copy them unchanged into run.json: Editor proposal records, Strategist
 dedupe titles, Worker refine/correction input, and Packager budget-spent
 exception/evidence. Initiative wave CLI remains Parked.
+
+- 2026-07-12 — **Phase 2 wave-1 immutable brief carriers green.** ADR-008
+  pins `mc.spawn-brief.v1`: `mc dispatch` now renders role input inside the
+  same transaction that claims the lease, and the resident copies it
+  byte-for-byte into run.json. Regressions cover full Editor proposal records,
+  Strategist rejected-title dedupe, Worker refinement notes/latest correction,
+  Packager BUDGET-SPENT exception/evidence, and Console queue/blocked state.
+  The generic skeleton prompt is gone. Complete fast lane green.
+
+NEXT: Continue wave-1 adversarial closure with strict `mc complete` arm/field
+validation and real CLI zombie/new-holder coverage, then authenticate and make
+immutable the runner lifecycle verbs. Keep initiative wave CLI Parked pending
+durable plan-review representation; frozen prose role directives remain a
+required authored artifact after the carrier schema.
