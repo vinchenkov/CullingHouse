@@ -2,7 +2,7 @@
 
 <!-- Header block: kept current by every session. -->
 LAST GREEN SHA: (this commit)
-PHASES PASSING: Phase 0 COMPLETE (S1–S8 all green, no fallback ADRs; only operator-leg deferrals remain); Phase 1 COMPLETE (1a substrate 155; 1b walking skeleton reviewed-and-fixed — fake-harness 43, agent-runner 13, runner/image 2, resident 32, dispatch + cmd/mc suites; Docker e2e PASS ×4 total)
+PHASES PASSING: Phase 0 COMPLETE (S1–S8 all green, no fallback ADRs; only operator-leg deferrals remain); Phase 1 COMPLETE (1a substrate 171; 1b walking skeleton reviewed-and-fixed — fake-harness 43, agent-runner 13, runner/image 2, resident 32, dispatch + cmd/mc suites; Docker e2e PASS ×4 total)
 KNOWN-FAILING: (none)
 FAST SUITE: mc/check.sh (gofmt+vet+go test ./... — includes substrate + promoted dispatch) + runner/fake-harness/check.sh + runner/agent-runner/check.sh + runner/image/check.sh + resident/check.sh. Docker e2e (phase-completion lane): cd mc && mise exec -- go test -tags docker_e2e -timeout 15m ./e2e/...
 
@@ -715,3 +715,19 @@ NEXT: TDD the first Homie registry slice: `mc homie start|bind|list` with
 host/allowlisted-Homie provenance, immutable session identity/locators,
 active-binding uniqueness, and no pipeline lease. Return only durable
 state/effect data; conversation send/history and runner transport follow.
+
+- 2026-07-12 — **Phase 2 Homie registry substrate backstops green.** The
+  takeover's three independent read-only audits found that Phase 1 allowed
+  two active sessions to own one surface place. Active ownership is now
+  globally unique by `(surface, channel_ref)`; bind-event identity is frozen,
+  inactive history cannot reactivate, and end/reap deactivates bindings.
+  Homie start provenance is non-null and immutable, while native session
+  handle + trace filename register as a paired set-once locator. Raw-SQL
+  negatives cover every guard; complete fast lane green. Substrate suite now
+  171.
+
+NEXT: TDD `mc homie start|bind|list`. Per ADR-001 D6, start/bind are strictly
+host scope; an allowlisted Homie may list only its own active session, while
+host list includes active/ended/reaped rows. Start atomically writes registry
+and its initial binding after trusted Homie route resolution and never touches the
+pipeline lease, Runs, outbox, file plane, or resident effects.

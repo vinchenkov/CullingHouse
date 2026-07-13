@@ -806,8 +806,40 @@ func TestNoDeleteBackstops(t *testing.T) {
 	mustExec(t, db, `INSERT INTO runs (id, tier, role, worksource, subject) VALUES ('r1', 'pipeline', 'worker', 'ws', ?)`, id)
 	wantAbort(t, db, `DELETE FROM runs WHERE id = 'r1'`)
 
-	mustExec(t, db, `INSERT INTO homie_sessions (id) VALUES ('h1')`)
+	mkHomieSession(t, db, "h1")
 	wantAbort(t, db, `DELETE FROM homie_sessions WHERE id = 'h1'`)
+}
+
+func TestHomieSessionRegistryInvariants(t *testing.T) {
+	db := openSpine(t)
+
+	// Start-time identity and resume locators are authoritative registry
+	// state, never nullable placeholders that a later component guesses.
+	wantAbort(t, db, `INSERT INTO homie_sessions (id) VALUES ('incomplete')`)
+	mkHomieSession(t, db, "h1")
+
+	for name, update := range map[string]string{
+		"id":             `id = 'renamed'`,
+		"created_at":     `created_at = datetime('now', '+1 day')`,
+		"container_name": `container_name = 'mc-homie-other'`,
+		"verb_allowlist": `verb_allowlist = '["task.add"]'`,
+		"session_path":   `session_path = 'sessions/other'`,
+		"binding":        `binding = 'codex/chatgpt'`,
+	} {
+		t.Run(name+"_immutable", func(t *testing.T) {
+			wantAbort(t, db, `UPDATE homie_sessions SET `+update+` WHERE id = 'h1'`)
+		})
+	}
+
+	// The runner registers the remaining locator pair exactly once. A
+	// half-registration is unstorable and conflicting retries fail closed.
+	wantAbort(t, db, `UPDATE homie_sessions SET native_session_ref = 'native-1' WHERE id = 'h1'`)
+	mustExec(t, db, `UPDATE homie_sessions
+		SET native_session_ref = 'native-1', trace_filename = 'native.jsonl'
+		WHERE id = 'h1'`)
+	wantAbort(t, db, `UPDATE homie_sessions
+		SET native_session_ref = 'native-2', trace_filename = 'native.jsonl'
+		WHERE id = 'h1'`)
 }
 
 // homie_bindings is bind-event history (§15.4): end -> resume on the same
@@ -815,15 +847,25 @@ func TestNoDeleteBackstops(t *testing.T) {
 // the history persists indefinitely (NOTE(P1.19)).
 func TestHomieBindingsHistory(t *testing.T) {
 	db := openSpine(t)
-	mustExec(t, db, `INSERT INTO homie_sessions (id) VALUES ('h1')`)
+	mkHomieSession(t, db, "h1")
+	mkHomieSession(t, db, "h2")
 	mustExec(t, db, `INSERT INTO homie_bindings (session_id, surface, channel_ref) VALUES ('h1', 'discord', 'chan-1')`)
 
 	// A second ACTIVE binding for the same place is refused.
 	wantAbort(t, db, `INSERT INTO homie_bindings (session_id, surface, channel_ref) VALUES ('h1', 'discord', 'chan-1')`)
+	// The place is globally unambiguous: a different active session cannot
+	// claim the same Discord/dashboard/CLI destination either (§15.4).
+	wantAbort(t, db, `INSERT INTO homie_bindings (session_id, surface, channel_ref) VALUES ('h2', 'discord', 'chan-1')`)
+	// Bind-event identity is immutable; only active -> inactive is legal.
+	wantAbort(t, db, `UPDATE homie_bindings SET channel_ref = 'chan-2' WHERE session_id = 'h1'`)
 
 	// Session ends: active bindings clear (§15.4)…
 	mustExec(t, db, `UPDATE homie_sessions SET status = 'ended' WHERE id = 'h1'`)
-	mustExec(t, db, `UPDATE homie_bindings SET active = 0 WHERE session_id = 'h1'`)
+	if active := oneInt(t, db, `SELECT active FROM homie_bindings WHERE session_id = 'h1'`); active != 0 {
+		t.Fatalf("ended session retained active binding: %d", active)
+	}
+	wantAbort(t, db, `UPDATE homie_bindings SET active = 1 WHERE session_id = 'h1'`)
+	wantAbort(t, db, `INSERT INTO homie_bindings (session_id, surface, channel_ref) VALUES ('h1', 'dashboard', 'ended-place')`)
 	// …and resuming from the same surface creates a FRESH binding row — the
 	// spec's primary resume flow must be storable.
 	mustExec(t, db, `UPDATE homie_sessions SET status = 'active' WHERE id = 'h1'`)
@@ -839,7 +881,7 @@ func TestHomieBindingsHistory(t *testing.T) {
 
 func TestConversationRowsAppendOnly(t *testing.T) {
 	db := openSpine(t)
-	mustExec(t, db, `INSERT INTO homie_sessions (id) VALUES ('h1')`)
+	mkHomieSession(t, db, "h1")
 	mustExec(t, db,
 		`INSERT INTO conversation_messages (session_id, seq, direction, surface, body)
 		 VALUES ('h1', 1, 'inbound', 'discord', 'hello')`)

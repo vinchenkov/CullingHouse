@@ -143,14 +143,22 @@ and is easiest to reverse.
   PK `(session_id, surface, channel_ref)` that primary resume flow was
   unstorable (re-binding the same Discord channel aborted UNIQUE). Takeover
   fix: surrogate `id` PK; a partial unique index keeps at most one *active*
-  row per (session, surface, place); a no-delete trigger keeps the history
-  ("the row, its bindings history … persist indefinitely", §15.4) — closing
-  the one keep-forever table that was silently deletable.
+  session per (surface, place) globally — inbound routing names "the session"
+  bound there, so session-scoped uniqueness is ambiguous. A no-delete trigger
+  keeps the history ("the row, its bindings history … persist indefinitely",
+  §15.4), identity fields cannot be rewritten, inactive events cannot be
+  resurrected, and end/reap deactivates current bindings automatically.
 - **NOTE(P1.20) — packets are born live.** A born-archived packet would dodge
   `packets_wip_cap` (which fires only `WHEN NEW.archived = 0`) while
   permanently consuming the task's one-packet-for-life slot (Inv. 11); no
   spec flow produces one. `packets_born_live` aborts it — the packet-side
   mirror of NOTE(P1.2)'s nothing-is-born-archived rule.
+- **NOTE(P2.4) — Homie start provenance is immutable registry state.** The
+  start-known fields (`id`, `created_at`, container name, frozen verb
+  allowlist, session path, and exact runtime binding) are non-null and
+  immutable. The runner-known native handle and trace filename are a paired
+  set-once locator, mirroring `runs`. Status and `last_activity_at` remain the
+  only ordinary mutable session fields; ended/reaped rows remain resumable.
 
 ## Test inventory
 

@@ -125,6 +125,15 @@ func mkPacket(t *testing.T, db *sql.DB, taskID int64) {
 		taskID)
 }
 
+func mkHomieSession(t *testing.T, db *sql.DB, id string) {
+	t.Helper()
+	mustExec(t, db, `
+		INSERT INTO homie_sessions
+			(id, container_name, verb_allowlist, session_path, binding)
+		VALUES (?, ?, '["homie.list"]', ?, 'fake/fake')`,
+		id, "mc-homie-"+id, "sessions/"+id)
+}
+
 // cancelTask applies the operator cancel bookkeeping: decision + timestamp +
 // archive, one transaction (§6, §7).
 func cancelTask(t *testing.T, db *sql.DB, id int64) {

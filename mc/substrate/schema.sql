@@ -712,12 +712,13 @@ CREATE TABLE homie_sessions (
                        CHECK (status IN ('active', 'ended', 'reaped')),
     created_at         TEXT NOT NULL DEFAULT (datetime('now')),
     last_activity_at   TEXT NOT NULL DEFAULT (datetime('now')),
-    container_name     TEXT,
-    verb_allowlist     TEXT,   -- frozen at mc homie start (§15.3)
-    session_path       TEXT,   -- the four locators (§9, §15.4)
-    binding            TEXT,
+    container_name     TEXT NOT NULL,
+    verb_allowlist     TEXT NOT NULL,   -- frozen at mc homie start (§15.3)
+    session_path       TEXT NOT NULL,   -- the four locators (§9, §15.4)
+    binding            TEXT NOT NULL,
     native_session_ref TEXT,
-    trace_filename     TEXT
+    trace_filename     TEXT,
+    CHECK ((native_session_ref IS NULL) = (trace_filename IS NULL))
 );
 
 -- ended/reaped are not terminal for resumability; the row persists forever.
@@ -727,11 +728,33 @@ BEGIN
     SELECT RAISE(ABORT, 'homie session rows are never deleted (§15.4)');
 END;
 
+CREATE TRIGGER homie_sessions_identity_immutable
+BEFORE UPDATE OF id, created_at, container_name, verb_allowlist, session_path, binding
+ON homie_sessions
+WHEN NEW.id <> OLD.id
+  OR NEW.created_at <> OLD.created_at
+  OR NEW.container_name <> OLD.container_name
+  OR NEW.verb_allowlist <> OLD.verb_allowlist
+  OR NEW.session_path <> OLD.session_path
+  OR NEW.binding <> OLD.binding
+BEGIN
+    SELECT RAISE(ABORT, 'Homie session identity, route, path, and allowlist are frozen at start (§15.3–§15.4)');
+END;
+
+CREATE TRIGGER homie_sessions_native_locators_immutable
+BEFORE UPDATE OF native_session_ref, trace_filename ON homie_sessions
+WHEN OLD.native_session_ref IS NOT NULL
+  AND (NEW.native_session_ref IS NOT OLD.native_session_ref
+       OR NEW.trace_filename IS NOT OLD.trace_filename)
+BEGIN
+    SELECT RAISE(ABORT, 'Homie native session locators are immutable once registered (Inv. 26)');
+END;
+
 -- One row per bind *event* (§15.4: active bindings clear when the session
 -- ends; a resume "creates a fresh binding" for the requesting surface, and
 -- "the row, its bindings history ... persist indefinitely") — so the key is
--- a surrogate id, at most one ACTIVE row per (session, surface, place), and
--- the history is never deleted (NOTE(P1.19)).
+-- a surrogate id, at most one ACTIVE session per surface/place, and the
+-- history is never deleted (NOTE(P1.19), §15.4 routing is singular).
 CREATE TABLE homie_bindings (
     id          INTEGER PRIMARY KEY,
     session_id  TEXT NOT NULL REFERENCES homie_sessions(id),
@@ -742,7 +765,39 @@ CREATE TABLE homie_bindings (
 );
 
 CREATE UNIQUE INDEX bindings_one_active
-    ON homie_bindings (session_id, surface, channel_ref) WHERE active = 1;
+    ON homie_bindings (surface, channel_ref) WHERE active = 1;
+
+CREATE TRIGGER homie_bindings_require_active_session
+BEFORE INSERT ON homie_bindings
+WHEN NEW.active = 1 AND NOT EXISTS (
+    SELECT 1 FROM homie_sessions s
+    WHERE s.id = NEW.session_id AND s.status = 'active'
+)
+BEGIN
+    SELECT RAISE(ABORT, 'an active binding requires an active Homie session (§15.4)');
+END;
+
+CREATE TRIGGER homie_bindings_history_immutable
+BEFORE UPDATE ON homie_bindings
+WHEN NEW.id <> OLD.id
+  OR NEW.session_id <> OLD.session_id
+  OR NEW.surface <> OLD.surface
+  OR NEW.channel_ref <> OLD.channel_ref
+  OR NEW.bound_at <> OLD.bound_at
+  OR (OLD.active = 0 AND NEW.active = 1)
+BEGIN
+    SELECT RAISE(ABORT, 'binding history is immutable and inactive rows never reactivate (§15.4)');
+END;
+
+-- Ending/reaping a session clears its active bindings in the same statement;
+-- resume creates fresh binding events rather than resurrecting history.
+CREATE TRIGGER homie_sessions_deactivate_bindings
+AFTER UPDATE OF status ON homie_sessions
+WHEN OLD.status = 'active' AND NEW.status <> 'active'
+BEGIN
+    UPDATE homie_bindings SET active = 0
+    WHERE session_id = NEW.id AND active = 1;
+END;
 
 CREATE TRIGGER homie_bindings_no_delete
 BEFORE DELETE ON homie_bindings

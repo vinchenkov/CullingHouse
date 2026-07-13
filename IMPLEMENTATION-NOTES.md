@@ -417,3 +417,17 @@ Entry template:
 - Spec impact: temporary staging only; full §16.3 alert-class expansion lands
   with `config.toml`/onboarding
 - Needs your decision: no
+
+## 2026-07-12 — Active Homie bindings are unique per concrete surface place
+- Where: Phase 2 Homie registry takeover audit; spec §15.4; prior
+  NOTE(P1.19)
+- Gap: the Phase-1 partial index included `session_id`, so two active sessions
+  could both own the same `(surface, channel_ref)`. The spec routes inbound
+  traffic to "the session bound" to a place, making that state ambiguous.
+- Choice: make active ownership globally unique on `(surface, channel_ref)`;
+  preserve historical bind events, prohibit row rewriting/reactivation, and
+  automatically deactivate a session's bindings when it ends or is reaped.
+  No implicit transfer exists: a conflicting session is refused until the
+  current session ends. This is the fail-closed, least-invented reading.
+- Spec impact: §15.4 could state the global uniqueness explicitly
+- Needs your decision: no
