@@ -159,6 +159,37 @@ func dispatchVerb(args []string, stdin io.Reader) (any, error) {
 		return cmdRun(rest)
 	case "land":
 		return cmdLand(rest)
+	case "doctor":
+		if len(rest) != 0 {
+			return nil, verbs.Usagef("usage: mc doctor")
+		}
+		id, err := verbs.LoadIdentity()
+		if err != nil {
+			return nil, err
+		}
+		// Doctor opens (or reports on) the spine itself: it must diagnose a
+		// missing spine rather than fail on it, and must never create bytes.
+		return verbs.Doctor(id, os.Getenv("MC_SPINE"))
+	case "backup":
+		if len(rest) != 0 {
+			return nil, verbs.Usagef("usage: mc backup")
+		}
+		id, err := verbs.LoadIdentity()
+		if err != nil {
+			return nil, err
+		}
+		return verbs.Backup(id, os.Getenv("MC_SPINE"))
+	case "reset":
+		fs := newFlags("mc reset")
+		confirm := fs.Bool("confirm", false, "confirm the destructive re-initialization")
+		if err := parse(fs, rest); err != nil {
+			return nil, err
+		}
+		id, err := verbs.LoadIdentity()
+		if err != nil {
+			return nil, err
+		}
+		return verbs.Reset(id, os.Getenv("MC_SPINE"), *confirm)
 	case "lock":
 		// Pure read (§18 `mc <record> get`): the e2e's lease-state assertion
 		// channel — it cannot open the spine volume (contract §7).

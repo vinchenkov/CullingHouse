@@ -3809,3 +3809,278 @@ func TestLockGetAndRunList(t *testing.T) {
 	}
 	_ = id
 }
+
+// ---------------------------------------------------------------------------
+// Operational verbs (wave-2 contract §1.5, ADR-014): doctor / backup / reset
+// ---------------------------------------------------------------------------
+
+// backupFiles lists MC_HOME/backups in name order.
+func backupFiles(t *testing.T, spine string) []string {
+	t.Helper()
+	entries, err := os.ReadDir(filepath.Join(filepath.Dir(spine), "backups"))
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	names := []string{}
+	for _, e := range entries {
+		// Ignore WAL/SHM siblings materialized by the test's own snapshot
+		// inspection; the snapshot set is the .db files.
+		if strings.HasSuffix(e.Name(), "-wal") || strings.HasSuffix(e.Name(), "-shm") {
+			continue
+		}
+		names = append(names, e.Name())
+	}
+	return names
+}
+
+func TestBackup(t *testing.T) {
+	t.Run("snapshot_is_consistent_and_source_stays_usable", func(t *testing.T) {
+		spine := initSpine(t)
+		taskAdd(t, spine, "survives the snapshot")
+
+		res := runMC(t, spineEnv(spine), "", "backup")
+		if res.code != 0 {
+			t.Fatalf("backup failed (%d): %s", res.code, res.stderr)
+		}
+		snapshot, _ := res.json["snapshot"].(string)
+		if !strings.HasPrefix(snapshot, filepath.Join(filepath.Dir(spine), "backups")+string(filepath.Separator)) {
+			t.Fatalf("snapshot path = %q, want under MC_HOME/backups/", snapshot)
+		}
+		if res.json["bytes"].(float64) <= 0 {
+			t.Fatalf("snapshot bytes = %v", res.json["bytes"])
+		}
+		// The snapshot is a complete, consistent spine: identity and records.
+		snapDB, err := substrate.Open(snapshot)
+		if err != nil {
+			t.Fatalf("open snapshot: %v", err)
+		}
+		defer snapDB.Close()
+		if n := queryInt(t, snapDB, `SELECT COUNT(*) FROM tasks`); n != 1 {
+			t.Fatalf("snapshot task rows = %d, want 1", n)
+		}
+		if got := queryStr(t, snapDB, `SELECT deployment_uuid FROM meta WHERE id = 1`); got == "" {
+			t.Fatal("snapshot lost the deployment identity")
+		}
+		// No .tmp residue and the source keeps accepting writes.
+		for _, name := range backupFiles(t, spine) {
+			if strings.Contains(name, ".tmp-") {
+				t.Fatalf("temp snapshot residue: %q", name)
+			}
+		}
+		taskAdd(t, spine, "post-backup write")
+
+		// A same-second second snapshot lands as its own file.
+		again := runMC(t, spineEnv(spine), "", "backup")
+		if again.code != 0 || again.json["snapshot"] == snapshot {
+			t.Fatalf("second backup = code %d snapshot %v", again.code, again.json["snapshot"])
+		}
+		if n := len(backupFiles(t, spine)); n != 2 {
+			t.Fatalf("backups dir has %d files, want 2", n)
+		}
+	})
+
+	t.Run("backup_is_host_scope_and_refuses_before_touching_anything", func(t *testing.T) {
+		spine := initSpine(t)
+		for name, env := range map[string][]string{
+			"pipeline": runJSONEnv(t, spine, "r-x", "pipeline", "worker"),
+			"homie":    homieJSONEnv(t, spine, "h-x", defaultHomieAllowlist),
+		} {
+			res := runMC(t, env, "", "backup")
+			if res.code != 1 {
+				t.Fatalf("%s backup exit = %d stderr %q", name, res.code, res.stderr)
+			}
+		}
+		if n := len(backupFiles(t, spine)); n != 0 {
+			t.Fatalf("denied backup wrote %d snapshot files", n)
+		}
+		missing := runMC(t, []string{"MC_SPINE=" + filepath.Join(t.TempDir(), "absent.db"), "MC_HOME=" + t.TempDir()}, "", "backup")
+		if missing.code != 1 || !strings.Contains(missing.stderr, "no spine") {
+			t.Fatalf("missing-spine backup = code %d stderr %q", missing.code, missing.stderr)
+		}
+	})
+}
+
+func TestDoctor(t *testing.T) {
+	findingByCheck := func(t *testing.T, res mcResult) map[string]map[string]any {
+		t.Helper()
+		out := map[string]map[string]any{}
+		findings, ok := res.json["findings"].([]any)
+		if !ok {
+			t.Fatalf("doctor result = %v", res.json)
+		}
+		for _, raw := range findings {
+			f := raw.(map[string]any)
+			check, _ := f["check"].(string)
+			status, _ := f["status"].(string)
+			section, _ := f["onboard_section"].(string)
+			if check == "" || status == "" || section == "" {
+				t.Fatalf("finding missing check/status/onboard_section: %v", f)
+			}
+			out[check] = f
+		}
+		return out
+	}
+
+	t.Run("healthy_deployment_reports_ok_and_defers_phase3_probes", func(t *testing.T) {
+		spine := initSpine(t)
+		res := runMC(t, spineEnv(spine), "", "doctor")
+		if res.code != 0 || res.json["ok"] != true {
+			t.Fatalf("doctor = code %d json %v stderr %q", res.code, res.json, res.stderr)
+		}
+		findings := findingByCheck(t, res)
+		for check, wantStatus := range map[string]string{
+			"mc-home": "ok", "spine": "ok", "routing": "ok", "worksources": "ok",
+			"container-runtime": "deferred", "gateway": "deferred",
+			"runtime-auth": "deferred", "supervision": "deferred",
+		} {
+			f, present := findings[check]
+			if !present || f["status"] != wantStatus {
+				t.Fatalf("finding %q = %v, want status %q", check, f, wantStatus)
+			}
+		}
+		if findings["routing"]["onboard_section"] != "routing" ||
+			findings["spine"]["onboard_section"] != "home" ||
+			findings["runtime-auth"]["onboard_section"] != "runtime-auth" {
+			t.Fatalf("repairing sections = %v", findings)
+		}
+	})
+
+	t.Run("failures_name_their_repairing_section_without_mutation", func(t *testing.T) {
+		spine := initSpine(t)
+		taskAdd(t, spine, "doctor must not touch me")
+		db := openDB(t, spine)
+		if err := os.WriteFile(filepath.Join(filepath.Dir(spine), "routing.md"),
+			[]byte("| role | harness |\n|---|---|\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		res := runMC(t, spineEnv(spine), "", "doctor")
+		if res.code != 0 || res.json["ok"] != false {
+			t.Fatalf("doctor = code %d json %v", res.code, res.json)
+		}
+		findings := findingByCheck(t, res)
+		if findings["routing"]["status"] != "fail" || findings["routing"]["onboard_section"] != "routing" {
+			t.Fatalf("routing finding = %v", findings["routing"])
+		}
+		if findings["spine"]["status"] != "ok" {
+			t.Fatalf("spine finding = %v", findings["spine"])
+		}
+		if n := queryInt(t, db, `SELECT COUNT(*) FROM tasks`); n != 1 {
+			t.Fatalf("doctor mutated tasks: %d rows", n)
+		}
+	})
+
+	t.Run("missing_spine_reports_loss_without_creating_bytes", func(t *testing.T) {
+		home := t.TempDir()
+		absent := filepath.Join(home, "spine.db")
+		if err := os.WriteFile(filepath.Join(home, "routing.md"), []byte(fakeRoutingMarkdown), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		res := runMC(t, []string{"MC_SPINE=" + absent, "MC_HOME=" + home}, "", "doctor")
+		if res.code != 0 || res.json["ok"] != false {
+			t.Fatalf("doctor = code %d json %v stderr %q", res.code, res.json, res.stderr)
+		}
+		findings := findingByCheck(t, res)
+		if findings["spine"]["status"] != "fail" ||
+			!strings.Contains(findings["spine"]["detail"].(string), "restore from backup") {
+			t.Fatalf("spine loss finding = %v", findings["spine"])
+		}
+		if _, err := os.Stat(absent); !os.IsNotExist(err) {
+			t.Fatalf("doctor created spine bytes at %q", absent)
+		}
+	})
+
+	t.Run("doctor_is_host_scope", func(t *testing.T) {
+		spine := initSpine(t)
+		for name, env := range map[string][]string{
+			"pipeline": runJSONEnv(t, spine, "r-x", "pipeline", "worker"),
+			"homie":    homieJSONEnv(t, spine, "h-x", defaultHomieAllowlist),
+		} {
+			res := runMC(t, env, "", "doctor")
+			if res.code != 1 {
+				t.Fatalf("%s doctor exit = %d stderr %q", name, res.code, res.stderr)
+			}
+		}
+	})
+}
+
+func TestReset(t *testing.T) {
+	t.Run("refuses_without_confirmation_and_takes_no_snapshot", func(t *testing.T) {
+		spine := initSpine(t)
+		taskAdd(t, spine, "still here")
+		res := runMC(t, spineEnv(spine), "", "reset")
+		if res.code != 1 || !strings.Contains(res.stderr, "--confirm") {
+			t.Fatalf("unconfirmed reset = code %d stderr %q", res.code, res.stderr)
+		}
+		if _, err := os.Stat(spine); err != nil {
+			t.Fatalf("unconfirmed reset touched the spine: %v", err)
+		}
+		if n := len(backupFiles(t, spine)); n != 0 {
+			t.Fatalf("unconfirmed reset wrote %d snapshots", n)
+		}
+	})
+
+	t.Run("confirmed_reset_snapshots_first_then_deletes_the_spine", func(t *testing.T) {
+		spine := initSpine(t)
+		taskAdd(t, spine, "must survive in the snapshot")
+		res := runMC(t, spineEnv(spine), "", "reset", "--confirm")
+		if res.code != 0 || res.json["reset"] != true {
+			t.Fatalf("reset = code %d json %v stderr %q", res.code, res.json, res.stderr)
+		}
+		// Output carries only paths and the flag — never config/secret values.
+		for key := range res.json {
+			switch key {
+			case "spine", "snapshot", "reset":
+			default:
+				t.Fatalf("unexpected reset output key %q in %v", key, res.json)
+			}
+		}
+		snapshot := res.json["snapshot"].(string)
+		snapDB, err := substrate.Open(snapshot)
+		if err != nil {
+			t.Fatalf("open pre-reset snapshot: %v", err)
+		}
+		defer snapDB.Close()
+		if n := queryInt(t, snapDB, `SELECT COUNT(*) FROM tasks`); n != 1 {
+			t.Fatalf("snapshot task rows = %d, want 1", n)
+		}
+		for _, residue := range []string{spine, spine + "-wal", spine + "-shm"} {
+			if _, err := os.Stat(residue); !os.IsNotExist(err) {
+				t.Fatalf("reset left %q behind (err %v)", residue, err)
+			}
+		}
+	})
+
+	t.Run("failed_snapshot_aborts_the_reset", func(t *testing.T) {
+		spine := initSpine(t)
+		// A file where the backups directory must go makes the snapshot fail.
+		if err := os.WriteFile(filepath.Join(filepath.Dir(spine), "backups"), []byte("in the way"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		res := runMC(t, spineEnv(spine), "", "reset", "--confirm")
+		if res.code != 1 {
+			t.Fatalf("snapshot-blocked reset = code %d stderr %q", res.code, res.stderr)
+		}
+		if _, err := os.Stat(spine); err != nil {
+			t.Fatalf("aborted reset deleted the spine: %v", err)
+		}
+	})
+
+	t.Run("reset_is_host_scope", func(t *testing.T) {
+		spine := initSpine(t)
+		for name, env := range map[string][]string{
+			"pipeline": runJSONEnv(t, spine, "r-x", "pipeline", "worker"),
+			"homie":    homieJSONEnv(t, spine, "h-x", defaultHomieAllowlist),
+		} {
+			res := runMC(t, env, "", "reset", "--confirm")
+			if res.code != 1 {
+				t.Fatalf("%s reset exit = %d stderr %q", name, res.code, res.stderr)
+			}
+		}
+		if _, err := os.Stat(spine); err != nil {
+			t.Fatalf("denied reset touched the spine: %v", err)
+		}
+	})
+}

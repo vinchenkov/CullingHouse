@@ -901,3 +901,32 @@ probes stay Phase 3), `mc backup` (spine snapshot verb), and `mc reset`
 (confirmation-required destructive re-init, snapshot first). Then the
 deterministic split-brain kill-point convergence suite. Initiative wave CLI
 remains Parked pending the durable plan-review representation.
+
+- 2026-07-13 — **Phase 2 operational verbs green.** ADR-014 pins the
+  Phase-2 tier of `doctor|backup|reset`, all strictly host scope refusing
+  before any spine open, none able to create spine bytes at a missing
+  MC_SPINE. `mc backup`: `VACUUM INTO` a temp name under
+  `MC_HOME/backups/`, renamed on completion, same-second collisions
+  suffixed; snapshot proven complete (tasks + meta identity) and the
+  source stays writable; retention stays the resident tick chore's.
+  `mc reset`: unconfirmed is a pure no-op refusal (no snapshot); confirmed
+  snapshots first and aborts untouched if the snapshot fails, then deletes
+  the spine + WAL/SHM siblings (dev-tier stand-in for §16.4 volume
+  teardown); output is paths-only, never secrets. `mc doctor`: total
+  finding surface `{check, status ok|fail|deferred, detail,
+  onboard_section}` — MC_HOME shape, spine meta/UUID/schema (missing spine
+  reported as loss with restore-from-backup language, never repaired),
+  Worksource/sandbox-profile references, routing.md against the active
+  registry; container/gateway/runtime-auth/supervision appear as deferred
+  findings with their §17 repairing sections from day one; doctor always
+  exits 0 with `ok` carrying the verdict and mutates nothing. Complete
+  fast lane green (Go + docker-tag vet + fake-routing build; fake 43,
+  agent-runner 13, runner/image 2, resident 32).
+
+NEXT: TDD the `mc onboard` section dispatcher (§17, wave-2 contract §1.5):
+named sections `preflight|home|runtime-auth|routing|container|worksource|
+tunables|surfaces|supervision|verify`, resumable/idempotent per §16.4
+(meta-first, never re-init a non-empty spine), Phase-2 doubles for host
+effects, no launchd load ever (S7 rule). Then the deterministic split-brain
+kill-point convergence suite (contract §4). Initiative wave CLI remains
+Parked pending the durable plan-review representation.
