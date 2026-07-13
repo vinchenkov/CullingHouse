@@ -562,3 +562,18 @@ NEXT: Add true aggregate-level concurrent CAS coverage (separate from the
 process flock), plus Editor/Strategist/Packager transactional rollback cases.
 Then reconcile remaining wave-1 items and author the frozen prose directives.
 Initiative wave CLI remains Parked pending durable plan-review representation.
+
+- 2026-07-12 — **Phase 2 adversarial acceptance gaps closed.** Four concurrent
+  BEGIN-IMMEDIATE claimants now prove the domain CAS independently of the
+  process flock (one Run winner, three coded losers). Real CLI regressions
+  prove Strategist valid-first/DB-invalid-second, Editor reject-first/
+  blocked-second, and Packager stage-before-WIP-cap all roll back task,
+  activity, Run, packet, and lease writes. Packet cancel now uses a distinct
+  aggregate requiring the live Review Packet, while generic initiative/child
+  cancellation remains available to the state machine. Complete fast lane
+  green.
+
+NEXT: Author and embed the frozen role directives so ADR-008 briefs carry
+both immutable state and product-owned instructions (including orchestration-
+by-default). Then perform a final wave-1 contract diff and advance only the
+unparked Phase 2 lines. Initiative wave CLI remains Parked.

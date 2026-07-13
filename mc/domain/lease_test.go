@@ -6,6 +6,9 @@ package domain_test
 import (
 	"context"
 	"database/sql"
+	"errors"
+	"fmt"
+	"sync"
 	"testing"
 	"time"
 
@@ -105,6 +108,68 @@ func TestClaim(t *testing.T) {
 		}
 		if got := lockStr(t, db, "run_id"); got != "winner" {
 			t.Fatalf("run_id = %q, want the winner untouched", got)
+		}
+	})
+
+	t.Run("concurrent_transaction_claimants_have_one_cas_winner", func(t *testing.T) {
+		db := openSpine(t)
+		id := mkTask(t, db, "task", "seeded")
+		const claimants = 4
+		start := make(chan struct{})
+		results := make(chan error, claimants)
+		var ready sync.WaitGroup
+		ready.Add(claimants)
+		for i := 0; i < claimants; i++ {
+			go func(i int) {
+				ctx := context.Background()
+				conn, err := db.Conn(ctx)
+				if err != nil {
+					ready.Done()
+					results <- err
+					return
+				}
+				defer conn.Close()
+				ready.Done()
+				<-start
+				if _, err := conn.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
+					results <- err
+					return
+				}
+				_, err = domain.Claim(ctx, conn, testNow, domain.ClaimArgs{
+					RunID: fmt.Sprintf("racer-%d", i), Owner: "worker",
+					SubjectID: &id, HardDeadlineMinutes: 240,
+				})
+				if err != nil {
+					_, _ = conn.ExecContext(ctx, "ROLLBACK")
+					results <- err
+					return
+				}
+				_, err = conn.ExecContext(ctx, "COMMIT")
+				results <- err
+			}(i)
+		}
+		ready.Wait()
+		close(start)
+
+		winners, losers := 0, 0
+		for i := 0; i < claimants; i++ {
+			err := <-results
+			if err == nil {
+				winners++
+				continue
+			}
+			var de *domain.DomainError
+			if errors.As(err, &de) && de.Code == domain.CodeLeaseHeld {
+				losers++
+				continue
+			}
+			t.Fatalf("claimant returned non-CAS error: %v", err)
+		}
+		if winners != 1 || losers != claimants-1 {
+			t.Fatalf("winners/losers = %d/%d, want 1/%d", winners, losers, claimants-1)
+		}
+		if got := oneInt(t, db, `SELECT COUNT(*) FROM runs`); got != 1 {
+			t.Fatalf("runs rows = %d, want exactly one committed claimant", got)
 		}
 	})
 

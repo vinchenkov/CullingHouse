@@ -440,6 +440,17 @@ func Cancel(ctx context.Context, q Q, taskID int64, reason string) error {
 	return err
 }
 
+// CancelPacket is the operator Review Packet cancel arm. Generic Cancel is
+// also used for seeded initiative/child teardown, so packet existence belongs
+// at this narrower aggregate boundary: operator packet decisions may never
+// act on work that was not made reviewable (Inv. 11/17).
+func CancelPacket(ctx context.Context, q Q, taskID int64, reason string) error {
+	if err := requireLivePacket(ctx, q, taskID); err != nil {
+		return err
+	}
+	return Cancel(ctx, q, taskID, reason)
+}
+
 // ProposalArgs births one proposed row (§6: tasks are born proposed).
 type ProposalArgs struct {
 	Title       string

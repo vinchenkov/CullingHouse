@@ -51,7 +51,7 @@ func PacketDecide(db *sql.DB, task int64, decision, reason string) (any, error) 
 			result["decision"] = "revise"
 			result["status"] = "seeded"
 		case "cancel":
-			if err := domain.Cancel(ctx, q, task, reason); err != nil {
+			if err := domain.CancelPacket(ctx, q, task, reason); err != nil {
 				return err
 			}
 			result["decision"] = "cancelled"

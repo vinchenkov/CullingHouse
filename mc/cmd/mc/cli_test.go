@@ -1076,6 +1076,8 @@ func TestPacketDecideValidation(t *testing.T) {
 			[]string{"packet", "decide", fmt.Sprint(taskID), "--approve"}, 1, "packaged"},
 		{"approve_missing_task",
 			[]string{"packet", "decide", "999", "--approve"}, 1, "no task"},
+		{"cancel_without_packet_is_domain",
+			[]string{"packet", "decide", fmt.Sprint(taskID), "--cancel", "--reason", "invisible"}, 1, "Review Packet"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -1854,6 +1856,112 @@ func TestInitiativeDoneRequiresCompletionReport(t *testing.T) {
 	if output := queryStr(t, db, `SELECT output_path FROM runs WHERE id=?`, run); output != "outputs/completion.md" {
 		t.Fatalf("completion report path = %q", output)
 	}
+}
+
+func TestPhase2TerminalTransactionsRollback(t *testing.T) {
+	t.Run("strategist_valid_first_invalid_second", func(t *testing.T) {
+		spine := initSpine(t)
+		eff := dispatchExpect(t, spine, "spawn")
+		run := eff["run_id"].(string)
+		env := runJSONEnv(t, spine, run, "pipeline", "strategist(propose)")
+		batch := `{"proposals":[
+			{"worksource":"ws-test","title":"must roll back"},
+			{"worksource":"ws-test","title":"invalid priority","priority":99}]}`
+		res := runMC(t, env, batch, "strategist", "propose", "--run", run, "--batch", "-")
+		if res.code != 1 {
+			t.Fatalf("exit = %d stderr=%q, want domain rollback", res.code, res.stderr)
+		}
+		db := openDB(t, spine)
+		if got := queryInt(t, db, `SELECT COUNT(*) FROM tasks`); got != 0 {
+			t.Fatalf("half Strategist batch committed %d tasks", got)
+		}
+		if got := queryStr(t, db, `SELECT ended_at FROM runs WHERE id=?`, run); got != "<NULL>" {
+			t.Fatalf("failed Strategist batch ended run at %q", got)
+		}
+		if got := queryStr(t, db, `SELECT run_id FROM lock WHERE id=1`); got != run {
+			t.Fatalf("failed Strategist batch released lease: %q", got)
+		}
+	})
+
+	t.Run("editor_reject_first_blocked_promote_second", func(t *testing.T) {
+		spine := initSpine(t)
+		t1 := taskAdd(t, spine, "reject must roll back")
+		t2 := taskAdd(t, spine, "blocked after snapshot")
+		eff := dispatchExpect(t, spine, "spawn")
+		run := eff["run_id"].(string)
+		db := openDB(t, spine)
+		if _, err := db.Exec(`UPDATE tasks SET blocked=1, blocked_reason='concurrent hold' WHERE id=?`, t2); err != nil {
+			t.Fatal(err)
+		}
+		batch := fmt.Sprintf(`{"verdicts":[
+			{"task":%d,"decision":"reject","reason":"weak"},
+			{"task":%d,"decision":"promote","reason":"strong"}]}`, t1, t2)
+		res := runMC(t, runJSONEnv(t, spine, run, "pipeline", "editor"), batch,
+			"editor", "decide", "--run", run, "--batch", "-")
+		if res.code != 1 {
+			t.Fatalf("exit = %d stderr=%q, want atomic refusal", res.code, res.stderr)
+		}
+		if got := queryStr(t, db, `SELECT status || '/' || COALESCE(decision, 'null') || '/' || archived FROM tasks WHERE id=?`, t1); got != "proposed/null/0" {
+			t.Fatalf("first Editor verdict half-committed: %q", got)
+		}
+		if got := queryInt(t, db, `SELECT COUNT(*) FROM activity WHERE kind='task.rejected' AND subject=?`, t1); got != 0 {
+			t.Fatalf("rolled-back rejection left %d activity rows", got)
+		}
+		if got := queryStr(t, db, `SELECT run_id FROM lock WHERE id=1`); got != run {
+			t.Fatalf("failed Editor batch released lease: %q", got)
+		}
+	})
+
+	t.Run("packager_wip_cap_rolls_back_stage", func(t *testing.T) {
+		spine := initSpine(t)
+		db := openDB(t, spine)
+		for i := 0; i < 3; i++ {
+			res, err := db.Exec(`INSERT INTO tasks (title, worksource, target_ref) VALUES (?, 'ws-test', 'main')`, fmt.Sprintf("packet-%d", i))
+			if err != nil {
+				t.Fatal(err)
+			}
+			id, _ := res.LastInsertId()
+			for _, status := range []string{"seeded", "worked", "verified", "packaged"} {
+				if _, err := db.Exec(`UPDATE tasks SET status=? WHERE id=?`, status, id); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if _, err := db.Exec(`INSERT INTO review_packets (task_id, render_path) VALUES (?, 'packet.html')`, id); err != nil {
+				t.Fatal(err)
+			}
+		}
+		res, err := db.Exec(`INSERT INTO tasks (title, worksource, target_ref) VALUES ('fourth', 'ws-test', 'main')`)
+		if err != nil {
+			t.Fatal(err)
+		}
+		taskID, _ := res.LastInsertId()
+		for _, status := range []string{"seeded", "worked", "verified"} {
+			if _, err := db.Exec(`UPDATE tasks SET status=? WHERE id=?`, status, taskID); err != nil {
+				t.Fatal(err)
+			}
+		}
+		run := "packager-cap-run"
+		if _, err := db.Exec(`INSERT INTO runs (id, tier, role, worksource, subject) VALUES (?, 'pipeline', 'packager', 'ws-test', ?)`, run, taskID); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := db.Exec(`UPDATE lock SET run_id=?, worksource='ws-test', subject=?, owner='packager', acquired_at=datetime('now'), hard_deadline_at=datetime('now', '+4 hours') WHERE id=1`, run, taskID); err != nil {
+			t.Fatal(err)
+		}
+		got := runMC(t, runJSONEnv(t, spine, run, "pipeline", "packager"), "",
+			"complete", fmt.Sprint(taskID), "--run", run, "--status", "packaged", "--outputs", "fourth.html")
+		if got.code != 1 || !strings.Contains(got.stderr, "WIP cap") {
+			t.Fatalf("exit=%d stderr=%q, want WIP-cap rollback", got.code, got.stderr)
+		}
+		if status := queryStr(t, db, `SELECT status FROM tasks WHERE id=?`, taskID); status != "verified" {
+			t.Fatalf("failed packet birth left task %q, want verified", status)
+		}
+		if packets := queryInt(t, db, `SELECT COUNT(*) FROM review_packets WHERE task_id=?`, taskID); packets != 0 {
+			t.Fatalf("failed birth left %d packets", packets)
+		}
+		if lockRun := queryStr(t, db, `SELECT run_id FROM lock WHERE id=1`); lockRun != run {
+			t.Fatalf("failed Packager terminal released lease: %q", lockRun)
+		}
+	})
 }
 
 func TestSelfDelegation(t *testing.T) {
