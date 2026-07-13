@@ -275,8 +275,11 @@ func TestDispatchSQLDifferentialActions(t *testing.T) {
 		task := dvTask(1, dispatch.ScopeTask, dispatch.StatusPackaged, 0)
 		task.Decision, task.DecidedAt = dispatch.DecisionApproved, &decided
 		task.Branch, task.VerifiedSHA = "mc/task-1", "abc123"
-		dvInsertTask(t, db, task)
+		fixture := task
+		fixture.Decision, fixture.DecidedAt = "", nil
+		dvInsertTask(t, db, fixture)
 		dvExec(t, db, `INSERT INTO review_packets (task_id, created_at) VALUES (1, ?)`, dvOld.Format(spineTime))
+		dvExec(t, db, `UPDATE tasks SET decision='approved', decided_at=? WHERE id=1`, decided.Format(spineTime))
 		packet := dispatch.Packet{TaskID: 1, CreatedAt: dvOld}
 		want, _ := dvDispatch(t, db, dispatch.Records{Tasks: []dispatch.Task{task}, Packets: []dispatch.Packet{packet}}, dispatch.Lock{}, dvConfig(24))
 		if want.Kind != dispatch.KindLand {

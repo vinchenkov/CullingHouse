@@ -102,6 +102,22 @@ func TestPacketBirth(t *testing.T) {
 			return domain.Birth(ctx, q, 999, "r.html")
 		})
 	})
+
+	t.Run("decided_task_cannot_birth_or_rerender_packet", func(t *testing.T) {
+		db := openSpine(t)
+		id := mkTask(t, db, "task", "packaged")
+		if err := birthPacket(t, db, id, "v1.html"); err != nil {
+			t.Fatalf("first birth: %v", err)
+		}
+		mustExec(t, db, `UPDATE tasks SET decision = 'approved', decided_at = datetime('now') WHERE id = ?`, id)
+		wantCode(t, db, domain.CodeAlreadyDecided, func(ctx context.Context, q domain.Q) error {
+			return domain.Birth(ctx, q, id, "v2.html")
+		})
+		if got := oneStr(t, db, `SELECT render_path FROM review_packets WHERE task_id = ?`, id); got != "v1.html" {
+			t.Fatalf("decided packet rerendered to %q", got)
+		}
+		wantAbort(t, db, `UPDATE review_packets SET render_path = 'v3.html' WHERE task_id = ?`, id)
+	})
 }
 
 func TestApplyDeepening(t *testing.T) {

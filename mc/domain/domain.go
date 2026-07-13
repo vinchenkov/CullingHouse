@@ -48,6 +48,7 @@ const (
 	CodeDeepeningRequired  = "deepening-required"
 	CodeDeepeningForbidden = "deepening-forbidden"
 	CodeNotPackaged        = "not-packaged"
+	CodeLandingFence       = "landing-fence"
 	CodeAlreadyDecided     = "already-decided"
 	CodeStrictDrain        = "strict-drain"
 	CodeZeroPromotion      = "zero-promotion"
@@ -116,6 +117,8 @@ type taskRow struct {
 	Decision        sql.NullString
 	Archived        bool
 	Branch          sql.NullString
+	VerifiedSHA     sql.NullString
+	TargetRef       sql.NullString
 	Worksource      string
 }
 
@@ -124,10 +127,11 @@ func getTask(ctx context.Context, q Q, id int64) (taskRow, error) {
 	var blocked, archived int
 	err := q.QueryRowContext(ctx, `
 		SELECT id, scope, status, initiative_id, correction_count, blocked,
-		       decision, archived, branch, worksource
+		       decision, archived, branch, verified_sha, target_ref, worksource
 		FROM tasks WHERE id = ?`, id).Scan(
 		&r.ID, &r.Scope, &r.Status, &r.InitiativeID, &r.CorrectionCount,
-		&blocked, &r.Decision, &archived, &r.Branch, &r.Worksource)
+		&blocked, &r.Decision, &archived, &r.Branch, &r.VerifiedSHA,
+		&r.TargetRef, &r.Worksource)
 	if err == sql.ErrNoRows {
 		return r, Errf(CodeNotFound, "no task %d", id)
 	}
@@ -137,6 +141,22 @@ func getTask(ctx context.Context, q Q, id int64) (taskRow, error) {
 	r.Blocked = blocked == 1
 	r.Archived = archived == 1
 	return r, nil
+}
+
+func requireLivePacket(ctx context.Context, q Q, taskID int64) error {
+	var archived int
+	err := q.QueryRowContext(ctx,
+		`SELECT archived FROM review_packets WHERE task_id = ?`, taskID).Scan(&archived)
+	if err == sql.ErrNoRows {
+		return Errf(CodeNotFound, "task %d holds no Review Packet (Inv. 11, Inv. 17)", taskID)
+	}
+	if err != nil {
+		return err
+	}
+	if archived != 0 {
+		return Errf(CodeArchived, "task %d's Review Packet is archived (Inv. 11)", taskID)
+	}
+	return nil
 }
 
 // requireLive rejects archived and decided rows: archived rows are terminal

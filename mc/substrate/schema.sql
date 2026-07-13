@@ -374,9 +374,42 @@ CREATE TRIGGER packets_require_packaged
 BEFORE INSERT ON review_packets
 WHEN NOT EXISTS (
     SELECT 1 FROM tasks t
-    WHERE t.id = NEW.task_id AND t.status = 'packaged' AND t.archived = 0)
+    WHERE t.id = NEW.task_id AND t.status = 'packaged'
+      AND t.decision IS NULL AND t.archived = 0)
 BEGIN
     SELECT RAISE(ABORT, 'a packet is born only from a packaged task (Inv. 11)');
+END;
+
+-- Review-only state writes (§7, Inv. 11/17). Re-entry and approval are
+-- legal only while the task's one Review Packet is live. A branch-carrying
+-- approval must already carry the complete immutable landing fence.
+CREATE TRIGGER tasks_reentry_requires_live_packet
+BEFORE UPDATE OF status ON tasks
+WHEN OLD.status = 'packaged' AND NEW.status = 'seeded'
+  AND NOT EXISTS (
+      SELECT 1 FROM review_packets p
+      WHERE p.task_id = OLD.id AND p.archived = 0)
+BEGIN
+    SELECT RAISE(ABORT, 'packaged re-entry requires a live Review Packet (Inv. 11, Inv. 17)');
+END;
+
+CREATE TRIGGER tasks_approve_requires_live_packet
+BEFORE UPDATE OF decision ON tasks
+WHEN NEW.decision = 'approved'
+  AND NOT EXISTS (
+      SELECT 1 FROM review_packets p
+      WHERE p.task_id = OLD.id AND p.archived = 0)
+BEGIN
+    SELECT RAISE(ABORT, 'approval requires a live Review Packet (Inv. 11, Inv. 17)');
+END;
+
+CREATE TRIGGER tasks_approve_requires_landing_fence
+BEFORE UPDATE OF decision ON tasks
+WHEN NEW.decision = 'approved' AND NEW.branch IS NOT NULL AND NEW.branch <> ''
+  AND (NEW.verified_sha IS NULL OR NEW.verified_sha = ''
+       OR NEW.target_ref IS NULL OR NEW.target_ref = '')
+BEGIN
+    SELECT RAISE(ABORT, 'branch approval requires verified_sha and target_ref (§7 landing fence)');
 END;
 
 -- Packets are born live, into the queue (Inv. 11): a born-archived packet
@@ -387,6 +420,18 @@ BEFORE INSERT ON review_packets
 WHEN NEW.archived <> 0
 BEGIN
     SELECT RAISE(ABORT, 'packets are born live, into the queue (Inv. 11)');
+END;
+
+-- A decided packet is the immutable operator record. Re-packaging may
+-- replace the render only while the owning task is still undecided; a late
+-- or buggy caller cannot rewrite what was approved/cancelled (§5, Inv. 11).
+CREATE TRIGGER packets_decided_task_render_frozen
+BEFORE UPDATE OF render_path ON review_packets
+WHEN EXISTS (
+    SELECT 1 FROM tasks t
+    WHERE t.id = OLD.task_id AND t.decision IS NOT NULL)
+BEGIN
+    SELECT RAISE(ABORT, 'a decided task packet cannot be rerendered (§5, Inv. 11)');
 END;
 
 -- Review WIP cap (Inv. 18, §8): at most 3 unarchived packets, enforced where

@@ -389,3 +389,19 @@ NEXT: Require the task's live Review Packet at approve/revise/re-entry and
 require complete SHA/target landing inputs before branch approval; prevent
 packet birth/rerender after a decision. Then continue the remaining
 adversarial findings. Initiative wave CLI remains Parked.
+
+- 2026-07-12 — **Phase 2 adversarial review: review-surface fences closed.**
+  Red domain regressions proved packaged rows could approve/re-enter without
+  ever becoming reviewable, branch work could be irreversibly approved with
+  missing SHA/target inputs, and decided packet renders could be rewritten.
+  Domain plus substrate now require the live lifetime packet for approval and
+  re-entry, require the complete landing fence before branch approval, reject
+  packet birth/rerender after a decision, and keep decided renders immutable.
+  The SQL↔dispatch landing fixture now constructs the legal packet-first
+  order. Full Go fast lane green.
+
+NEXT: Close the remaining initiative lattice findings: cancellation must
+overwrite every open child's decision to cancelled, and a propagated parent
+block cannot be manually cleared while a live child remains blocked. Then
+pin verdict outcome/deepening/correction carriers red-first. Initiative wave
+CLI remains Parked.

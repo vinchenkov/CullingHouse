@@ -257,6 +257,9 @@ func Reenter(ctx context.Context, q Q, taskID int64, notes string) error {
 		return Errf(CodeNotPackaged,
 			"only packaged rows re-enter (§6, §8); task %d is %q", taskID, r.Status)
 	}
+	if err := requireLivePacket(ctx, q, taskID); err != nil {
+		return err
+	}
 	_, err = q.ExecContext(ctx,
 		`UPDATE tasks SET status = 'seeded', refine_notes = ? WHERE id = ?`,
 		nullIfEmpty(notes), taskID)
@@ -312,6 +315,15 @@ func Approve(ctx context.Context, q Q, taskID int64) (bool, error) {
 	if r.Status != "packaged" {
 		return false, Errf(CodeNotPackaged,
 			"only packaged work can be approved (§4, §6); task %d is %q", taskID, r.Status)
+	}
+	if err := requireLivePacket(ctx, q, taskID); err != nil {
+		return false, err
+	}
+	if r.Branch.Valid && r.Branch.String != "" &&
+		(!r.VerifiedSHA.Valid || r.VerifiedSHA.String == "" ||
+			!r.TargetRef.Valid || r.TargetRef.String == "") {
+		return false, Errf(CodeLandingFence,
+			"branch-carrying task %d requires verified_sha and target_ref before approval (§7 landing fence)", taskID)
 	}
 	if _, err := q.ExecContext(ctx, `
 		UPDATE tasks SET decision = 'approved', decided_at = datetime('now')

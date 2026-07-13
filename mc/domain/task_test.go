@@ -483,6 +483,7 @@ func TestReenter(t *testing.T) {
 	t.Run("packaged_to_seeded_with_notes", func(t *testing.T) {
 		db := openSpine(t)
 		id := mkTask(t, db, "task", "packaged")
+		mkPacket(t, db, id)
 		mustTx(t, db, func(ctx context.Context, q domain.Q) error {
 			return domain.Reenter(ctx, q, id, "deepen the risk section")
 		})
@@ -499,6 +500,7 @@ func TestReenter(t *testing.T) {
 	t.Run("notes_overwritten_per_reentry", func(t *testing.T) {
 		db := openSpine(t)
 		id := mkTask(t, db, "task", "packaged")
+		mkPacket(t, db, id)
 		mustTx(t, db, func(ctx context.Context, q domain.Q) error {
 			return domain.Reenter(ctx, q, id, "first notes")
 		})
@@ -521,11 +523,23 @@ func TestReenter(t *testing.T) {
 		})
 	})
 
+	t.Run("packaged_without_live_packet_rejected", func(t *testing.T) {
+		db := openSpine(t)
+		id := mkTask(t, db, "task", "packaged")
+		wantCode(t, db, domain.CodeNotFound, func(ctx context.Context, q domain.Q) error {
+			return domain.Reenter(ctx, q, id, "cannot revise invisible work")
+		})
+		if got := taskStr(t, db, id, "status"); got != "packaged" {
+			t.Fatalf("packetless re-entry moved task to %q", got)
+		}
+	})
+
 	// Decided rows never transition (§6): an approved packaged row holds at
 	// packaged through landing — revise-after-approve is refused both layers.
 	t.Run("decided_rejected_both_layers", func(t *testing.T) {
 		db := openSpine(t)
 		id := mkTask(t, db, "task", "packaged")
+		mkPacket(t, db, id)
 		mustExec(t, db, `UPDATE tasks SET decision = 'approved', decided_at = datetime('now') WHERE id = ?`, id)
 		wantCode(t, db, domain.CodeAlreadyDecided, func(ctx context.Context, q domain.Q) error {
 			return domain.Reenter(ctx, q, id, "n")
@@ -611,7 +625,8 @@ func TestApprove(t *testing.T) {
 	t.Run("branch_carrying_holds_for_landing", func(t *testing.T) {
 		db := openSpine(t)
 		id := mkTask(t, db, "task", "packaged")
-		mustExec(t, db, `UPDATE tasks SET branch = 'mc/task-1' WHERE id = ?`, id)
+		mkPacket(t, db, id)
+		mustExec(t, db, `UPDATE tasks SET branch = 'mc/task-1', verified_sha = 'abc', target_ref = 'main' WHERE id = ?`, id)
 		var archived bool
 		mustTx(t, db, func(ctx context.Context, q domain.Q) error {
 			var err error
@@ -623,6 +638,34 @@ func TestApprove(t *testing.T) {
 		}
 		if got := taskStr(t, db, id, "decision"); got != "approved" {
 			t.Fatalf("decision = %q", got)
+		}
+	})
+
+	t.Run("packet_and_complete_landing_fence_required", func(t *testing.T) {
+		for _, tc := range []struct {
+			name  string
+			setup string
+			code  string
+		}{
+			{name: "missing_packet", setup: `UPDATE tasks SET branch = 'mc/task-x', verified_sha = 'abc', target_ref = 'main' WHERE id = ?`, code: domain.CodeNotFound},
+			{name: "missing_verified_sha", setup: `UPDATE tasks SET branch = 'mc/task-x', target_ref = 'main' WHERE id = ?`, code: domain.CodeLandingFence},
+			{name: "missing_target_ref", setup: `UPDATE tasks SET branch = 'mc/task-x', verified_sha = 'abc', target_ref = NULL WHERE id = ?`, code: domain.CodeLandingFence},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				db := openSpine(t)
+				id := mkTask(t, db, "task", "packaged")
+				if tc.name != "missing_packet" {
+					mkPacket(t, db, id)
+				}
+				mustExec(t, db, tc.setup, id)
+				wantCode(t, db, tc.code, func(ctx context.Context, q domain.Q) error {
+					_, err := domain.Approve(ctx, q, id)
+					return err
+				})
+				if got := taskStr(t, db, id, "decision"); got != "<NULL>" {
+					t.Fatalf("invalid landing fence wrote decision %q", got)
+				}
+			})
 		}
 	})
 
@@ -639,7 +682,8 @@ func TestApprove(t *testing.T) {
 	t.Run("double_decision_rejected", func(t *testing.T) {
 		db := openSpine(t)
 		id := mkTask(t, db, "task", "packaged")
-		mustExec(t, db, `UPDATE tasks SET branch = 'mc/task-x' WHERE id = ?`, id) // holds unarchived
+		mkPacket(t, db, id)
+		mustExec(t, db, `UPDATE tasks SET branch = 'mc/task-x', verified_sha = 'abc', target_ref = 'main' WHERE id = ?`, id) // holds unarchived
 		mustTx(t, db, func(ctx context.Context, q domain.Q) error {
 			_, err := domain.Approve(ctx, q, id)
 			return err

@@ -100,6 +100,9 @@ func TestTransitionMatrix(t *testing.T) {
 					} else {
 						id = mkTask(t, db, pop, from)
 					}
+					if from == "packaged" && to == "seeded" {
+						mkPacket(t, db, id)
+					}
 					_, err := db.Exec(`UPDATE tasks SET status = ? WHERE id = ?`, to, id)
 					switch {
 					case from == to:
@@ -200,6 +203,7 @@ func TestArchivedRowsAreTerminal(t *testing.T) {
 
 	t.Run("approved_and_landed", func(t *testing.T) {
 		id := mkTask(t, db, "task", "packaged")
+		mkPacket(t, db, id)
 		mustExec(t, db, `UPDATE tasks SET decision = 'approved', decided_at = datetime('now') WHERE id = ?`, id)
 		mustExec(t, db, `UPDATE tasks SET archived = 1 WHERE id = ?`, id)
 		wantAbort(t, db, `UPDATE tasks SET status = 'seeded' WHERE id = ?`, id)
@@ -228,6 +232,7 @@ func TestArchivedRowsAreTerminal(t *testing.T) {
 	})
 	t.Run("landed_unarchive_refused", func(t *testing.T) {
 		id := mkTask(t, db, "task", "packaged")
+		mkPacket(t, db, id)
 		mustExec(t, db, `UPDATE tasks SET branch = 'mc/task-x', verified_sha = 'abc', target_ref = 'main' WHERE id = ?`, id)
 		mustExec(t, db, `UPDATE tasks SET decision = 'approved', decided_at = datetime('now') WHERE id = ?`, id)
 		mustExec(t, db, `UPDATE tasks SET archived = 1 WHERE id = ?`, id) // the §7 landing-success write
@@ -311,6 +316,7 @@ func TestApproveOnlyFromPackaged(t *testing.T) {
 				id := mkTask(t, db, scope, st)
 				q := `UPDATE tasks SET decision = 'approved', decided_at = datetime('now') WHERE id = ?`
 				if st == "packaged" {
+					mkPacket(t, db, id)
 					mustExec(t, db, q, id)
 					// A landing-pending row (approved, unarchived, at packaged)
 					// can never be pulled back into the pipeline: the refinement
@@ -324,6 +330,31 @@ func TestApproveOnlyFromPackaged(t *testing.T) {
 				}
 			})
 		}
+	}
+
+	t.Run("live_packet_required", func(t *testing.T) {
+		db := openSpine(t)
+		id := mkTask(t, db, "task", "packaged")
+		wantAbort(t, db,
+			`UPDATE tasks SET decision = 'approved', decided_at = datetime('now') WHERE id = ?`, id)
+		wantAbort(t, db, `UPDATE tasks SET status = 'seeded' WHERE id = ?`, id)
+	})
+
+	for _, tc := range []struct {
+		name  string
+		setup string
+	}{
+		{name: "missing_verified_sha", setup: `UPDATE tasks SET branch = 'mc/task-x', target_ref = 'main' WHERE id = ?`},
+		{name: "missing_target_ref", setup: `UPDATE tasks SET branch = 'mc/task-x', verified_sha = 'abc', target_ref = NULL WHERE id = ?`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			db := openSpine(t)
+			id := mkTask(t, db, "task", "packaged")
+			mkPacket(t, db, id)
+			mustExec(t, db, tc.setup, id)
+			wantAbort(t, db,
+				`UPDATE tasks SET decision = 'approved', decided_at = datetime('now') WHERE id = ?`, id)
+		})
 	}
 }
 

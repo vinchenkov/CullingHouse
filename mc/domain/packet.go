@@ -21,7 +21,10 @@ func Birth(ctx context.Context, q Q, taskID int64, renderPath string) error {
 	if err != nil {
 		return err
 	}
-	if r.Archived || r.Status != "packaged" {
+	if err := requireLive(r); err != nil {
+		return err
+	}
+	if r.Status != "packaged" {
 		return Errf(CodeNotPackaged,
 			"a packet is born only from a live packaged task (Inv. 11); task %d is %q", taskID, r.Status)
 	}
