@@ -375,6 +375,21 @@ func TestDispatchSpawnBriefCarriesClaimedState(t *testing.T) {
 		}
 	})
 
+	t.Run("verifier_gets_latest_worker_output", func(t *testing.T) {
+		db := dvSpine(t)
+		task := dvTask(1, dispatch.ScopeTask, dispatch.StatusWorked, 2)
+		dvInsertTask(t, db, task)
+		dvExec(t, db, `INSERT INTO runs
+			(id, tier, role, worksource, subject, output_path, ended_at, outcome)
+			VALUES ('prior-worker', 'pipeline', 'worker', 'ws-test', 1,
+			        'outputs/worker-report.md', datetime('now'), 'completed')`)
+		_, got := dvDispatch(t, db, dispatch.Records{Tasks: []dispatch.Task{task}}, dispatch.Lock{}, dvConfig(24))
+		brief := fmt.Sprint(got["brief"])
+		if !strings.Contains(brief, `"latest_output_path": "outputs/worker-report.md"`) {
+			t.Fatalf("Verifier brief lost Worker output: %s", brief)
+		}
+	})
+
 	t.Run("packager_gets_budget_spent_exception_and_evidence", func(t *testing.T) {
 		db := dvSpine(t)
 		task := dvTask(1, dispatch.ScopeTask, dispatch.StatusVerified, 2)

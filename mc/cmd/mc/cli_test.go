@@ -1118,7 +1118,8 @@ func packageTask(t *testing.T, spine string, taskID int64, branch string) {
 	eff = dispatchExpect(t, spine, "spawn") // packager
 	run = eff["run_id"].(string)
 	res = runMC(t, runJSONEnv(t, spine, run, "pipeline", "packager"), "",
-		"complete", fmt.Sprint(taskID), "--run", run, "--status", "packaged")
+		"complete", fmt.Sprint(taskID), "--run", run, "--status", "packaged",
+		"--outputs", fmt.Sprintf("packets/%d.html", taskID))
 	if res.code != 0 {
 		t.Fatalf("complete packaged failed: %s", res.stderr)
 	}
@@ -1710,6 +1711,93 @@ func TestCompletePhase2Terminals(t *testing.T) {
 // passing argv, stdout, and the exit code through untouched. A stub docker
 // on PATH keeps the fast lane Docker-free.
 // ---------------------------------------------------------------------------
+
+func TestCompleteRejectsCrossArmFields(t *testing.T) {
+	tests := []struct {
+		name string
+		args []string
+		msg  string
+	}{
+		{name: "packaged_branch", args: []string{"--status", "packaged", "--outputs", "packet.html", "--branch", "mc/x"}, msg: "--branch"},
+		{name: "packaged_missing_outputs", args: []string{"--status", "packaged"}, msg: "--outputs"},
+		{name: "seeded_branch", args: []string{"--status", "seeded", "--outputs", "scope.md", "--branch", "mc/x"}, msg: "--branch"},
+		{name: "seeded_reason", args: []string{"--status", "seeded", "--outputs", "scope.md", "--reason", "ignored"}, msg: "--reason"},
+		{name: "worked_reason", args: []string{"--status", "worked", "--reason", "ignored"}, msg: "--reason"},
+		{name: "needs_operator_branch", args: []string{"--needs-operator", "--reason", "need", "--branch", "mc/x"}, msg: "--branch"},
+		{name: "needs_operator_outputs", args: []string{"--needs-operator", "--reason", "need", "--outputs", "ignored"}, msg: "--outputs"},
+		{name: "infra_branch", args: []string{"--infra", "--reason", "boom", "--branch", "mc/x"}, msg: "--branch"},
+		{name: "infra_outputs", args: []string{"--infra", "--reason", "boom", "--outputs", "ignored"}, msg: "--outputs"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			spine, taskID, run, env := workerFixture(t, tc.name)
+			args := []string{"complete", fmt.Sprint(taskID), "--run", run}
+			args = append(args, tc.args...)
+			res := runMC(t, env, "", args...)
+			if res.code != 2 || !strings.Contains(res.stderr, tc.msg) {
+				t.Fatalf("exit = %d stderr %q, want usage containing %q", res.code, res.stderr, tc.msg)
+			}
+			db := openDB(t, spine)
+			if got := queryStr(t, db, `SELECT status FROM tasks WHERE id = ?`, taskID); got != "seeded" {
+				t.Fatalf("invalid field matrix moved task to %q", got)
+			}
+			if got := queryStr(t, db, `SELECT run_id FROM lock WHERE id = 1`); got != run {
+				t.Fatalf("invalid field matrix disturbed lease: %q", got)
+			}
+		})
+	}
+}
+
+func TestInitiativeDoneRequiresCompletionReport(t *testing.T) {
+	spine := initSpine(t)
+	db := openDB(t, spine)
+	res, err := db.Exec(`INSERT INTO tasks
+		(title, description, scope, worksource, target_ref)
+		VALUES ('initiative', 'charter', 'initiative', 'ws-test', 'main')`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	initiative, err := res.LastInsertId()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`UPDATE tasks SET status='seeded' WHERE id=?`, initiative); err != nil {
+		t.Fatal(err)
+	}
+	run := "initiative-run"
+	if _, err := db.Exec(`INSERT INTO runs
+		(id, tier, role, worksource, subject)
+		VALUES (?, 'pipeline', 'strategist', 'ws-test', ?)`, run, initiative); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`UPDATE lock SET
+		run_id=?, worksource='ws-test', subject=?, owner='strategist',
+		acquired_at=datetime('now'), hard_deadline_at=datetime('now', '+4 hours')
+		WHERE id=1`, run, initiative); err != nil {
+		t.Fatal(err)
+	}
+	env := runJSONEnv(t, spine, run, "pipeline", "strategist(initiative)")
+	got := runMC(t, env, "", "complete", fmt.Sprint(initiative),
+		"--run", run, "--status", "worked")
+	if got.code != 2 || !strings.Contains(got.stderr, "--outputs") {
+		t.Fatalf("missing report exit=%d stderr=%q", got.code, got.stderr)
+	}
+	if status := queryStr(t, db, `SELECT status FROM tasks WHERE id=?`, initiative); status != "seeded" {
+		t.Fatalf("missing report moved initiative to %q", status)
+	}
+	if lockRun := queryStr(t, db, `SELECT run_id FROM lock WHERE id=1`); lockRun != run {
+		t.Fatalf("missing report disturbed lease: %q", lockRun)
+	}
+
+	got = runMC(t, env, "", "complete", fmt.Sprint(initiative),
+		"--run", run, "--status", "worked", "--outputs", "outputs/completion.md")
+	if got.code != 0 {
+		t.Fatalf("completion report rejected: %s", got.stderr)
+	}
+	if output := queryStr(t, db, `SELECT output_path FROM runs WHERE id=?`, run); output != "outputs/completion.md" {
+		t.Fatalf("completion report path = %q", output)
+	}
+}
 
 func TestSelfDelegation(t *testing.T) {
 	stubDir := t.TempDir()

@@ -640,7 +640,8 @@ CREATE TABLE runs (
     verdict_outcome    TEXT CHECK (verdict_outcome IN ('pass', 'correct', 'budget-spent')),
     evidence_path      TEXT,
     correction_path    TEXT,
-    deepening          TEXT CHECK (deepening IN ('genuine', 'churn'))
+	deepening          TEXT CHECK (deepening IN ('genuine', 'churn')),
+	output_path        TEXT    -- terminal report/artifact reference from mc complete (Inv. 10)
 );
 
 -- Every run's trace is kept forever (Inv. 26); so is its row.

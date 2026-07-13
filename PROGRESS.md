@@ -534,3 +534,16 @@ validation and real CLI zombie/new-holder coverage, then authenticate and make
 immutable the runner lifecycle verbs. Keep initiative wave CLI Parked pending
 durable plan-review representation; frozen prose role directives remain a
 required authored artifact after the carrier schema.
+
+- 2026-07-12 — **Phase 2 adversarial review: `mc complete` payload truth fixed.**
+  Process regressions now reject every cross-arm field instead of silently
+  dropping it (`branch`, `reason`, `outputs`), require Packager render paths,
+  and require Strategist(initiative)'s completion report. `--outputs` is no
+  longer inert: the terminal transaction stores `runs.output_path`, and the
+  next role's ADR-008 brief carries the latest report/artifact reference.
+  Complete fast lane green.
+
+NEXT: Bind heartbeat and session registration to the runner's own run.json,
+make locator registration idempotent-but-immutable, and add old CLI complete /
+heartbeat versus new-holder snapshots. Then close atomic rollback/CAS coverage
+gaps. Initiative wave CLI remains Parked; frozen prose directives remain due.

@@ -45,6 +45,7 @@ type spawnBriefDocument struct {
 	DedupeTitles     []string      `json:"dedupe_titles,omitempty"`
 	LatestCorrection *briefVerdict `json:"latest_correction,omitempty"`
 	LatestVerdict    *briefVerdict `json:"latest_verdict,omitempty"`
+	LatestOutputPath string        `json:"latest_output_path,omitempty"`
 	ReviewQueue      []briefTask   `json:"review_queue,omitempty"`
 	BlockedTasks     []briefTask   `json:"blocked_tasks,omitempty"`
 }
@@ -63,6 +64,17 @@ func buildSpawnBrief(ctx context.Context, q Q, sp *dispatch.Spawn) (string, erro
 			return "", err
 		}
 		doc.Subject = &subject
+		var output sql.NullString
+		err = q.QueryRowContext(ctx, `
+			SELECT output_path FROM runs
+			WHERE subject = ? AND output_path IS NOT NULL
+			ORDER BY created_at DESC, id DESC LIMIT 1`, *sp.SubjectID).Scan(&output)
+		if err != nil && err != sql.ErrNoRows {
+			return "", err
+		}
+		if output.Valid {
+			doc.LatestOutputPath = output.String
+		}
 	}
 
 	if sp.Role == dispatch.RoleEditor {

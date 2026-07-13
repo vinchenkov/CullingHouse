@@ -68,6 +68,18 @@ func Complete(db *sql.DB, id *RunIdentity, a CompleteArgs) (any, error) {
 	if (a.NeedsOperator || a.Infra) && a.Reason == "" {
 		return nil, Usagef("mc complete --needs-operator/--infra require --reason (§18)")
 	}
+	if a.Branch != "" && a.Status != "worked" {
+		return nil, Usagef("--branch is legal only with --status worked (Worker terminal)")
+	}
+	if a.Reason != "" && a.Status != "" {
+		return nil, Usagef("--reason is legal only with --needs-operator or --infra")
+	}
+	if (a.NeedsOperator || a.Infra) && a.Outputs != "" {
+		return nil, Usagef("--outputs is forbidden with --needs-operator/--infra")
+	}
+	if a.Status == "packaged" && a.Outputs == "" {
+		return nil, Usagef("the Packager terminal requires --outputs <packet render path> (Inv. 11)")
+	}
 	if a.Status == "seeded" && a.Outputs == "" {
 		return nil, Usagef("the Refiner terminal requires --outputs <deepening scope> (§8, A-P2-2)")
 	}
@@ -95,6 +107,12 @@ func Complete(db *sql.DB, id *RunIdentity, a CompleteArgs) (any, error) {
 			if scope == "initiative" {
 				if id.Role != "strategist(initiative)" {
 					return roleMismatch(id, "strategist(initiative)")
+				}
+				if a.Outputs == "" {
+					return Usagef("initiative done-declaration requires --outputs <completion report> (ADR-001 D4)")
+				}
+				if a.Branch != "" {
+					return Usagef("--branch belongs to the Worker terminal, not an initiative done-declaration")
 				}
 			} else if baseRole(id.Role) != "worker" {
 				return roleMismatch(id, "worker")
@@ -154,6 +172,23 @@ func Complete(db *sql.DB, id *RunIdentity, a CompleteArgs) (any, error) {
 			outcome = "infra-failed"
 			result["dispatch_retries"] = charge.Remaining
 			result["blocked"] = charge.Blocked
+		}
+
+		if a.Outputs != "" {
+			written, err := q.ExecContext(ctx,
+				`UPDATE runs SET output_path = ? WHERE id = ? AND output_path IS NULL`,
+				a.Outputs, a.Run)
+			if err != nil {
+				return err
+			}
+			n, err := written.RowsAffected()
+			if err != nil {
+				return err
+			}
+			if n != 1 {
+				return Domainf("Run %s already carries a terminal output path", a.Run)
+			}
+			result["outputs"] = a.Outputs
 		}
 
 		if err := endRun(ctx, q, a.Run, outcome); err != nil {

@@ -17,7 +17,8 @@ deterministic indented JSON. It contains the resolved role and the role's
 immutable inputs from the claim snapshot:
 
 - every subject role: the task/initiative record, including criteria,
-  correction budget, landing references, and current refinement notes;
+  correction budget, landing references, current refinement notes, and the
+  latest `mc complete --outputs` report/artifact reference;
 - Editor: the full records for the exact proposed-pool snapshot;
 - Strategist(propose): recently rejected titles as dedupe memory;
 - Worker: the latest CORRECT verdict and correction-file path;
