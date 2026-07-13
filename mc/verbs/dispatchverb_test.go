@@ -353,4 +353,36 @@ func TestDispatchRejectsInvalidStoredTimezoneBeforeMutation(t *testing.T) {
 	}
 }
 
+func TestDispatchReapsStaleLeaseBeforeReadingInvalidConsoleTimezone(t *testing.T) {
+	db := dvSpine(t)
+	task := dvTask(1, dispatch.ScopeTask, dispatch.StatusSeeded, 2)
+	dvInsertTask(t, db, task)
+	dvExec(t, db, `INSERT INTO runs (id, tier, role, worksource, subject) VALUES ('stale-run', 'pipeline', 'worker', 'ws-test', 1)`)
+	dvExec(t, db, `
+		UPDATE lock SET run_id='stale-run', worksource='ws-test', subject=1,
+		owner='worker', acquired_at=?, last_heartbeat_at=NULL,
+		hard_deadline_at=?, console_tz='Mars/Olympus' WHERE id=1`,
+		dvOld.Format(spineTime), dvFuture.Format(spineTime))
+
+	effect, err := Dispatch(db)
+	if err != nil {
+		t.Fatalf("stale lease was wedged behind invalid Console timezone: %v", err)
+	}
+	got := effect.(map[string]any)
+	if got["action"] != "reap" || got["run_id"] != "stale-run" {
+		t.Fatalf("effect = %v, want stale-run reap", got)
+	}
+	var retries int
+	if err := db.QueryRow(`SELECT dispatch_retries FROM tasks WHERE id=1`).Scan(&retries); err != nil || retries != 2 {
+		t.Fatalf("authoritative subject charge = %d err=%v", retries, err)
+	}
+	var lockRun sql.NullString
+	if err := db.QueryRow(`SELECT run_id FROM lock WHERE id=1`).Scan(&lockRun); err != nil {
+		t.Fatal(err)
+	}
+	if lockRun.Valid {
+		t.Fatalf("stale lease still held by %q", lockRun.String)
+	}
+}
+
 func ptr64(v int64) *int64 { return &v }

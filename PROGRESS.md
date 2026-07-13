@@ -469,3 +469,16 @@ NEXT: Restore step-(0) precedence so a corrupt Console timezone cannot wedge
 a stale lease, then exclude/refuse blocked proposals at the Editor snapshot
 and decision boundaries. Initiative wave CLI remains Parked pending durable
 plan-review representation.
+
+- 2026-07-12 — **Phase 2 adversarial review: stale leases outrank Console.**
+  A red SQL-adapter regression proved an invalid stored IANA zone aborted
+  before step (0), indefinitely wedging a stale global lease. A held lease
+  now executes only keep/reap logic with a non-semantic clock placeholder;
+  Console timezone validation remains fail-closed once the lease is free.
+  The stale subject is charged and the lease releases despite corrupt Console
+  config. Complete fast lane green.
+
+NEXT: Exclude blocked proposals from Editor pool snapshots and refuse stale
+Editor verdicts against a concurrently blocked proposal at the aggregate
+boundary. Then address saturated operator-directed recovery and runtime route
+truth. Initiative wave CLI remains Parked.

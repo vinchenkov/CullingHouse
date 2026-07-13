@@ -44,11 +44,18 @@ func Dispatch(db *sql.DB) (any, error) {
 		if err != nil {
 			return err
 		}
-		loc, err := time.LoadLocation(tun.consoleTZ)
-		if err != nil {
-			// Fail-closed (contract §4.3): a broken stored zone aborts the
-			// tick rather than delivering on a guessed clock.
-			return Domainf("lock.console_tz %q is not a loadable IANA zone (§16.3): %v", tun.consoleTZ, err)
+		// Step (0) lease reconciliation outranks every free-lock concern
+		// (§10). A held lease never consults the Console clock: Decide either
+		// keeps it or reaps it. This prevents corrupt schedule configuration
+		// from wedging the global liveness fence.
+		loc := time.UTC
+		if !lk.Held {
+			loc, err = time.LoadLocation(tun.consoleTZ)
+			if err != nil {
+				// Fail-closed (contract §4.3): once the lock is free, a broken
+				// stored zone aborts rather than delivering on a guessed clock.
+				return Domainf("lock.console_tz %q is not a loadable IANA zone (§16.3): %v", tun.consoleTZ, err)
+			}
 		}
 		cfg := dispatch.Config{
 			ReviewWIPCap:   3, // Inv. 18; the substrate trigger is the backstop
