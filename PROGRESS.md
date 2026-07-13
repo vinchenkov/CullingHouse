@@ -847,3 +847,28 @@ as a record-only status/binding transition requiring the immutable locator
 pair for native continue mode; conversation-row fallback stays explicit and
 audited. Then runner claim/reply transport. Initiative wave CLI remains
 Parked pending the durable plan-review representation.
+
+- 2026-07-13 — **Phase 2 Homie locator seam + record-only resume green**
+  (746bbad). ADR-012 pins both: `run register-session` gains a homie-tier
+  arm writing the set-once native locator pair onto the caller's own
+  canonical registry row (identity not liveness — post-end registration
+  stays legal per Inv. 26; allowlist untouched, runner-private scope;
+  cross-session/pipeline/host attempts inert, conflicting replays refused in
+  verb and trigger). `mc homie resume <session> --from <surface:channel_ref>`
+  is host-only and record-only: ended|reaped → active + `homie.resumed`
+  activity + fresh binding in one transaction; occupied place aborts the
+  whole transition (session stays ended, no activity residue); missing
+  locator pair refuses, naming the §15.4 conversation-rows fallback as a
+  separate explicit arm; already-active resume is idempotent only for the
+  exact crash-after-commit retry, otherwise "use bind"; no launch effect
+  (relaunch is the resident's, Phase 3+, matching start's posture).
+  Complete fast lane green.
+
+NEXT: TDD the Homie runner claim/reply transport (the ADR-010 deferral):
+fenced idempotent claim of pending inbound conversation rows over the
+existing claimed_by/claimed_at/completed_at columns, and a runner-scope
+`homie reply` that appends the reply row + per-binding echo/reply outbox
+rows atomically — never through the model's Homie-agent identity. Then
+sweep the remaining §18 operational verbs (doctor/backup/reset) toward the
+wave-2 contract before the split-brain suite. Initiative wave CLI remains
+Parked.
