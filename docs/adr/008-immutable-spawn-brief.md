@@ -27,8 +27,9 @@ immutable inputs from the claim snapshot:
 - Strategist(console): the live Review Queue and blocked-task records.
 
 The fixed role directives and prose rubrics remain a separate tracked
-artifact. They will wrap/use this typed carrier; they do not change who owns
-state assembly.
+artifact under `mc/verbs/directives/`, embedded in the `mc` binary. Every v1
+document carries its role's directive alongside the typed state; directives
+do not change who owns state assembly.
 
 ## Consequences
 

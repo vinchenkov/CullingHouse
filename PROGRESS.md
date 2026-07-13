@@ -577,3 +577,19 @@ NEXT: Author and embed the frozen role directives so ADR-008 briefs carry
 both immutable state and product-owned instructions (including orchestration-
 by-default). Then perform a final wave-1 contract diff and advance only the
 unparked Phase 2 lines. Initiative wave CLI remains Parked.
+
+- 2026-07-12 — **Required authored artifact: frozen directives/briefs green.**
+  Eight tracked role directives are embedded in the `mc` binary and carried
+  inside every `mc.spawn-brief.v1` document. Each pins role jurisdiction,
+  orchestration-by-default with read-only depth-1 subagents, the inline-work
+  exception, and the single terminal action; role-specific rubrics cover
+  contrastive Editor judgment, Verifier gates, correction/refinement,
+  exception-labeled packaging, initiative boundaries, and Console ranking.
+  Tests prove every dispatch role has a distinct directive and unknown roles
+  fail closed. This satisfies the spec §16.1/Inv.20 authored role-directive
+  and brief-template deliverable. Complete fast lane green.
+
+NEXT: Perform the final Phase 2 wave-1 contract/spec diff, record the parked
+and wave-2 deferrals precisely, and advance the ledger only for acceptance
+sets that are actually green. Initiative wave CLI remains Parked pending the
+durable holistic plan-review representation.

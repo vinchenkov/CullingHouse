@@ -40,6 +40,7 @@ type briefVerdict struct {
 type spawnBriefDocument struct {
 	Schema           string        `json:"schema"`
 	Role             string        `json:"role"`
+	Directive        string        `json:"directive"`
 	Subject          *briefTask    `json:"subject,omitempty"`
 	ProposedPool     []briefTask   `json:"proposed_pool,omitempty"`
 	DedupeTitles     []string      `json:"dedupe_titles,omitempty"`
@@ -56,7 +57,13 @@ type spawnBriefDocument struct {
 // spine, so correction/refinement/evidence carriers cannot drift across the
 // decision-to-effect gap (spec §9.2, §10, Inv. 10/12).
 func buildSpawnBrief(ctx context.Context, q Q, sp *dispatch.Spawn) (string, error) {
-	doc := spawnBriefDocument{Schema: spawnBriefSchema, Role: string(sp.Role)}
+	directive, err := directiveForRole(sp.Role)
+	if err != nil {
+		return "", err
+	}
+	doc := spawnBriefDocument{
+		Schema: spawnBriefSchema, Role: string(sp.Role), Directive: directive,
+	}
 
 	if sp.SubjectID != nil {
 		subject, err := loadBriefTask(ctx, q, *sp.SubjectID)

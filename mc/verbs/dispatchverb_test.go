@@ -351,7 +351,7 @@ func TestDispatchSpawnBriefCarriesClaimedState(t *testing.T) {
 		dvExec(t, db, `UPDATE tasks SET description='criterion: exact output' WHERE id=1`)
 		_, got := dvDispatch(t, db, dispatch.Records{Tasks: []dispatch.Task{task}}, dispatch.Lock{}, dvConfig(24))
 		brief := fmt.Sprint(got["brief"])
-		for _, want := range []string{"contrast this proposal", "criterion: exact output", `"proposed_pool"`} {
+		for _, want := range []string{"contrast this proposal", "criterion: exact output", `"proposed_pool"`, "Orchestrate by default."} {
 			if !strings.Contains(brief, want) {
 				t.Fatalf("Editor brief missing %q: %s", want, brief)
 			}
