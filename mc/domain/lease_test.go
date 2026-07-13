@@ -232,7 +232,7 @@ func TestApplyReap(t *testing.T) {
 		mustTx(t, db, func(ctx context.Context, q domain.Q) error {
 			var err error
 			res, err = domain.ApplyReap(ctx, q, domain.ReapArgs{
-				RunID: "r1", Reason: "spawn-watchdog", SubjectID: &id,
+				RunID: "r1", Reason: "spawn-watchdog",
 			})
 			return err
 		})
@@ -263,7 +263,7 @@ func TestApplyReap(t *testing.T) {
 		mustTx(t, db, func(ctx context.Context, q domain.Q) error {
 			var err error
 			res, err = domain.ApplyReap(ctx, q, domain.ReapArgs{
-				RunID: "r1", Reason: "lease-timeout", SubjectID: &id,
+				RunID: "r1", Reason: "lease-timeout",
 			})
 			return err
 		})
@@ -297,6 +297,29 @@ func TestApplyReap(t *testing.T) {
 		}
 	})
 
+	t.Run("subject_charge_is_derived_from_fenced_lease", func(t *testing.T) {
+		db := openSpine(t)
+		id := mkTask(t, db, "task", "seeded")
+		other := mkTask(t, db, "task", "seeded")
+		if err := claim(t, db, domain.ClaimArgs{
+			RunID: "authoritative", Owner: "worker", SubjectID: &id, HardDeadlineMinutes: 240,
+		}); err != nil {
+			t.Fatal(err)
+		}
+		mustTx(t, db, func(ctx context.Context, q domain.Q) error {
+			_, err := domain.ApplyReap(ctx, q, domain.ReapArgs{
+				RunID: "authoritative", Reason: "lease-timeout",
+			})
+			return err
+		})
+		if got := taskInt(t, db, id, "dispatch_retries"); got != 2 {
+			t.Fatalf("leased subject dispatch_retries = %d, want charged once", got)
+		}
+		if got := taskInt(t, db, other, "dispatch_retries"); got != 3 {
+			t.Fatalf("unrelated subject dispatch_retries = %d, want untouched", got)
+		}
+	})
+
 	// Two budgets (§10 crash table; contract §2): reaping a verifier lease
 	// mid-rally charges dispatch_retries, never correction_count.
 	t.Run("verifier_reap_leaves_rally_budget_untouched", func(t *testing.T) {
@@ -310,7 +333,7 @@ func TestApplyReap(t *testing.T) {
 		}
 		mustTx(t, db, func(ctx context.Context, q domain.Q) error {
 			_, err := domain.ApplyReap(ctx, q, domain.ReapArgs{
-				RunID: "v1", Reason: "hard-deadline", SubjectID: &id,
+				RunID: "v1", Reason: "hard-deadline",
 			})
 			return err
 		})
@@ -336,7 +359,7 @@ func TestZombieVersusNewHolder(t *testing.T) {
 	}
 	mustTx(t, db, func(ctx context.Context, q domain.Q) error {
 		_, err := domain.ApplyReap(ctx, q, domain.ReapArgs{
-			RunID: "zombie", Reason: "lease-timeout", SubjectID: &id,
+			RunID: "zombie", Reason: "lease-timeout",
 		})
 		return err
 	})

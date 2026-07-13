@@ -167,9 +167,8 @@ func Release(ctx context.Context, q Q, runID string) error {
 // ReapArgs is the write side of one step-(0) reap decision (the conditions
 // were evaluated by the frozen mc/dispatch.reapable).
 type ReapArgs struct {
-	RunID     string
-	Reason    string
-	SubjectID *int64 // nil = subjectless run: charges nothing (§10 step 0)
+	RunID  string
+	Reason string
 }
 
 // ReapResult reports the applied charge.
@@ -184,13 +183,23 @@ type ReapResult struct {
 // transaction; the container stop returns to the resident as effect data.
 func ApplyReap(ctx context.Context, q Q, a ReapArgs) (ReapResult, error) {
 	var res ReapResult
+	var subject sql.NullInt64
+	if err := q.QueryRowContext(ctx,
+		`SELECT subject FROM lock WHERE id = 1 AND run_id = ?`, a.RunID,
+	).Scan(&subject); err != nil {
+		if err == sql.ErrNoRows {
+			return res, Errf(CodeStaleRun,
+				"stale run: %q does not hold the live lease (§10 fencing)", a.RunID)
+		}
+		return res, err
+	}
 	if _, err := q.ExecContext(ctx,
 		`UPDATE runs SET ended_at = datetime('now'), outcome = 'reaped' WHERE id = ?`,
 		a.RunID); err != nil {
 		return res, err
 	}
-	if a.SubjectID != nil {
-		charge, err := ChargeInfra(ctx, q, *a.SubjectID, a.Reason)
+	if subject.Valid {
+		charge, err := ChargeInfra(ctx, q, subject.Int64, a.Reason)
 		if err != nil {
 			return res, err
 		}

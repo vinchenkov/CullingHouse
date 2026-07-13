@@ -300,9 +300,6 @@ func applyAction(ctx context.Context, q Q, now time.Time, a dispatch.Action, tun
 		// re-derives blocking from the charge itself (§10 "never a silent
 		// loop") — the two agree by construction on the same records.
 		reap := domain.ReapArgs{RunID: a.Reap.RunID, Reason: string(a.Reap.Reason)}
-		if a.Reap.SubjectID != nil && a.Reap.ChargeRetries {
-			reap.SubjectID = a.Reap.SubjectID
-		}
 		if _, err := domain.ApplyReap(ctx, q, reap); err != nil {
 			return nil, err
 		}

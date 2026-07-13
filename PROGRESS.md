@@ -377,3 +377,15 @@ NEXT: Continue confirmed Phase 2 wave-1 findings red-first: make reap derive
 its subject from the fenced lease, then require a live packet and complete
 landing fence for packet decisions/re-entry. Initiative wave CLI remains
 Parked pending the operator's durable plan-review representation.
+
+- 2026-07-12 — **Phase 2 adversarial review: reap authority closed.** A red
+  regression proved a subject-carrying lease could be reaped without charging
+  its subject because the write aggregate trusted an optional action payload.
+  `ApplyReap` now fences and reads the authoritative subject from the live
+  lock before touching the Run, making omitted/injected subject accounting
+  impossible; subjectless runs still charge nothing. Full Go fast lane green.
+
+NEXT: Require the task's live Review Packet at approve/revise/re-entry and
+require complete SHA/target landing inputs before branch approval; prevent
+packet birth/rerender after a decision. Then continue the remaining
+adversarial findings. Initiative wave CLI remains Parked.
