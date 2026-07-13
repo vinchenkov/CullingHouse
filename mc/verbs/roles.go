@@ -179,7 +179,7 @@ type StrategistProposals struct {
 // subjectless lease (ADR-001 D4, constraint b) and releases it — the run's
 // terminal action. The insert rides the domain birth helper.
 func StrategistPropose(db *sql.DB, id *RunIdentity, run string, batch io.Reader) (any, error) {
-	if err := requireRole(id, "strategist"); err != nil {
+	if err := requireExactRole(id, "strategist(propose)"); err != nil {
 		return nil, err
 	}
 	if err := requireOwnRun(id, run); err != nil {
@@ -200,8 +200,12 @@ func StrategistPropose(db *sql.DB, id *RunIdentity, run string, batch io.Reader)
 
 	ids := []int64{}
 	err := inTx(db, func(ctx context.Context, q Q) error {
-		if _, err := fenceRun(ctx, q, run); err != nil {
+		subject, err := fenceRun(ctx, q, run)
+		if err != nil {
 			return err
+		}
+		if subject != nil {
+			return Domainf("Strategist(propose) requires a subjectless lease; run %s carries task %d (ADR-001 D4)", run, *subject)
 		}
 		for _, p := range payload.Proposals {
 			// origin='autonomous': the schema's agent-provenance value
@@ -244,7 +248,7 @@ type StrategistWaveChildren struct {
 // whole-wave atomic birth into a live, still-seeded initiative — the lease's
 // subject. Whole wave or nothing (constraint a).
 func StrategistWave(db *sql.DB, id *RunIdentity, run string, initiative int64, batch io.Reader) (any, error) {
-	if err := requireRole(id, "strategist"); err != nil {
+	if err := requireExactRole(id, "strategist(initiative)"); err != nil {
 		return nil, err
 	}
 	if err := requireOwnRun(id, run); err != nil {

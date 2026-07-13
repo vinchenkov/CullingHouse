@@ -92,12 +92,12 @@ func Complete(db *sql.DB, id *RunIdentity, a CompleteArgs) (any, error) {
 				`SELECT scope FROM tasks WHERE id = ?`, a.Task).Scan(&scope); err != nil {
 				return err
 			}
-			want := "worker"
 			if scope == "initiative" {
-				want = "strategist"
-			}
-			if baseRole(id.Role) != want {
-				return roleMismatch(id, want)
+				if id.Role != "strategist(initiative)" {
+					return roleMismatch(id, "strategist(initiative)")
+				}
+			} else if baseRole(id.Role) != "worker" {
+				return roleMismatch(id, "worker")
 			}
 			if err := domain.AdvanceStage(ctx, q, a.Task, "worked"); err != nil {
 				return err

@@ -456,3 +456,16 @@ NEXT: Add exact Strategist mode plus subject-shape fences for propose and the
 implemented-but-parked initiative terminal. Then fix invalid-console-TZ reap
 precedence and blocked-proposal Editor visibility. Initiative wave CLI remains
 Parked pending durable plan-review representation.
+
+- 2026-07-12 — **Phase 2 adversarial review: Strategist capabilities split.**
+  Red process tests proved initiative/console envelopes could terminate a
+  propose run and that propose accepted a subject-carrying lease. Exact
+  run.json role modes now fence propose vs initiative; propose additionally
+  requires the fenced lease to be subjectless, wave requires an initiative
+  mode, and initiative done-declaration accepts only that same exact mode.
+  Complete fast lane green (Go + all four Bun suites).
+
+NEXT: Restore step-(0) precedence so a corrupt Console timezone cannot wedge
+a stale lease, then exclude/refuse blocked proposals at the Editor snapshot
+and decision boundaries. Initiative wave CLI remains Parked pending durable
+plan-review representation.

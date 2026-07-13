@@ -183,6 +183,19 @@ func requireRole(id *RunIdentity, want string) error {
 	return nil
 }
 
+// requireExactRole preserves Strategist's explicit mode as part of the
+// capability. Lock.owner is flat, so run.json is the only place that can
+// prevent propose/initiative/console terminals from crossing (§3, ADR-001 D4).
+func requireExactRole(id *RunIdentity, want string) error {
+	if err := requirePipeline(id); err != nil {
+		return err
+	}
+	if id.Role != want {
+		return roleMismatch(id, want)
+	}
+	return nil
+}
+
 // requireOwnRun binds a role terminal's caller-supplied fencing token to the
 // immutable identity in run.json before the token is checked against the live
 // lease (§18 deny rule 2). Lease fencing alone is insufficient: an old

@@ -1403,6 +1403,54 @@ func TestStrategistProposeStrictBatchJSON(t *testing.T) {
 	}
 }
 
+func TestStrategistProposeModeAndSubjectFence(t *testing.T) {
+	for _, role := range []string{"strategist(initiative)", "strategist(console)"} {
+		t.Run(role, func(t *testing.T) {
+			spine := initSpine(t)
+			eff := dispatchExpect(t, spine, "spawn")
+			run := eff["run_id"].(string)
+			res := runMC(t, runJSONEnv(t, spine, run, "pipeline", role),
+				`{"proposals":[]}`, "strategist", "propose", "--run", run, "--batch", "-")
+			if res.code != 1 || !strings.Contains(res.stderr, "role mismatch") {
+				t.Fatalf("exit = %d stderr %q", res.code, res.stderr)
+			}
+			db := openDB(t, spine)
+			if got := queryStr(t, db, `SELECT run_id FROM lock WHERE id = 1`); got != run {
+				t.Fatalf("wrong mode disturbed lease: %q", got)
+			}
+		})
+	}
+
+	t.Run("subject_carrying_lease_refused", func(t *testing.T) {
+		spine := initSpine(t)
+		eff := dispatchExpect(t, spine, "spawn")
+		run := eff["run_id"].(string)
+		db := openDB(t, spine)
+		res, err := db.Exec(`INSERT INTO tasks (title, worksource, target_ref) VALUES ('fixture', 'ws-test', 'main')`)
+		if err != nil {
+			t.Fatal(err)
+		}
+		taskID, err := res.LastInsertId()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := db.Exec(`UPDATE lock SET subject = ? WHERE id = 1`, taskID); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := db.Exec(`UPDATE runs SET subject = ? WHERE id = ?`, taskID, run); err != nil {
+			t.Fatal(err)
+		}
+		got := runMC(t, runJSONEnv(t, spine, run, "pipeline", "strategist(propose)"),
+			`{"proposals":[]}`, "strategist", "propose", "--run", run, "--batch", "-")
+		if got.code != 1 || !strings.Contains(got.stderr, "subjectless") {
+			t.Fatalf("exit = %d stderr %q", got.code, got.stderr)
+		}
+		if lockRun := queryStr(t, db, `SELECT run_id FROM lock WHERE id = 1`); lockRun != run {
+			t.Fatalf("subject-shape refusal disturbed lease: %q", lockRun)
+		}
+	})
+}
+
 func workerFixture(t *testing.T, title string) (string, int64, string, []string) {
 	t.Helper()
 	spine := initSpine(t)
