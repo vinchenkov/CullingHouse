@@ -2,7 +2,7 @@
 
 <!-- Header block: kept current by every session. -->
 LAST GREEN SHA: (this commit)
-PHASES PASSING: Phase 0 COMPLETE (S1–S8 all green, no fallback ADRs; only operator-leg deferrals remain); Phase 1 COMPLETE (1a substrate 172; 1b walking skeleton reviewed-and-fixed — fake-harness 43, agent-runner 13, runner/image 2, resident 36, dispatch + cmd/mc suites; Docker e2e PASS ×4 total)
+PHASES PASSING: Phase 0 COMPLETE (S1–S8 all green, no fallback ADRs; only operator-leg deferrals remain); Phase 1 COMPLETE (1a substrate 172; 1b walking skeleton reviewed-and-fixed — fake-harness 43, agent-runner 13, runner/image 2, resident 38, dispatch + cmd/mc suites; Docker e2e PASS ×4 total)
 KNOWN-FAILING: (none)
 FAST SUITE: mc/check.sh (gofmt+vet+go test ./... — includes substrate + promoted dispatch) + runner/fake-harness/check.sh + runner/agent-runner/check.sh + runner/image/check.sh + resident/check.sh. Docker e2e (phase-completion lane): cd mc && mise exec -- go test -tags docker_e2e -timeout 15m ./e2e/...
 
@@ -50,6 +50,7 @@ FAST SUITE: mc/check.sh (gofmt+vet+go test ./... — includes substrate + promot
   - [~] Split-brain kill-point convergence suite
     - [x] action selected / before effect; session folder / before run.json
     - [x] run.json / before container; container start / before heartbeat
+    - [x] workspace bytes / before commit; git commit / before complete
   - [ ] Nightly randomized/metamorphic/lifecycle properties + planted mutants
 - [ ] Phase 3 — Boundary conformance (Docker)
 - [ ] Phase 4 — E2E control loops (six scenario families)
@@ -1033,3 +1034,31 @@ commit is observed rather than duplicated, and watchdog recovery charges
 only its declared retry. Add no fault hook to `mc`. Then cover operator
 approve/landing and outbox delivery boundaries. Initiative wave CLI remains
 Parked pending the durable plan-review representation.
+
+- 2026-07-13 — **Standalone Worker Git split-brain boundaries green.** The
+  deterministic harness now drives the real resident, agent runner, fake
+  harness, `mc` CLI, SQLite spine, and a temporary Git Worksource through
+  both `workspace bytes / before git commit` and `git commit / before
+  complete`. The first attempt reaches a real post-heartbeat lease and dies
+  with either staged bytes or one task-branch commit; fixture-only clock
+  surgery then lets the ordinary restarted loop reap it by `lease-timeout`,
+  charge exactly one Worker retry, and select a distinct Run. The retry
+  reuses the one canonical worktree: staged bytes become exactly one commit,
+  while an existing commit is observed at the same SHA and completed without
+  another commit. Both rows end worked with retry 2, no correction, one task
+  branch/worktree/commit, a clean primary checkout, and unchanged `main`.
+  Detached container-return semantics remain separate from runner completion,
+  and a fivefold focused stress run is green. The missing generic worktree
+  assignment and retry-unsafe Phase-1 e2e behavior are explicitly scoped and
+  recorded in IMPLEMENTATION-NOTES rather than hidden in the fixture.
+  Complete fast lane green (Go all packages; fake 43, agent-runner 13,
+  runner/image 2, resident 38).
+
+NEXT: TDD `operator approve / before land` and `merge success / cleanup or
+report gap` through the real CLI, ordinary resident loop, `mc-land`, and a
+temporary Git Worksource. Prove approval without effect deterministically
+re-emits landing-pending; after a real successful merge, prove restart never
+creates a second merge, preserves success truth, and exposes cleanup/report
+debt. Inject death only at host-side effect seams, never in `mc`. Then cover
+the outbox delivery boundary. Initiative wave CLI remains Parked pending the
+durable plan-review representation.

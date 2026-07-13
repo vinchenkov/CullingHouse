@@ -610,3 +610,27 @@ Entry template:
   truth before any replacement; changing only the reap error branch cannot.
 - Spec impact: none (§11.6 already specifies both required mechanisms)
 - Needs your decision: no
+
+## 2026-07-13 — Generic worktree assignment is not implemented by the skeleton
+- Where: Phase-2 split-brain `workspace bytes / git commit / complete` rows;
+  spec §6.2, §10, §11.5, Inv. 25; Phase-1 Docker e2e fake Worker
+- Gap: neither the resident nor agent runner creates or assigns a task
+  worktree; the skeleton mounts the whole Worksource, while its scripted
+  Worker unconditionally runs `git worktree add -b` and invokes `mc complete`
+  in a later fake-harness step. On retry, the add can fail because the
+  branch/worktree already exists, yet the fake harness deliberately records
+  a shell failure without aborting later steps, allowing that e2e behavior
+  to claim `worked` without proving Git convergence. The immutable brief
+  carries no assigned worktree path before completion. Initiative shared
+  worktree provisioning remains additionally Parked with the wave model.
+- Choice: scope the Phase-2 fast convergence proof honestly to a standalone
+  scripted Worker: the fresh attempt inspects the canonical existing Git
+  state and performs reconciliation plus fenced `mc complete` in one
+  `set -eu` step. Keep Git semantics out of the mechanical runner. The
+  Phase-3 mount/worktree implementation must make "assigned worktree"
+  concrete before canonical harness acceptance, and the Docker e2e behavior
+  must become retry-safe when crash recovery is promoted there; any frozen
+  directive/brief change follows ADR-008 versioning rather than silent text
+  drift.
+- Spec impact: none (this is named incomplete implementation, not a changed contract)
+- Needs your decision: no
