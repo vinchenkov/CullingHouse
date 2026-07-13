@@ -587,6 +587,27 @@ func TestCascadeArchive(t *testing.T) {
 			t.Fatalf("archived task's packet not archived")
 		}
 	})
+
+	t.Run("open_landing_pending_child_becomes_cancelled", func(t *testing.T) {
+		db := openSpine(t)
+		ini := mkTask(t, db, "initiative", "seeded")
+		child := mkChild(t, db, ini)
+		walkChild(t, db, child, "packaged")
+		mkPacket(t, db, child)
+		mustExec(t, db, `UPDATE tasks SET branch = 'mc/child', verified_sha = 'abc', target_ref = 'main' WHERE id = ?`, child)
+		mustExec(t, db, `UPDATE tasks SET decision = 'approved', decided_at = datetime('now') WHERE id = ?`, child)
+
+		cancelTask(t, db, ini)
+		if got := taskStr(t, db, child, "decision"); got != "cancelled" {
+			t.Fatalf("open child decision = %q, want cancelled", got)
+		}
+		if got := taskInt(t, db, child, "archived"); got != 1 {
+			t.Fatalf("open child not archived")
+		}
+		if got := oneInt(t, db, `SELECT archived FROM review_packets WHERE task_id = ?`, child); got != 1 {
+			t.Fatalf("open child packet not archived")
+		}
+	})
 }
 
 // ---------------------------------------------------------------------------

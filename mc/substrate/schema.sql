@@ -322,8 +322,8 @@ AFTER UPDATE OF archived ON tasks
 WHEN NEW.scope = 'initiative' AND OLD.archived = 0 AND NEW.archived = 1
 BEGIN
     UPDATE tasks
-    SET decision   = COALESCE(decision, 'cancelled'),
-        decided_at = COALESCE(decided_at, datetime('now')),
+    SET decision   = 'cancelled',
+        decided_at = datetime('now'),
         archived   = 1
     WHERE initiative_id = NEW.id AND archived = 0;
     -- Keep the lattice recursive_triggers-agnostic: write the downstream

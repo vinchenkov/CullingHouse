@@ -753,6 +753,36 @@ func TestCancel(t *testing.T) {
 			t.Fatalf("child packet not cascaded")
 		}
 	})
+
+	t.Run("initiative_cancel_overwrites_open_child_approval", func(t *testing.T) {
+		db := openSpine(t)
+		init := mkTask(t, db, "initiative", "seeded")
+		child := mkChildTask(t, db, init)
+		mustExec(t, db, `UPDATE tasks SET status = 'worked' WHERE id = ?`, child)
+		mustExec(t, db, `UPDATE tasks SET status = 'verified' WHERE id = ?`, child)
+		mustExec(t, db, `UPDATE tasks SET status = 'packaged', branch = 'mc/initiative-child', verified_sha = 'abc', target_ref = 'main' WHERE id = ?`, child)
+		mkPacket(t, db, child)
+		mustTx(t, db, func(ctx context.Context, q domain.Q) error {
+			_, err := domain.Approve(ctx, q, child)
+			return err
+		})
+		if got := taskInt(t, db, child, "archived"); got != 0 {
+			t.Fatalf("landing-pending child archived before parent cancellation")
+		}
+
+		mustTx(t, db, func(ctx context.Context, q domain.Q) error {
+			return domain.Cancel(ctx, q, init, "initiative descoped")
+		})
+		if got := taskStr(t, db, child, "decision"); got != "cancelled" {
+			t.Fatalf("open child decision = %q, want parent cancellation to win", got)
+		}
+		if got := taskInt(t, db, child, "archived"); got != 1 {
+			t.Fatalf("open child not archived")
+		}
+		if got := oneInt(t, db, `SELECT archived FROM review_packets WHERE task_id = ?`, child); got != 1 {
+			t.Fatalf("open child's packet not archived")
+		}
+	})
 }
 
 func TestBirthProposal(t *testing.T) {

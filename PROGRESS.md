@@ -405,3 +405,15 @@ overwrite every open child's decision to cancelled, and a propagated parent
 block cannot be manually cleared while a live child remains blocked. Then
 pin verdict outcome/deepening/correction carriers red-first. Initiative wave
 CLI remains Parked.
+
+- 2026-07-12 — **Phase 2 adversarial review: initiative cancellation fixed.**
+  A red landing-pending-child regression proved the parent archive cascade
+  preserved an open child's earlier `approved` decision. The substrate now
+  makes parent cancellation authoritative for every still-open child:
+  decision/timestamp become `cancelled`, the child archives, then its packet
+  archives. Domain and raw-SQL backstops agree; full Go fast lane green.
+
+NEXT: Prevent manual unblocking of a parent initiative while any live child
+remains blocked, with matching aggregate and substrate regressions. Then pin
+verdict outcome/deepening/correction carriers red-first. Initiative wave CLI
+remains Parked.
