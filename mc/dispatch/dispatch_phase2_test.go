@@ -345,3 +345,43 @@ func TestOccupancy_GlobalAcrossWorksources(t *testing.T) {
 	a := decide(t, rec, freeLock())
 	wantSpawn(t, a, RoleRefiner, pi64(1)) // at cap globally → refinement mode
 }
+
+// ---------------------------------------------------------------------------
+// Takeover finding — §10 step (0c) carries no Worksource-status qualifier and
+// §7 pins "landing latency is at most one tick". Pause/archive make work
+// invisible to NEW selection, but an operator-approved landing-pending row
+// must still land: archive is terminal and no unpause verb exists, so a
+// gated landing would strand approved work forever while its packet burns an
+// Inv. 18 review slot permanently.
+// ---------------------------------------------------------------------------
+
+func TestStep0c_LandingProceedsRegardlessOfWorksourceStatus(t *testing.T) {
+	for _, status := range []string{"paused", "archived"} {
+		one := tk(1, StatusPackaged, decided(DecisionApproved, at(-10)), branch("b1", "s1"))
+		one.WorksourceStatus = status
+		rec := recs([]Task{one}, []Packet{pk(1)})
+		a := decide(t, rec, freeLock())
+		if a.Kind != KindLand || a.Land.TaskID != 1 {
+			t.Fatalf("%s Worksource held an approved landing: got %+v", status, a)
+		}
+	}
+}
+
+func TestStep0c_StrandedLandingsCannotSaturateTheQueueForever(t *testing.T) {
+	held := func(id int64) Task {
+		one := tk(id, StatusPackaged, decided(DecisionApproved, at(-10-int(id))),
+			branch("b", "s"))
+		one.WorksourceStatus = "archived"
+		return one
+	}
+	rec := recs([]Task{
+		held(1), held(2), held(3),
+		tk(4, StatusVerified), // active Worksource work waiting on the cap
+	}, atCapPackets(1, 2, 3))
+	a := decide(t, rec, freeLock())
+	// One held row lands per tick (oldest decided_at first); the cap drains
+	// instead of wedging the whole system at idle/queue-saturated.
+	if a.Kind != KindLand || a.Land.TaskID != 3 {
+		t.Fatalf("archived-Worksource landings wedged the queue: got %+v", a)
+	}
+}

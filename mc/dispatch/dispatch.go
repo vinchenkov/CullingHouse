@@ -477,7 +477,10 @@ func consoleDue(rec Records, cfg Config, clk Clock) bool {
 func nextLanding(rec Records) (Task, bool) {
 	var cand []Task
 	for _, t := range rec.Tasks {
-		if worksourceActive(t) && t.LandingPending() {
+		// Deliberately no worksourceActive gate: §10 (0c) has no status
+		// qualifier, archive is terminal, and no unpause verb exists — a
+		// gated landing would strand approved work and its Inv. 18 slot.
+		if t.LandingPending() {
 			cand = append(cand, t)
 		}
 	}
