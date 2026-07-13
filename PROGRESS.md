@@ -2,7 +2,7 @@
 
 <!-- Header block: kept current by every session. -->
 LAST GREEN SHA: (this commit)
-PHASES PASSING: Phase 0 COMPLETE (S1–S8 all green, no fallback ADRs; only operator-leg deferrals remain); Phase 1 COMPLETE (1a substrate 172; 1b walking skeleton reviewed-and-fixed — fake-harness 43, agent-runner 13, runner/image 40, resident 41, dispatch + cmd/mc suites; Docker e2e PASS ×4 total)
+PHASES PASSING: Phase 0 COMPLETE (S1–S8 all green, no fallback ADRs; only operator-leg deferrals remain); Phase 1 COMPLETE (1a substrate 172; 1b walking skeleton reviewed-and-fixed — fake-harness 43, agent-runner 13, runner/image 40, resident 42, dispatch + cmd/mc suites; Docker e2e PASS ×4 total)
 KNOWN-FAILING: (none)
 FAST SUITE: mc/check.sh (gofmt+vet+go test ./... — includes substrate + promoted dispatch) + runner/fake-harness/check.sh + runner/agent-runner/check.sh + runner/image/check.sh + resident/check.sh. Docker e2e (phase-completion lane): cd mc && mise exec -- go test -tags docker_e2e -timeout 15m ./e2e/...
 
@@ -47,11 +47,12 @@ FAST SUITE: mc/check.sh (gofmt+vet+go test ./... — includes substrate + promot
   - [!] Strategist wave CLI: isolated under Parked (durable holistic Editor
         plan-review representation is operator/spec input)
   - [x] Wave 2 full unparked §18 verb/error/scope surface
-  - [~] Split-brain kill-point convergence suite
+  - [x] Split-brain kill-point convergence suite
     - [x] action selected / before effect; session folder / before run.json
     - [x] run.json / before container; container start / before heartbeat
     - [x] workspace bytes / before commit; git commit / before complete
     - [x] operator approve / before land; merge success / cleanup or report gap
+    - [x] message/outbox insert / delivery
   - [ ] Nightly randomized/metamorphic/lifecycle properties + planted mutants
 - [ ] Phase 3 — Boundary conformance (Docker)
 - [ ] Phase 4 — E2E control loops (six scenario families)
@@ -1094,3 +1095,26 @@ ack-response-loss replay are idempotent; and the record/lock/effect triple
 converges without deleting the source message. Then implement the nightly
 property package and bounded fast honesty/mutant gates (§5). Initiative wave
 CLI remains Parked pending the durable plan-review representation.
+
+- 2026-07-13 — **Final message/outbox split-brain boundary green.** One real
+  `homie send` transaction durably appends the inbound conversation row and
+  its destination outbox row. A fixture-local native-surface client then
+  drives the real `outbox poll → external delivery → outbox ack` protocol:
+  death after the external post but before ack re-polls the byte-identical
+  durable id, and an explicitly external id-keyed fake collapses the retry to
+  one logical post while preserving Mission Control's at-least-once contract.
+  A second death after the ack commit proves response-loss replay is inert,
+  retains the first delivery timestamp and source history, and leaves the
+  record/lock/effect triple unchanged. No production Discord/dashboard loop
+  or exactly-once claim was introduced; independent adversarial review
+  confirmed that boundary. Complete fast lane green (Go gofmt/vet/all
+  packages; fake 43, agent-runner 13, runner/image 40, resident 42).
+
+NEXT: Implement the Phase 2 nightly property package from wave-2 contract §5
+under `mc/property` with the `nightly` build tag: dispatch purity/cardinality,
+ineligible-row metamorphism, and lifecycle random walks checked against the
+substrate after every step. Keep runtime randomized suites non-gating, but
+TDD bounded fast generator-honesty floors and the complete named planted-
+mutant gate (blocked filter, packet archive, budgets, lease token, WIP cap).
+Initiative wave CLI remains Parked pending the durable plan-review
+representation.

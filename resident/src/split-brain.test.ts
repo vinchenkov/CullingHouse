@@ -1,9 +1,10 @@
 // Deterministic split-brain convergence fixtures (phase-2 wave-2 contract
 // §4). These are deliberately cross-boundary tests: the real mc binary
 // commits the record/lease decision, while failures enter only through the
-// resident/runner injection seams. Restart always uses the ordinary tick
-// loop. No fault or test clock exists in mc; fixture-only SQLite surgery ages
-// the committed lease, matching the CLI integration tier's watchdog setup.
+// resident/runner/native-surface injection seams. Restart uses the ordinary
+// tick loop or the ordinary outbox poll/send/ack client, respectively. No
+// fault or test clock exists in mc; fixture-only SQLite surgery ages the
+// committed lease, matching the CLI integration tier's watchdog setup.
 
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
@@ -735,6 +736,69 @@ class LandingMc {
       }
     }
     return result;
+  };
+}
+
+interface SurfaceOutboxRow extends JsonObject {
+  id: number;
+  kind: string;
+  session_id: string | null;
+  surface: string;
+  channel_ref: string | null;
+  payload: JsonObject;
+  created_at: string;
+}
+
+function requireSurfaceRows(result: ExecResult, surface: string): SurfaceOutboxRow[] {
+  if (result.exitCode !== 0) {
+    throw new Error(`outbox poll ${surface} exited ${result.exitCode}: ${result.stderr}`);
+  }
+  const parsed = JSON.parse(result.stdout) as JsonObject;
+  if (parsed.surface !== surface || !Array.isArray(parsed.rows)) {
+    throw new Error(`malformed ${surface} outbox poll: ${result.stdout}`);
+  }
+  return parsed.rows.map((value) => {
+    if (
+      value === null || typeof value !== "object" || Array.isArray(value) ||
+      typeof (value as JsonObject).id !== "number" ||
+      (value as JsonObject).surface !== surface
+    ) {
+      throw new Error(`malformed ${surface} outbox row: ${JSON.stringify(value)}`);
+    }
+    return value as SurfaceOutboxRow;
+  });
+}
+
+/** One native-surface pass: read durable cursor, push, then ack confirmation. */
+async function drainSurfaceOnce(
+  surface: string,
+  runSurfaceMc: Exec,
+  deliver: (row: SurfaceOutboxRow) => Promise<void>,
+): Promise<SurfaceOutboxRow[]> {
+  const rows = requireSurfaceRows(
+    await runSurfaceMc(["outbox", "poll", "--surface", surface]),
+    surface,
+  );
+  for (const row of rows) {
+    await deliver(row);
+    const ack = await runSurfaceMc([
+      "outbox", "ack", String(row.id), "--surface", surface,
+    ]);
+    if (ack.exitCode !== 0) {
+      throw new Error(`outbox ack ${row.id} exited ${ack.exitCode}: ${ack.stderr}`);
+    }
+  }
+  return rows;
+}
+
+/** External API model: attempts are at-least-once; durable outbox id dedups. */
+class DeduplicatingSurface {
+  attempts: number[] = [];
+  logicalPosts = new Map<number, SurfaceOutboxRow>();
+
+  deliver = async (row: SurfaceOutboxRow): Promise<void> => {
+    this.attempts.push(row.id);
+    if (!this.logicalPosts.has(row.id)) this.logicalPosts.set(row.id, row);
   };
 }
 
@@ -1510,4 +1574,189 @@ describe("split-brain convergence: approval and landing boundary", () => {
       }
     }, 30_000);
   }
+});
+
+describe("split-brain convergence: message and outbox delivery boundary", () => {
+  test("message/outbox insert / delivery", async () => {
+    const fixture = await makeFixture();
+    try {
+      const started = await mcJson(fixture.home, fixture.spine, [
+        "homie", "start", "--from", "dashboard:console",
+      ]);
+      const session = started.session_id;
+      if (typeof session !== "string") {
+        throw new Error(`homie start returned no session: ${JSON.stringify(started)}`);
+      }
+      await mcJson(fixture.home, fixture.spine, [
+        "homie", "bind", session, "--from", "discord:ops",
+      ]);
+      const baselineLock = await lock(fixture);
+      const baselineTask = await task(fixture);
+      const baselineRuns = await runs(fixture);
+
+      // One real CLI transaction appends the source conversation row and
+      // resolves its one non-origin destination into the outbox.
+      const sent = await mcJson(fixture.home, fixture.spine, [
+        "homie", "send", session,
+        "--from", "dashboard:console",
+        "--body", "deliver this durable turn",
+      ]);
+      expect(sent).toMatchObject({ session_id: session, seq: 1, echoes: 1 });
+      const messageID = sent.message_id;
+      expect(typeof messageID).toBe("number");
+
+      const realSurfaceMc: Exec = (argv) => runMc(fixture.home, fixture.spine, argv);
+      const initialRows = requireSurfaceRows(
+        await realSurfaceMc(["outbox", "poll", "--surface", "discord"]),
+        "discord",
+      );
+      expect(initialRows).toHaveLength(1);
+      const row = initialRows[0]!;
+      expect(row).toMatchObject({
+        kind: "homie_echo",
+        session_id: session,
+        surface: "discord",
+        channel_ref: "ops",
+      });
+      expect(row.payload).toMatchObject({
+        message_id: messageID,
+        seq: 1,
+        body: "deliver this durable turn",
+      });
+
+      const committed = new Database(fixture.spine);
+      try {
+        const message = committed.query(`
+          SELECT id, session_id, seq, direction, surface, channel_ref, body
+          FROM conversation_messages WHERE session_id = ?`).get(session) as JsonObject;
+        expect(message).toEqual({
+          id: messageID,
+          session_id: session,
+          seq: 1,
+          direction: "inbound",
+          surface: "dashboard",
+          channel_ref: "console",
+          body: "deliver this durable turn",
+        });
+        const outbox = committed.query(`
+          SELECT id, session_id, surface, channel_ref, delivered_at
+          FROM outbox WHERE session_id = ?`).get(session) as JsonObject;
+        expect(outbox).toEqual({
+          id: row.id,
+          session_id: session,
+          surface: "discord",
+          channel_ref: "ops",
+          delivered_at: null,
+        });
+      } finally {
+        committed.close();
+      }
+
+      const external = new DeduplicatingSurface();
+      let diedBeforeAck = false;
+      const firstSurfaceMc: Exec = async (argv) => {
+        if (argv[0] === "outbox" && argv[1] === "ack" && !diedBeforeAck) {
+          diedBeforeAck = true;
+          throw new Error("simulated native-surface death after delivery, before ack");
+        }
+        return realSurfaceMc(argv);
+      };
+      await expect(
+        drainSurfaceOnce("discord", firstSurfaceMc, external.deliver),
+      ).rejects.toThrow("after delivery, before ack");
+
+      // Physical delivery succeeded, but no canonical cursor advanced. A
+      // restart sees the byte-identical durable row with the same dedup id.
+      expect(external.attempts).toEqual([row.id]);
+      expect([...external.logicalPosts.keys()]).toEqual([row.id]);
+      const checkpointRows = requireSurfaceRows(
+        await realSurfaceMc(["outbox", "poll", "--surface", "discord"]),
+        "discord",
+      );
+      expect(checkpointRows).toEqual(initialRows);
+      const checkpoint = new Database(fixture.spine);
+      try {
+        const delivery = checkpoint.query(
+          "SELECT delivered_at FROM outbox WHERE id = ?",
+        ).get(row.id) as JsonObject;
+        expect(delivery.delivered_at).toBeNull();
+        expect((checkpoint.query(
+          "SELECT COUNT(*) AS n FROM conversation_messages WHERE session_id = ?",
+        ).get(session) as JsonObject).n).toBe(1);
+      } finally {
+        checkpoint.close();
+      }
+      expect(await lock(fixture)).toEqual(baselineLock);
+      expect(await task(fixture)).toEqual(baselineTask);
+      expect(await runs(fixture)).toEqual(baselineRuns);
+
+      // The restarted surface re-polls and retries the same id. Its external
+      // API suppresses a second logical post. This time ack commits, but its
+      // response is lost as the native process dies again.
+      let lostAckResponse = false;
+      const secondSurfaceMc: Exec = async (argv) => {
+        const result = await realSurfaceMc(argv);
+        if (
+          argv[0] === "outbox" && argv[1] === "ack" &&
+          result.exitCode === 0 && !lostAckResponse
+        ) {
+          lostAckResponse = true;
+          throw new Error("simulated native-surface death after ack commit");
+        }
+        return result;
+      };
+      await expect(
+        drainSurfaceOnce("discord", secondSurfaceMc, external.deliver),
+      ).rejects.toThrow("after ack commit");
+      expect(external.attempts).toEqual([row.id, row.id]);
+      expect([...external.logicalPosts.keys()]).toEqual([row.id]);
+
+      const afterAck = new Database(fixture.spine);
+      let deliveredAt: string;
+      try {
+        const state = afterAck.query(`
+          SELECT delivered_at,
+                 (SELECT COUNT(*) FROM conversation_messages WHERE session_id = ?) AS messages,
+                 (SELECT COUNT(*) FROM outbox WHERE session_id = ?) AS outbox_rows
+          FROM outbox WHERE id = ?`).get(session, session, row.id) as JsonObject;
+        expect(typeof state.delivered_at).toBe("string");
+        deliveredAt = state.delivered_at as string;
+        expect(state.messages).toBe(1);
+        expect(state.outbox_rows).toBe(1);
+      } finally {
+        afterAck.close();
+      }
+
+      // A second restart sees no pending delivery. Direct ack replay is an
+      // inert success with the first timestamp, and neither bookkeeping path
+      // deletes the source message or outbox history.
+      expect(await drainSurfaceOnce("discord", realSurfaceMc, external.deliver)).toEqual([]);
+      const ackReplay = await mcJson(fixture.home, fixture.spine, [
+        "outbox", "ack", String(row.id), "--surface", "discord",
+      ]);
+      expect(ackReplay).toEqual({
+        id: row.id,
+        surface: "discord",
+        acked: false,
+        delivered_at: deliveredAt,
+      });
+      expect(external.attempts).toEqual([row.id, row.id]);
+      const history = await mcJson(fixture.home, fixture.spine, [
+        "homie", "history", session,
+      ]);
+      expect(history.messages).toEqual([
+        expect.objectContaining({
+          id: messageID,
+          seq: 1,
+          direction: "inbound",
+          body: "deliver this durable turn",
+        }),
+      ]);
+      expect(await lock(fixture)).toEqual(baselineLock);
+      expect(await task(fixture)).toEqual(baselineTask);
+      expect(await runs(fixture)).toEqual(baselineRuns);
+    } finally {
+      rmSync(fixture.root, { recursive: true, force: true });
+    }
+  }, 30_000);
 });
