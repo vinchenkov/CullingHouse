@@ -294,6 +294,20 @@ func Unblock(ctx context.Context, q Q, taskID int64) error {
 	if !r.Blocked {
 		return Errf(CodeNotBlocked, "task %d is not blocked", taskID)
 	}
+	if r.Scope == "initiative" {
+		var blockedChildren int
+		if err := q.QueryRowContext(ctx, `
+			SELECT COUNT(*) FROM tasks
+			WHERE initiative_id = ? AND blocked = 1 AND archived = 0`, taskID,
+		).Scan(&blockedChildren); err != nil {
+			return err
+		}
+		if blockedChildren > 0 {
+			return Errf(CodeBlockedChild,
+				"initiative %d cannot unblock while %d live children remain blocked (§6.1)",
+				taskID, blockedChildren)
+		}
+	}
 	_, err = q.ExecContext(ctx, `UPDATE tasks SET blocked = 0 WHERE id = ?`, taskID)
 	return err
 }

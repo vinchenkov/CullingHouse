@@ -417,3 +417,15 @@ NEXT: Prevent manual unblocking of a parent initiative while any live child
 remains blocked, with matching aggregate and substrate regressions. Then pin
 verdict outcome/deepening/correction carriers red-first. Initiative wave CLI
 remains Parked.
+
+- 2026-07-12 — **Phase 2 adversarial review: maximally strict block restored.**
+  A red regression proved `task unblock` could clear the propagated parent
+  flag while its child stayed blocked. Domain and substrate now refuse a
+  parent unblock while any live blocked child exists; resolving the last
+  child still drives the existing auto-clear path. Full Go fast lane green.
+
+NEXT: Pin Verifier outcome carriers: PASS refinement is genuine,
+BUDGET-SPENT refinement is churn, correction belongs only to CORRECT, and
+required evidence/SHA must be enforced in the domain transaction. Then close
+strict batch parsing and Strategist mode fences. Initiative wave CLI remains
+Parked.

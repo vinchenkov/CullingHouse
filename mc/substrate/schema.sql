@@ -249,6 +249,18 @@ BEGIN
     UPDATE tasks SET stage_entered_at = datetime('now') WHERE id = NEW.id;
 END;
 
+-- A propagated initiative block cannot be manually defeated while any live
+-- child remains blocked (§6.1 maximally strict blocking).
+CREATE TRIGGER initiatives_unblock_requires_children_clear
+BEFORE UPDATE OF blocked ON tasks
+WHEN OLD.scope = 'initiative' AND OLD.blocked = 1 AND NEW.blocked = 0
+  AND EXISTS (
+      SELECT 1 FROM tasks c
+      WHERE c.initiative_id = OLD.id AND c.blocked = 1 AND c.archived = 0)
+BEGIN
+    SELECT RAISE(ABORT, 'initiative cannot unblock while a live child remains blocked (§6.1)');
+END;
+
 -- Unblock clears the reason (§6: unblocking resumes exactly where it
 -- stopped; a stale question must not linger on the row).
 CREATE TRIGGER tasks_unblock_clears_reason

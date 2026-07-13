@@ -141,6 +141,30 @@ func TestBirthWave(t *testing.T) {
 // block auto-clears when the last blocked child resolves; an operator-set
 // reason never auto-clears.
 func TestInitiativeBlockCascades(t *testing.T) {
+	t.Run("parent_cannot_unblock_while_child_remains_blocked", func(t *testing.T) {
+		db := openSpine(t)
+		init := mkTask(t, db, "initiative", "seeded")
+		var children []int64
+		mustTx(t, db, func(ctx context.Context, q domain.Q) error {
+			var err error
+			children, err = domain.BirthWave(ctx, q, init, []domain.WaveChild{{Title: "blocked child"}})
+			return err
+		})
+		mustTx(t, db, func(ctx context.Context, q domain.Q) error {
+			return domain.Block(ctx, q, children[0], "waiting")
+		})
+		wantCode(t, db, domain.CodeBlockedChild, func(ctx context.Context, q domain.Q) error {
+			return domain.Unblock(ctx, q, init)
+		})
+		if got := taskInt(t, db, init, "blocked"); got != 1 {
+			t.Fatalf("parent block cleared while child remained blocked")
+		}
+		if got := taskInt(t, db, children[0], "blocked"); got != 1 {
+			t.Fatalf("child block changed")
+		}
+		wantAbort(t, db, `UPDATE tasks SET blocked = 0 WHERE id = ?`, init)
+	})
+
 	t.Run("propagation_and_auto_clear", func(t *testing.T) {
 		db := openSpine(t)
 		init := mkTask(t, db, "initiative", "seeded")

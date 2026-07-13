@@ -56,6 +56,7 @@ const (
 	CodeLeaseHeld          = "lease-held"
 	CodeNotFound           = "not-found"
 	CodeNotBlocked         = "not-blocked"
+	CodeBlockedChild       = "blocked-child"
 	CodeReasonRequired     = "reason-required"
 	CodeSaturated          = "saturated"
 	CodeEmptyWave          = "empty-wave"
