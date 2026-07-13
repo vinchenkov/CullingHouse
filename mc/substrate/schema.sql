@@ -641,7 +641,8 @@ CREATE TABLE runs (
     evidence_path      TEXT,
     correction_path    TEXT,
 	deepening          TEXT CHECK (deepening IN ('genuine', 'churn')),
-	output_path        TEXT    -- terminal report/artifact reference from mc complete (Inv. 10)
+	output_path        TEXT,   -- terminal report/artifact reference from mc complete (Inv. 10)
+	CHECK ((native_session_ref IS NULL) = (trace_filename IS NULL))
 );
 
 -- Every run's trace is kept forever (Inv. 26); so is its row.
@@ -649,6 +650,15 @@ CREATE TRIGGER runs_no_delete
 BEFORE DELETE ON runs
 BEGIN
     SELECT RAISE(ABORT, 'run rows are never deleted (Inv. 26)');
+END;
+
+CREATE TRIGGER runs_session_locators_immutable
+BEFORE UPDATE OF native_session_ref, trace_filename ON runs
+WHEN OLD.native_session_ref IS NOT NULL
+  AND (NEW.native_session_ref IS NOT OLD.native_session_ref
+       OR NEW.trace_filename IS NOT OLD.trace_filename)
+BEGIN
+    SELECT RAISE(ABORT, 'native session locators are immutable once registered (Inv. 26)');
 END;
 
 ------------------------------------------------------------------------------

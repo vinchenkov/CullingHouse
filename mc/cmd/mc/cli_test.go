@@ -500,11 +500,12 @@ func TestPipelineWalk(t *testing.T) {
 		t.Fatalf("spawn = %v, want worker on task %d", eff, taskID)
 	}
 	workerRun := eff["run_id"].(string)
+	workerEnv := runJSONEnv(t, spine, workerRun, "pipeline", "worker")
 
 	// Runner lifecycle: heartbeat advances last_heartbeat_at, never the hard
 	// deadline (Inv. 1); register-session records the locators (ADR-001 D5).
 	deadlineBefore := queryStr(t, db, `SELECT hard_deadline_at FROM lock WHERE id = 1`)
-	hb := runMC(t, spineEnv(spine), "", "heartbeat", workerRun)
+	hb := runMC(t, workerEnv, "", "heartbeat", workerRun)
 	if hb.code != 0 {
 		t.Fatalf("heartbeat failed: %s", hb.stderr)
 	}
@@ -514,10 +515,10 @@ func TestPipelineWalk(t *testing.T) {
 	if got := queryStr(t, db, `SELECT hard_deadline_at FROM lock WHERE id = 1`); got != deadlineBefore {
 		t.Fatalf("heartbeat moved hard_deadline_at %q → %q (Inv. 1)", deadlineBefore, got)
 	}
-	if res := runMC(t, spineEnv(spine), "", "heartbeat", "not-the-run"); res.code != 1 {
+	if res := runMC(t, workerEnv, "", "heartbeat", "not-the-run"); res.code != 1 {
 		t.Fatalf("stale heartbeat exit = %d, want 1", res.code)
 	}
-	rs := runMC(t, spineEnv(spine), "", "run", "register-session", workerRun,
+	rs := runMC(t, workerEnv, "", "run", "register-session", workerRun,
 		"--native-ref", "fake-session", "--file", "native.jsonl")
 	if rs.code != 0 {
 		t.Fatalf("register-session failed: %s", rs.stderr)
@@ -525,14 +526,24 @@ func TestPipelineWalk(t *testing.T) {
 	if got := queryStr(t, db, `SELECT native_session_ref FROM runs WHERE id = ?`, workerRun); got != "fake-session" {
 		t.Fatalf("native_session_ref = %q", got)
 	}
-	if res := runMC(t, spineEnv(spine), "", "run", "register-session", "not-the-run",
+	if replay := runMC(t, workerEnv, "", "run", "register-session", workerRun,
+		"--native-ref", "fake-session", "--file", "native.jsonl"); replay.code != 0 {
+		t.Fatalf("same-value locator replay exit=%d stderr=%q", replay.code, replay.stderr)
+	}
+	if conflict := runMC(t, workerEnv, "", "run", "register-session", workerRun,
+		"--native-ref", "different-session", "--file", "other.jsonl"); conflict.code != 1 {
+		t.Fatalf("conflicting locator rewrite exit=%d stderr=%q", conflict.code, conflict.stderr)
+	}
+	if got := queryStr(t, db, `SELECT native_session_ref || '/' || trace_filename FROM runs WHERE id = ?`, workerRun); got != "fake-session/native.jsonl" {
+		t.Fatalf("conflicting registration rewrote locators to %q", got)
+	}
+	if res := runMC(t, workerEnv, "", "run", "register-session", "not-the-run",
 		"--native-ref", "x", "--file", "y"); res.code != 1 {
 		t.Fatalf("unknown-run register-session exit = %d, want 1", res.code)
 	}
 
 	// Worker terminal: seeded → worked, branch recorded (Ambiguity A2), and
 	// complete never dispatches (Inv. 3) — no effect data, lease free.
-	workerEnv := runJSONEnv(t, spine, workerRun, "pipeline", "worker")
 	branch := fmt.Sprintf("mc/task-%d", taskID)
 	runsBefore := queryInt(t, db, `SELECT COUNT(*) FROM runs`)
 	res = runMC(t, workerEnv, "", "complete", fmt.Sprint(taskID),
@@ -564,7 +575,7 @@ func TestPipelineWalk(t *testing.T) {
 	// runner fires it at session-start, which can lose the race against the
 	// behavior's terminal verb releasing the lease — the own-row write must
 	// still land after release, or the locators are silently lost forever.
-	rs = runMC(t, spineEnv(spine), "", "run", "register-session", workerRun,
+	rs = runMC(t, workerEnv, "", "run", "register-session", workerRun,
 		"--native-ref", "fake-session", "--file", "native.jsonl")
 	if rs.code != 0 {
 		t.Fatalf("register-session after lease release exit = %d, want 0 (own-row identity, not fencing): %s", rs.code, rs.stderr)
@@ -995,6 +1006,48 @@ func TestDispatchReap(t *testing.T) {
 	})
 }
 
+func TestZombieCLILeavesNewHolderUntouched(t *testing.T) {
+	spine, taskID, zombieRun, zombieEnv := workerFixture(t, "zombie CLI fence")
+	db := openDB(t, spine)
+	if _, err := db.Exec(`UPDATE lock SET acquired_at=datetime('now', '-10 minutes'),
+		last_heartbeat_at=NULL, hard_deadline_at=datetime('now', '+1 hour') WHERE id=1`); err != nil {
+		t.Fatal(err)
+	}
+	if got := dispatchExpect(t, spine, "reap"); got["run_id"] != zombieRun {
+		t.Fatalf("reaped run = %v, want %s", got["run_id"], zombieRun)
+	}
+	fresh := dispatchExpect(t, spine, "spawn")
+	freshRun := fresh["run_id"].(string)
+	if freshRun == zombieRun {
+		t.Fatal("re-claim reused fencing token")
+	}
+	snapshot := func() string {
+		return queryStr(t, db, `SELECT run_id || '|' || owner || '|' || subject || '|' ||
+			acquired_at || '|' || COALESCE(last_heartbeat_at, 'null') || '|' || hard_deadline_at
+			FROM lock WHERE id=1`)
+	}
+	before := snapshot()
+
+	for _, tc := range []struct {
+		name string
+		args []string
+	}{
+		{name: "old_complete", args: []string{"complete", fmt.Sprint(taskID), "--run", zombieRun, "--status", "worked"}},
+		{name: "old_heartbeat", args: []string{"heartbeat", zombieRun}},
+		{name: "zombie_supplies_new_token", args: []string{"complete", fmt.Sprint(taskID), "--run", freshRun, "--status", "worked"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			res := runMC(t, zombieEnv, "", tc.args...)
+			if res.code != 1 {
+				t.Fatalf("exit = %d stderr=%q, want fenced refusal", res.code, res.stderr)
+			}
+		})
+	}
+	if after := snapshot(); after != before {
+		t.Fatalf("zombie CLI disturbed new lease:\n before %s\n after  %s", before, after)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // mc packet decide — validation + Phase 2 revise/cancel arms (§7).
 // ---------------------------------------------------------------------------
@@ -1245,6 +1298,10 @@ func TestRoleScopeEnforcement(t *testing.T) {
 			[]string{"editor", "decide", "--run", run, "--batch", "-"}, batch, "caller run mismatch"},
 		{"complete_without_identity", spineEnv(spine),
 			[]string{"complete", fmt.Sprint(taskID), "--run", run, "--status", "worked"}, "", "pipeline run identity"},
+		{"heartbeat_without_identity", spineEnv(spine),
+			[]string{"heartbeat", run}, "", "pipeline run identity"},
+		{"register_session_without_identity", spineEnv(spine),
+			[]string{"run", "register-session", run, "--native-ref", "x", "--file", "native.jsonl"}, "", "pipeline run identity"},
 		{"verifier_wrong_role", runJSONEnv(t, spine, run, "pipeline", "editor"),
 			[]string{"verifier", "verdict", fmt.Sprint(taskID), "--run", run,
 				"--outcome", "pass", "--evidence", "e", "--sha", "s"}, "", "role mismatch"},

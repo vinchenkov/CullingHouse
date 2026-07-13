@@ -111,7 +111,11 @@ func dispatchVerb(args []string, stdin io.Reader) (any, error) {
 		if len(rest) != 1 {
 			return nil, verbs.Usagef("usage: mc heartbeat <run_id>")
 		}
-		return withSpine(func(db *sql.DB) (any, error) { return verbs.Heartbeat(db, rest[0]) })
+		id, err := verbs.LoadIdentity()
+		if err != nil {
+			return nil, err
+		}
+		return withSpine(func(db *sql.DB) (any, error) { return verbs.Heartbeat(db, id, rest[0]) })
 	case "run":
 		return cmdRun(rest)
 	case "land":
@@ -459,8 +463,12 @@ func cmdRun(args []string) (any, error) {
 	if err := parse(fs, rest); err != nil {
 		return nil, err
 	}
+	id, err := verbs.LoadIdentity()
+	if err != nil {
+		return nil, err
+	}
 	return withSpine(func(db *sql.DB) (any, error) {
-		return verbs.RegisterSession(db, runID, *nativeRef, *file)
+		return verbs.RegisterSession(db, id, runID, *nativeRef, *file)
 	})
 }
 

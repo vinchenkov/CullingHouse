@@ -547,3 +547,18 @@ NEXT: Bind heartbeat and session registration to the runner's own run.json,
 make locator registration idempotent-but-immutable, and add old CLI complete /
 heartbeat versus new-holder snapshots. Then close atomic rollback/CAS coverage
 gaps. Initiative wave CLI remains Parked; frozen prose directives remain due.
+
+- 2026-07-12 — **Phase 2 adversarial review: runner lifecycle authority fixed.**
+  Heartbeat and register-session now require the caller's own pipeline
+  run.json before touching state; heartbeat remains live-lease fenced while
+  locator registration remains legal after own-run lease release. Same-value
+  registration retries are idempotent, conflicting replacements fail in both
+  verb and substrate, and locator nullability travels as a pair. A real CLI
+  reap/reclaim test proves old complete, old heartbeat, and an old container
+  supplying the new token leave the new lease bit-for-bit unchanged. Complete
+  fast lane green.
+
+NEXT: Add true aggregate-level concurrent CAS coverage (separate from the
+process flock), plus Editor/Strategist/Packager transactional rollback cases.
+Then reconcile remaining wave-1 items and author the frozen prose directives.
+Initiative wave CLI remains Parked pending durable plan-review representation.

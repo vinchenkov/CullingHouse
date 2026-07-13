@@ -886,6 +886,15 @@ func TestRunsVerdictRecordColumns(t *testing.T) {
 	wantAbort(t, db, `UPDATE runs SET deepening = 'sideways' WHERE id = 'v1'`)
 }
 
+func TestRunSessionLocatorsRegisterOnce(t *testing.T) {
+	db := openSpine(t)
+	mustExec(t, db, `INSERT INTO runs (id, tier, role) VALUES ('r1', 'pipeline', 'worker')`)
+	wantAbort(t, db, `UPDATE runs SET native_session_ref='session-only' WHERE id='r1'`)
+	mustExec(t, db, `UPDATE runs SET native_session_ref='session-1', trace_filename='native.jsonl' WHERE id='r1'`)
+	mustExec(t, db, `UPDATE runs SET native_session_ref='session-1', trace_filename='native.jsonl' WHERE id='r1'`)
+	wantAbort(t, db, `UPDATE runs SET native_session_ref='session-2', trace_filename='other.jsonl' WHERE id='r1'`)
+}
+
 // NOTE(P2.3): tasks.refine_notes is mutable carried-notes state, not an
 // identity column — the immutability trigger must not catch it.
 func TestTasksRefineNotesColumn(t *testing.T) {
