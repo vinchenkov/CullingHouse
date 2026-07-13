@@ -197,7 +197,7 @@ func cmdInit(args []string) (any, error) {
 
 func cmdTask(args []string) (any, error) {
 	if len(args) == 0 {
-		return nil, verbs.Usagef("usage: mc task add|get …")
+		return nil, verbs.Usagef("usage: mc task add|get|block|unblock …")
 	}
 	switch args[0] {
 	case "add":
@@ -228,6 +228,39 @@ func cmdTask(args []string) (any, error) {
 			return nil, verbs.Usagef("mc task get: bad id %q", args[1])
 		}
 		return withSpine(func(db *sql.DB) (any, error) { return verbs.TaskGet(db, id) })
+	case "block":
+		id, rest, err := positionalID("mc task block", args[1:])
+		if err != nil {
+			return nil, err
+		}
+		fs := newFlags("mc task block")
+		reason := fs.String("reason", "", "operator decision required")
+		if err := parse(fs, rest); err != nil {
+			return nil, err
+		}
+		idn, err := verbs.LoadIdentity()
+		if err != nil {
+			return nil, err
+		}
+		return withSpine(func(db *sql.DB) (any, error) {
+			return verbs.TaskBlock(db, idn, id, *reason)
+		})
+	case "unblock":
+		id, rest, err := positionalID("mc task unblock", args[1:])
+		if err != nil {
+			return nil, err
+		}
+		fs := newFlags("mc task unblock")
+		if err := parse(fs, rest); err != nil {
+			return nil, err
+		}
+		idn, err := verbs.LoadIdentity()
+		if err != nil {
+			return nil, err
+		}
+		return withSpine(func(db *sql.DB) (any, error) {
+			return verbs.TaskUnblock(db, idn, id)
+		})
 	}
 	return nil, verbs.Usagef("unknown subverb: mc task %s", args[0])
 }
@@ -281,17 +314,19 @@ func cmdComplete(args []string) (any, error) {
 	fs.StringVar(&a.Status, "status", "", "worked|packaged")
 	fs.StringVar(&a.Branch, "branch", "", "branch the work landed on")
 	fs.StringVar(&a.Outputs, "outputs", "", "output artifact path")
-	// §18 flags: parse-and-reject in the skeleton [P2].
-	reason := fs.String("reason", "", "deferred [P2]")
-	needsOperator := fs.Bool("needs-operator", false, "deferred [P2]")
-	infra := fs.Bool("infra", false, "deferred [P2]")
-	correctionCount := fs.Int("correction-count", -1, "deferred [P2]")
+	reason := fs.String("reason", "", "terminal reason")
+	needsOperator := fs.Bool("needs-operator", false, "block for an operator decision")
+	infra := fs.Bool("infra", false, "charge the dispatch-infrastructure budget")
+	correctionCount := fs.Int("correction-count", -1, "reserved; verifier verdict owns correction arithmetic")
 	if err := parse(fs, rest); err != nil {
 		return nil, err
 	}
-	if *reason != "" || *needsOperator || *infra || *correctionCount != -1 {
-		return nil, verbs.Domainf("--reason/--needs-operator/--infra/--correction-count are deferred to Phase 2 (contract §2 [P2])")
+	if *correctionCount != -1 {
+		return nil, verbs.Domainf("--correction-count is written only by mc verifier verdict; mc complete cannot own the quality budget (§7/§10)")
 	}
+	a.Reason = *reason
+	a.NeedsOperator = *needsOperator
+	a.Infra = *infra
 	if a.Run == "" {
 		return nil, verbs.Usagef("mc complete requires --run (the fencing token, §10)")
 	}

@@ -293,3 +293,17 @@ NEXT: Continue Phase 2 wave 1 at the next independent red-green slice:
 verbs/dispatch loader differential suite. Before wave-1 closure, add the
 spec-required process flock and replace hardcoded fake binding with validated
 routing.md resolution. Do not wire `strategist wave` until its Parked decision.
+
+- 2026-07-12 — **Phase 2 CLI terminals green.** Red-first real-binary tests
+  now cover host block/unblock, pipeline own-subject-only block and denied
+  unblock; `mc complete --needs-operator` (status preserved, blocked reason,
+  run outcome, lease release, no dispatch); `--infra` (dispatch budget only);
+  and Refiner `--status seeded` at queue cap (same task re-enters, packet slot
+  stays live). `--correction-count` remains an explicit rejection owned by
+  Verifier verdict. Complete expanded fast lane green (Go + 43/12/2/30 Bun).
+
+NEXT: Phase 2 wave-1 adapter correctness: add `mc init` console schedule
+tunables and the contract-promised `mc/verbs/dispatchverb_test.go`
+differential suite (real SQL projection/action application versus pure
+dispatch). Then implement the §10 process-level dispatch flock and validated
+routing.md binding resolution. Initiative wave remains isolated under Parked.

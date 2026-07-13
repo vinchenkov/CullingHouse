@@ -298,6 +298,70 @@ func TestPacketListEmpty(t *testing.T) {
 	}
 }
 
+func TestTaskBlockUnblock(t *testing.T) {
+	t.Run("host_blocks_and_unblocks_without_moving_status", func(t *testing.T) {
+		spine := initSpine(t)
+		id := taskAdd(t, spine, "needs a decision")
+		res := runMC(t, spineEnv(spine), "", "task", "block", fmt.Sprint(id),
+			"--reason", "choose a target")
+		if res.code != 0 {
+			t.Fatalf("block failed: %s", res.stderr)
+		}
+		db := openDB(t, spine)
+		if got := queryStr(t, db, `SELECT status || '/' || blocked || '/' || blocked_reason FROM tasks WHERE id = ?`, id); got != "proposed/1/choose a target" {
+			t.Fatalf("blocked row = %q", got)
+		}
+		res = runMC(t, spineEnv(spine), "", "task", "unblock", fmt.Sprint(id))
+		if res.code != 0 {
+			t.Fatalf("unblock failed: %s", res.stderr)
+		}
+		if got := queryStr(t, db, `SELECT status || '/' || blocked || '/' || COALESCE(blocked_reason, 'none') FROM tasks WHERE id = ?`, id); got != "proposed/0/none" {
+			t.Fatalf("unblocked row = %q", got)
+		}
+	})
+
+	t.Run("pipeline_may_block_only_its_live_subject_and_never_unblock", func(t *testing.T) {
+		spine, id, run, env := workerFixture(t, "pipeline block")
+		other := taskAdd(t, spine, "not this run's subject")
+		res := runMC(t, env, "", "task", "block", fmt.Sprint(other), "--reason", "no")
+		if res.code != 1 || !strings.Contains(res.stderr, "own subject") {
+			t.Fatalf("cross-subject block exit=%d stderr=%q", res.code, res.stderr)
+		}
+		res = runMC(t, env, "", "task", "block", fmt.Sprint(id), "--reason", "operator choice")
+		if res.code != 0 {
+			t.Fatalf("own-subject block failed: %s", res.stderr)
+		}
+		res = runMC(t, env, "", "task", "unblock", fmt.Sprint(id))
+		if res.code != 1 || !strings.Contains(res.stderr, "operator verb") {
+			t.Fatalf("pipeline unblock exit=%d stderr=%q", res.code, res.stderr)
+		}
+		db := openDB(t, spine)
+		if got := queryStr(t, db, `SELECT run_id FROM lock WHERE id = 1`); got != run {
+			t.Fatalf("nonterminal block disturbed lease: %q", got)
+		}
+		if got := queryInt(t, db, `SELECT blocked FROM tasks WHERE id = ?`, other); got != 0 {
+			t.Fatalf("cross-subject refusal blocked other task")
+		}
+	})
+
+	t.Run("validation", func(t *testing.T) {
+		spine := initSpine(t)
+		id := taskAdd(t, spine, "validation")
+		for _, tc := range []struct {
+			args []string
+			want int
+		}{
+			{[]string{"task", "block", fmt.Sprint(id)}, 2},
+			{[]string{"task", "unblock", fmt.Sprint(id), "extra"}, 2},
+			{[]string{"task", "block", "bad", "--reason", "x"}, 2},
+		} {
+			if res := runMC(t, spineEnv(spine), "", tc.args...); res.code != tc.want {
+				t.Fatalf("mc %v exit=%d stderr=%q, want %d", tc.args, res.code, res.stderr, tc.want)
+			}
+		}
+	})
+}
+
 // ---------------------------------------------------------------------------
 // The pipeline walk: the contract §7 ladder minus Docker — every stage
 // advanced by a fresh `mc dispatch` against a temp spine, every terminal
@@ -1042,7 +1106,7 @@ func TestStrategistProposeInserts(t *testing.T) {
 	})
 }
 
-func verifierFixture(t *testing.T, title string) (string, int64, string, []string) {
+func workerFixture(t *testing.T, title string) (string, int64, string, []string) {
 	t.Helper()
 	spine := initSpine(t)
 	taskID := taskAdd(t, spine, title)
@@ -1058,13 +1122,20 @@ func verifierFixture(t *testing.T, title string) (string, int64, string, []strin
 
 	eff = dispatchExpect(t, spine, "spawn")
 	workerRun := eff["run_id"].(string)
-	res = runMC(t, runJSONEnv(t, spine, workerRun, "pipeline", "worker"), "",
+	return spine, taskID, workerRun,
+		runJSONEnv(t, spine, workerRun, "pipeline", "worker")
+}
+
+func verifierFixture(t *testing.T, title string) (string, int64, string, []string) {
+	t.Helper()
+	spine, taskID, workerRun, workerEnv := workerFixture(t, title)
+	res := runMC(t, workerEnv, "",
 		"complete", fmt.Sprint(taskID), "--run", workerRun, "--status", "worked")
 	if res.code != 0 {
 		t.Fatalf("worker fixture failed: %s", res.stderr)
 	}
 
-	eff = dispatchExpect(t, spine, "spawn")
+	eff := dispatchExpect(t, spine, "spawn")
 	verifierRun := eff["run_id"].(string)
 	return spine, taskID, verifierRun,
 		runJSONEnv(t, spine, verifierRun, "pipeline", "verifier")
@@ -1157,36 +1228,103 @@ func TestVerifierVerdictValidation(t *testing.T) {
 	}
 }
 
-func TestCompleteDeferredFlagsRejected(t *testing.T) {
-	spine := initSpine(t)
-	taskID := taskAdd(t, spine, "flagged")
-	eff := dispatchExpect(t, spine, "spawn")
-	run := eff["run_id"].(string)
-	env := runJSONEnv(t, spine, run, "pipeline", "worker")
-
-	for _, flags := range [][]string{
-		{"--reason", "stuck"},
-		{"--needs-operator"},
-		{"--infra"},
-		{"--correction-count", "1"},
-	} {
-		args := append([]string{"complete", fmt.Sprint(taskID), "--run", run, "--status", "worked"}, flags...)
-		res := runMC(t, env, "", args...)
-		if res.code != 1 || !strings.Contains(res.stderr, "deferred") {
-			t.Fatalf("mc %v exit = %d (%q), want 1 deferred", args, res.code, res.stderr)
+func TestCompletePhase2Terminals(t *testing.T) {
+	t.Run("needs_operator_blocks_without_moving_status", func(t *testing.T) {
+		spine, taskID, run, env := workerFixture(t, "operator decision")
+		res := runMC(t, env, "", "complete", fmt.Sprint(taskID), "--run", run,
+			"--needs-operator", "--reason", "choose a deployment target")
+		if res.code != 0 {
+			t.Fatalf("needs-operator failed: %s", res.stderr)
 		}
-	}
-
-	t.Run("bad_status_usage", func(t *testing.T) {
-		res := runMC(t, env, "", "complete", fmt.Sprint(taskID), "--run", run, "--status", "done")
-		if res.code != 2 {
-			t.Fatalf("exit = %d, want 2", res.code)
+		if _, has := res.json["action"]; has {
+			t.Fatalf("terminal returned dispatch effect: %v", res.json)
+		}
+		db := openDB(t, spine)
+		if got := queryStr(t, db, `SELECT status || '/' || blocked || '/' || blocked_reason FROM tasks WHERE id = ?`, taskID); got != "seeded/1/choose a deployment target" {
+			t.Fatalf("blocked task = %q", got)
+		}
+		if got := queryStr(t, db, `SELECT outcome FROM runs WHERE id = ?`, run); got != "blocked" {
+			t.Fatalf("run outcome = %q", got)
+		}
+		if got := queryStr(t, db, `SELECT run_id FROM lock WHERE id = 1`); got != "<NULL>" {
+			t.Fatalf("terminal did not release lease: %q", got)
 		}
 	})
-	t.Run("missing_run_usage", func(t *testing.T) {
-		res := runMC(t, env, "", "complete", fmt.Sprint(taskID), "--status", "worked")
-		if res.code != 2 {
-			t.Fatalf("exit = %d, want 2", res.code)
+
+	t.Run("infra_charges_only_dispatch_budget", func(t *testing.T) {
+		spine, taskID, run, env := workerFixture(t, "infra failure")
+		res := runMC(t, env, "", "complete", fmt.Sprint(taskID), "--run", run,
+			"--infra", "--reason", "adapter exited")
+		if res.code != 0 {
+			t.Fatalf("infra terminal failed: %s", res.stderr)
+		}
+		db := openDB(t, spine)
+		if got := queryStr(t, db, `SELECT status || '/' || dispatch_retries || '/' || correction_count FROM tasks WHERE id = ?`, taskID); got != "seeded/2/0" {
+			t.Fatalf("infra-charged task = %q", got)
+		}
+		if got := queryStr(t, db, `SELECT outcome FROM runs WHERE id = ?`, run); got != "infra-failed" {
+			t.Fatalf("run outcome = %q", got)
+		}
+	})
+
+	t.Run("refiner_reenters_packaged_task_and_keeps_slot", func(t *testing.T) {
+		spine := initSpine(t)
+		db := openDB(t, spine)
+		ids := make([]int64, 0, 3)
+		for i := 0; i < 3; i++ {
+			id := taskAdd(t, spine, fmt.Sprintf("queued %d", i))
+			ids = append(ids, id)
+			for _, status := range []string{"seeded", "worked", "verified", "packaged"} {
+				if _, err := db.Exec(`UPDATE tasks SET status = ? WHERE id = ?`, status, id); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if _, err := db.Exec(`UPDATE tasks SET priority = ? WHERE id = ?`, i, id); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := db.Exec(`INSERT INTO review_packets (task_id) VALUES (?)`, id); err != nil {
+				t.Fatal(err)
+			}
+		}
+		eff := dispatchExpect(t, spine, "spawn")
+		if eff["role"] != "refiner" || eff["subject_id"] != float64(ids[0]) {
+			t.Fatalf("at-cap dispatch = %v, want refiner on %d", eff, ids[0])
+		}
+		run := eff["run_id"].(string)
+		env := runJSONEnv(t, spine, run, "pipeline", "refiner")
+		res := runMC(t, env, "", "complete", fmt.Sprint(ids[0]), "--run", run,
+			"--status", "seeded", "--outputs", "deepen sources and rerun checks")
+		if res.code != 0 {
+			t.Fatalf("refiner terminal failed: %s", res.stderr)
+		}
+		if got := queryStr(t, db, `SELECT status || '/' || refine_notes FROM tasks WHERE id = ?`, ids[0]); got != "seeded/deepen sources and rerun checks" {
+			t.Fatalf("re-entered task = %q", got)
+		}
+		if got := queryInt(t, db, `SELECT archived FROM review_packets WHERE task_id = ?`, ids[0]); got != 0 {
+			t.Fatalf("refiner freed packet slot: %d", got)
+		}
+	})
+
+	t.Run("validation_and_correction_count_ownership", func(t *testing.T) {
+		_, taskID, run, env := workerFixture(t, "complete validation")
+		for _, tc := range []struct {
+			name string
+			args []string
+			want int
+			msg  string
+		}{
+			{"missing_reason", []string{"complete", fmt.Sprint(taskID), "--run", run, "--needs-operator"}, 2, "--reason"},
+			{"two_arms", []string{"complete", fmt.Sprint(taskID), "--run", run, "--status", "worked", "--infra", "--reason", "x"}, 2, "exactly one"},
+			{"correction_count_owned_by_verdict", []string{"complete", fmt.Sprint(taskID), "--run", run, "--status", "worked", "--correction-count", "1"}, 1, "verifier verdict"},
+			{"bad_status", []string{"complete", fmt.Sprint(taskID), "--run", run, "--status", "done"}, 2, "worked|packaged|seeded"},
+			{"missing_run", []string{"complete", fmt.Sprint(taskID), "--status", "worked"}, 2, "--run"},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				res := runMC(t, env, "", tc.args...)
+				if res.code != tc.want || !strings.Contains(res.stderr, tc.msg) {
+					t.Fatalf("exit=%d stderr=%q, want %d containing %q", res.code, res.stderr, tc.want, tc.msg)
+				}
+			})
 		}
 	})
 }
