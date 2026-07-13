@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -2793,6 +2794,318 @@ func TestHomieResume(t *testing.T) {
 		unknown := runMC(t, spineEnv(spine), "", "homie", "resume", "h-missing", "--from", "cli:x")
 		if unknown.code != 1 || !strings.Contains(unknown.stderr, "unknown Homie session") {
 			t.Fatalf("unknown resume = code %d stderr %q", unknown.code, unknown.stderr)
+		}
+	})
+}
+
+// The ADR-013 runner transport: fenced idempotent claims of pending inbound
+// turns and the atomic reply append + completion + homie_reply fan-out. Both
+// are the runner's private own-session scope (§11.5) — never the model's
+// frozen operator allowlist, never host, never pipeline.
+func TestHomieClaimReply(t *testing.T) {
+	start := func(t *testing.T, spine, from string) string {
+		t.Helper()
+		res := runMC(t, spineEnv(spine), "", "homie", "start", "--from", from)
+		if res.code != 0 {
+			t.Fatalf("homie start failed: %s", res.stderr)
+		}
+		return res.json["session_id"].(string)
+	}
+	send := func(t *testing.T, spine, session, from, body string) int64 {
+		t.Helper()
+		res := runMC(t, spineEnv(spine), "", "homie", "send", session, "--from", from, "--body", body)
+		if res.code != 0 {
+			t.Fatalf("homie send failed: %s", res.stderr)
+		}
+		return int64(res.json["message_id"].(float64))
+	}
+	// The runner identity is run.json presence alone — deliberately no
+	// verb_allowlist: transport must never depend on the model's frozen
+	// operator surface.
+	runner := func(t *testing.T, spine, session string) []string {
+		t.Helper()
+		return runJSONEnv(t, spine, session, "homie", "homie")
+	}
+
+	t.Run("claim_stamps_and_returns_the_next_pending_turn_idempotently", func(t *testing.T) {
+		spine := initSpine(t)
+		session := start(t, spine, "dashboard:dash")
+		m1 := send(t, spine, session, "cli:term", "first question")
+		m2 := send(t, spine, session, "cli:term", "second question")
+		db := openDB(t, spine)
+		if _, err := db.Exec(`UPDATE homie_sessions SET last_activity_at = datetime('now', '-1 day') WHERE id = ?`, session); err != nil {
+			t.Fatal(err)
+		}
+		beforeActivity := queryStr(t, db, `SELECT last_activity_at FROM homie_sessions WHERE id = ?`, session)
+
+		claim := runMC(t, runner(t, spine, session), "", "homie", "claim", session)
+		if claim.code != 0 {
+			t.Fatalf("claim failed (%d): %s", claim.code, claim.stderr)
+		}
+		msg, ok := claim.json["message"].(map[string]any)
+		if !ok {
+			t.Fatalf("claim result = %v", claim.json)
+		}
+		if msg["id"] != float64(m1) || msg["seq"] != float64(1) || msg["body"] != "first question" ||
+			msg["surface"] != "cli" || msg["channel_ref"] != "term" || msg["reclaimed"] != false {
+			t.Fatalf("claimed message = %v", msg)
+		}
+		claimState := func(id int64) string {
+			return queryStr(t, db, `SELECT COALESCE(claimed_by, '<null>') || '|' ||
+				COALESCE(claimed_at, '<null>') FROM conversation_messages WHERE id = ?`, id)
+		}
+		firstClaim := claimState(m1)
+		if !strings.HasPrefix(firstClaim, session+"|") || strings.HasSuffix(firstClaim, "|<null>") {
+			t.Fatalf("claim state = %q", firstClaim)
+		}
+		if got := claimState(m2); got != "<null>|<null>" {
+			t.Fatalf("claim touched the queued turn: %q", got)
+		}
+
+		// A fresh runner resumes the durable claim: same turn, same stamp.
+		reclaim := runMC(t, runner(t, spine, session), "", "homie", "claim", session)
+		if reclaim.code != 0 {
+			t.Fatalf("reclaim failed: %s", reclaim.stderr)
+		}
+		remsg := reclaim.json["message"].(map[string]any)
+		if remsg["id"] != float64(m1) || remsg["reclaimed"] != true {
+			t.Fatalf("reclaimed message = %v", remsg)
+		}
+		if got := claimState(m1); got != firstClaim {
+			t.Fatalf("reclaim rewrote claim state: before %q after %q", firstClaim, got)
+		}
+		// Claiming is bookkeeping, not conversation traffic.
+		if got := queryStr(t, db, `SELECT last_activity_at FROM homie_sessions WHERE id = ?`, session); got != beforeActivity {
+			t.Fatalf("claim advanced last_activity_at: before %q after %q", beforeActivity, got)
+		}
+
+		empty := start(t, spine, "cli:empty")
+		nothing := runMC(t, runner(t, spine, empty), "", "homie", "claim", empty)
+		if nothing.code != 0 || nothing.json["message"] != nil {
+			t.Fatalf("empty claim = code %d json %v stderr %q", nothing.code, nothing.json, nothing.stderr)
+		}
+	})
+
+	t.Run("reply_appends_completes_and_fans_out_to_every_binding", func(t *testing.T) {
+		spine := initSpine(t)
+		session := start(t, spine, "dashboard:dash")
+		if res := runMC(t, spineEnv(spine), "", "homie", "bind", session, "--from", "discord:disc"); res.code != 0 {
+			t.Fatalf("bind failed: %s", res.stderr)
+		}
+		m1 := send(t, spine, session, "cli:term", "please do X")
+		if res := runMC(t, runner(t, spine, session), "", "homie", "claim", session); res.code != 0 {
+			t.Fatalf("claim failed: %s", res.stderr)
+		}
+
+		// Conversation transport is lease-free and coexists with a live
+		// leased pipeline run.
+		taskAdd(t, spine, "pipeline stays live during reply")
+		dispatchExpect(t, spine, "spawn")
+		db := openDB(t, spine)
+		lockBefore := queryStr(t, db, `SELECT run_id || '|' || owner || '|' || subject FROM lock WHERE id = 1`)
+		if _, err := db.Exec(`UPDATE homie_sessions SET last_activity_at = datetime('now', '-1 day') WHERE id = ?`, session); err != nil {
+			t.Fatal(err)
+		}
+		beforeActivity := queryStr(t, db, `SELECT last_activity_at FROM homie_sessions WHERE id = ?`, session)
+
+		reply := runMC(t, runner(t, spine, session), "", "homie", "reply", session,
+			"--to", strconv.FormatInt(m1, 10), "--body", "done: X",
+			"--attachments", `["outputs/x.png"]`)
+		if reply.code != 0 {
+			t.Fatalf("reply failed (%d): %s", reply.code, reply.stderr)
+		}
+		if reply.json["replied"] != true || reply.json["seq"] != float64(2) ||
+			reply.json["reply_to"] != float64(m1) || reply.json["deliveries"] != float64(3) {
+			t.Fatalf("reply result = %v", reply.json)
+		}
+		replyID := int64(reply.json["message_id"].(float64))
+
+		if got := queryStr(t, db, `SELECT direction || '|' || surface || '|' ||
+			COALESCE(channel_ref, '<null>') || '|' || body || '|' || attachments || '|' || reply_to
+			FROM conversation_messages WHERE id = ?`, replyID); got != `reply|homie|<null>|done: X|["outputs/x.png"]|`+strconv.FormatInt(m1, 10) {
+			t.Fatalf("reply row = %q", got)
+		}
+		if got := queryStr(t, db, `SELECT COALESCE(completed_at, '<null>') FROM conversation_messages WHERE id = ?`, m1); got == "<null>" {
+			t.Fatalf("reply did not complete the claimed turn")
+		}
+		if got := queryStr(t, db, `SELECT group_concat(surface || ':' || channel_ref, ',') FROM
+			(SELECT surface, channel_ref FROM outbox WHERE kind = 'homie_reply' ORDER BY surface, channel_ref)`); got != "cli:term,dashboard:dash,discord:disc" {
+			t.Fatalf("reply destinations = %q", got)
+		}
+		var payload map[string]any
+		if err := json.Unmarshal([]byte(queryStr(t, db,
+			`SELECT payload FROM outbox WHERE kind = 'homie_reply' ORDER BY id LIMIT 1`)), &payload); err != nil {
+			t.Fatal(err)
+		}
+		attachments, _ := payload["attachments"].([]any)
+		if payload["message_id"] != float64(replyID) || payload["seq"] != float64(2) ||
+			payload["body"] != "done: X" || payload["reply_to"] != float64(m1) ||
+			len(attachments) != 1 || attachments[0] != "outputs/x.png" {
+			t.Fatalf("reply payload = %v", payload)
+		}
+		if got := queryStr(t, db, `SELECT last_activity_at FROM homie_sessions WHERE id = ?`, session); got == beforeActivity {
+			t.Fatalf("reply did not advance last_activity_at from %q", beforeActivity)
+		}
+		if got := queryStr(t, db, `SELECT run_id || '|' || owner || '|' || subject FROM lock WHERE id = 1`); got != lockBefore {
+			t.Fatalf("reply disturbed pipeline lease: before %q after %q", lockBefore, got)
+		}
+
+		// The completed turn leaves the pending queue; new traffic re-enters it.
+		drained := runMC(t, runner(t, spine, session), "", "homie", "claim", session)
+		if drained.code != 0 || drained.json["message"] != nil {
+			t.Fatalf("post-reply claim = code %d json %v", drained.code, drained.json)
+		}
+		m3 := send(t, spine, session, "cli:term", "follow-up")
+		next := runMC(t, runner(t, spine, session), "", "homie", "claim", session)
+		if next.code != 0 {
+			t.Fatalf("follow-up claim failed: %s", next.stderr)
+		}
+		if msg := next.json["message"].(map[string]any); msg["id"] != float64(m3) || msg["seq"] != float64(3) {
+			t.Fatalf("follow-up claim = %v", next.json)
+		}
+	})
+
+	t.Run("reply_replay_is_idempotent_and_a_second_logical_reply_is_refused", func(t *testing.T) {
+		spine := initSpine(t)
+		session := start(t, spine, "dashboard:dash")
+		m1 := send(t, spine, session, "dashboard:dash", "one")
+		if res := runMC(t, runner(t, spine, session), "", "homie", "claim", session); res.code != 0 {
+			t.Fatalf("claim failed: %s", res.stderr)
+		}
+		first := runMC(t, runner(t, spine, session), "", "homie", "reply", session,
+			"--to", strconv.FormatInt(m1, 10), "--body", "answer")
+		if first.code != 0 {
+			t.Fatalf("reply failed: %s", first.stderr)
+		}
+		db := openDB(t, spine)
+		beforeMessages := queryInt(t, db, `SELECT COUNT(*) FROM conversation_messages`)
+		beforeOutbox := queryInt(t, db, `SELECT COUNT(*) FROM outbox`)
+
+		// Crash-after-commit retry: same logical reply, nothing re-appended.
+		replay := runMC(t, runner(t, spine, session), "", "homie", "reply", session,
+			"--to", strconv.FormatInt(m1, 10), "--body", "answer")
+		if replay.code != 0 || replay.json["replied"] != false ||
+			replay.json["message_id"] != first.json["message_id"] {
+			t.Fatalf("reply replay = code %d json %v stderr %q", replay.code, replay.json, replay.stderr)
+		}
+		if queryInt(t, db, `SELECT COUNT(*) FROM conversation_messages`) != beforeMessages ||
+			queryInt(t, db, `SELECT COUNT(*) FROM outbox`) != beforeOutbox {
+			t.Fatal("idempotent replay appended rows")
+		}
+		// A different body against a completed turn is a second logical reply.
+		second := runMC(t, runner(t, spine, session), "", "homie", "reply", session,
+			"--to", strconv.FormatInt(m1, 10), "--body", "different answer")
+		if second.code != 1 || !strings.Contains(second.stderr, "one logical reply") {
+			t.Fatalf("second reply = code %d stderr %q", second.code, second.stderr)
+		}
+
+		// Reply protocol violations are inert.
+		m2 := send(t, spine, session, "dashboard:dash", "two")
+		other := start(t, spine, "cli:other")
+		m3 := send(t, spine, other, "cli:other", "other conversation")
+		replyID := int64(first.json["message_id"].(float64))
+		for name, tc := range map[string]struct {
+			to  int64
+			msg string
+		}{
+			"unclaimed_turn":       {to: m2, msg: "unclaimed"},
+			"reply_to_a_reply":     {to: replyID, msg: "inbound turn"},
+			"unknown_message":      {to: 9999, msg: "unknown conversation message"},
+			"another_conversation": {to: m3, msg: "another conversation"},
+		} {
+			t.Run(name, func(t *testing.T) {
+				res := runMC(t, runner(t, spine, session), "", "homie", "reply", session,
+					"--to", strconv.FormatInt(tc.to, 10), "--body", "x")
+				if res.code != 1 || !strings.Contains(res.stderr, tc.msg) {
+					t.Fatalf("exit = %d stderr %q, want failure containing %q", res.code, res.stderr, tc.msg)
+				}
+			})
+		}
+		if queryInt(t, db, `SELECT COUNT(*) FROM conversation_messages WHERE direction = 'reply'`) != 1 {
+			t.Fatal("refused replies appended rows")
+		}
+	})
+
+	t.Run("reply_outbox_failure_rolls_back_the_whole_turn", func(t *testing.T) {
+		spine := initSpine(t)
+		session := start(t, spine, "dashboard:dash")
+		m1 := send(t, spine, session, "dashboard:dash", "roll me back")
+		if res := runMC(t, runner(t, spine, session), "", "homie", "claim", session); res.code != 0 {
+			t.Fatalf("claim failed: %s", res.stderr)
+		}
+		db := openDB(t, spine)
+		beforeActivity := queryStr(t, db, `SELECT last_activity_at FROM homie_sessions WHERE id = ?`, session)
+		if _, err := db.Exec(`CREATE TRIGGER test_fail_homie_reply
+			BEFORE INSERT ON outbox WHEN NEW.kind = 'homie_reply'
+			BEGIN SELECT RAISE(ABORT, 'injected reply failure'); END`); err != nil {
+			t.Fatal(err)
+		}
+		res := runMC(t, runner(t, spine, session), "", "homie", "reply", session,
+			"--to", strconv.FormatInt(m1, 10), "--body", "must roll back")
+		if res.code != 1 || !strings.Contains(res.stderr, "injected reply failure") {
+			t.Fatalf("reply atomic failure = code %d stderr %q", res.code, res.stderr)
+		}
+		if queryInt(t, db, `SELECT COUNT(*) FROM conversation_messages WHERE direction = 'reply'`) != 0 ||
+			queryInt(t, db, `SELECT COUNT(*) FROM outbox`) != 0 {
+			t.Fatal("failed reply left a reply or outbox row")
+		}
+		if got := queryStr(t, db, `SELECT COALESCE(completed_at, '<null>') FROM conversation_messages WHERE id = ?`, m1); got != "<null>" {
+			t.Fatalf("failed reply completed the turn: %q", got)
+		}
+		if got := queryStr(t, db, `SELECT last_activity_at FROM homie_sessions WHERE id = ?`, session); got != beforeActivity {
+			t.Fatalf("failed reply changed last_activity_at: before %q after %q", beforeActivity, got)
+		}
+	})
+
+	t.Run("claim_and_reply_are_own_session_runner_scope", func(t *testing.T) {
+		spine := initSpine(t)
+		session := start(t, spine, "dashboard:dash")
+		m1 := send(t, spine, session, "dashboard:dash", "fence me")
+		db := openDB(t, spine)
+		to := strconv.FormatInt(m1, 10)
+
+		for name, env := range map[string][]string{
+			"host":          spineEnv(spine),
+			"pipeline":      runJSONEnv(t, spine, "r-x", "pipeline", "worker"),
+			"cross-session": runner(t, spine, "h-other"),
+		} {
+			for _, args := range [][]string{
+				{"homie", "claim", session},
+				{"homie", "reply", session, "--to", to, "--body", "forged"},
+			} {
+				res := runMC(t, env, "", args...)
+				if res.code != 1 {
+					t.Fatalf("%s %v exit = %d stderr %q", name, args, res.code, res.stderr)
+				}
+			}
+		}
+		if got := queryStr(t, db, `SELECT COALESCE(claimed_by, '<null>') || '|' ||
+			COALESCE(completed_at, '<null>') FROM conversation_messages WHERE id = ?`, m1); got != "<null>|<null>" {
+			t.Fatalf("forged transport touched the turn: %q", got)
+		}
+		if queryInt(t, db, `SELECT COUNT(*) FROM conversation_messages`) != 1 ||
+			queryInt(t, db, `SELECT COUNT(*) FROM outbox`) != 0 {
+			t.Fatal("forged transport appended rows")
+		}
+
+		// An ended session's runner has no transport left.
+		if res := runMC(t, runner(t, spine, session), "", "homie", "claim", session); res.code != 0 {
+			t.Fatalf("claim failed: %s", res.stderr)
+		}
+		if res := runMC(t, spineEnv(spine), "", "homie", "end", session, "--reason", "test"); res.code != 0 {
+			t.Fatalf("end failed: %s", res.stderr)
+		}
+		endedClaim := runMC(t, runner(t, spine, session), "", "homie", "claim", session)
+		if endedClaim.code != 1 || !strings.Contains(endedClaim.stderr, "active") {
+			t.Fatalf("ended claim = code %d stderr %q", endedClaim.code, endedClaim.stderr)
+		}
+		endedReply := runMC(t, runner(t, spine, session), "", "homie", "reply", session,
+			"--to", to, "--body", "ghost turn")
+		if endedReply.code != 1 || !strings.Contains(endedReply.stderr, "active") {
+			t.Fatalf("ended reply = code %d stderr %q", endedReply.code, endedReply.stderr)
+		}
+		if got := queryStr(t, db, `SELECT COALESCE(completed_at, '<null>') FROM conversation_messages WHERE id = ?`, m1); got != "<null>" {
+			t.Fatalf("ended-session transport completed the turn: %q", got)
 		}
 	})
 }

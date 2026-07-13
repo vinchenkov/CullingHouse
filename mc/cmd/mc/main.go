@@ -590,7 +590,7 @@ func cmdConsole(args []string) (any, error) {
 
 func cmdHomie(args []string) (any, error) {
 	if len(args) == 0 {
-		return nil, verbs.Usagef("usage: mc homie start|bind|send|list|history|resume|end …")
+		return nil, verbs.Usagef("usage: mc homie start|bind|send|claim|reply|list|history|resume|end …")
 	}
 	switch args[0] {
 	case "start":
@@ -704,6 +704,47 @@ func cmdHomie(args []string) (any, error) {
 		return withSpine(func(db *sql.DB) (any, error) {
 			return verbs.HomieSend(db, id, verbs.HomieSendArgs{
 				Session: sessionID, From: *from, Body: *body, Attachments: *attachments,
+			})
+		})
+
+	case "claim":
+		sessionID, rest, err := positional("mc homie claim", args[1:])
+		if err != nil {
+			return nil, err
+		}
+		if len(rest) != 0 {
+			return nil, verbs.Usagef("mc homie claim: unexpected argument %q", rest[0])
+		}
+		id, err := verbs.LoadIdentity()
+		if err != nil {
+			return nil, err
+		}
+		return withSpine(func(db *sql.DB) (any, error) {
+			return verbs.HomieClaim(db, id, sessionID)
+		})
+
+	case "reply":
+		sessionID, rest, err := positional("mc homie reply", args[1:])
+		if err != nil {
+			return nil, err
+		}
+		fs := newFlags("mc homie reply")
+		to := fs.Int64("to", 0, "claimed inbound message id")
+		body := fs.String("body", "", "reply text")
+		attachments := fs.String("attachments", "", "JSON array of file-plane paths")
+		if err := parse(fs, rest); err != nil {
+			return nil, err
+		}
+		if *to <= 0 {
+			return nil, verbs.Usagef("mc homie reply requires --to <inbound message id>")
+		}
+		id, err := verbs.LoadIdentity()
+		if err != nil {
+			return nil, err
+		}
+		return withSpine(func(db *sql.DB) (any, error) {
+			return verbs.HomieReply(db, id, verbs.HomieReplyArgs{
+				Session: sessionID, To: *to, Body: *body, Attachments: *attachments,
 			})
 		})
 

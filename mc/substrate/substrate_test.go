@@ -966,6 +966,66 @@ func TestConversationRowsRequireActiveSession(t *testing.T) {
 	}
 }
 
+// ADR-013 claim/reply lattice — the storage law behind "runner death cannot
+// create two logical replies to one inbound turn" (§11.5): a reply names the
+// inbound turn it answers, exactly once, within its own conversation; claim
+// and completion state are one-way and set-once.
+func TestConversationClaimReplyLattice(t *testing.T) {
+	db := openSpine(t)
+	mkHomieSession(t, db, "h-cr")
+	mkHomieSession(t, db, "h-cr2")
+	mustExec(t, db,
+		`INSERT INTO conversation_messages (session_id, seq, direction, surface, body)
+		 VALUES ('h-cr', 1, 'inbound', 'discord', 'question')`)
+	turn := oneInt(t, db, `SELECT id FROM conversation_messages WHERE session_id = 'h-cr' AND seq = 1`)
+
+	// A reply names its inbound turn; inbound rows never carry reply_to.
+	wantAbort(t, db,
+		`INSERT INTO conversation_messages (session_id, seq, direction, surface, body)
+		 VALUES ('h-cr', 2, 'reply', 'homie', 'orphan reply')`)
+	wantAbort(t, db,
+		`INSERT INTO conversation_messages (session_id, seq, direction, surface, body, reply_to)
+		 VALUES ('h-cr', 2, 'inbound', 'discord', 'inbound with reply_to', ?)`, turn)
+	wantAbort(t, db,
+		`INSERT INTO conversation_messages (session_id, seq, direction, surface, body, reply_to)
+		 VALUES ('h-cr', 2, 'reply', 'homie', 'dangling', 999)`)
+	// …and only an inbound turn of its own conversation.
+	wantAbort(t, db,
+		`INSERT INTO conversation_messages (session_id, seq, direction, surface, body, reply_to)
+		 VALUES ('h-cr2', 1, 'reply', 'homie', 'cross-conversation', ?)`, turn)
+
+	// Claim columns travel as a pair, and completion requires a claim.
+	wantAbort(t, db, `UPDATE conversation_messages SET claimed_by = 'h-cr' WHERE id = ?`, turn)
+	wantAbort(t, db, `UPDATE conversation_messages SET completed_at = datetime('now') WHERE id = ?`, turn)
+	mustExec(t, db,
+		`UPDATE conversation_messages SET claimed_by = 'h-cr', claimed_at = datetime('now') WHERE id = ?`, turn)
+
+	// Claims are set-once: a fresh runner resumes the durable claim, never
+	// rewrites or clears it.
+	wantAbort(t, db, `UPDATE conversation_messages SET claimed_by = 'other' WHERE id = ?`, turn)
+	wantAbort(t, db, `UPDATE conversation_messages SET claimed_at = datetime('now', '+1 hour') WHERE id = ?`, turn)
+	wantAbort(t, db, `UPDATE conversation_messages SET claimed_by = NULL, claimed_at = NULL WHERE id = ?`, turn)
+
+	mustExec(t, db,
+		`INSERT INTO conversation_messages (session_id, seq, direction, surface, body, reply_to)
+		 VALUES ('h-cr', 2, 'reply', 'homie', 'answer', ?)`, turn)
+	reply := oneInt(t, db, `SELECT id FROM conversation_messages WHERE session_id = 'h-cr' AND seq = 2`)
+
+	// One logical reply per inbound turn, immutable linkage, and reply rows
+	// are never themselves claimable.
+	wantAbort(t, db,
+		`INSERT INTO conversation_messages (session_id, seq, direction, surface, body, reply_to)
+		 VALUES ('h-cr', 3, 'reply', 'homie', 'second reply', ?)`, turn)
+	wantAbort(t, db, `UPDATE conversation_messages SET reply_to = NULL WHERE id = ?`, reply)
+	wantAbort(t, db,
+		`UPDATE conversation_messages SET claimed_by = 'h-cr', claimed_at = datetime('now') WHERE id = ?`, reply)
+
+	// Completion is set-once and never clears.
+	mustExec(t, db, `UPDATE conversation_messages SET completed_at = datetime('now') WHERE id = ?`, turn)
+	wantAbort(t, db, `UPDATE conversation_messages SET completed_at = datetime('now', '+1 hour') WHERE id = ?`, turn)
+	wantAbort(t, db, `UPDATE conversation_messages SET completed_at = NULL WHERE id = ?`, turn)
+}
+
 // ---------------------------------------------------------------------------
 // Phase 2 additive columns (phase2-contract §5) — new-column coverage only;
 // every case above is Phase 1a/1b and stays untouched.

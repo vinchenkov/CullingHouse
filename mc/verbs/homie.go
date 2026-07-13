@@ -289,13 +289,13 @@ func ensureActiveBinding(ctx context.Context, q Q, sessionID string, from Surfac
 	return true, err
 }
 
-func parseAttachments(raw string) ([]string, any, error) {
+func parseAttachments(verb, raw string) ([]string, any, error) {
 	if raw == "" {
 		return []string{}, nil, nil
 	}
 	var refs []string
 	if err := json.Unmarshal([]byte(raw), &refs); err != nil || refs == nil {
-		return nil, nil, Usagef("mc homie send --attachments must be a JSON array of path strings")
+		return nil, nil, Usagef("%s --attachments must be a JSON array of path strings", verb)
 	}
 	for _, ref := range refs {
 		clean := path.Clean(ref)
@@ -338,7 +338,7 @@ func HomieSend(db *sql.DB, id *RunIdentity, a HomieSendArgs) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	attachments, attachmentValue, err := parseAttachments(a.Attachments)
+	attachments, attachmentValue, err := parseAttachments("mc homie send", a.Attachments)
 	if err != nil {
 		return nil, err
 	}
@@ -435,6 +435,273 @@ func HomieSend(db *sql.DB, id *RunIdentity, a HomieSendArgs) (any, error) {
 		"session_id": a.Session, "message_id": messageID, "seq": seq,
 		"echoes": echoes,
 	}, nil
+}
+
+// requireHomieRunner fences the ADR-013 transport verbs to the Homie
+// runner's own-session identity (§11.5): run.json tier `homie` naming this
+// exact session. Like register-session, this is the runner's private scope —
+// the frozen verb_allowlist governs only the model's operator verbs and is
+// deliberately never consulted here. Host and pipeline callers own no
+// conversation transport.
+func requireHomieRunner(id *RunIdentity, sessionID, verb string) error {
+	if id == nil || id.Tier != "homie" {
+		return Domainf("%s is the Homie runner's own-session transport scope (§11.5)", verb)
+	}
+	if id.RunID == "" || id.RunID != sessionID {
+		return Domainf("a Homie runner touches only its own conversation; run.json identifies %q, target is %q (§11.5)", id.RunID, sessionID)
+	}
+	return nil
+}
+
+// requireActiveHomieSessionTx requires the canonical registry row to be live
+// inside the caller's write transaction: transport on an ended or reaped
+// session is inert (§15.4) — resume is an explicit host transition, never a
+// side effect of a zombie runner's traffic.
+func requireActiveHomieSessionTx(ctx context.Context, q Q, sessionID string) error {
+	var status string
+	err := q.QueryRowContext(ctx,
+		`SELECT status FROM homie_sessions WHERE id = ?`, sessionID).Scan(&status)
+	if err == sql.ErrNoRows {
+		return Domainf("unknown Homie session %q", sessionID)
+	}
+	if err != nil {
+		return err
+	}
+	if status != "active" {
+		return Domainf("Homie session %q is %s; transport requires an active session (§15.4)", sessionID, status)
+	}
+	return nil
+}
+
+// HomieClaim atomically claims the next pending inbound turn of the caller's
+// own conversation (§11.5). Pending is durable state — direction inbound,
+// completed_at NULL — so a fresh runner resumes the exact turn a dead one
+// held: an already-claimed pending turn is returned again with its original
+// set-once claim stamp. Claiming is bookkeeping, not conversation traffic;
+// it never advances last_activity_at.
+func HomieClaim(db *sql.DB, id *RunIdentity, sessionID string) (any, error) {
+	if err := requireHomieRunner(id, sessionID, "mc homie claim"); err != nil {
+		return nil, err
+	}
+	var message map[string]any
+	err := inTx(db, func(ctx context.Context, q Q) error {
+		if err := requireActiveHomieSessionTx(ctx, q, sessionID); err != nil {
+			return err
+		}
+		var messageID, seq int64
+		var surface, body, createdAt string
+		var channelRef, attachmentJSON, claimedAt sql.NullString
+		err := q.QueryRowContext(ctx, `
+			SELECT id, seq, surface, channel_ref, body, attachments, created_at, claimed_at
+			FROM conversation_messages
+			WHERE session_id = ? AND direction = 'inbound' AND completed_at IS NULL
+			ORDER BY id LIMIT 1`, sessionID,
+		).Scan(&messageID, &seq, &surface, &channelRef, &body, &attachmentJSON, &createdAt, &claimedAt)
+		if err == sql.ErrNoRows {
+			return nil // nothing pending is an ordinary poll outcome
+		}
+		if err != nil {
+			return err
+		}
+		reclaimed := claimedAt.Valid
+		if !reclaimed {
+			if _, err := q.ExecContext(ctx, `
+				UPDATE conversation_messages SET claimed_by = ?, claimed_at = datetime('now')
+				WHERE id = ?`, sessionID, messageID); err != nil {
+				return err
+			}
+			if err := q.QueryRowContext(ctx,
+				`SELECT claimed_at FROM conversation_messages WHERE id = ?`, messageID,
+			).Scan(&claimedAt); err != nil {
+				return err
+			}
+		}
+		attachments := []string{}
+		if attachmentJSON.Valid {
+			if err := json.Unmarshal([]byte(attachmentJSON.String), &attachments); err != nil {
+				return fmt.Errorf("parse attachments for conversation message %d: %w", messageID, err)
+			}
+		}
+		var channel any
+		if channelRef.Valid {
+			channel = channelRef.String
+		}
+		message = map[string]any{
+			"id": messageID, "seq": seq, "surface": surface, "channel_ref": channel,
+			"body": body, "attachments": attachments, "created_at": createdAt,
+			"claimed_at": claimedAt.String, "reclaimed": reclaimed,
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{"session_id": sessionID, "message": message}, nil
+}
+
+type HomieReplyArgs struct {
+	Session     string
+	To          int64
+	Body        string
+	Attachments string
+}
+
+type homieReplyPayload struct {
+	MessageID   int64    `json:"message_id"`
+	Seq         int64    `json:"seq"`
+	Body        string   `json:"body"`
+	Attachments []string `json:"attachments"`
+	ReplyTo     int64    `json:"reply_to"`
+}
+
+// HomieReply is the runner's outbound half of the turn (§11.5, §15.5): one
+// transaction appends the reply row against the claimed inbound turn,
+// completes the claim, advances activity time, and fans one homie_reply
+// outbox row to EVERY active binding (a reply reads identically on every
+// bound surface, origin included — unlike an inbound echo). Replay of a
+// committed turn is idempotent for the identical logical reply and refused
+// for any other: one inbound turn, one logical reply.
+func HomieReply(db *sql.DB, id *RunIdentity, a HomieReplyArgs) (any, error) {
+	if err := requireHomieRunner(id, a.Session, "mc homie reply"); err != nil {
+		return nil, err
+	}
+	attachments, attachmentValue, err := parseAttachments("mc homie reply", a.Attachments)
+	if err != nil {
+		return nil, err
+	}
+	if a.Body == "" && len(attachments) == 0 {
+		return nil, Usagef("mc homie reply requires a body or attachment (§15.5)")
+	}
+	var out map[string]any
+	err = inTx(db, func(ctx context.Context, q Q) error {
+		if err := requireActiveHomieSessionTx(ctx, q, a.Session); err != nil {
+			return err
+		}
+		var turnSession, direction string
+		var claimedBy, completedAt sql.NullString
+		err := q.QueryRowContext(ctx, `
+			SELECT session_id, direction, claimed_by, completed_at
+			FROM conversation_messages WHERE id = ?`, a.To,
+		).Scan(&turnSession, &direction, &claimedBy, &completedAt)
+		if err == sql.ErrNoRows {
+			return Domainf("unknown conversation message %d", a.To)
+		}
+		if err != nil {
+			return err
+		}
+		if turnSession != a.Session {
+			return Domainf("message %d belongs to another conversation (§11.5)", a.To)
+		}
+		if direction != "inbound" {
+			return Domainf("mc homie reply answers an inbound turn; message %d is a %s row", a.To, direction)
+		}
+		if !claimedBy.Valid {
+			return Domainf("inbound turn %d is unclaimed; the runner claims a turn before replying (§11.5)", a.To)
+		}
+		if completedAt.Valid {
+			// Crash-after-commit retry: the turn's one logical reply exists.
+			var replyID, replySeq int64
+			var replyBody string
+			var replyAttachments sql.NullString
+			err := q.QueryRowContext(ctx, `
+				SELECT id, seq, body, attachments FROM conversation_messages
+				WHERE reply_to = ?`, a.To,
+			).Scan(&replyID, &replySeq, &replyBody, &replyAttachments)
+			if err == sql.ErrNoRows {
+				return Domainf("inbound turn %d is completed but carries no reply row; refusing to guess (§11.5)", a.To)
+			}
+			if err != nil {
+				return err
+			}
+			sameAttachments := (!replyAttachments.Valid && attachmentValue == nil) ||
+				(replyAttachments.Valid && attachmentValue != nil && replyAttachments.String == attachmentValue.(string))
+			if replyBody != a.Body || !sameAttachments {
+				return Domainf("inbound turn %d already has its one logical reply (§11.5)", a.To)
+			}
+			out = map[string]any{
+				"session_id": a.Session, "message_id": replyID, "seq": replySeq,
+				"reply_to": a.To, "deliveries": 0, "replied": false,
+			}
+			return nil
+		}
+
+		var seq int64
+		if err := q.QueryRowContext(ctx, `
+			SELECT COALESCE(MAX(seq), 0) + 1
+			FROM conversation_messages WHERE session_id = ?`, a.Session).Scan(&seq); err != nil {
+			return err
+		}
+		inserted, err := q.ExecContext(ctx, `
+			INSERT INTO conversation_messages
+				(session_id, seq, direction, surface, channel_ref, body, attachments, reply_to)
+			VALUES (?, ?, 'reply', 'homie', NULL, ?, ?, ?)`,
+			a.Session, seq, a.Body, attachmentValue, a.To)
+		if err != nil {
+			return err
+		}
+		replyID, err := inserted.LastInsertId()
+		if err != nil {
+			return err
+		}
+		if _, err := q.ExecContext(ctx, `
+			UPDATE conversation_messages SET completed_at = datetime('now')
+			WHERE id = ? AND completed_at IS NULL`, a.To); err != nil {
+			return err
+		}
+		if _, err := q.ExecContext(ctx, `
+			UPDATE homie_sessions SET last_activity_at = datetime('now')
+			WHERE id = ? AND status = 'active'`, a.Session); err != nil {
+			return err
+		}
+		payload, err := json.Marshal(homieReplyPayload{
+			MessageID: replyID, Seq: seq, Body: a.Body,
+			Attachments: attachments, ReplyTo: a.To,
+		})
+		if err != nil {
+			return err
+		}
+		rows, err := q.QueryContext(ctx, `
+			SELECT surface, channel_ref FROM homie_bindings
+			WHERE session_id = ? AND active = 1
+			ORDER BY surface, channel_ref, id`, a.Session)
+		if err != nil {
+			return err
+		}
+		var destinations []SurfaceRef
+		for rows.Next() {
+			var destination SurfaceRef
+			if err := rows.Scan(&destination.Surface, &destination.ChannelRef); err != nil {
+				rows.Close()
+				return err
+			}
+			destinations = append(destinations, destination)
+		}
+		if err := rows.Close(); err != nil {
+			return err
+		}
+		if err := rows.Err(); err != nil {
+			return err
+		}
+		deliveries := 0
+		for _, destination := range destinations {
+			if _, err := q.ExecContext(ctx, `
+				INSERT INTO outbox (kind, session_id, surface, channel_ref, payload)
+				VALUES ('homie_reply', ?, ?, ?, ?)`,
+				a.Session, destination.Surface, destination.ChannelRef, string(payload)); err != nil {
+				return err
+			}
+			deliveries++
+		}
+		out = map[string]any{
+			"session_id": a.Session, "message_id": replyID, "seq": seq,
+			"reply_to": a.To, "deliveries": deliveries, "replied": true,
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 func sortedUniqueStrings(in []string) []string {

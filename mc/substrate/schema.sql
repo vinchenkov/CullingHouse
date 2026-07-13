@@ -822,12 +822,26 @@ CREATE TABLE conversation_messages (
     attachments  TEXT CHECK (attachments IS NULL OR
                        (json_valid(attachments) AND json_type(attachments) = 'array')),
                                              -- JSON array of file-plane references (§15.5)
+    reply_to     INTEGER REFERENCES conversation_messages(id),
+                                             -- the inbound turn a reply completes (§11.5, ADR-013)
     created_at   TEXT    NOT NULL DEFAULT (datetime('now')),
     claimed_by   TEXT,                       -- fenced, idempotent runner claims (§11.5)
     claimed_at   TEXT,
     completed_at TEXT,
-    UNIQUE (session_id, seq)
+    UNIQUE (session_id, seq),
+    -- Every reply answers exactly one inbound turn; inbound rows never do.
+    CHECK ((direction = 'inbound') = (reply_to IS NULL)),
+    -- Claim state travels as a pair, only on inbound turns, and completion
+    -- requires a claim (§11.5, ADR-013).
+    CHECK ((claimed_by IS NULL) = (claimed_at IS NULL)),
+    CHECK (direction = 'inbound' OR claimed_by IS NULL),
+    CHECK (completed_at IS NULL OR claimed_at IS NOT NULL)
 );
+
+-- "Runner death cannot create two logical replies to one inbound turn"
+-- (§11.5): the one-reply-per-turn law lives in storage, not verb code.
+CREATE UNIQUE INDEX conversation_one_reply_per_turn
+    ON conversation_messages (reply_to) WHERE reply_to IS NOT NULL;
 
 CREATE INDEX conversation_pending ON conversation_messages (session_id, id)
     WHERE direction = 'inbound' AND completed_at IS NULL;
@@ -842,9 +856,41 @@ WHEN NEW.id <> OLD.id
   OR NEW.channel_ref IS NOT OLD.channel_ref
   OR NEW.body <> OLD.body
   OR NEW.attachments IS NOT OLD.attachments
+  OR NEW.reply_to IS NOT OLD.reply_to
   OR NEW.created_at <> OLD.created_at
 BEGIN
     SELECT RAISE(ABORT, 'conversation rows are append-only; only claim state may change (§15.4)');
+END;
+
+-- A reply answers an inbound turn of its own conversation (§11.5, ADR-013);
+-- the FK alone would accept a reply row or another session's turn.
+CREATE TRIGGER conversation_reply_answers_own_inbound
+BEFORE INSERT ON conversation_messages
+WHEN NEW.reply_to IS NOT NULL AND NOT EXISTS (
+    SELECT 1 FROM conversation_messages m
+    WHERE m.id = NEW.reply_to
+      AND m.session_id = NEW.session_id
+      AND m.direction = 'inbound'
+)
+BEGIN
+    SELECT RAISE(ABORT, 'a reply must answer an inbound turn of its own conversation (§11.5)');
+END;
+
+-- Claim and completion state are one-way and set-once: a fresh runner
+-- resumes the durable claim; nothing rewrites or clears it (§11.5).
+CREATE TRIGGER conversation_claim_set_once
+BEFORE UPDATE OF claimed_by, claimed_at ON conversation_messages
+WHEN OLD.claimed_by IS NOT NULL
+  AND (NEW.claimed_by IS NOT OLD.claimed_by OR NEW.claimed_at IS NOT OLD.claimed_at)
+BEGIN
+    SELECT RAISE(ABORT, 'conversation claims are set-once (§11.5)');
+END;
+
+CREATE TRIGGER conversation_completion_set_once
+BEFORE UPDATE OF completed_at ON conversation_messages
+WHEN OLD.completed_at IS NOT NULL AND NEW.completed_at IS NOT OLD.completed_at
+BEGIN
+    SELECT RAISE(ABORT, 'turn completion is set-once (§11.5)');
 END;
 
 CREATE TRIGGER conversation_no_delete

@@ -872,3 +872,32 @@ rows atomically — never through the model's Homie-agent identity. Then
 sweep the remaining §18 operational verbs (doctor/backup/reset) toward the
 wave-2 contract before the split-brain suite. Initiative wave CLI remains
 Parked.
+
+- 2026-07-13 — **Phase 2 Homie runner claim/reply transport green.** ADR-013
+  pins the ADR-010 deferral. `mc homie claim <session>` is the runner's
+  own-session scope (run.json tier homie, allowlist never consulted, host/
+  pipeline/cross-session refused): lowest-id pending inbound turn, claim
+  stamp set-once, a fresh runner reclaims a dead one's turn with the
+  original stamp, nothing-pending is an empty result, no activity advance.
+  `mc homie reply <session> --to <id>` requires the claimed own-conversation
+  inbound turn and appends the reply row (new additive `reply_to` column —
+  the durable linkage the double-reply law needs), completes the turn,
+  advances activity, and fans one `homie_reply` outbox row to EVERY active
+  binding (origin included, per §15.5) in one transaction; injected outbox
+  failure rolls back everything. Identical-payload replay of a committed
+  turn is idempotent (`replied: false`); any different payload is refused —
+  one logical reply per inbound turn, enforced in storage by a partial
+  unique index on reply_to plus CHECKs (reply⇔reply_to, claim-pair,
+  completion-requires-claim, replies never claimable) and triggers
+  (own-session-inbound reference, claim and completion set-once).
+  Ended/reaped sessions refuse transport (resume stays an explicit host
+  transition). Complete fast lane green (Go all packages incl. docker-tag
+  vet + fake-routing build; fake 43, agent-runner 13, runner/image 2,
+  resident 32); substrate suite +1 (TestConversationClaimReplyLattice).
+
+NEXT: Sweep the remaining §18 operational verbs toward the wave-2 contract:
+`mc doctor` (validate routing, schema, MC_HOME shape — container/gateway
+probes stay Phase 3), `mc backup` (spine snapshot verb), and `mc reset`
+(confirmation-required destructive re-init, snapshot first). Then the
+deterministic split-brain kill-point convergence suite. Initiative wave CLI
+remains Parked pending the durable plan-review representation.
