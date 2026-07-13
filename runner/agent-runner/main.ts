@@ -36,6 +36,8 @@ const NATIVE_FILENAME = "native.jsonl"; // cli.ts's fixed name; registered via -
 export interface RunEnvelope {
   run_id: string;
   role: string;
+	harness: string;
+	model_binding: string;
   subject_id: number | null;
   pool_ids?: number[];
   heartbeat_interval_s: number;
@@ -92,6 +94,13 @@ async function mc(argv: string[]): Promise<number> {
 
 async function main(): Promise<number> {
   const run = (await Bun.file(RUN_JSON).json()) as RunEnvelope;
+	if (run.harness !== "fake" || run.model_binding !== "fake") {
+		log(
+			`unsupported runtime route ${JSON.stringify(`${run.harness}/${run.model_binding}`)}; ` +
+				"this test runner contains only the fake adapter",
+		);
+		return 2;
+	}
   log(`run ${run.run_id} role=${run.role} subject=${run.subject_id ?? "none"}`);
 
   const proc = Bun.spawn(

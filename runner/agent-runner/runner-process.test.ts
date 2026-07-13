@@ -38,6 +38,8 @@ async function runRunner(opts: {
   behavior: unknown;
   mcExit?: number;
   delayRegistration?: boolean;
+	  harness?: string;
+	  modelBinding?: string;
 }): Promise<RunResult> {
   const root = mkdtempSync(join(tmpdir(), "mc-runner-test-"));
   roots.push(root);
@@ -58,8 +60,8 @@ async function runRunner(opts: {
       role: "worker",
       subject_id: 7,
       worksource: "ws-test",
-      harness: "fake",
-      model_binding: "fake",
+	      harness: opts.harness ?? "fake",
+	      model_binding: opts.modelBinding ?? "fake",
       mode: "fresh",
       brief: "process-level runner test",
       pool_ids: [],
@@ -115,6 +117,17 @@ const crashBehavior = {
 };
 
 describe("agent runner process behaviors (contract §4, spec §11.5)", () => {
+	  test("refuses a canonical route before invoking the fake adapter", async () => {
+	    const res = await runRunner({
+	      behavior: { steps: [{ do: "succeed", output: "must not run" }] },
+	      harness: "codex",
+	      modelBinding: "chatgpt",
+	    });
+	    expect(res.exitCode).toBe(2);
+	    expect(res.stderr).toContain("unsupported runtime route");
+	    expect(res.mcCalls).toEqual([]);
+	  }, 20_000);
+
   test("a crashed harness's exit code passes through — never converted into success", async () => {
     const res = await runRunner({ behavior: crashBehavior });
     expect(res.exitCode).toBe(17);

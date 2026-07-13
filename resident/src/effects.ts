@@ -70,6 +70,13 @@ async function spawn(effect: SpawnEffect, deps: TickDeps): Promise<void> {
     log(`spawn refused: run_id ${JSON.stringify(run_id)} fails the container-name charset`);
     return;
   }
+	if (effect.harness !== "fake" || effect.model_binding !== "fake") {
+		log(
+			`spawn refused: unsupported route ${JSON.stringify(`${effect.harness}/${effect.model_binding}`)}; ` +
+				"the current resident image contains only the explicitly test-tagged fake adapter (fail-closed)",
+		);
+		return;
+	}
   const behavior = config.roleBehaviors[role];
   if (behavior === undefined) {
     log(`spawn refused: no behavior mapped for role ${JSON.stringify(role)} (fail-closed)`);

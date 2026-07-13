@@ -507,3 +507,16 @@ runtime routes so recorded binding can never lie about executed adapter. Then
 assemble immutable spawn briefs carrying Editor records, Strategist dedupe,
 refine/correction notes, and Packager exception evidence. Initiative wave CLI
 remains Parked.
+
+- 2026-07-12 — **Phase 2 adversarial review: runtime route truth restored.**
+  Red resident and real-runner process tests proved a canonical
+  `codex/chatgpt` envelope still invoked the fake harness. Until the later
+  real-adapter phase lands, both layers now refuse non-`fake/fake` routes
+  before creating launch bytes or invoking the fake CLI. No canonical Run can
+  claim one adapter and execute another. Complete fast lane green; counts are
+  now fake 43, agent-runner 13, runner/image 2, resident 31.
+
+NEXT: Assemble immutable spawn briefs in `mc` from the claimed state snapshot
+and copy them unchanged into run.json: Editor proposal records, Strategist
+dedupe titles, Worker refine/correction input, and Packager budget-spent
+exception/evidence. Initiative wave CLI remains Parked.

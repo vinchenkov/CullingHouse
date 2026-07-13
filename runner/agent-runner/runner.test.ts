@@ -10,6 +10,8 @@ import { harnessEnv, makeLineSplitter, type RunEnvelope } from "./main";
 const envelope = (over: Partial<RunEnvelope>): RunEnvelope => ({
   run_id: "abc123",
   role: "worker",
+	harness: "fake",
+	model_binding: "fake",
   subject_id: 42,
   pool_ids: [],
   heartbeat_interval_s: 1,

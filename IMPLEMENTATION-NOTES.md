@@ -387,3 +387,16 @@ Entry template:
   fall back to it. Runs store the immutable `harness/binding` locator.
 - Spec impact: none; phase2-contract §7's ownership fence was incomplete
 - Needs your decision: no
+
+## 2026-07-12 — Canonical routes refuse the fake-only execution skeleton
+- Where: Phase 2 takeover review; spec §9 Runtime Adapter; Phase 1 fake harness
+- Gap: routing now truthfully records canonical harness/binding choices, while
+  the resident image and agent runner do not gain real Codex/Claude adapters
+  until the later container/runtime phase. Without an interim fence, a Run
+  recorded as canonical would actually execute the fake harness.
+- Choice: both resident and runner refuse every non-`fake/fake` spawn before
+  any fake adapter effect. The explicitly test-tagged fake E2E remains green;
+  canonical routes can execute only after their real adapter registry lands.
+  This preserves trace truth and is trivially removed adapter-by-adapter.
+- Spec impact: none; this is the fail-closed state between ordered phases
+- Needs your decision: no

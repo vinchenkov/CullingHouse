@@ -49,6 +49,18 @@ describe("idle / reenter / unknown", () => {
 });
 
 describe("spawn effect", () => {
+
+  test("canonical route is refused before the fake-only skeleton can mislabel execution", async () => {
+    const rig = makeRig();
+    await applyEffect(
+      { ...spawnEffect, harness: "codex", model_binding: "chatgpt" },
+      rig.deps,
+    );
+    expect(rig.fakeFs.events).toEqual([]);
+    expect(rig.docker.calls).toEqual([]);
+    expect(rig.logs.some((l) => l.includes("spawn refused") && l.includes("unsupported route"))).toBe(true);
+  });
+
   test("effects in §10 order: folder → run.json → container", async () => {
     const rig = makeRig();
     rig.docker.enqueue(ok("container-id\n"));
