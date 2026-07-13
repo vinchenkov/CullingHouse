@@ -819,7 +819,9 @@ CREATE TABLE conversation_messages (
     surface      TEXT    NOT NULL CHECK (surface IN ('discord', 'dashboard', 'cli', 'homie')),
     channel_ref  TEXT,
     body         TEXT    NOT NULL,
-    attachments  TEXT,                       -- JSON array of file-plane references (§15.5)
+    attachments  TEXT CHECK (attachments IS NULL OR
+                       (json_valid(attachments) AND json_type(attachments) = 'array')),
+                                             -- JSON array of file-plane references (§15.5)
     created_at   TEXT    NOT NULL DEFAULT (datetime('now')),
     claimed_by   TEXT,                       -- fenced, idempotent runner claims (§11.5)
     claimed_at   TEXT,
@@ -864,7 +866,8 @@ CREATE TABLE outbox (
     session_id   TEXT REFERENCES homie_sessions(id),
     surface      TEXT NOT NULL,
     channel_ref  TEXT,
-    payload      TEXT NOT NULL,   -- small inline JSON; anything large rides as a path reference
+    payload      TEXT NOT NULL    -- small inline JSON; anything large rides as a path reference
+                 CHECK (json_valid(payload) AND json_type(payload) = 'object'),
     created_at   TEXT NOT NULL DEFAULT (datetime('now')),
     delivered_at TEXT
 );

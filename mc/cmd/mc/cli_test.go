@@ -2167,6 +2167,277 @@ func TestHomieStartBindList(t *testing.T) {
 	})
 }
 
+func TestHomieSendHistoryEnd(t *testing.T) {
+	start := func(t *testing.T, spine, from string, allow ...string) string {
+		t.Helper()
+		args := []string{"homie", "start", "--from", from}
+		if len(allow) != 0 {
+			args = append(args, "--allow", strings.Join(allow, ","))
+		}
+		res := runMC(t, spineEnv(spine), "", args...)
+		if res.code != 0 {
+			t.Fatalf("homie start failed: %s", res.stderr)
+		}
+		return res.json["session_id"].(string)
+	}
+	bind := func(t *testing.T, spine, session, from string) {
+		t.Helper()
+		res := runMC(t, spineEnv(spine), "", "homie", "bind", session, "--from", from)
+		if res.code != 0 {
+			t.Fatalf("homie bind failed: %s", res.stderr)
+		}
+	}
+
+	t.Run("send_binds_origin_appends_stable_history_and_echoes_other_surfaces", func(t *testing.T) {
+		spine := initSpine(t)
+		session := start(t, spine, "dashboard:dash")
+		bind(t, spine, session, "discord:disc")
+
+		// Conversation traffic is lease-free and must coexist with a live
+		// leased pipeline run.
+		taskAdd(t, spine, "pipeline stays live during chat")
+		dispatchExpect(t, spine, "spawn")
+		db := openDB(t, spine)
+		lockBefore := queryStr(t, db, `SELECT run_id || '|' || owner || '|' || subject FROM lock WHERE id = 1`)
+		if _, err := db.Exec(`UPDATE homie_sessions SET last_activity_at = datetime('now', '-1 day') WHERE id = ?`, session); err != nil {
+			t.Fatal(err)
+		}
+		oldActivity := queryStr(t, db, `SELECT last_activity_at FROM homie_sessions WHERE id = ?`, session)
+
+		first := runMC(t, spineEnv(spine), "", "homie", "send", session,
+			"--from", "cli:terminal", "--body", "hello from CLI",
+			"--attachments", `["attachments/screenshot.png"]`)
+		if first.code != 0 {
+			t.Fatalf("homie send failed: %s", first.stderr)
+		}
+		if first.json["seq"] != float64(1) || first.json["echoes"] != float64(2) {
+			t.Fatalf("first send result = %v", first.json)
+		}
+		if got := queryStr(t, db, `SELECT direction || '|' || surface || '|' || channel_ref || '|' || body || '|' || attachments
+			FROM conversation_messages WHERE session_id = ? AND seq = 1`, session); got != `inbound|cli|terminal|hello from CLI|["attachments/screenshot.png"]` {
+			t.Fatalf("first conversation row = %q", got)
+		}
+		if got := queryStr(t, db, `SELECT last_activity_at FROM homie_sessions WHERE id = ?`, session); got == oldActivity {
+			t.Fatalf("send did not advance last_activity_at from %q", oldActivity)
+		}
+		if n := queryInt(t, db, `SELECT COUNT(*) FROM homie_bindings WHERE session_id = ? AND active = 1`, session); n != 3 {
+			t.Fatalf("origin traffic did not bind CLI place: %d bindings", n)
+		}
+		if got := queryStr(t, db, `SELECT group_concat(surface || ':' || channel_ref, ',') FROM
+			(SELECT surface, channel_ref FROM outbox WHERE kind = 'homie_echo' ORDER BY surface, channel_ref)`); got != "dashboard:dash,discord:disc" {
+			t.Fatalf("echo destinations = %q", got)
+		}
+		var payload map[string]any
+		if err := json.Unmarshal([]byte(queryStr(t, db, `SELECT payload FROM outbox ORDER BY id LIMIT 1`)), &payload); err != nil {
+			t.Fatal(err)
+		}
+		origin := payload["origin"].(map[string]any)
+		if payload["body"] != "hello from CLI" || payload["seq"] != float64(1) ||
+			origin["surface"] != "cli" || origin["channel_ref"] != "terminal" {
+			t.Fatalf("echo payload = %v", payload)
+		}
+		if got := queryStr(t, db, `SELECT run_id || '|' || owner || '|' || subject FROM lock WHERE id = 1`); got != lockBefore {
+			t.Fatalf("send disturbed pipeline lease: before %q after %q", lockBefore, got)
+		}
+
+		second := runMC(t, spineEnv(spine), "", "homie", "send", session,
+			"--from", "dashboard:dash", "--body", "second turn")
+		if second.code != 0 || second.json["seq"] != float64(2) || second.json["echoes"] != float64(2) {
+			t.Fatalf("second send = code %d json %v stderr %q", second.code, second.json, second.stderr)
+		}
+
+		history := runMC(t, spineEnv(spine), "", "homie", "history", session)
+		if history.code != 0 {
+			t.Fatalf("homie history failed: %s", history.stderr)
+		}
+		messages := history.json["messages"].([]any)
+		if len(messages) != 2 {
+			t.Fatalf("history = %v", history.json)
+		}
+		m1, m2 := messages[0].(map[string]any), messages[1].(map[string]any)
+		if m1["seq"] != float64(1) || m2["seq"] != float64(2) || m2["body"] != "second turn" {
+			t.Fatalf("history order/content = %v", messages)
+		}
+		attachments := m1["attachments"].([]any)
+		if len(attachments) != 1 || attachments[0] != "attachments/screenshot.png" {
+			t.Fatalf("history attachments = %v", attachments)
+		}
+		if got := m2["attachments"].([]any); len(got) != 0 {
+			t.Fatalf("attachment-free history row = %v", got)
+		}
+	})
+
+	t.Run("send_outbox_failure_rolls_back_binding_message_and_activity", func(t *testing.T) {
+		spine := initSpine(t)
+		session := start(t, spine, "dashboard:dash")
+		bind(t, spine, session, "discord:disc")
+		db := openDB(t, spine)
+		beforeActivity := queryStr(t, db, `SELECT last_activity_at FROM homie_sessions WHERE id = ?`, session)
+		if _, err := db.Exec(`CREATE TRIGGER test_fail_homie_echo
+			BEFORE INSERT ON outbox WHEN NEW.kind = 'homie_echo'
+			BEGIN SELECT RAISE(ABORT, 'injected echo failure'); END`); err != nil {
+			t.Fatal(err)
+		}
+		res := runMC(t, spineEnv(spine), "", "homie", "send", session,
+			"--from", "cli:new-origin", "--body", "must roll back")
+		if res.code != 1 || !strings.Contains(res.stderr, "injected echo failure") {
+			t.Fatalf("send atomic failure = code %d stderr %q", res.code, res.stderr)
+		}
+		if queryInt(t, db, `SELECT COUNT(*) FROM conversation_messages`) != 0 ||
+			queryInt(t, db, `SELECT COUNT(*) FROM outbox`) != 0 {
+			t.Fatal("failed send left a message or outbox row")
+		}
+		if queryInt(t, db, `SELECT COUNT(*) FROM homie_bindings WHERE channel_ref = 'new-origin'`) != 0 {
+			t.Fatal("failed send left the implicit origin binding")
+		}
+		if got := queryStr(t, db, `SELECT last_activity_at FROM homie_sessions WHERE id = ?`, session); got != beforeActivity {
+			t.Fatalf("failed send changed last_activity_at: before %q after %q", beforeActivity, got)
+		}
+	})
+
+	t.Run("end_activity_failure_rolls_back_status_and_binding_deactivation", func(t *testing.T) {
+		spine := initSpine(t)
+		session := start(t, spine, "dashboard:dash")
+		db := openDB(t, spine)
+		if _, err := db.Exec(`CREATE TRIGGER test_fail_homie_end_activity
+			BEFORE INSERT ON activity WHEN NEW.kind = 'homie.ended'
+			BEGIN SELECT RAISE(ABORT, 'injected end activity failure'); END`); err != nil {
+			t.Fatal(err)
+		}
+		res := runMC(t, spineEnv(spine), "", "homie", "end", session, "--reason", "must roll back")
+		if res.code != 1 || !strings.Contains(res.stderr, "injected end activity failure") {
+			t.Fatalf("end atomic failure = code %d stderr %q", res.code, res.stderr)
+		}
+		if got := queryStr(t, db, `SELECT status FROM homie_sessions WHERE id = ?`, session); got != "active" {
+			t.Fatalf("failed end changed status: %q", got)
+		}
+		if n := queryInt(t, db, `SELECT COUNT(*) FROM homie_bindings WHERE session_id = ? AND active = 1`, session); n != 1 {
+			t.Fatalf("failed end deactivated bindings: %d active", n)
+		}
+		if n := queryInt(t, db, `SELECT COUNT(*) FROM activity WHERE kind = 'homie.ended'`); n != 0 {
+			t.Fatalf("failed end left %d activity rows", n)
+		}
+	})
+
+	t.Run("scope_history_and_end_are_own_session_fenced", func(t *testing.T) {
+		spine := initSpine(t)
+		a := start(t, spine, "dashboard:a")
+		b := start(t, spine, "cli:b")
+		if got := runMC(t, spineEnv(spine), "", "homie", "send", a,
+			"--from", "dashboard:a", "--body", "visible only in A"); got.code != 0 {
+			t.Fatalf("send fixture failed: %s", got.stderr)
+		}
+		db := openDB(t, spine)
+		beforeMessages := queryInt(t, db, `SELECT COUNT(*) FROM conversation_messages`)
+
+		pipeline := runJSONEnv(t, spine, "pipeline", "pipeline", "worker")
+		for _, args := range [][]string{
+			{"homie", "send", a, "--from", "dashboard:a", "--body", "forged"},
+			{"homie", "history", a},
+			{"homie", "end", a, "--reason", "forged"},
+		} {
+			got := runMC(t, pipeline, "", args...)
+			if got.code != 1 {
+				t.Fatalf("pipeline %v exit = %d stderr %q", args, got.code, got.stderr)
+			}
+		}
+		if queryInt(t, db, `SELECT COUNT(*) FROM conversation_messages`) != beforeMessages ||
+			queryStr(t, db, `SELECT status FROM homie_sessions WHERE id = ?`, a) != "active" {
+			t.Fatal("pipeline Homie verb mutated state")
+		}
+
+		homieA := homieJSONEnv(t, spine, a, defaultHomieAllowlist)
+		forgedSend := runMC(t, homieA, "", "homie", "send", a,
+			"--from", "dashboard:a", "--body", "agent cannot inject transport")
+		if forgedSend.code != 1 {
+			t.Fatalf("Homie-agent send exit = %d stderr %q", forgedSend.code, forgedSend.stderr)
+		}
+		ownHistory := runMC(t, homieA, "", "homie", "history", a)
+		if ownHistory.code != 0 || len(ownHistory.json["messages"].([]any)) != 1 {
+			t.Fatalf("own history = code %d json %v stderr %q", ownHistory.code, ownHistory.json, ownHistory.stderr)
+		}
+		otherHistory := runMC(t, homieA, "", "homie", "history", b)
+		if otherHistory.code != 1 || !strings.Contains(otherHistory.stderr, "own session") {
+			t.Fatalf("cross-session history = code %d stderr %q", otherHistory.code, otherHistory.stderr)
+		}
+		otherEnd := runMC(t, homieA, "", "homie", "end", b, "--reason", "hijack")
+		if otherEnd.code != 1 || !strings.Contains(otherEnd.stderr, "own session") {
+			t.Fatalf("cross-session end = code %d stderr %q", otherEnd.code, otherEnd.stderr)
+		}
+
+		lockBefore := queryStr(t, db, `SELECT COALESCE(run_id, '<free>') FROM lock WHERE id = 1`)
+		ended := runMC(t, homieA, "", "homie", "end", a, "--reason", "operator done")
+		if ended.code != 0 || ended.json["status"] != "ended" || ended.json["ended"] != true {
+			t.Fatalf("own end = code %d json %v stderr %q", ended.code, ended.json, ended.stderr)
+		}
+		if got := queryStr(t, db, `SELECT status FROM homie_sessions WHERE id = ?`, a); got != "ended" {
+			t.Fatalf("ended session status = %q", got)
+		}
+		if n := queryInt(t, db, `SELECT COUNT(*) FROM homie_bindings WHERE session_id = ? AND active = 1`, a); n != 0 {
+			t.Fatalf("end left %d active bindings", n)
+		}
+		if got := queryStr(t, db, `SELECT kind || '|' || subject || '|' || detail FROM activity WHERE kind = 'homie.ended'`); got != "homie.ended|"+a+"|operator done" {
+			t.Fatalf("end activity = %q", got)
+		}
+		if got := queryStr(t, db, `SELECT COALESCE(run_id, '<free>') FROM lock WHERE id = 1`); got != lockBefore {
+			t.Fatalf("end disturbed pipeline lease: before %q after %q", lockBefore, got)
+		}
+		stale := runMC(t, homieA, "", "homie", "history", a)
+		if stale.code != 1 || !strings.Contains(stale.stderr, "not active") {
+			t.Fatalf("ended Homie history = code %d stderr %q", stale.code, stale.stderr)
+		}
+		hostHistory := runMC(t, spineEnv(spine), "", "homie", "history", a)
+		if hostHistory.code != 0 || len(hostHistory.json["messages"].([]any)) != 1 {
+			t.Fatalf("host lost ended-session history: code %d json %v", hostHistory.code, hostHistory.json)
+		}
+		replay := runMC(t, spineEnv(spine), "", "homie", "end", a, "--reason", "operator done")
+		if replay.code != 0 || replay.json["ended"] != false || queryInt(t, db, `SELECT COUNT(*) FROM activity WHERE kind = 'homie.ended'`) != 1 {
+			t.Fatalf("host end replay = code %d json %v stderr %q", replay.code, replay.json, replay.stderr)
+		}
+	})
+
+	t.Run("validation_and_cross_session_origin_conflict_are_inert", func(t *testing.T) {
+		spine := initSpine(t)
+		a := start(t, spine, "dashboard:a")
+		b := start(t, spine, "cli:b")
+		db := openDB(t, spine)
+		for _, tc := range []struct {
+			name string
+			args []string
+			msg  string
+		}{
+			{name: "missing_body", args: []string{"homie", "send", a, "--from", "dashboard:a"}, msg: "body or attachment"},
+			{name: "bad_attachments_json", args: []string{"homie", "send", a, "--from", "dashboard:a", "--attachments", `{}`}, msg: "JSON array"},
+			{name: "attachment_traversal", args: []string{"homie", "send", a, "--from", "dashboard:a", "--attachments", `["../secret"]`}, msg: "normalized relative"},
+			{name: "unknown_session", args: []string{"homie", "send", "h-missing", "--from", "dashboard:x", "--body", "x"}, msg: "unknown Homie session"},
+			{name: "origin_owned_by_other", args: []string{"homie", "send", a, "--from", "cli:b", "--body", "x"}, msg: "already bound"},
+			{name: "history_unknown", args: []string{"homie", "history", "h-missing"}, msg: "unknown Homie session"},
+			{name: "end_missing_reason", args: []string{"homie", "end", a}, msg: "requires --reason"},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				beforeMessages := queryInt(t, db, `SELECT COUNT(*) FROM conversation_messages`)
+				beforeOutbox := queryInt(t, db, `SELECT COUNT(*) FROM outbox`)
+				got := runMC(t, spineEnv(spine), "", tc.args...)
+				if got.code == 0 || !strings.Contains(got.stderr, tc.msg) {
+					t.Fatalf("exit = %d stderr %q, want failure containing %q", got.code, got.stderr, tc.msg)
+				}
+				if queryInt(t, db, `SELECT COUNT(*) FROM conversation_messages`) != beforeMessages ||
+					queryInt(t, db, `SELECT COUNT(*) FROM outbox`) != beforeOutbox {
+					t.Fatal("invalid Homie message verb mutated state")
+				}
+			})
+		}
+		if _, err := db.Exec(`UPDATE homie_sessions SET status = 'ended' WHERE id = ?`, b); err != nil {
+			t.Fatal(err)
+		}
+		endedSend := runMC(t, spineEnv(spine), "", "homie", "send", b,
+			"--from", "cli:b", "--body", "implicit resume comes later")
+		if endedSend.code != 1 || !strings.Contains(endedSend.stderr, "use resume") {
+			t.Fatalf("ended send = code %d stderr %q", endedSend.code, endedSend.stderr)
+		}
+	})
+}
+
 func workerFixture(t *testing.T, title string) (string, int64, string, []string) {
 	t.Helper()
 	spine := initSpine(t)

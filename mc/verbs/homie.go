@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"path"
 	"sort"
 	"strings"
 )
@@ -28,8 +29,8 @@ var maximumHomieAgentVerbs = []string{
 }
 
 type SurfaceRef struct {
-	Surface    string
-	ChannelRef string
+	Surface    string `json:"surface"`
+	ChannelRef string `json:"channel_ref"`
 }
 
 func parseSurfaceRef(raw string) (SurfaceRef, error) {
@@ -178,24 +179,7 @@ func HomieBind(db *sql.DB, id *RunIdentity, sessionID, rawFrom string) (any, err
 			return Domainf("binding requires an active Homie session; %q is %s (use resume)", sessionID, status)
 		}
 
-		var owner string
-		err = q.QueryRowContext(ctx, `
-			SELECT session_id FROM homie_bindings
-			WHERE surface = ? AND channel_ref = ? AND active = 1`,
-			from.Surface, from.ChannelRef).Scan(&owner)
-		switch {
-		case err == nil && owner == sessionID:
-			bound = false
-			return nil
-		case err == nil:
-			return Domainf("%s:%s is already bound to active Homie session %q",
-				from.Surface, from.ChannelRef, owner)
-		case err != sql.ErrNoRows:
-			return err
-		}
-		_, err = q.ExecContext(ctx, `
-			INSERT INTO homie_bindings (session_id, surface, channel_ref)
-			VALUES (?, ?, ?)`, sessionID, from.Surface, from.ChannelRef)
+		bound, err = ensureActiveBinding(ctx, q, sessionID, from)
 		return err
 	})
 	if err != nil {
@@ -205,6 +189,175 @@ func HomieBind(db *sql.DB, id *RunIdentity, sessionID, rawFrom string) (any, err
 		"session_id": sessionID,
 		"surface":    from.Surface, "channel_ref": from.ChannelRef,
 		"bound": bound,
+	}, nil
+}
+
+func ensureActiveBinding(ctx context.Context, q Q, sessionID string, from SurfaceRef) (bool, error) {
+	var owner string
+	err := q.QueryRowContext(ctx, `
+		SELECT session_id FROM homie_bindings
+		WHERE surface = ? AND channel_ref = ? AND active = 1`,
+		from.Surface, from.ChannelRef).Scan(&owner)
+	switch {
+	case err == nil && owner == sessionID:
+		return false, nil
+	case err == nil:
+		return false, Domainf("%s:%s is already bound to active Homie session %q",
+			from.Surface, from.ChannelRef, owner)
+	case err != sql.ErrNoRows:
+		return false, err
+	}
+	_, err = q.ExecContext(ctx, `
+		INSERT INTO homie_bindings (session_id, surface, channel_ref)
+		VALUES (?, ?, ?)`, sessionID, from.Surface, from.ChannelRef)
+	return true, err
+}
+
+func parseAttachments(raw string) ([]string, any, error) {
+	if raw == "" {
+		return []string{}, nil, nil
+	}
+	var refs []string
+	if err := json.Unmarshal([]byte(raw), &refs); err != nil || refs == nil {
+		return nil, nil, Usagef("mc homie send --attachments must be a JSON array of path strings")
+	}
+	for _, ref := range refs {
+		clean := path.Clean(ref)
+		if ref == "" || path.IsAbs(ref) || clean != ref || clean == "." ||
+			clean == ".." || strings.HasPrefix(clean, "../") {
+			return nil, nil, Usagef("attachment references must be normalized relative file-plane paths (§15.5)")
+		}
+	}
+	b, err := json.Marshal(refs)
+	if err != nil {
+		return nil, nil, Usagef("encode attachment references: %v", err)
+	}
+	return refs, string(b), nil
+}
+
+type HomieSendArgs struct {
+	Session     string
+	From        string
+	Body        string
+	Attachments string
+}
+
+type homieEchoPayload struct {
+	MessageID   int64      `json:"message_id"`
+	Seq         int64      `json:"seq"`
+	Body        string     `json:"body"`
+	Attachments []string   `json:"attachments"`
+	Origin      SurfaceRef `json:"origin"`
+}
+
+// HomieSend is native-surface transport into one active conversation. The
+// inbound record, first-traffic binding, activity timestamp, and echo rows to
+// every other binding commit together (§15.5). It is structurally host-only;
+// the Homie model never owns inbound transport.
+func HomieSend(db *sql.DB, id *RunIdentity, a HomieSendArgs) (any, error) {
+	if err := RequireHostScope(id, "mc homie send"); err != nil {
+		return nil, err
+	}
+	from, err := parseSurfaceRef(a.From)
+	if err != nil {
+		return nil, err
+	}
+	attachments, attachmentValue, err := parseAttachments(a.Attachments)
+	if err != nil {
+		return nil, err
+	}
+	if a.Body == "" && len(attachments) == 0 {
+		return nil, Usagef("mc homie send requires a body or attachment (§15.5)")
+	}
+
+	var messageID, seq int64
+	echoes := 0
+	err = inTx(db, func(ctx context.Context, q Q) error {
+		var status string
+		err := q.QueryRowContext(ctx,
+			`SELECT status FROM homie_sessions WHERE id = ?`, a.Session).Scan(&status)
+		if err == sql.ErrNoRows {
+			return Domainf("unknown Homie session %q", a.Session)
+		}
+		if err != nil {
+			return err
+		}
+		if status != "active" {
+			return Domainf("Homie session %q is %s; use resume before send (§15.4)", a.Session, status)
+		}
+		if _, err := ensureActiveBinding(ctx, q, a.Session, from); err != nil {
+			return err
+		}
+		if err := q.QueryRowContext(ctx, `
+			SELECT COALESCE(MAX(seq), 0) + 1
+			FROM conversation_messages WHERE session_id = ?`, a.Session).Scan(&seq); err != nil {
+			return err
+		}
+		inserted, err := q.ExecContext(ctx, `
+			INSERT INTO conversation_messages
+				(session_id, seq, direction, surface, channel_ref, body, attachments)
+			VALUES (?, ?, 'inbound', ?, ?, ?, ?)`,
+			a.Session, seq, from.Surface, from.ChannelRef, a.Body, attachmentValue)
+		if err != nil {
+			return err
+		}
+		messageID, err = inserted.LastInsertId()
+		if err != nil {
+			return err
+		}
+		if _, err := q.ExecContext(ctx, `
+			UPDATE homie_sessions SET last_activity_at = datetime('now')
+			WHERE id = ? AND status = 'active'`, a.Session); err != nil {
+			return err
+		}
+		payload, err := json.Marshal(homieEchoPayload{
+			MessageID: messageID, Seq: seq, Body: a.Body,
+			Attachments: attachments, Origin: from,
+		})
+		if err != nil {
+			return err
+		}
+		rows, err := q.QueryContext(ctx, `
+			SELECT surface, channel_ref FROM homie_bindings
+			WHERE session_id = ? AND active = 1
+			  AND NOT (surface = ? AND channel_ref = ?)
+			ORDER BY surface, channel_ref, id`,
+			a.Session, from.Surface, from.ChannelRef)
+		if err != nil {
+			return err
+		}
+		var destinations []SurfaceRef
+		for rows.Next() {
+			var destination SurfaceRef
+			if err := rows.Scan(&destination.Surface, &destination.ChannelRef); err != nil {
+				rows.Close()
+				return err
+			}
+			destinations = append(destinations, destination)
+		}
+		if err := rows.Close(); err != nil {
+			return err
+		}
+		if err := rows.Err(); err != nil {
+			return err
+		}
+		for _, destination := range destinations {
+			if _, err := q.ExecContext(ctx, `
+				INSERT INTO outbox (kind, session_id, surface, channel_ref, payload)
+				VALUES ('homie_echo', ?, ?, ?, ?)`,
+				a.Session, destination.Surface, destination.ChannelRef, string(payload)); err != nil {
+				return err
+			}
+			echoes++
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{
+		"session_id": a.Session, "message_id": messageID, "seq": seq,
+		"echoes": echoes,
 	}, nil
 }
 
@@ -375,4 +528,131 @@ func HomieList(db *sql.DB, id *RunIdentity) (any, error) {
 		out = append(out, sessions[i].jsonMap())
 	}
 	return map[string]any{"sessions": out}, nil
+}
+
+// HomieHistory reads the one durable transcript in stable sequence order.
+// Host may read any retained session; a Homie agent is canonical-active,
+// allowlisted, and restricted to its own conversation (ADR-001 D6).
+func HomieHistory(db *sql.DB, id *RunIdentity, sessionID string) (any, error) {
+	if id != nil {
+		if id.Tier != "homie" {
+			return nil, Domainf("mc homie history is host or Homie-agent scope; run.json tier is %q (ADR-001 D6)", id.Tier)
+		}
+		if id.RunID != sessionID {
+			return nil, Domainf("a Homie agent may read only its own session; caller is %q, target is %q", id.RunID, sessionID)
+		}
+		if err := requireActiveHomieVerb(context.Background(), db, id, "homie.history"); err != nil {
+			return nil, classify(err)
+		}
+	}
+	var status string
+	if err := db.QueryRow(`SELECT status FROM homie_sessions WHERE id = ?`, sessionID).Scan(&status); err == sql.ErrNoRows {
+		return nil, Domainf("unknown Homie session %q", sessionID)
+	} else if err != nil {
+		return nil, classify(err)
+	}
+	rows, err := db.Query(`
+		SELECT id, seq, direction, surface, channel_ref, body, attachments, created_at
+		FROM conversation_messages WHERE session_id = ? ORDER BY seq, id`, sessionID)
+	if err != nil {
+		return nil, classify(err)
+	}
+	defer rows.Close()
+	messages := []map[string]any{}
+	for rows.Next() {
+		var messageID, seq int64
+		var direction, surface, body, createdAt string
+		var channelRef, attachmentJSON sql.NullString
+		if err := rows.Scan(
+			&messageID, &seq, &direction, &surface, &channelRef,
+			&body, &attachmentJSON, &createdAt,
+		); err != nil {
+			return nil, classify(err)
+		}
+		attachments := []string{}
+		if attachmentJSON.Valid {
+			if err := json.Unmarshal([]byte(attachmentJSON.String), &attachments); err != nil {
+				return nil, classify(fmt.Errorf("parse attachments for conversation message %d: %w", messageID, err))
+			}
+		}
+		var channel any
+		if channelRef.Valid {
+			channel = channelRef.String
+		}
+		messages = append(messages, map[string]any{
+			"id": messageID, "seq": seq, "direction": direction,
+			"surface": surface, "channel_ref": channel, "body": body,
+			"attachments": attachments, "created_at": createdAt,
+		})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, classify(err)
+	}
+	return map[string]any{
+		"session_id": sessionID, "status": status, "messages": messages,
+	}, nil
+}
+
+// HomieEnd changes only durable conversation state. The substrate trigger
+// deactivates bindings; the next resident sweep owns any container stop.
+// Host retries are idempotent. A Homie agent may end only its own active,
+// canonically allowlisted session.
+func HomieEnd(db *sql.DB, id *RunIdentity, sessionID, reason string) (any, error) {
+	if reason == "" {
+		return nil, Usagef("mc homie end requires --reason")
+	}
+	if id != nil {
+		if id.Tier != "homie" {
+			return nil, Domainf("mc homie end is host or Homie-agent scope; run.json tier is %q (ADR-001 D6)", id.Tier)
+		}
+		if id.RunID != sessionID {
+			return nil, Domainf("a Homie agent may end only its own session; caller is %q, target is %q", id.RunID, sessionID)
+		}
+		if err := RequireOperatorVerb(id, "homie.end"); err != nil {
+			return nil, err
+		}
+	}
+	ended := false
+	status := ""
+	err := inTx(db, func(ctx context.Context, q Q) error {
+		if id != nil {
+			if err := requireActiveHomieVerb(ctx, q, id, "homie.end"); err != nil {
+				return err
+			}
+		}
+		err := q.QueryRowContext(ctx,
+			`SELECT status FROM homie_sessions WHERE id = ?`, sessionID).Scan(&status)
+		if err == sql.ErrNoRows {
+			return Domainf("unknown Homie session %q", sessionID)
+		}
+		if err != nil {
+			return err
+		}
+		if status != "active" {
+			return nil // host/surface retry: preserve ended or reaped truth
+		}
+		if _, err := q.ExecContext(ctx,
+			`UPDATE homie_sessions SET status = 'ended' WHERE id = ? AND status = 'active'`,
+			sessionID); err != nil {
+			return err
+		}
+		actor := "operator"
+		if id != nil {
+			actor = "homie"
+		}
+		if _, err := q.ExecContext(ctx, `
+			INSERT INTO activity (actor, kind, subject, detail)
+			VALUES (?, 'homie.ended', ?, ?)`, actor, sessionID, reason); err != nil {
+			return err
+		}
+		ended = true
+		status = "ended"
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{
+		"session_id": sessionID, "status": status, "ended": ended,
+	}, nil
 }

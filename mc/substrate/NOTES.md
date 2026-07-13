@@ -107,7 +107,9 @@ and is easiest to reverse.
   §15.4 calls the rows append-only while §11.5/§15.5 require durable claim and
   delivery bookkeeping on the same records. Split by column: identity/content
   columns abort on UPDATE; `claimed_by`/`claimed_at`/`completed_at` may
-  advance. DELETE always aborts.
+  advance. DELETE always aborts. Attachment carriers are JSON arrays, and
+  outbox payloads are JSON objects, CHECK-pinned so later transport writers
+  cannot place malformed durable work on either bus.
 - **NOTE(P1.14) — defaults where the spec names none:** `priority` defaults
   to 2 (mid-band of P0–P3; expedite is always explicit), `dispatch_retries`
   to 3 (§16.3's shipped budget), lease timing columns to the §16.3 table.

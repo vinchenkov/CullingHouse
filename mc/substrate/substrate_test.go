@@ -888,6 +888,12 @@ func TestHomieBindingsHistory(t *testing.T) {
 func TestConversationRowsAppendOnly(t *testing.T) {
 	db := openSpine(t)
 	mkHomieSession(t, db, "h1")
+	wantAbort(t, db,
+		`INSERT INTO conversation_messages (session_id, seq, direction, surface, body, attachments)
+		 VALUES ('h1', 90, 'inbound', 'discord', 'bad', 'not-json')`)
+	wantAbort(t, db,
+		`INSERT INTO conversation_messages (session_id, seq, direction, surface, body, attachments)
+		 VALUES ('h1', 91, 'inbound', 'discord', 'bad', '{}')`)
 	mustExec(t, db,
 		`INSERT INTO conversation_messages (session_id, seq, direction, surface, body)
 		 VALUES ('h1', 1, 'inbound', 'discord', 'hello')`)
@@ -903,6 +909,13 @@ func TestConversationRowsAppendOnly(t *testing.T) {
 	mustExec(t, db,
 		`UPDATE conversation_messages SET completed_at = datetime('now')
 		 WHERE session_id = 'h1' AND seq = 1`)
+}
+
+func TestOutboxPayloadIsJSONObject(t *testing.T) {
+	db := openSpine(t)
+	wantAbort(t, db, `INSERT INTO outbox (kind, surface, payload) VALUES ('health', 'dashboard', 'not-json')`)
+	wantAbort(t, db, `INSERT INTO outbox (kind, surface, payload) VALUES ('health', 'dashboard', '[]')`)
+	mustExec(t, db, `INSERT INTO outbox (kind, surface, payload) VALUES ('health', 'dashboard', '{"status":"ok"}')`)
 }
 
 // ---------------------------------------------------------------------------

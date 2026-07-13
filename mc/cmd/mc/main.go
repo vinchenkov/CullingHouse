@@ -581,7 +581,7 @@ func cmdConsole(args []string) (any, error) {
 
 func cmdHomie(args []string) (any, error) {
 	if len(args) == 0 {
-		return nil, verbs.Usagef("usage: mc homie start|bind|list …")
+		return nil, verbs.Usagef("usage: mc homie start|bind|send|list|history|end …")
 	}
 	switch args[0] {
 	case "start":
@@ -650,6 +650,68 @@ func cmdHomie(args []string) (any, error) {
 		}
 		return withSpine(func(db *sql.DB) (any, error) {
 			return verbs.HomieList(db, id)
+		})
+
+	case "send":
+		sessionID, rest, err := positional("mc homie send", args[1:])
+		if err != nil {
+			return nil, err
+		}
+		fs := newFlags("mc homie send")
+		from := fs.String("from", "", "origin surface:channel_ref")
+		body := fs.String("body", "", "inbound text")
+		attachments := fs.String("attachments", "", "JSON array of file-plane paths")
+		if err := parse(fs, rest); err != nil {
+			return nil, err
+		}
+		if *from == "" {
+			return nil, verbs.Usagef("mc homie send requires --from <surface:channel_ref>")
+		}
+		id, err := verbs.LoadIdentity()
+		if err != nil {
+			return nil, err
+		}
+		return withSpine(func(db *sql.DB) (any, error) {
+			return verbs.HomieSend(db, id, verbs.HomieSendArgs{
+				Session: sessionID, From: *from, Body: *body, Attachments: *attachments,
+			})
+		})
+
+	case "history":
+		sessionID, rest, err := positional("mc homie history", args[1:])
+		if err != nil {
+			return nil, err
+		}
+		if len(rest) != 0 {
+			return nil, verbs.Usagef("mc homie history: unexpected argument %q", rest[0])
+		}
+		id, err := verbs.LoadIdentity()
+		if err != nil {
+			return nil, err
+		}
+		return withSpine(func(db *sql.DB) (any, error) {
+			return verbs.HomieHistory(db, id, sessionID)
+		})
+
+	case "end":
+		sessionID, rest, err := positional("mc homie end", args[1:])
+		if err != nil {
+			return nil, err
+		}
+		fs := newFlags("mc homie end")
+		reason := fs.String("reason", "", "end reason")
+		if err := parse(fs, rest); err != nil {
+			return nil, err
+		}
+		if *reason == "" {
+			return nil, verbs.Usagef("mc homie end requires --reason")
+		}
+		id, err := verbs.LoadIdentity()
+		if err != nil {
+			return nil, err
+		}
+		return withSpine(func(db *sql.DB) (any, error) {
+			return verbs.HomieEnd(db, id, sessionID, *reason)
 		})
 	}
 	return nil, verbs.Usagef("unknown subverb: mc homie %s", args[0])

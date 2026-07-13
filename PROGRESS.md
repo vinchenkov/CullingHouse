@@ -2,7 +2,7 @@
 
 <!-- Header block: kept current by every session. -->
 LAST GREEN SHA: (this commit)
-PHASES PASSING: Phase 0 COMPLETE (S1–S8 all green, no fallback ADRs; only operator-leg deferrals remain); Phase 1 COMPLETE (1a substrate 171; 1b walking skeleton reviewed-and-fixed — fake-harness 43, agent-runner 13, runner/image 2, resident 32, dispatch + cmd/mc suites; Docker e2e PASS ×4 total)
+PHASES PASSING: Phase 0 COMPLETE (S1–S8 all green, no fallback ADRs; only operator-leg deferrals remain); Phase 1 COMPLETE (1a substrate 172; 1b walking skeleton reviewed-and-fixed — fake-harness 43, agent-runner 13, runner/image 2, resident 32, dispatch + cmd/mc suites; Docker e2e PASS ×4 total)
 KNOWN-FAILING: (none)
 FAST SUITE: mc/check.sh (gofmt+vet+go test ./... — includes substrate + promoted dispatch) + runner/fake-harness/check.sh + runner/agent-runner/check.sh + runner/image/check.sh + resident/check.sh. Docker e2e (phase-completion lane): cd mc && mise exec -- go test -tags docker_e2e -timeout 15m ./e2e/...
 
@@ -753,3 +753,24 @@ per-session sequence, origin binding and cross-surface echo outbox in one
 transaction; deterministic durable history; host or allowlisted-own end that
 deactivates bindings without deleting rows or touching the pipeline lease.
 Keep implicit resume and runner claim/reply behind their following slices.
+
+- 2026-07-12 — **Phase 2 Homie send/history/end green.** ADR-010 pins the
+  inbound and lifecycle grammar. Host-only send accepts text and normalized
+  attachment references, creates the first-traffic origin binding, allocates
+  the next durable per-session sequence, advances activity time, and writes
+  one `homie_echo` row for every other active binding in a single transaction.
+  Injected outbox failure rolls back the message, implicit binding, and time.
+  History renders the permanent transcript and structured attachments in
+  stable order; host retains ended-session access while an allowlisted Homie
+  is active-own only. End atomically flips status, appends the reason event,
+  and lets the substrate deactivate bindings; injected event failure rolls
+  all of that back, and host replay is idempotent. Pipeline/Homie transport
+  forgeries, cross-session reads/ends, invalid attachment carriers, occupied
+  origins, and ended sends are inert. Attachment and outbox JSON shapes now
+  also have raw-schema CHECKs. Complete fast lane green; substrate suite 172.
+
+NEXT: TDD `mc outbox poll|ack` as a host/native-surface-only delivery cursor:
+poll one surface's undelivered rows in stable id order without mutation; ack
+only a row owned by that same surface, idempotently. Then add explicit Homie
+resume plus a real Homie-runner capability seam before claim/reply/register;
+do not expose outbound transport through the model's Homie-agent identity.
