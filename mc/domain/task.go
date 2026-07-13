@@ -461,10 +461,34 @@ type ProposalArgs struct {
 	Worksource  string
 }
 
+// requireActiveWorksource refuses filing new work into a paused or archived
+// Worksource. Pause stops intake, archive is terminal, and no unpause verb
+// exists (§18) — a row filed there would be invisible to every selection
+// site forever, silently swallowing operator intent.
+func requireActiveWorksource(ctx context.Context, q Q, id string) error {
+	var status string
+	err := q.QueryRowContext(ctx,
+		`SELECT status FROM worksources WHERE id = ?`, id).Scan(&status)
+	if err == sql.ErrNoRows {
+		return Errf(CodeNotFound, "unknown worksource %q", id)
+	}
+	if err != nil {
+		return err
+	}
+	if status != "active" {
+		return Errf(CodeWorksourceInactive,
+			"worksource %q is %s and accepts no new work", id, status)
+	}
+	return nil
+}
+
 // BirthProposal files one row into the proposed pool.
 func BirthProposal(ctx context.Context, q Q, a ProposalArgs) (int64, error) {
 	if a.Title == "" || a.Worksource == "" {
 		return 0, Errf(CodeReasonRequired, "a proposal requires title and worksource (ADR-001 D4)")
+	}
+	if err := requireActiveWorksource(ctx, q, a.Worksource); err != nil {
+		return 0, err
 	}
 	scope := a.Scope
 	if scope == "" {

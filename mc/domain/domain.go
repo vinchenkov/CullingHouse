@@ -66,6 +66,7 @@ const (
 	CodeEmptyWave          = "empty-wave"
 	CodeNotInitiative      = "not-initiative"
 	CodeArchived           = "archived"
+	CodeWorksourceInactive = "worksource-inactive"
 )
 
 // DomainError is a domain rejection: exit 1 at the CLI (phase1b-contract §2),

@@ -518,6 +518,40 @@ func TestWorksourceLifecycle(t *testing.T) {
 	}
 }
 
+func TestInactiveWorksourceRefusesNewWork(t *testing.T) {
+	spine := initSpine(t)
+	add := runMC(t, spineEnv(spine), "", "worksource", "add", "ws-cold",
+		"--title", "Cold", "--kind", "repo")
+	if add.code != 0 {
+		t.Fatalf("worksource add failed: %s", add.stderr)
+	}
+	db := openDB(t, spine)
+
+	for _, status := range []string{"pause", "archive"} {
+		if res := runMC(t, spineEnv(spine), "", "worksource", status, "ws-cold"); res.code != 0 {
+			t.Fatalf("worksource %s failed: %s", status, res.stderr)
+		}
+		before := queryInt(t, db, `SELECT COUNT(*) FROM tasks`)
+		for _, args := range [][]string{
+			{"task", "add", "swallowed", "--worksource", "ws-cold"},
+			{"initiative", "add", "swallowed arc", "--worksource", "ws-cold",
+				"--charter", "criterion: never visible"},
+		} {
+			res := runMC(t, spineEnv(spine), "", args...)
+			if res.code != 1 {
+				t.Fatalf("after %s, %v exit = %d stderr=%q", status, args, res.code, res.stderr)
+			}
+			errObj, ok := res.json["error"].(map[string]any)
+			if !ok || errObj["code"] != "worksource-inactive" {
+				t.Fatalf("after %s, %v error JSON = %v", status, args, res.json)
+			}
+		}
+		if got := queryInt(t, db, `SELECT COUNT(*) FROM tasks`); got != before {
+			t.Fatalf("after %s, inactive Worksource swallowed %d rows", status, got-before)
+		}
+	}
+}
+
 func TestHomieWorksourcePauseArchive(t *testing.T) {
 	spine := initSpine(t)
 	add := runMC(t, spineEnv(spine), "", "worksource", "add", "ws-homie",

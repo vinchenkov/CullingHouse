@@ -25,18 +25,14 @@ func TaskAdd(db *sql.DB, id *RunIdentity, title, worksource, description string,
 		if err := requireOperatorVerbTx(ctx, q, id, "task.add"); err != nil {
 			return err
 		}
-		pri := 2 // schema default P2
-		if priority != nil {
-			pri = *priority
-		}
-		res, err := q.ExecContext(ctx, `
-			INSERT INTO tasks (title, description, priority, origin, worksource, target_ref)
-			VALUES (?, ?, ?, 'user', ?, 'main')`,
-			title, nullIfEmpty(description), pri, worksource)
-		if err != nil {
-			return err
-		}
-		taskID, err = res.LastInsertId()
+		var err error
+		taskID, err = domain.BirthProposal(ctx, q, domain.ProposalArgs{
+			Title:       title,
+			Description: description,
+			Priority:    priority,
+			Origin:      "user",
+			Worksource:  worksource,
+		})
 		return err
 	})
 	if err != nil {
