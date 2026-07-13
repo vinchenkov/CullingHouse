@@ -171,6 +171,12 @@ func TestClaim(t *testing.T) {
 		if got := oneInt(t, db, `SELECT COUNT(*) FROM runs`); got != 1 {
 			t.Fatalf("runs rows = %d, want exactly one committed claimant", got)
 		}
+		// The lock's holder and the single committed Run are the same racer —
+		// a lock/runs mismatch would otherwise pass the counts above.
+		if got := oneInt(t, db, `SELECT COUNT(*) FROM lock
+			WHERE id = 1 AND run_id = (SELECT id FROM runs)`); got != 1 {
+			t.Fatalf("lock.run_id does not match the committed runs row")
+		}
 	})
 
 	t.Run("subjectless_claim_carries_no_worksource", func(t *testing.T) {

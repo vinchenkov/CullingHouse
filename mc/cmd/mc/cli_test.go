@@ -1980,6 +1980,35 @@ func TestConsolePublish(t *testing.T) {
 			t.Fatalf("failed atomic publish released lease: %q", got)
 		}
 	})
+
+	// Injecting at the transaction's LAST write (the lease release) proves
+	// the event, outbox fan-out, and Run end all roll back with it — the
+	// outbox-insert injection above leaves the later writes unexercised.
+	t.Run("release_failure_rolls_back_event_outbox_and_run_end", func(t *testing.T) {
+		_, run, env, db := newConsoleRun(t)
+		if _, err := db.Exec(`CREATE TRIGGER test_fail_console_release
+			BEFORE UPDATE OF run_id ON lock
+			WHEN OLD.run_id IS NOT NULL AND NEW.run_id IS NULL
+			BEGIN SELECT RAISE(ABORT, 'injected release failure'); END`); err != nil {
+			t.Fatal(err)
+		}
+		res := runMC(t, env, "", "console", "publish", "--run", run, "--content", "outputs/c.html")
+		if res.code != 1 || !strings.Contains(res.stderr, "injected release failure") {
+			t.Fatalf("exit = %d stderr %q", res.code, res.stderr)
+		}
+		if n := queryInt(t, db, `SELECT COUNT(*) FROM activity WHERE kind = 'daily.briefing'`); n != 0 {
+			t.Fatalf("failed atomic publish left %d events", n)
+		}
+		if n := queryInt(t, db, `SELECT COUNT(*) FROM outbox`); n != 0 {
+			t.Fatalf("failed atomic publish left %d outbox rows", n)
+		}
+		if got := queryStr(t, db, `SELECT COALESCE(outcome, '<null>') FROM runs WHERE id = ?`, run); got != "<null>" {
+			t.Fatalf("failed atomic publish ended run: %q", got)
+		}
+		if got := queryStr(t, db, `SELECT run_id FROM lock WHERE id = 1`); got != run {
+			t.Fatalf("failed atomic publish released lease: %q", got)
+		}
+	})
 }
 
 func TestHomieStartBindList(t *testing.T) {
@@ -2556,6 +2585,18 @@ func TestHomieSendHistoryEnd(t *testing.T) {
 	})
 }
 
+// outboxSnapshot captures every outbox column in deterministic id order, so
+// "read-only" means the whole table byte-identical, not a two-column proxy.
+func outboxSnapshot(t *testing.T, db *sql.DB) string {
+	t.Helper()
+	return queryStr(t, db, `SELECT COALESCE(group_concat(row, ';'), '<empty>') FROM (
+		SELECT id || '|' || kind || '|' || COALESCE(session_id, '<null>') || '|' ||
+		       surface || '|' || COALESCE(channel_ref, '<null>') || '|' ||
+		       payload || '|' || created_at || '|' ||
+		       COALESCE(delivered_at, '<null>') AS row
+		FROM outbox ORDER BY id)`)
+}
+
 func TestOutboxPollAck(t *testing.T) {
 	fixture := func(t *testing.T) (string, *sql.DB) {
 		t.Helper()
@@ -2577,7 +2618,7 @@ func TestOutboxPollAck(t *testing.T) {
 
 	t.Run("poll_is_surface_scoped_stable_and_read_only", func(t *testing.T) {
 		spine, db := fixture(t)
-		before := queryStr(t, db, `SELECT group_concat(id || ':' || COALESCE(delivered_at, '<null>'), ',') FROM outbox ORDER BY id`)
+		before := outboxSnapshot(t, db)
 
 		dashboard := runMC(t, spineEnv(spine), "", "outbox", "poll", "--surface", "dashboard")
 		if dashboard.code != 0 {
@@ -2599,8 +2640,8 @@ func TestOutboxPollAck(t *testing.T) {
 		if discord.code != 0 || len(discord.json["rows"].([]any)) != 1 {
 			t.Fatalf("discord poll = code %d json %v stderr %q", discord.code, discord.json, discord.stderr)
 		}
-		if got := queryStr(t, db, `SELECT group_concat(id || ':' || COALESCE(delivered_at, '<null>'), ',') FROM outbox ORDER BY id`); got != before {
-			t.Fatalf("poll mutated delivery state: before %q after %q", before, got)
+		if got := outboxSnapshot(t, db); got != before {
+			t.Fatalf("poll mutated the outbox: before %q after %q", before, got)
 		}
 
 		// Stable id order and limit are part of the delivery cursor contract.
@@ -2659,7 +2700,7 @@ func TestOutboxPollAck(t *testing.T) {
 
 	t.Run("scope_and_usage_fail_before_delivery_mutation", func(t *testing.T) {
 		spine, db := fixture(t)
-		before := queryStr(t, db, `SELECT group_concat(id || ':' || COALESCE(delivered_at, '<null>'), ',') FROM outbox ORDER BY id`)
+		before := outboxSnapshot(t, db)
 		pipeline := runJSONEnv(t, spine, "pipeline", "pipeline", "worker")
 		homie := homieJSONEnv(t, spine, "h-forged", defaultHomieAllowlist)
 		for name, env := range map[string][]string{"pipeline": pipeline, "homie": homie} {
@@ -2685,12 +2726,16 @@ func TestOutboxPollAck(t *testing.T) {
 			{args: []string{"outbox", "ack", "1"}, msg: "requires --surface"},
 		} {
 			got := runMC(t, spineEnv(spine), "", tc.args...)
-			if got.code == 0 || !strings.Contains(got.stderr, tc.msg) {
+			if got.code != 2 || !strings.Contains(got.stderr, tc.msg) {
 				t.Fatalf("%v exit = %d stderr %q", tc.args, got.code, got.stderr)
 			}
+			errObj, ok := got.json["error"].(map[string]any)
+			if !ok || errObj["code"] != "usage" {
+				t.Fatalf("%v error JSON = %v", tc.args, got.json)
+			}
 		}
-		if got := queryStr(t, db, `SELECT group_concat(id || ':' || COALESCE(delivered_at, '<null>'), ',') FROM outbox ORDER BY id`); got != before {
-			t.Fatalf("scope/usage failure mutated delivery: before %q after %q", before, got)
+		if got := outboxSnapshot(t, db); got != before {
+			t.Fatalf("scope/usage failure mutated the outbox: before %q after %q", before, got)
 		}
 	})
 }
