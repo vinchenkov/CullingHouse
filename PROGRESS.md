@@ -661,3 +661,14 @@ capability enforcement remains a Phase 3 structural-boundary mechanism.
 NEXT: TDD `mc initiative add`, `mc worksource add|list|pause|archive`, and
 `mc task interrupt` with the new error/scope matrix. Preserve the parked
 initiative-wave terminal; these operator record verbs do not depend on it.
+
+- 2026-07-12 — **Phase 2 wave 2 `initiative add` green.** Host or allowlisted
+  Homie intent now files an `origin:user`, `scope=initiative` proposal into
+  the ordinary contrastive pool; title, Worksource, and a checkable `--charter`
+  are mandatory and expedited priority -1 is preserved. Pipeline provenance
+  is denied before insertion. This adds no wave state and does not touch the
+  parked holistic plan-review question. Complete fast lane green.
+
+NEXT: TDD `mc worksource add|list|pause|archive`, including active-only
+dispatch visibility and immutable historical rows. Then implement operator
+interrupt as cancel+lease-clear+exact stop effect.

@@ -401,6 +401,44 @@ func TestTaskAddAndGet(t *testing.T) {
 	}
 }
 
+func TestInitiativeAdd(t *testing.T) {
+	t.Run("host_files_user_initiative_with_charter", func(t *testing.T) {
+		spine := initSpine(t)
+		res := runMC(t, spineEnv(spine), "", "initiative", "add", "raise system leverage",
+			"--worksource", "ws-test", "--charter", "criterion: acceptance doubles",
+			"--priority", "-1")
+		if res.code != 0 {
+			t.Fatalf("initiative add failed: %s", res.stderr)
+		}
+		id := int64(res.json["initiative_id"].(float64))
+		db := openDB(t, spine)
+		if got := queryStr(t, db, `SELECT scope || '/' || origin || '/' || priority || '/' || description FROM tasks WHERE id=?`, id); got != "initiative/user/-1/criterion: acceptance doubles" {
+			t.Fatalf("initiative row = %q", got)
+		}
+	})
+
+	t.Run("charter_required_and_pipeline_denied", func(t *testing.T) {
+		spine := initSpine(t)
+		missing := runMC(t, spineEnv(spine), "", "initiative", "add", "missing charter",
+			"--worksource", "ws-test")
+		if missing.code != 2 || !strings.Contains(missing.stderr, "--charter") {
+			t.Fatalf("missing charter exit=%d stderr=%q", missing.code, missing.stderr)
+		}
+		taskAdd(t, spine, "claim Editor")
+		eff := dispatchExpect(t, spine, "spawn")
+		run := eff["run_id"].(string)
+		denied := runMC(t, runJSONEnv(t, spine, run, "pipeline", "editor"), "",
+			"initiative", "add", "forged", "--worksource", "ws-test", "--charter", "fake")
+		if denied.code != 1 || !strings.Contains(denied.stderr, "operator verb") {
+			t.Fatalf("pipeline initiative add exit=%d stderr=%q", denied.code, denied.stderr)
+		}
+		db := openDB(t, spine)
+		if got := queryInt(t, db, `SELECT COUNT(*) FROM tasks WHERE scope='initiative'`); got != 0 {
+			t.Fatalf("pipeline forged %d initiatives", got)
+		}
+	})
+}
+
 func TestPacketListEmpty(t *testing.T) {
 	spine := initSpine(t)
 	res := runMC(t, spineEnv(spine), "", "packet", "list")

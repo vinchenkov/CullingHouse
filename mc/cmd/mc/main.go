@@ -110,6 +110,8 @@ func dispatchVerb(args []string, stdin io.Reader) (any, error) {
 		return cmdInit(rest)
 	case "task":
 		return cmdTask(rest)
+	case "initiative":
+		return cmdInitiative(rest)
 	case "packet":
 		return cmdPacket(rest)
 	case "dispatch":
@@ -314,6 +316,34 @@ func cmdTask(args []string) (any, error) {
 		})
 	}
 	return nil, verbs.Usagef("unknown subverb: mc task %s", args[0])
+}
+
+func cmdInitiative(args []string) (any, error) {
+	if len(args) == 0 || args[0] != "add" {
+		return nil, verbs.Usagef("usage: mc initiative add <title> --worksource <id> --charter <criteria> [--priority -1..3]")
+	}
+	title, rest, err := positional("mc initiative add", args[1:])
+	if err != nil {
+		return nil, err
+	}
+	fs := newFlags("mc initiative add")
+	worksource := fs.String("worksource", "", "worksource id")
+	charter := fs.String("charter", "", "checkable initiative charter")
+	priority := fs.Int("priority", -100, "priority (-1..3)")
+	if err := parse(fs, rest); err != nil {
+		return nil, err
+	}
+	var pri *int
+	if *priority != -100 {
+		pri = priority
+	}
+	id, err := verbs.LoadIdentity()
+	if err != nil {
+		return nil, err
+	}
+	return withSpine(func(db *sql.DB) (any, error) {
+		return verbs.InitiativeAdd(db, id, title, *worksource, *charter, pri)
+	})
 }
 
 func cmdPacket(args []string) (any, error) {
