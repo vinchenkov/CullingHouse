@@ -205,6 +205,50 @@ function recordingMc(
   };
 }
 
+type FirstRunMode = "ordinary" | "die-before-start" | "die-after-start";
+
+/**
+ * Stateful Docker seam shared across resident restarts. The two injected
+ * modes model which side of container creation became durable; every later
+ * run/stop uses the ordinary behavior. This is test-side host state, never a
+ * production fault hook.
+ */
+class RecordingDocker {
+  calls: string[][] = [];
+  live = new Set<string>();
+  private firstDetachedRun = true;
+
+  constructor(private readonly firstRunMode: FirstRunMode) {}
+
+  exec: Exec = async (argv) => {
+    this.calls.push([...argv]);
+    if (argv[0] === "run" && argv.includes("-d")) {
+      const nameAt = argv.indexOf("--name");
+      const name = nameAt >= 0 ? argv[nameAt + 1] : undefined;
+      if (name === undefined) throw new Error("test Docker received a detached run without --name");
+
+      const isFirst = this.firstDetachedRun;
+      this.firstDetachedRun = false;
+      if (isFirst && this.firstRunMode === "die-before-start") {
+        throw new Error("simulated resident death before container start");
+      }
+      this.live.add(name);
+      if (isFirst && this.firstRunMode === "die-after-start") {
+        throw new Error("simulated resident death after container start");
+      }
+      return ok(`${name}-container-id\n`);
+    }
+
+    if (argv[0] === "stop") {
+      const name = argv[1];
+      if (name === undefined) throw new Error("test Docker received stop without a name");
+      if (!this.live.delete(name)) return fail(1, "No such container");
+      return ok("");
+    }
+    return ok("");
+  };
+}
+
 async function lock(fixture: Fixture): Promise<JsonObject> {
   return mcJson(fixture.home, fixture.spine, ["lock", "get"]);
 }
@@ -236,12 +280,36 @@ const boundaries = [
     killAfterDispatch: true,
     failBeforeWrite: false,
     oldFolderExists: false,
+    oldEnvelopeExists: false,
+    oldContainerExists: false,
+    firstRunMode: "ordinary",
   },
   {
     name: "session folder / before run.json",
     killAfterDispatch: false,
     failBeforeWrite: true,
     oldFolderExists: true,
+    oldEnvelopeExists: false,
+    oldContainerExists: false,
+    firstRunMode: "ordinary",
+  },
+  {
+    name: "run.json / before container",
+    killAfterDispatch: false,
+    failBeforeWrite: false,
+    oldFolderExists: true,
+    oldEnvelopeExists: true,
+    oldContainerExists: false,
+    firstRunMode: "die-before-start",
+  },
+  {
+    name: "container start / before first heartbeat",
+    killAfterDispatch: false,
+    failBeforeWrite: false,
+    oldFolderExists: true,
+    oldEnvelopeExists: true,
+    oldContainerExists: true,
+    firstRunMode: "die-after-start",
   },
 ] as const;
 
@@ -254,8 +322,10 @@ describe("split-brain convergence: committed spawn before first heartbeat", () =
         // Commit the decision, then lose the first resident at the selected
         // non-atomic boundary. All failures are outside mc.
         const firstFs = recordingFs(boundary.failBeforeWrite);
+        const docker = new RecordingDocker(boundary.firstRunMode);
         const first = makeRig({
           runMc: recordingMc(fixture, effects, boundary.killAfterDispatch),
+          docker: docker.exec,
           fs: firstFs.fs,
           config: fixture.config,
         });
@@ -274,10 +344,26 @@ describe("split-brain convergence: committed spawn before first heartbeat", () =
         const oldRun = selected.run_id;
         const oldSession = join(fixture.home, "sessions", oldRun);
         const oldEnvelope = join(fixture.home, "runs", `${oldRun}.json`);
+        const oldContainer = `mc-run-${oldRun}`;
 
-        expect(first.docker.calls).toEqual([]);
+        const initialDockerCalls = boundary.oldEnvelopeExists ? 1 : 0;
+        expect(docker.calls).toHaveLength(initialDockerCalls);
+        if (initialDockerCalls === 1) {
+          expect(docker.calls[0]![0]).toBe("run");
+          expect(docker.calls[0]).toContain(oldContainer);
+          expect(docker.calls[0]).toContain(`${oldSession}:/mc/session`);
+          expect(docker.calls[0]).toContain(`${oldEnvelope}:/mc/run.json:ro`);
+        }
+        expect(docker.live.has(oldContainer)).toBe(boundary.oldContainerExists);
         expect(first.logs.some((line) => line.includes("simulated resident death"))).toBe(true);
-        expect(existsSync(oldEnvelope)).toBe(false);
+        expect(existsSync(oldEnvelope)).toBe(boundary.oldEnvelopeExists);
+        if (boundary.oldEnvelopeExists) {
+          expect(JSON.parse(readFileSync(oldEnvelope, "utf8"))).toMatchObject({
+            run_id: oldRun,
+            subject_id: fixture.taskId,
+            role: "editor",
+          });
+        }
         expect(existsSync(oldSession)).toBe(boundary.oldFolderExists);
         if (boundary.oldFolderExists) expect(readdirSync(oldSession)).toEqual([]);
         if (boundary.killAfterDispatch) expect(firstFs.events).toEqual([]);
@@ -317,13 +403,10 @@ describe("split-brain convergence: committed spawn before first heartbeat", () =
         const recoveredFs = recordingFs();
         const recovered = makeRig({
           runMc: recordingMc(fixture, effects, false),
+          docker: docker.exec,
           fs: recoveredFs.fs,
           config: fixture.config,
         });
-        recovered.docker.enqueue(
-          fail(1, "No such container"),
-          ok("new-container-id\n"),
-        );
         const recoveredLoop = startTickLoop(recovered.deps);
 
         await recovered.timer.fire();
@@ -334,8 +417,12 @@ describe("split-brain convergence: committed spawn before first heartbeat", () =
           reason: "spawn-watchdog",
           stop_container: true,
         });
-        expect(recovered.docker.calls).toEqual([["stop", `mc-run-${oldRun}`]]);
-        expect(recovered.logs.some((line) => line.includes("No such container"))).toBe(true);
+        expect(docker.calls).toHaveLength(initialDockerCalls + 1);
+        expect(docker.calls.at(-1)).toEqual(["stop", oldContainer]);
+        expect(docker.live.has(oldContainer)).toBe(false);
+        expect(recovered.logs.some((line) => line.includes("No such container"))).toBe(
+          !boundary.oldContainerExists,
+        );
         expect(existsSync(oldEnvelope)).toBe(false);
         expect(existsSync(oldSession)).toBe(boundary.oldFolderExists);
         if (boundary.oldFolderExists) expect(readdirSync(oldSession)).toEqual([]);
@@ -384,11 +471,13 @@ describe("split-brain convergence: committed spawn before first heartbeat", () =
         expect(existsSync(oldSession)).toBe(boundary.oldFolderExists);
         if (boundary.oldFolderExists) expect(readdirSync(oldSession)).toEqual([]);
 
-        expect(recovered.docker.calls).toHaveLength(2);
-        expect(recovered.docker.calls[1]![0]).toBe("run");
-        expect(recovered.docker.calls[1]).toContain(`mc-run-${newRun}`);
-        expect(recovered.docker.calls[1]).toContain(`${newSession}:/mc/session`);
-        expect(recovered.docker.calls[1]).toContain(`${newEnvelope}:/mc/run.json:ro`);
+        expect(docker.calls).toHaveLength(initialDockerCalls + 2);
+        const retryDocker = docker.calls.at(-1)!;
+        expect(retryDocker[0]).toBe("run");
+        expect(retryDocker).toContain(`mc-run-${newRun}`);
+        expect(retryDocker).toContain(`${newSession}:/mc/session`);
+        expect(retryDocker).toContain(`${newEnvelope}:/mc/run.json:ro`);
+        expect([...docker.live]).toEqual([`mc-run-${newRun}`]);
         expect(await lock(fixture)).toMatchObject({
           run_id: newRun,
           worksource: "ws-test",
@@ -421,7 +510,7 @@ describe("split-brain convergence: committed spawn before first heartbeat", () =
         await recovered.timer.fire();
         expect(effects).toHaveLength(4);
         expect(effects[3]).toEqual({ action: "idle", reason: "lease-held" });
-        expect(recovered.docker.calls).toHaveLength(2);
+        expect(docker.calls).toHaveLength(initialDockerCalls + 2);
         expect(await runs(fixture)).toHaveLength(2);
         expect(await task(fixture)).toMatchObject({ dispatch_retries: 2 });
 

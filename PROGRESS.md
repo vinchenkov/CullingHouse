@@ -2,7 +2,7 @@
 
 <!-- Header block: kept current by every session. -->
 LAST GREEN SHA: (this commit)
-PHASES PASSING: Phase 0 COMPLETE (S1–S8 all green, no fallback ADRs; only operator-leg deferrals remain); Phase 1 COMPLETE (1a substrate 172; 1b walking skeleton reviewed-and-fixed — fake-harness 43, agent-runner 13, runner/image 2, resident 34, dispatch + cmd/mc suites; Docker e2e PASS ×4 total)
+PHASES PASSING: Phase 0 COMPLETE (S1–S8 all green, no fallback ADRs; only operator-leg deferrals remain); Phase 1 COMPLETE (1a substrate 172; 1b walking skeleton reviewed-and-fixed — fake-harness 43, agent-runner 13, runner/image 2, resident 36, dispatch + cmd/mc suites; Docker e2e PASS ×4 total)
 KNOWN-FAILING: (none)
 FAST SUITE: mc/check.sh (gofmt+vet+go test ./... — includes substrate + promoted dispatch) + runner/fake-harness/check.sh + runner/agent-runner/check.sh + runner/image/check.sh + resident/check.sh. Docker e2e (phase-completion lane): cd mc && mise exec -- go test -tags docker_e2e -timeout 15m ./e2e/...
 
@@ -49,6 +49,7 @@ FAST SUITE: mc/check.sh (gofmt+vet+go test ./... — includes substrate + promot
   - [x] Wave 2 full unparked §18 verb/error/scope surface
   - [~] Split-brain kill-point convergence suite
     - [x] action selected / before effect; session folder / before run.json
+    - [x] run.json / before container; container start / before heartbeat
   - [ ] Nightly randomized/metamorphic/lifecycle properties + planted mutants
 - [ ] Phase 3 — Boundary conformance (Docker)
 - [ ] Phase 4 — E2E control loops (six scenario families)
@@ -1004,3 +1005,31 @@ retry before the unchanged subject receives a distinct Run; model the
 post-start death at the injectable Docker seam, never with a fault hook in
 `mc`. Then continue to the workspace/commit boundary rows. Initiative wave
 CLI remains Parked pending the durable plan-review representation.
+
+- 2026-07-13 — **Remaining pre-heartbeat split-brain boundaries green.**
+  The parameter table now covers `run.json / before container` and
+  `container start / before first heartbeat` with one stateful test-local
+  Docker daemon shared across the dead and restarted resident instances.
+  The former proves the old container never became live; the latter proves
+  it did become live even though the Docker result was lost. In both cases
+  the ordinary restarted loop commits one watchdog reap, exact-name stop
+  leaves the old container absent, the materialized envelope is removed,
+  the permanent empty trace folder survives, and retry opens a distinct Run
+  with the only live container. The record/lock/effect triple agrees on
+  run, role, subject, Worksource, binding, and mounts; an extra tick proves
+  no duplicate Run/start/charge. The audit also isolated arbitrary
+  outcome-ambiguous stop failure as a composed-failure gap owned by the
+  already-specified Phase-3 orphan sweep + pre-spawn assertion; logged in
+  IMPLEMENTATION-NOTES rather than hidden by the single-fault fixtures.
+  Complete fast lane green (Go all packages; fake 43, agent-runner 13,
+  runner/image 2, resident 36).
+
+NEXT: TDD the `workspace bytes / before git commit` and `git commit / before
+complete` split-brain rows (wave-2 contract §4) through the injectable fake
+harness/agent-runner process seams and the real `mc` CLI against a temp git
+Worksource. Kill and restart the ordinary lifecycle; assert canonical task
+status stays unchanged, partial bytes are inert, an existing task-branch
+commit is observed rather than duplicated, and watchdog recovery charges
+only its declared retry. Add no fault hook to `mc`. Then cover operator
+approve/landing and outbox delivery boundaries. Initiative wave CLI remains
+Parked pending the durable plan-review representation.

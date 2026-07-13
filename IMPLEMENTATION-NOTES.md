@@ -590,3 +590,23 @@ Entry template:
   their scheduled phase.
 - Spec impact: none; ADR-015 names the intentionally staged Phase-2 effects
 - Needs your decision: no
+
+## 2026-07-13 — Ambiguous container-stop failure awaits the orphan sweep
+- Where: Phase-2 split-brain convergence, `container start / before first
+  heartbeat`; spec §11.6–§11.7; resident/src/effects.ts reap effector
+- Gap: the skeleton resident currently logs every resolved nonzero
+  `docker stop` result as if the exact container were already absent, then
+  removes its launch envelope. A transient or outcome-ambiguous stop can
+  therefore leave the old container alive after `mc dispatch` has already
+  committed the reap and freed the lease; a later spawn could coexist with
+  that zombie. A rejected stop skips envelope removal, but still cannot
+  restore the already-committed lease. The deterministic single-fault row
+  proves the specified successful-stop and confirmed-absence paths only.
+- Choice: keep the Phase-2 fixture honest with a stateful Docker model and
+  do not equate arbitrary failure with absence in its assertions. Close the
+  composed-failure window in the scheduled Phase-3 §11.6 implementation:
+  label-scoped orphan cleanup at every tick start plus the pipeline
+  pre-spawn at-most-one assertion. Those mechanisms re-establish container
+  truth before any replacement; changing only the reap error branch cannot.
+- Spec impact: none (§11.6 already specifies both required mechanisms)
+- Needs your decision: no
