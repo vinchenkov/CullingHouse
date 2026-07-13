@@ -82,12 +82,50 @@ func runMC(t *testing.T, env []string, stdin string, args ...string) mcResult {
 		}
 		res.code = exit.ExitCode()
 	}
-	if res.code == 0 && strings.TrimSpace(res.stdout) != "" {
+	if strings.TrimSpace(res.stdout) != "" {
 		if err := json.Unmarshal([]byte(res.stdout), &res.json); err != nil {
 			t.Fatalf("mc %v: stdout is not a single JSON object: %q (%v)", args, res.stdout, err)
 		}
 	}
 	return res
+}
+
+func TestStructuredErrorJSON(t *testing.T) {
+	spine := initSpine(t)
+
+	domainRes := runMC(t, spineEnv(spine), "", "packet", "decide", "999", "--approve")
+	if domainRes.code != 1 {
+		t.Fatalf("domain exit = %d stderr=%q", domainRes.code, domainRes.stderr)
+	}
+	domainErr, ok := domainRes.json["error"].(map[string]any)
+	if !ok || domainErr["code"] != "not-found" || !strings.Contains(domainErr["message"].(string), "no task") {
+		t.Fatalf("domain error JSON = %v", domainRes.json)
+	}
+
+	usageRes := runMC(t, spineEnv(spine), "", "task", "add")
+	if usageRes.code != 2 {
+		t.Fatalf("usage exit = %d stderr=%q", usageRes.code, usageRes.stderr)
+	}
+	usageErr, ok := usageRes.json["error"].(map[string]any)
+	if !ok || usageErr["code"] != "usage" {
+		t.Fatalf("usage error JSON = %v", usageRes.json)
+	}
+
+	// CLI-plane domain refusals without a narrower aggregate code still have
+	// one stable public slug rather than an empty/missing field.
+	eff := dispatchExpect(t, spine, "spawn")
+	run := eff["run_id"].(string)
+	scopeRes := runMC(t, runJSONEnv(t, spine, run, "pipeline", "editor"), "", "dispatch")
+	if scopeRes.code != 1 {
+		t.Fatalf("scope exit = %d stderr=%q", scopeRes.code, scopeRes.stderr)
+	}
+	scopeErr, ok := scopeRes.json["error"].(map[string]any)
+	if !ok || scopeErr["code"] != "domain-rejection" {
+		t.Fatalf("scope error JSON = %v", scopeRes.json)
+	}
+	if !strings.Contains(scopeRes.stderr, scopeErr["message"].(string)) {
+		t.Fatalf("stderr %q does not preserve JSON diagnostic %v", scopeRes.stderr, scopeErr)
+	}
 }
 
 const fakeRoutingMarkdown = `# Mission Control routing

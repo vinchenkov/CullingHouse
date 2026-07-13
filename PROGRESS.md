@@ -649,3 +649,15 @@ NEXT: Add the wave-2 structured error envelope while preserving exit codes,
 stderr diagnostics, and self-delegation byte fidelity. Then extend the scope
 matrix as new operator/Homie/transport verbs land. Runner-private vs model
 capability enforcement remains a Phase 3 structural-boundary mechanism.
+
+- 2026-07-12 — **Phase 2 wave 2 structured errors green.** Every local
+  rejection now emits one stdout JSON object with stable `error.code` and
+  `error.message` while retaining the stderr diagnostic and exit 1/2 split.
+  Coded domain errors preserve their slug, usage/environment errors use
+  `usage`, and uncoded CLI-domain refusals use stable `domain-rejection`.
+  Success JSON and delegated byte/exit passthrough remain unchanged. Complete
+  fast lane green.
+
+NEXT: TDD `mc initiative add`, `mc worksource add|list|pause|archive`, and
+`mc task interrupt` with the new error/scope matrix. Preserve the parked
+initiative-wave terminal; these operator record verbs do not depend on it.

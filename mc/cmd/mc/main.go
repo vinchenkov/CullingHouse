@@ -44,11 +44,26 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	out, err := dispatchVerb(args, stdin)
 	if err != nil {
 		fmt.Fprintln(stderr, "mc:", err)
+		exitCode := 1
+		errorCode := "domain-rejection"
 		var usage *verbs.UsageError
 		if errors.As(err, &usage) {
+			exitCode = 2
+			errorCode = "usage"
+		} else {
+			var domainErr *verbs.DomainError
+			if errors.As(err, &domainErr) && domainErr.Code != "" {
+				errorCode = domainErr.Code
+			}
+		}
+		envelope := map[string]any{
+			"error": map[string]any{"code": errorCode, "message": err.Error()},
+		}
+		if jsonErr := writeJSON(stdout, envelope); jsonErr != nil {
+			fmt.Fprintln(stderr, "mc: write error JSON:", jsonErr)
 			return 2
 		}
-		return 1
+		return exitCode
 	}
 	if err := writeJSON(stdout, out); err != nil {
 		fmt.Fprintln(stderr, "mc:", err)
