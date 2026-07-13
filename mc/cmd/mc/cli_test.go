@@ -2585,6 +2585,218 @@ func TestHomieSendHistoryEnd(t *testing.T) {
 	})
 }
 
+func TestHomieRunnerRegistersSessionLocators(t *testing.T) {
+	spine := initSpine(t)
+	started := runMC(t, spineEnv(spine), "", "homie", "start", "--from", "dashboard:reg")
+	if started.code != 0 {
+		t.Fatalf("homie start failed: %s", started.stderr)
+	}
+	session := started.json["session_id"].(string)
+	runner := runJSONEnv(t, spine, session, "homie", "homie")
+	db := openDB(t, spine)
+
+	reg := runMC(t, runner, "", "run", "register-session", session,
+		"--native-ref", "native-abc", "--file", "trace.jsonl")
+	if reg.code != 0 {
+		t.Fatalf("homie runner register-session failed (%d): %s", reg.code, reg.stderr)
+	}
+	locators := func() string {
+		return queryStr(t, db, `SELECT COALESCE(native_session_ref, '<null>') || '|' ||
+			COALESCE(trace_filename, '<null>') FROM homie_sessions WHERE id = ?`, session)
+	}
+	if got := locators(); got != "native-abc|trace.jsonl" {
+		t.Fatalf("locators = %q", got)
+	}
+
+	replay := runMC(t, runner, "", "run", "register-session", session,
+		"--native-ref", "native-abc", "--file", "trace.jsonl")
+	if replay.code != 0 {
+		t.Fatalf("same-value locator retry rejected: %s", replay.stderr)
+	}
+	conflict := runMC(t, runner, "", "run", "register-session", session,
+		"--native-ref", "native-other", "--file", "other.jsonl")
+	if conflict.code != 1 || !strings.Contains(conflict.stderr, "immutable") {
+		t.Fatalf("conflicting locators = code %d stderr %q", conflict.code, conflict.stderr)
+	}
+	if got := locators(); got != "native-abc|trace.jsonl" {
+		t.Fatalf("conflict mutated locators: %q", got)
+	}
+
+	// Cross-session, pipeline-identity, and host attempts are all inert.
+	other := runMC(t, spineEnv(spine), "", "homie", "start", "--from", "cli:reg2")
+	if other.code != 0 {
+		t.Fatalf("second homie start failed: %s", other.stderr)
+	}
+	otherSession := other.json["session_id"].(string)
+	for name, attempt := range map[string]mcResult{
+		"cross-session": runMC(t, runner, "", "run", "register-session", otherSession,
+			"--native-ref", "n", "--file", "f"),
+		"pipeline-identity": runMC(t, runJSONEnv(t, spine, session, "pipeline", "worker"), "",
+			"run", "register-session", session, "--native-ref", "n", "--file", "f"),
+		"host": runMC(t, spineEnv(spine), "",
+			"run", "register-session", otherSession, "--native-ref", "n", "--file", "f"),
+	} {
+		if attempt.code != 1 {
+			t.Fatalf("%s register = %d stderr %q", name, attempt.code, attempt.stderr)
+		}
+	}
+	if got := queryStr(t, db, `SELECT COALESCE(native_session_ref, '<null>')
+		FROM homie_sessions WHERE id = ?`, otherSession); got != "<null>" {
+		t.Fatalf("forged registration reached %q: %q", otherSession, got)
+	}
+
+	// Registration survives session end: identity, not liveness (Inv. 26).
+	ended := runMC(t, spineEnv(spine), "", "homie", "end", otherSession, "--reason", "test")
+	if ended.code != 0 {
+		t.Fatalf("homie end failed: %s", ended.stderr)
+	}
+	late := runMC(t, runJSONEnv(t, spine, otherSession, "homie", "homie"), "",
+		"run", "register-session", otherSession, "--native-ref", "late", "--file", "late.jsonl")
+	if late.code != 0 {
+		t.Fatalf("post-end locator registration refused: %s", late.stderr)
+	}
+}
+
+func TestHomieResume(t *testing.T) {
+	begin := func(t *testing.T, spine, from string) string {
+		t.Helper()
+		res := runMC(t, spineEnv(spine), "", "homie", "start", "--from", from)
+		if res.code != 0 {
+			t.Fatalf("homie start failed: %s", res.stderr)
+		}
+		return res.json["session_id"].(string)
+	}
+	register := func(t *testing.T, spine, session string) {
+		t.Helper()
+		res := runMC(t, runJSONEnv(t, spine, session, "homie", "homie"), "",
+			"run", "register-session", session, "--native-ref", "n-"+session, "--file", session+".jsonl")
+		if res.code != 0 {
+			t.Fatalf("register locators failed: %s", res.stderr)
+		}
+	}
+	end := func(t *testing.T, spine, session string) {
+		t.Helper()
+		res := runMC(t, spineEnv(spine), "", "homie", "end", session, "--reason", "test drill")
+		if res.code != 0 {
+			t.Fatalf("homie end failed: %s", res.stderr)
+		}
+	}
+
+	t.Run("record_only_transition_rebinds_the_requesting_surface", func(t *testing.T) {
+		spine := initSpine(t)
+		session := begin(t, spine, "dashboard:main")
+		register(t, spine, session)
+		end(t, spine, session)
+		db := openDB(t, spine)
+
+		res := runMC(t, spineEnv(spine), "", "homie", "resume", session, "--from", "discord:ops")
+		if res.code != 0 || res.json["resumed"] != true {
+			t.Fatalf("resume = code %d json %v stderr %q", res.code, res.json, res.stderr)
+		}
+		if got := queryStr(t, db, `SELECT status FROM homie_sessions WHERE id = ?`, session); got != "active" {
+			t.Fatalf("resumed status = %q", got)
+		}
+		if n := queryInt(t, db, `SELECT COUNT(*) FROM homie_bindings
+			WHERE session_id = ? AND surface = 'discord' AND channel_ref = 'ops' AND active = 1`, session); n != 1 {
+			t.Fatalf("resume bound %d active discord:ops rows", n)
+		}
+		// Pre-end binding history is not resurrected.
+		if n := queryInt(t, db, `SELECT COUNT(*) FROM homie_bindings
+			WHERE session_id = ? AND surface = 'dashboard' AND active = 1`, session); n != 0 {
+			t.Fatalf("resume reactivated %d historical bindings", n)
+		}
+		if n := queryInt(t, db, `SELECT COUNT(*) FROM activity
+			WHERE kind = 'homie.resumed' AND subject = ?`, session); n != 1 {
+			t.Fatalf("homie.resumed activity rows = %d", n)
+		}
+
+		// Crash-after-commit retry is idempotent; any other active-session
+		// resume is bind's job.
+		retry := runMC(t, spineEnv(spine), "", "homie", "resume", session, "--from", "discord:ops")
+		if retry.code != 0 || retry.json["resumed"] != false {
+			t.Fatalf("resume retry = code %d json %v stderr %q", retry.code, retry.json, retry.stderr)
+		}
+		elsewhere := runMC(t, spineEnv(spine), "", "homie", "resume", session, "--from", "cli:new")
+		if elsewhere.code != 1 || !strings.Contains(elsewhere.stderr, "use bind") {
+			t.Fatalf("active resume elsewhere = code %d stderr %q", elsewhere.code, elsewhere.stderr)
+		}
+	})
+
+	t.Run("reaped_sessions_are_resumable", func(t *testing.T) {
+		spine := initSpine(t)
+		session := begin(t, spine, "dashboard:reap")
+		register(t, spine, session)
+		db := openDB(t, spine)
+		if _, err := db.Exec(`UPDATE homie_sessions SET status = 'reaped' WHERE id = ?`, session); err != nil {
+			t.Fatal(err)
+		}
+		res := runMC(t, spineEnv(spine), "", "homie", "resume", session, "--from", "dashboard:reap")
+		if res.code != 0 || res.json["resumed"] != true {
+			t.Fatalf("reaped resume = code %d json %v stderr %q", res.code, res.json, res.stderr)
+		}
+	})
+
+	t.Run("native_continue_requires_the_registered_locator_pair", func(t *testing.T) {
+		spine := initSpine(t)
+		session := begin(t, spine, "cli:bare")
+		end(t, spine, session)
+		db := openDB(t, spine)
+		res := runMC(t, spineEnv(spine), "", "homie", "resume", session, "--from", "cli:bare")
+		if res.code != 1 || !strings.Contains(res.stderr, "locator") {
+			t.Fatalf("locator-less resume = code %d stderr %q", res.code, res.stderr)
+		}
+		if got := queryStr(t, db, `SELECT status FROM homie_sessions WHERE id = ?`, session); got != "ended" {
+			t.Fatalf("refused resume moved status to %q", got)
+		}
+	})
+
+	t.Run("occupied_place_aborts_the_whole_transition", func(t *testing.T) {
+		spine := initSpine(t)
+		first := begin(t, spine, "dashboard:one")
+		register(t, spine, first)
+		end(t, spine, first)
+		second := begin(t, spine, "cli:two")
+		_ = second
+		db := openDB(t, spine)
+
+		res := runMC(t, spineEnv(spine), "", "homie", "resume", first, "--from", "cli:two")
+		if res.code != 1 || !strings.Contains(res.stderr, "already bound") {
+			t.Fatalf("occupied resume = code %d stderr %q", res.code, res.stderr)
+		}
+		if got := queryStr(t, db, `SELECT status FROM homie_sessions WHERE id = ?`, first); got != "ended" {
+			t.Fatalf("aborted resume left status %q", got)
+		}
+		if n := queryInt(t, db, `SELECT COUNT(*) FROM activity
+			WHERE kind = 'homie.resumed' AND subject = ?`, first); n != 0 {
+			t.Fatalf("aborted resume left %d activity rows", n)
+		}
+	})
+
+	t.Run("resume_is_host_scope_only", func(t *testing.T) {
+		spine := initSpine(t)
+		session := begin(t, spine, "dashboard:scope")
+		register(t, spine, session)
+		end(t, spine, session)
+		db := openDB(t, spine)
+		for name, env := range map[string][]string{
+			"pipeline":    runJSONEnv(t, spine, "r-x", "pipeline", "worker"),
+			"homie-agent": homieJSONEnv(t, spine, session, defaultHomieAllowlist),
+		} {
+			res := runMC(t, env, "", "homie", "resume", session, "--from", "dashboard:scope")
+			if res.code != 1 {
+				t.Fatalf("%s resume exit = %d stderr %q", name, res.code, res.stderr)
+			}
+		}
+		if got := queryStr(t, db, `SELECT status FROM homie_sessions WHERE id = ?`, session); got != "ended" {
+			t.Fatalf("denied resume moved status to %q", got)
+		}
+		unknown := runMC(t, spineEnv(spine), "", "homie", "resume", "h-missing", "--from", "cli:x")
+		if unknown.code != 1 || !strings.Contains(unknown.stderr, "unknown Homie session") {
+			t.Fatalf("unknown resume = code %d stderr %q", unknown.code, unknown.stderr)
+		}
+	})
+}
+
 // outboxSnapshot captures every outbox column in deterministic id order, so
 // "read-only" means the whole table byte-identical, not a two-column proxy.
 func outboxSnapshot(t *testing.T, db *sql.DB) string {

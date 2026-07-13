@@ -192,6 +192,82 @@ func HomieBind(db *sql.DB, id *RunIdentity, sessionID, rawFrom string) (any, err
 	}, nil
 }
 
+// HomieResume is the ADR-012 record-only status/binding transition: host
+// scope only, ended|reaped → active, requiring the immutable native locator
+// pair (the §15.4 conversation-rows fallback is a separate explicit arm,
+// never an implicit downgrade). No launch effect — re-mounting the folder
+// and relaunching the recorded harness is the resident's host authority.
+func HomieResume(db *sql.DB, id *RunIdentity, sessionID, rawFrom string) (any, error) {
+	if err := RequireHostScope(id, "mc homie resume"); err != nil {
+		return nil, err
+	}
+	from, err := parseSurfaceRef(rawFrom)
+	if err != nil {
+		return nil, err
+	}
+	resumed := false
+	err = inTx(db, func(ctx context.Context, q Q) error {
+		var status string
+		var nativeRef, traceFile sql.NullString
+		err := q.QueryRowContext(ctx, `
+			SELECT status, native_session_ref, trace_filename
+			FROM homie_sessions WHERE id = ?`, sessionID,
+		).Scan(&status, &nativeRef, &traceFile)
+		if err == sql.ErrNoRows {
+			return Domainf("unknown Homie session %q", sessionID)
+		}
+		if err != nil {
+			return err
+		}
+		if status == "active" {
+			// Crash-after-commit retry: idempotent iff the requested place
+			// is already this session's active binding.
+			var owner string
+			err := q.QueryRowContext(ctx, `
+				SELECT session_id FROM homie_bindings
+				WHERE surface = ? AND channel_ref = ? AND active = 1`,
+				from.Surface, from.ChannelRef).Scan(&owner)
+			if err == nil && owner == sessionID {
+				return nil
+			}
+			if err != nil && err != sql.ErrNoRows {
+				return err
+			}
+			return Domainf("Homie session %q is already active (use bind)", sessionID)
+		}
+		if !nativeRef.Valid || !traceFile.Valid {
+			return Domainf("Homie session %q never registered its native locator pair; "+
+				"native continue is impossible and the §15.4 conversation-rows fallback "+
+				"is a separate explicit arm (ADR-012)", sessionID)
+		}
+		// Status flips first: the binding trigger requires an active session.
+		if _, err := q.ExecContext(ctx, `
+			UPDATE homie_sessions SET status = 'active', last_activity_at = datetime('now')
+			WHERE id = ?`, sessionID); err != nil {
+			return err
+		}
+		if _, err := q.ExecContext(ctx, `
+			INSERT INTO activity (actor, kind, subject, detail)
+			VALUES ('operator', 'homie.resumed', ?, ?)`,
+			sessionID, from.Surface+":"+from.ChannelRef); err != nil {
+			return err
+		}
+		if _, err := ensureActiveBinding(ctx, q, sessionID, from); err != nil {
+			return err
+		}
+		resumed = true
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{
+		"session_id": sessionID, "status": "active",
+		"surface": from.Surface, "channel_ref": from.ChannelRef,
+		"resumed": resumed,
+	}, nil
+}
+
 func ensureActiveBinding(ctx context.Context, q Q, sessionID string, from SurfaceRef) (bool, error) {
 	var owner string
 	err := q.QueryRowContext(ctx, `

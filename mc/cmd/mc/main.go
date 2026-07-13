@@ -590,7 +590,7 @@ func cmdConsole(args []string) (any, error) {
 
 func cmdHomie(args []string) (any, error) {
 	if len(args) == 0 {
-		return nil, verbs.Usagef("usage: mc homie start|bind|send|list|history|end …")
+		return nil, verbs.Usagef("usage: mc homie start|bind|send|list|history|resume|end …")
 	}
 	switch args[0] {
 	case "start":
@@ -647,6 +647,27 @@ func cmdHomie(args []string) (any, error) {
 		}
 		return withSpine(func(db *sql.DB) (any, error) {
 			return verbs.HomieBind(db, id, sessionID, *from)
+		})
+
+	case "resume":
+		sessionID, rest, err := positional("mc homie resume", args[1:])
+		if err != nil {
+			return nil, err
+		}
+		fs := newFlags("mc homie resume")
+		from := fs.String("from", "", "surface:channel_ref")
+		if err := parse(fs, rest); err != nil {
+			return nil, err
+		}
+		if *from == "" {
+			return nil, verbs.Usagef("mc homie resume requires --from <surface:channel_ref>")
+		}
+		id, err := verbs.LoadIdentity()
+		if err != nil {
+			return nil, err
+		}
+		return withSpine(func(db *sql.DB) (any, error) {
+			return verbs.HomieResume(db, id, sessionID, *from)
 		})
 
 	case "list":
