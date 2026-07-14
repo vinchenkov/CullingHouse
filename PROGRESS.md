@@ -2,7 +2,7 @@
 
 <!-- Header block: kept current by every session. -->
 LAST GREEN SHA: (this commit)
-PHASES PASSING: Phase 0 COMPLETE (S1–S8 all green, no fallback ADRs; only operator-leg deferrals remain); Phase 1 COMPLETE (1a substrate 172; 1b walking skeleton reviewed-and-fixed — fake-harness 43, agent-runner 13, runner/image 40, resident 42, dispatch + cmd/mc suites; Docker e2e PASS ×4 total)
+PHASES PASSING: Phase 0 COMPLETE (S1–S8 all green, no fallback ADRs; only operator-leg deferrals remain); Phase 1 COMPLETE (1a substrate 172; 1b walking skeleton reviewed-and-fixed — fake-harness 43, agent-runner 13, runner/image 40, resident 42, dispatch + cmd/mc suites; Docker e2e PASS ×4 total); Phase 2 COMPLETE for every unparked acceptance line (domain/§18 surface, deterministic split-brain convergence, bounded honesty + five mutants, tagged dispatch/metamorphic/twin-spine lifecycle properties; initiative-wave CLI remains explicitly isolated under Parked)
 KNOWN-FAILING: (none)
 FAST SUITE: mc/check.sh (gofmt+vet+go test ./... — includes substrate + promoted dispatch) + runner/fake-harness/check.sh + runner/agent-runner/check.sh + runner/image/check.sh + resident/check.sh. Docker e2e (phase-completion lane): cd mc && mise exec -- go test -tags docker_e2e -timeout 15m ./e2e/...
 
@@ -39,7 +39,7 @@ FAST SUITE: mc/check.sh (gofmt+vet+go test ./... — includes substrate + promot
         RW-alias/Inv. 26, mc-land silent checkout, mc-land missing
         merge --abort, register-session lease-fence race), 4 refuted with
         documented reasons; fast lane + Docker e2e re-green
-- [~] Phase 2 — Dispatch + domain correctness
+- [x] Phase 2 — Dispatch + domain correctness (all unparked acceptance)
   - [x] Wave 1 unparked acceptance: dispatch table + SQL differential;
         domain aggregates; completion/fencing/two budgets; process flock +
         independent CAS; strict role/runner identity; immutable routing,
@@ -53,10 +53,10 @@ FAST SUITE: mc/check.sh (gofmt+vet+go test ./... — includes substrate + promot
     - [x] workspace bytes / before commit; git commit / before complete
     - [x] operator approve / before land; merge success / cleanup or report gap
     - [x] message/outbox insert / delivery
-  - [~] Nightly randomized/metamorphic/lifecycle properties + planted mutants
+  - [x] Nightly randomized/metamorphic/lifecycle properties + planted mutants
     - [x] bounded generator honesty + exact five-mutant fast gate
     - [x] tagged dispatch state fuzzer + ineligible-row metamorphism
-    - [ ] tagged twin-spine lifecycle random walk
+    - [x] tagged twin-spine lifecycle random walk
 - [ ] Phase 3 — Boundary conformance (Docker)
 - [ ] Phase 4 — E2E control loops (six scenario families)
 - [ ] Phase 5 — Real-subscription acceptance (operator-scheduled)
@@ -1146,3 +1146,40 @@ state, and audit the trigger invariants after every step. Include valid and
 classified invalid intents, rejection rollback, all task/verdict/packet/wave/
 budget/lease arms, and fixed seed+step replay. Initiative wave CLI remains
 Parked pending the durable plan-review representation.
+
+- 2026-07-13 — **Quota-interrupted twin-spine lifecycle property recovered,
+  adversarially hardened, and green.** The prior Codex session exhausted its
+  quota with one preserved test artifact; the operator checkpointed those
+  bytes as 0a66894 while this session was grounding. Four fixed-seed walks now
+  drive every exported stateful `mc/domain` operation against independent
+  domain/raw spines under matched `BEGIN IMMEDIATE`, with a complete curated
+  arm walk, randomly interleaved task/initiative strata, and 160 reproducible
+  perturbation steps per seed. Every accepted step compares result and full
+  relevant durable state; every classified rejection proves the exact domain
+  code and rollback; both spines audit trigger invariants, foreign keys, lease
+  arithmetic, timestamp validity/bounds, and periodic integrity checks.
+  Adversarial review caught and closed four oracle weaknesses before
+  acceptance: refinement BUDGET-SPENT had no post-write rejection witness;
+  domain-only raw paths were permissively labeled `may accept` despite this
+  schema deterministically accepting them; snapshots collapsed or omitted
+  timestamp/carrier/tunable state; and forced lifecycle strata were credited
+  together with the narrower random tail. The closure adds the composite
+  rollback witness, requires raw acceptance, derives subjectless Fence truth
+  from the raw lock, validates the actual heartbeat stamp, snapshots every
+  relevant column, poisons every status edge to prove stage restamping, and
+  carries a non-null packet thesis through rerender. Complete nightly suite +
+  nightly vet green; focused lifecycle ×10 green; Docker-tag compile/vet and
+  fake-routing-tag compile/vet green; complete fast lane green (Go all
+  packages; fake-harness 43, agent-runner 13, runner/image 40, resident 42).
+  Phase 2 is complete for every unparked acceptance line; the initiative-wave
+  CLI remains isolated under Parked and is not implied accepted.
+
+NEXT: Begin Phase 3 boundary conformance by authoring
+`docs/phase3-contract.md` from handoff Part 3 before production changes. Pin
+one Docker-backed test per enforcement mechanism, the mechanism ownership and
+failure semantics, and the exact non-Docker compile/fast lanes. Then TDD the
+first independent mount-validation/fail-closed slice (accept + reject for
+symlink, blocked pattern, `..`/`:`, cross-Worksource, and RW-only-when-both-
+agree; an unappliable rule blocks without spawning). Promote S1/S2 as frozen
+canaries, do not load launchd, and do not route around the parked initiative-
+wave representation.

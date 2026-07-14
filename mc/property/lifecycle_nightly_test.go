@@ -22,7 +22,6 @@ type rawRelation int
 const (
 	rawMustAccept rawRelation = iota
 	rawMustReject
-	rawMayAccept
 )
 
 type walkApply func(context.Context, domain.Q) (string, error)
@@ -50,6 +49,8 @@ type taskFact struct {
 	ID           int64
 	Scope        string
 	Status       string
+	CreatedAt    string
+	StageEntered string
 	InitiativeID sql.NullInt64
 	Blocked      bool
 	Archived     bool
@@ -70,8 +71,9 @@ type walkHarness struct {
 	step       int
 	history    []string
 	coverage   map[string]int
-	randomHits map[string]int
-	inRandom   bool
+	strataHits map[string]int
+	inStrata   bool
+	startedAt  time.Time
 	lastDomain spineSnapshot
 	lastRaw    spineSnapshot
 }
@@ -91,7 +93,8 @@ func newWalkHarness(t *testing.T, seed int64) *walkHarness {
 	t.Helper()
 	h := &walkHarness{
 		t: t, domainDB: openPropertySpine(t), rawDB: openPropertySpine(t),
-		seed: seed, coverage: map[string]int{}, randomHits: map[string]int{},
+		seed: seed, coverage: map[string]int{}, strataHits: map[string]int{},
+		startedAt: time.Now().UTC().Add(-time.Second).Truncate(time.Second),
 	}
 	h.lastDomain = snapshotSpine(t, h.domainDB)
 	h.lastRaw = snapshotSpine(t, h.rawDB)
@@ -126,8 +129,6 @@ func relationName(relation rawRelation) string {
 		return "raw-must-accept"
 	case rawMustReject:
 		return "raw-must-reject"
-	case rawMayAccept:
-		return "raw-may-accept"
 	default:
 		return "raw-relation-unknown"
 	}
@@ -196,7 +197,6 @@ func (h *walkHarness) run(op walkOperation) {
 			if rErr == nil {
 				fail("raw relation must reject but accepted result %q", rResult)
 			}
-		case rawMayAccept:
 		}
 		_, _ = dConn.ExecContext(context.Background(), `ROLLBACK`)
 		_, _ = rConn.ExecContext(context.Background(), `ROLLBACK`)
@@ -213,8 +213,8 @@ func (h *walkHarness) run(op walkOperation) {
 	}
 	for _, key := range op.Coverage {
 		h.coverage[key]++
-		if h.inRandom {
-			h.randomHits[key]++
+		if h.inStrata {
+			h.strataHits[key]++
 		}
 	}
 	h.audit(op.Name)
@@ -236,8 +236,9 @@ func beginWalk(t *testing.T, db *sql.DB) *sql.Conn {
 
 func (h *walkHarness) audit(op string) {
 	h.t.Helper()
+	upper := time.Now().UTC().Add(2 * time.Second)
 	for label, db := range map[string]*sql.DB{"domain": h.domainDB, "raw": h.rawDB} {
-		assertSpineInvariants(h.t, db, h.seed, h.step, op, label)
+		assertSpineInvariants(h.t, db, h.seed, h.step, op, label, h.startedAt, upper)
 	}
 	if h.step%20 == 0 {
 		for label, db := range map[string]*sql.DB{"domain": h.domainDB, "raw": h.rawDB} {
@@ -264,7 +265,7 @@ func (h *walkHarness) runCoverageWalk() {
 	h.run(promoteOp("A promote", a))
 	h.run(advanceWorkedOp("A work", a))
 	h.run(claimOp("A verifier claim", "a-v1", "verifier", &a, false))
-	h.run(fenceOp("A live fence", "a-v1", &a))
+	h.run(fenceOp("A live fence", "a-v1"))
 	h.run(heartbeatOp("A heartbeat", "a-v1"))
 	h.run(releaseOp("A release", "a-v1"))
 	h.run(rejectedVerdictOp("A premature budget-spent rejected", domain.VerdictArgs{
@@ -277,6 +278,7 @@ func (h *walkHarness) runCoverageWalk() {
 	}, domain.CodeCorrectionRequired))
 	h.run(verdictOp("A pass", a, "a-v1", "pass", "evidence/a", "sha-a1", "", ""))
 	h.run(packageOp("A package", a, "packets/a1.html", true))
+	h.run(packetThesisFixtureOp("A thesis fixture", a, "A review thesis"))
 	h.run(deepeningOp("A churn 1", a, false))
 	h.run(deepeningOp("A genuine reset", a, true))
 	h.run(deepeningOp("A churn after reset 1", a, false))
@@ -287,6 +289,11 @@ func (h *walkHarness) runCoverageWalk() {
 	h.run(advanceWorkedOp("A rework", a))
 	h.run(claimOp("A verifier claim 2", "a-v2", "verifier", &a, false))
 	h.run(releaseOp("A release 2", "a-v2"))
+	h.run(rejectedVerdictOp("A refinement premature budget-spent rollback", domain.VerdictArgs{
+		TaskID: a, RunID: "a-v2", Outcome: "budget-spent",
+		EvidencePath: "evidence/a2-invalid-budget", VerifiedSHA: "sha-a2-invalid",
+		Deepening: "churn",
+	}, domain.CodeBudgetRemaining))
 	h.run(verdictOp("A recovery pass", a, "a-v2", "pass", "evidence/a2", "sha-a2", "", "genuine"))
 	h.run(packageOp("A rerender", a, "packets/a2.html", true))
 
@@ -398,7 +405,7 @@ func (h *walkHarness) runCoverageWalk() {
 
 	// Subjectless lease path.
 	h.run(claimOp("subjectless claim", "subjectless", "strategist", nil, true))
-	h.run(fenceOp("subjectless fence", "subjectless", nil))
+	h.run(fenceOp("subjectless fence", "subjectless"))
 	h.run(heartbeatOp("subjectless heartbeat", "subjectless"))
 	h.run(releaseOp("subjectless release", "subjectless"))
 	h.run(claimOp("subjectless reap claim", "subjectless-reap", "strategist", nil, true))
@@ -641,16 +648,16 @@ func (h *walkHarness) runRandomLifecycleStrata(r *rand.Rand) {
 
 func (h *walkHarness) runRandomTail(steps int) {
 	r := rand.New(rand.NewSource(h.seed ^ 0x5eed5eed))
-	h.inRandom = true
-	defer func() { h.inRandom = false }()
+	h.inStrata = true
 	h.runRandomLifecycleStrata(r)
+	h.inStrata = false
 	for i := 0; i < steps; i++ {
 		facts := loadTaskFacts(h.t, h.domainDB)
 		lockRun := currentLockRun(h.t, h.domainDB)
 		if lockRun != "" {
 			switch r.Intn(4) {
 			case 0:
-				h.run(fenceOp("random live fence", lockRun, lockSubject(h.t, h.domainDB)))
+				h.run(fenceOp("random live fence", lockRun))
 			case 1:
 				h.run(heartbeatOp("random heartbeat", lockRun))
 			case 2:
@@ -762,19 +769,20 @@ func (h *walkHarness) assertCoverage() {
 		code     string
 		relation rawRelation
 	}{
-		{"A premature budget-spent rejected", domain.CodeBudgetRemaining, rawMayAccept},
-		{"A correction carrier rejected", domain.CodeCorrectionRequired, rawMayAccept},
+		{"A premature budget-spent rejected", domain.CodeBudgetRemaining, rawMustAccept},
+		{"A correction carrier rejected", domain.CodeCorrectionRequired, rawMustAccept},
+		{"A refinement premature budget-spent rollback", domain.CodeBudgetRemaining, rawMustAccept},
 		{"A saturated reset rejected", domain.CodeSaturated, rawMustReject},
-		{"empty wave domain-only rejection", domain.CodeEmptyWave, rawMayAccept},
-		{"overlapping wave rejected", domain.CodeStrictDrain, rawMayAccept},
+		{"empty wave domain-only rejection", domain.CodeEmptyWave, rawMustAccept},
+		{"overlapping wave rejected", domain.CodeStrictDrain, rawMustAccept},
 		{"initiative strict drain rejected", domain.CodeStrictDrain, rawMustReject},
 		{"parent unblock rejected", domain.CodeBlockedChild, rawMustReject},
 		{"D blocked promote rejected", domain.CodeBlocked, rawMustReject},
-		{"D non-proposed reject rejected", domain.CodeIllegalTransition, rawMayAccept},
+		{"D non-proposed reject rejected", domain.CodeIllegalTransition, rawMustAccept},
 		{"D fourth packet rejected", domain.CodeWIPCap, rawMustReject},
-		{"inactive Worksource birth rejected", domain.CodeWorksourceInactive, rawMayAccept},
+		{"inactive Worksource birth rejected", domain.CodeWorksourceInactive, rawMustAccept},
 		{"block without reason rejected", domain.CodeReasonRequired, rawMustReject},
-		{"packet cancel without packet rejected", domain.CodeNotFound, rawMayAccept},
+		{"packet cancel without packet rejected", domain.CodeNotFound, rawMustAccept},
 		{"claim while held rejected", domain.CodeLeaseHeld, rawMustReject},
 		{"stale fence rejected", domain.CodeStaleRun, rawMustReject},
 		{"stale heartbeat rejected", domain.CodeStaleRun, rawMustReject},
@@ -787,15 +795,18 @@ func (h *walkHarness) assertCoverage() {
 			h.t.Errorf("seed=%d lifecycle generator never exercised rejection %s; coverage=%v", h.seed, key, h.coverage)
 		}
 	}
-	randomRequired := []string{
+	// These floors describe the randomized interleaver's complete lifecycle
+	// strata. The narrower perturbation tail that follows those strata is not
+	// credited for arms it cannot generate.
+	strataRequired := []string{
 		"BirthProposal", "Promote", "AdvanceStage:worked", "ApplyVerdict:pass",
 		"ApplyVerdict:correct", "ApplyVerdict:budget-spent", "AdvanceStage:packaged",
 		"Birth", "Reenter", "Approve", "Cancel", "CancelPacket", "BirthWave",
 	}
-	for _, key := range randomRequired {
-		if h.randomHits[key] == 0 {
+	for _, key := range strataRequired {
+		if h.strataHits[key] == 0 {
 			h.t.Errorf("seed=%d randomized lifecycle strata never exercised %s; random coverage=%v",
-				h.seed, key, h.randomHits)
+				h.seed, key, h.strataHits)
 		}
 	}
 }
@@ -828,6 +839,19 @@ func rawNull(s string) any {
 		return nil
 	}
 	return s
+}
+
+func normalizedTimestamp(s string) (string, error) {
+	if _, err := time.Parse(domain.SpineTime, s); err != nil {
+		return "", fmt.Errorf("invalid spine timestamp %q: %w", s, err)
+	}
+	return "<timestamp>", nil
+}
+
+func poisonStageStamp(ctx context.Context, q domain.Q, id int64) error {
+	_, err := q.ExecContext(ctx,
+		`UPDATE tasks SET stage_entered_at = '1900-01-01 00:00:00' WHERE id = ?`, id)
+	return err
 }
 
 func birthProposalOp(name string, args domain.ProposalArgs, captured *int64) walkOperation {
@@ -863,13 +887,13 @@ func birthProposalOp(name string, args domain.ProposalArgs, captured *int64) wal
 func promoteOp(name string, id int64) walkOperation {
 	return accepted(name, []string{"Promote"},
 		func(ctx context.Context, q domain.Q) (string, error) {
-			if _, err := q.ExecContext(ctx, `UPDATE tasks SET stage_entered_at = '1900-01-01 00:00:00' WHERE id = ?`, id); err != nil {
+			if err := poisonStageStamp(ctx, q, id); err != nil {
 				return "", err
 			}
 			return "promoted", domain.Promote(ctx, q, id)
 		},
 		func(ctx context.Context, q domain.Q) (string, error) {
-			if _, err := q.ExecContext(ctx, `UPDATE tasks SET stage_entered_at = '1900-01-01 00:00:00' WHERE id = ?`, id); err != nil {
+			if err := poisonStageStamp(ctx, q, id); err != nil {
 				return "", err
 			}
 			_, err := q.ExecContext(ctx, `UPDATE tasks SET status = 'seeded' WHERE id = ?`, id)
@@ -898,9 +922,15 @@ func rejectProposalOp(name string, id int64, reason string) walkOperation {
 func advanceWorkedOp(name string, id int64) walkOperation {
 	return accepted(name, []string{"AdvanceStage:worked"},
 		func(ctx context.Context, q domain.Q) (string, error) {
+			if err := poisonStageStamp(ctx, q, id); err != nil {
+				return "", err
+			}
 			return "worked", domain.AdvanceStage(ctx, q, id, "worked")
 		},
 		func(ctx context.Context, q domain.Q) (string, error) {
+			if err := poisonStageStamp(ctx, q, id); err != nil {
+				return "", err
+			}
 			_, err := q.ExecContext(ctx, `UPDATE tasks SET status = 'worked' WHERE id = ?`, id)
 			return "worked", err
 		})
@@ -908,6 +938,9 @@ func advanceWorkedOp(name string, id int64) walkOperation {
 
 func packageOp(name string, id int64, render string, wantAccept bool) walkOperation {
 	domainApply := func(ctx context.Context, q domain.Q) (string, error) {
+		if err := poisonStageStamp(ctx, q, id); err != nil {
+			return "", err
+		}
 		if err := domain.AdvanceStage(ctx, q, id, "packaged"); err != nil {
 			return "", err
 		}
@@ -917,6 +950,9 @@ func packageOp(name string, id int64, render string, wantAccept bool) walkOperat
 		return "packaged", nil
 	}
 	rawApply := func(ctx context.Context, q domain.Q) (string, error) {
+		if err := poisonStageStamp(ctx, q, id); err != nil {
+			return "", err
+		}
 		if _, err := q.ExecContext(ctx,
 			`UPDATE tasks SET status = 'packaged', refine_notes = NULL WHERE id = ?`, id); err != nil {
 			return "", err
@@ -943,6 +979,9 @@ func verdictOp(name string, taskID int64, runID, outcome, evidence, sha, correct
 	coverage := []string{"ApplyVerdict:" + outcome}
 	return accepted(name, coverage,
 		func(ctx context.Context, q domain.Q) (string, error) {
+			if err := poisonStageStamp(ctx, q, taskID); err != nil {
+				return "", err
+			}
 			res, err := domain.ApplyVerdict(ctx, q, domain.VerdictArgs{
 				TaskID: taskID, RunID: runID, Outcome: outcome,
 				EvidencePath: evidence, VerifiedSHA: sha,
@@ -951,6 +990,9 @@ func verdictOp(name string, taskID int64, runID, outcome, evidence, sha, correct
 			return fmt.Sprintf("%s|%d|%t", res.Status, res.CorrectionCount, res.ExceptionLabeled), err
 		},
 		func(ctx context.Context, q domain.Q) (string, error) {
+			if err := poisonStageStamp(ctx, q, taskID); err != nil {
+				return "", err
+			}
 			var correctionCount int
 			if err := q.QueryRowContext(ctx, `SELECT correction_count FROM tasks WHERE id = ?`, taskID).Scan(&correctionCount); err != nil {
 				return "", err
@@ -998,9 +1040,15 @@ func verdictOp(name string, taskID int64, runID, outcome, evidence, sha, correct
 func reenterOp(name string, id int64, notes string) walkOperation {
 	return accepted(name, []string{"Reenter"},
 		func(ctx context.Context, q domain.Q) (string, error) {
+			if err := poisonStageStamp(ctx, q, id); err != nil {
+				return "", err
+			}
 			return "seeded", domain.Reenter(ctx, q, id, notes)
 		},
 		func(ctx context.Context, q domain.Q) (string, error) {
+			if err := poisonStageStamp(ctx, q, id); err != nil {
+				return "", err
+			}
 			_, err := q.ExecContext(ctx, `UPDATE tasks SET status = 'seeded', refine_notes = ? WHERE id = ?`, rawNull(notes), id)
 			return "seeded", err
 		})
@@ -1070,6 +1118,15 @@ func branchFixtureOp(name string, id int64, branch string) walkOperation {
 		return "branch:" + branch, err
 	}
 	return accepted(name, []string{"Fixture:branch"}, apply, apply)
+}
+
+func packetThesisFixtureOp(name string, id int64, thesis string) walkOperation {
+	apply := func(ctx context.Context, q domain.Q) (string, error) {
+		_, err := q.ExecContext(ctx,
+			`UPDATE review_packets SET thesis = ? WHERE task_id = ?`, thesis, id)
+		return "thesis:" + thesis, err
+	}
+	return accepted(name, []string{"Fixture:packet-thesis"}, apply, apply)
 }
 
 func landingFixtureOp(name string, id int64) walkOperation {
@@ -1309,7 +1366,7 @@ func claimArgsOp(name string, coverage []string, args domain.ClaimArgs) walkOper
 		})
 }
 
-func fenceOp(name, runID string, wantSubject *int64) walkOperation {
+func fenceOp(name, runID string) walkOperation {
 	return accepted(name, []string{"Fence"},
 		func(ctx context.Context, q domain.Q) (string, error) {
 			subject, err := domain.Fence(ctx, q, runID)
@@ -1328,15 +1385,18 @@ func fenceOp(name, runID string, wantSubject *int64) walkOperation {
 				v := subject.Int64
 				return intPointerString(&v), nil
 			}
-			return intPointerString(wantSubject), nil
+			return intPointerString(nil), nil
 		})
 }
 
 func heartbeatOp(name, runID string) walkOperation {
 	return accepted(name, []string{"Heartbeat"},
 		func(ctx context.Context, q domain.Q) (string, error) {
-			_, err := domain.Heartbeat(ctx, q, runID)
-			return "heartbeat", err
+			stamp, err := domain.Heartbeat(ctx, q, runID)
+			if err != nil {
+				return "", err
+			}
+			return normalizedTimestamp(stamp)
 		},
 		func(ctx context.Context, q domain.Q) (string, error) {
 			res, err := q.ExecContext(ctx, `UPDATE lock SET last_heartbeat_at = datetime('now') WHERE id = 1 AND run_id = ?`, runID)
@@ -1347,7 +1407,12 @@ func heartbeatOp(name, runID string) walkOperation {
 			if n != 1 {
 				return "", fmt.Errorf("raw stale heartbeat")
 			}
-			return "heartbeat", nil
+			var stamp string
+			if err := q.QueryRowContext(ctx,
+				`SELECT last_heartbeat_at FROM lock WHERE id = 1`).Scan(&stamp); err != nil {
+				return "", err
+			}
+			return normalizedTimestamp(stamp)
 		})
 }
 
@@ -1417,12 +1482,24 @@ func rawReap(ctx context.Context, q domain.Q, runID, reason string) (domain.Reap
 }
 
 func rejectedVerdictOp(name string, args domain.VerdictArgs, code string) walkOperation {
-	return rejected(name, code, rawMayAccept,
+	return rejected(name, code, rawMustAccept,
 		func(ctx context.Context, q domain.Q) (string, error) {
 			_, err := domain.ApplyVerdict(ctx, q, args)
 			return "", err
 		},
 		func(ctx context.Context, q domain.Q) (string, error) {
+			switch args.Deepening {
+			case "genuine":
+				if _, err := q.ExecContext(ctx,
+					`UPDATE review_packets SET refine_streak = 0 WHERE task_id = ?`, args.TaskID); err != nil {
+					return "", err
+				}
+			case "churn":
+				if _, err := q.ExecContext(ctx,
+					`UPDATE review_packets SET refine_streak = refine_streak + 1 WHERE task_id = ?`, args.TaskID); err != nil {
+					return "", err
+				}
+			}
 			switch args.Outcome {
 			case "correct":
 				if _, err := q.ExecContext(ctx, `
@@ -1447,7 +1524,7 @@ func rejectedVerdictOp(name string, args domain.VerdictArgs, code string) walkOp
 
 func overlapWaveRejectedOp(name string, initiative int64, priority *int) walkOperation {
 	child := domain.WaveChild{Title: "overlap child", Description: "must roll back", Priority: priority}
-	return rejected(name, domain.CodeStrictDrain, rawMayAccept,
+	return rejected(name, domain.CodeStrictDrain, rawMustAccept,
 		func(ctx context.Context, q domain.Q) (string, error) {
 			_, err := domain.BirthWave(ctx, q, initiative, []domain.WaveChild{child})
 			return "", err
@@ -1470,7 +1547,7 @@ func overlapWaveRejectedOp(name string, initiative int64, priority *int) walkOpe
 }
 
 func nonProposedRejectRejectedOp(name string, id int64) walkOperation {
-	return rejected(name, domain.CodeIllegalTransition, rawMayAccept,
+	return rejected(name, domain.CodeIllegalTransition, rawMustAccept,
 		func(ctx context.Context, q domain.Q) (string, error) {
 			return "", domain.RejectProposal(ctx, q, id, "stale editor snapshot")
 		},
@@ -1501,7 +1578,7 @@ func inactiveBirthRejectedOp(name, worksource string, priority *int) walkOperati
 		Title: "inert intake", Scope: "task", Priority: priority,
 		Origin: "autonomous", Worksource: worksource,
 	}
-	return rejected(name, domain.CodeWorksourceInactive, rawMayAccept,
+	return rejected(name, domain.CodeWorksourceInactive, rawMustAccept,
 		func(ctx context.Context, q domain.Q) (string, error) {
 			_, err := domain.BirthProposal(ctx, q, args)
 			return "", err
@@ -1519,7 +1596,7 @@ func inactiveBirthRejectedOp(name, worksource string, priority *int) walkOperati
 }
 
 func cancelPacketMissingRejectedOp(name string, id int64) walkOperation {
-	return rejected(name, domain.CodeNotFound, rawMayAccept,
+	return rejected(name, domain.CodeNotFound, rawMustAccept,
 		func(ctx context.Context, q domain.Q) (string, error) {
 			return "", domain.CancelPacket(ctx, q, id, "no packet exists")
 		},
@@ -1557,10 +1634,10 @@ func strictDrainRejectedOp(name string, id int64) walkOperation {
 }
 
 // Empty-wave rejection is intentionally domain-only: the substrate has no
-// row mutation to backstop. The raw oracle may accept its no-op, but both
-// transactions still roll back and the classified asymmetry must stay inert.
+// row mutation to backstop. The raw oracle must accept its no-op; both
+// transactions then roll back and the classified asymmetry stays inert.
 func emptyWaveRejectedOp(name string, id int64) walkOperation {
-	return rejected(name, domain.CodeEmptyWave, rawMayAccept,
+	return rejected(name, domain.CodeEmptyWave, rawMustAccept,
 		func(ctx context.Context, q domain.Q) (string, error) {
 			_, err := domain.BirthWave(ctx, q, id, nil)
 			return "", err
@@ -1713,23 +1790,12 @@ func currentLockRun(t *testing.T, db *sql.DB) string {
 	return run.String
 }
 
-func lockSubject(t *testing.T, db *sql.DB) *int64 {
-	t.Helper()
-	var subject sql.NullInt64
-	if err := db.QueryRow(`SELECT subject FROM lock WHERE id = 1`).Scan(&subject); err != nil {
-		t.Fatalf("load lock subject: %v", err)
-	}
-	if !subject.Valid {
-		return nil
-	}
-	v := subject.Int64
-	return &v
-}
-
 func snapshotSpine(t *testing.T, db *sql.DB) spineSnapshot {
 	t.Helper()
 	var out spineSnapshot
-	out.Worksources = queryLines(t, db, `SELECT id, title, kind, status FROM worksources ORDER BY id`, 4)
+	out.Worksources = queryLines(t, db, `
+		SELECT id, title, kind, jurisdiction, sandbox_profile, directive, seeding_mode, status
+		FROM worksources ORDER BY id`, 8)
 	out.Tasks = queryTaskLines(t, db)
 	out.Packets = queryPacketLines(t, db)
 	out.Lock = queryLockLine(t, db)
@@ -1771,21 +1837,24 @@ func queryTaskLines(t *testing.T, db *sql.DB) []string {
 	t.Helper()
 	return queryLines(t, db, `
 		SELECT CAST(id AS TEXT), title, description, scope, CAST(initiative_id AS TEXT),
-		       CAST(priority AS TEXT), status, CAST(stage_rank AS TEXT),
-		       CAST(correction_count AS TEXT), CAST(blocked AS TEXT), blocked_reason,
-		       CAST(dispatch_retries AS TEXT), decision,
-		       CASE WHEN decided_at IS NULL THEN '0' ELSE '1' END,
+		       CAST(priority AS TEXT),
+		       CASE WHEN created_at IS NULL THEN NULL ELSE '<timestamp>' END,
+		       status, CASE WHEN stage_entered_at IS NULL THEN NULL ELSE '<timestamp>' END,
+		       CAST(stage_rank AS TEXT), CAST(correction_count AS TEXT),
+		       CAST(blocked AS TEXT), blocked_reason, CAST(dispatch_retries AS TEXT),
+		       decision, CASE WHEN decided_at IS NULL THEN NULL ELSE '<timestamp>' END,
 		       CAST(archived AS TEXT), origin, worksource, branch, verified_sha,
 		       target_ref, refine_notes
-		FROM tasks ORDER BY id`, 21)
+		FROM tasks ORDER BY id`, 23)
 }
 
 func queryPacketLines(t *testing.T, db *sql.DB) []string {
 	t.Helper()
 	return queryLines(t, db, `
-		SELECT CAST(task_id AS TEXT), render_path, CAST(refine_streak AS TEXT),
-		       CAST(saturated AS TEXT), CAST(archived AS TEXT)
-		FROM review_packets ORDER BY task_id`, 5)
+		SELECT CAST(task_id AS TEXT), render_path, thesis, CAST(refine_streak AS TEXT),
+		       CAST(saturated AS TEXT), CAST(archived AS TEXT),
+		       CASE WHEN created_at IS NULL THEN NULL ELSE '<timestamp>' END
+		FROM review_packets ORDER BY task_id`, 7)
 }
 
 func queryLockLine(t *testing.T, db *sql.DB) string {
@@ -1793,9 +1862,12 @@ func queryLockLine(t *testing.T, db *sql.DB) string {
 	lines := queryLines(t, db, `
 		SELECT CAST(id AS TEXT), run_id, worksource, CAST(subject AS TEXT), owner,
 		       acquired_at,
-		       CASE WHEN last_heartbeat_at IS NULL THEN '0' ELSE '1' END,
-		       hard_deadline_at
-		FROM lock ORDER BY id`, 8)
+		       CASE WHEN last_heartbeat_at IS NULL THEN NULL ELSE '<timestamp>' END,
+		       hard_deadline_at, CAST(timeout_minutes AS TEXT), CAST(grace_minutes AS TEXT),
+		       CAST(heartbeat_interval_s AS TEXT), CAST(spawn_grace_s AS TEXT),
+		       CAST(hard_deadline_minutes AS TEXT), CAST(console_hour AS TEXT),
+		       CAST(console_minute AS TEXT), console_tz
+		FROM lock ORDER BY id`, 16)
 	if len(lines) != 1 {
 		t.Fatalf("lock snapshot rows=%d", len(lines))
 	}
@@ -1806,17 +1878,21 @@ func queryRunLines(t *testing.T, db *sql.DB) []string {
 	t.Helper()
 	return queryLines(t, db, `
 		SELECT id, tier, role, worksource, CAST(subject AS TEXT),
-		       CASE WHEN ended_at IS NULL THEN '0' ELSE '1' END,
-		       outcome, session_path, binding, pool_snapshot, verdict_outcome,
-		       evidence_path, correction_path, deepening, output_path
-		FROM runs ORDER BY id`, 15)
+		       CASE WHEN created_at IS NULL THEN NULL ELSE '<timestamp>' END,
+		       CASE WHEN ended_at IS NULL THEN NULL ELSE '<timestamp>' END,
+		       outcome, session_path, binding, native_session_ref, trace_filename,
+		       pool_snapshot, verdict_outcome, evidence_path, correction_path,
+		       deepening, output_path
+		FROM runs ORDER BY id`, 18)
 }
 
 func queryActivityLines(t *testing.T, db *sql.DB) []string {
 	t.Helper()
 	return queryLines(t, db, `
-		SELECT CAST(id AS TEXT), actor, kind, subject, detail
-		FROM activity ORDER BY id`, 5)
+		SELECT CAST(id AS TEXT),
+		       CASE WHEN created_at IS NULL THEN NULL ELSE '<timestamp>' END,
+		       actor, kind, subject, detail
+		FROM activity ORDER BY id`, 6)
 }
 
 func normalizedNull(v sql.NullString) string {
@@ -1829,7 +1905,8 @@ func normalizedNull(v sql.NullString) string {
 func loadTaskFacts(t *testing.T, db *sql.DB) map[int64]taskFact {
 	t.Helper()
 	rows, err := db.Query(`
-		SELECT t.id, t.scope, t.status, t.initiative_id, t.blocked, t.archived,
+		SELECT t.id, t.scope, t.status, t.created_at, t.stage_entered_at,
+		       t.initiative_id, t.blocked, t.archived,
 		       t.decision, t.dispatch_retries, t.correction_count,
 		       EXISTS(SELECT 1 FROM review_packets p WHERE p.task_id = t.id),
 		       EXISTS(SELECT 1 FROM review_packets p WHERE p.task_id = t.id AND p.archived = 0),
@@ -1845,7 +1922,8 @@ func loadTaskFacts(t *testing.T, db *sql.DB) map[int64]taskFact {
 	for rows.Next() {
 		var f taskFact
 		var blocked, archived, hasPacket, packetLive, saturated int
-		if err := rows.Scan(&f.ID, &f.Scope, &f.Status, &f.InitiativeID,
+		if err := rows.Scan(&f.ID, &f.Scope, &f.Status, &f.CreatedAt, &f.StageEntered,
+			&f.InitiativeID,
 			&blocked, &archived, &f.Decision, &f.Retries, &f.Correction,
 			&hasPacket, &packetLive, &saturated, &f.Identity); err != nil {
 			t.Fatalf("task facts scan: %v", err)
@@ -1899,6 +1977,13 @@ func assertLegalStatusEdges(t *testing.T, seed int64, step int, op string, befor
 		if old.Identity != current.Identity {
 			t.Fatalf("seed=%d step=%d op=%s changed task %d identity", seed, step, op, id)
 		}
+		if old.CreatedAt != current.CreatedAt {
+			t.Fatalf("seed=%d step=%d op=%s changed task %d created_at", seed, step, op, id)
+		}
+		if old.Status == current.Status && old.StageEntered != current.StageEntered {
+			t.Fatalf("seed=%d step=%d op=%s changed task %d stage stamp without a status edge",
+				seed, step, op, id)
+		}
 		if old.Status != current.Status && !legal[old.Status+"->"+current.Status] {
 			t.Fatalf("seed=%d step=%d op=%s illegal status edge task %d: %s -> %s",
 				seed, step, op, id, old.Status, current.Status)
@@ -1906,7 +1991,14 @@ func assertLegalStatusEdges(t *testing.T, seed int64, step int, op string, befor
 	}
 }
 
-func assertSpineInvariants(t *testing.T, db *sql.DB, seed int64, step int, op, label string) {
+func assertSpineInvariants(
+	t *testing.T,
+	db *sql.DB,
+	seed int64,
+	step int,
+	op, label string,
+	lower, upper time.Time,
+) {
 	t.Helper()
 	failCount := func(name, query string, want int) {
 		t.Helper()
@@ -1952,6 +2044,7 @@ func assertSpineInvariants(t *testing.T, db *sql.DB, seed int64, step int, op, l
 	failCount("held-lock-run", `SELECT COUNT(*) FROM lock l WHERE l.run_id IS NOT NULL AND
 		NOT EXISTS (SELECT 1 FROM runs r WHERE r.id = l.run_id AND r.role = l.owner AND
 		 r.subject IS l.subject AND r.worksource IS l.worksource)`, 0)
+	assertRecentSpineTimestamps(t, db, seed, step, op, label, lower, upper)
 
 	var runID, acquiredAt, deadlineAt sql.NullString
 	var deadlineMinutes int
@@ -1987,5 +2080,48 @@ func assertSpineInvariants(t *testing.T, db *sql.DB, seed int64, step int, op, l
 	}); err != nil || aggregate != direct {
 		t.Fatalf("seed=%d step=%d op=%s %s occupancy domain=%d direct=%d err=%v",
 			seed, step, op, label, aggregate, direct, err)
+	}
+}
+
+func assertRecentSpineTimestamps(
+	t *testing.T,
+	db *sql.DB,
+	seed int64,
+	step int,
+	op, label string,
+	lower, upper time.Time,
+) {
+	t.Helper()
+	rows, err := db.Query(`
+		SELECT 'tasks.created_at#' || id, created_at FROM tasks
+		UNION ALL SELECT 'tasks.stage_entered_at#' || id, stage_entered_at FROM tasks
+		UNION ALL SELECT 'tasks.decided_at#' || id, decided_at FROM tasks WHERE decided_at IS NOT NULL
+		UNION ALL SELECT 'review_packets.created_at#' || task_id, created_at FROM review_packets
+		UNION ALL SELECT 'runs.created_at#' || id, created_at FROM runs
+		UNION ALL SELECT 'runs.ended_at#' || id, ended_at FROM runs WHERE ended_at IS NOT NULL
+		UNION ALL SELECT 'activity.created_at#' || id, created_at FROM activity
+		UNION ALL SELECT 'lock.last_heartbeat_at#1', last_heartbeat_at FROM lock
+		              WHERE last_heartbeat_at IS NOT NULL`)
+	if err != nil {
+		t.Fatalf("seed=%d step=%d op=%s %s timestamp audit query: %v", seed, step, op, label, err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var field, value string
+		if err := rows.Scan(&field, &value); err != nil {
+			t.Fatalf("seed=%d step=%d op=%s %s timestamp audit scan: %v", seed, step, op, label, err)
+		}
+		stamp, err := time.Parse(domain.SpineTime, value)
+		if err != nil {
+			t.Fatalf("seed=%d step=%d op=%s %s %s has invalid timestamp %q: %v",
+				seed, step, op, label, field, value, err)
+		}
+		if stamp.Before(lower) || stamp.After(upper) {
+			t.Fatalf("seed=%d step=%d op=%s %s %s timestamp %s outside [%s, %s]",
+				seed, step, op, label, field, stamp, lower, upper)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("seed=%d step=%d op=%s %s timestamp audit rows: %v", seed, step, op, label, err)
 	}
 }
