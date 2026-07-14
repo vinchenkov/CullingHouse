@@ -697,3 +697,158 @@ Entry template:
 - Spec impact: §15.3 should distinguish individual historical file mounts
   from session-directory mounts.
 - Needs your decision: no
+
+## 2026-07-13 — `open+audit` retains a control-address floor
+- Where: Phase-3 gateway topology; spec §11.4; ADR-018 Decisions 3–4
+- Gap: §11.4 describes `open+audit` literally as “everything passes through
+  the proxy and every hostname is logged.” Taken without a destination floor,
+  that also admits loopback, link-local metadata, Docker/runtime control, and
+  Mission Control's own gateway/admin endpoints. The spec separately requires
+  confinement to be fail-closed but does not reconcile the two statements.
+- Choice: keep arbitrary public HTTP/IP-literal access with mandatory audit,
+  but make loopback/unspecified/link-local/metadata/multicast and discovered
+  runtime/control endpoints non-removable denies. RFC1918/ULA HTTP is admitted
+  only through an explicit `egress_allow` domain; explicit raw private access
+  remains `network_allow`. This preserves the fail-closed invariants, changes
+  the least security-sensitive behavior, and is easy to widen later.
+- Spec impact: §11.4 should replace “everything” with “everything outside the
+  non-removable control-address floor; private HTTP requires an explicit
+  domain.”
+- Needs your decision: no
+
+## 2026-07-13 — Homie trace projection supersedes individual file mounts
+- Where: Phase-3 mount-plan adversarial review; spec Inv. 22/26, §11.3,
+  §15.3; ADR-017 Decisions 6–7
+- Gap: the earlier individual-file choice preserves folder exclusivity, but a
+  permanent trace store eventually exceeds ADR-016's finite mount count and
+  would make every later Homie plan invalid. The spec requires both forever
+  retention and operator-scope access but does not define a bounded mount
+  namespace.
+- Choice: supersede only the earlier note's individual-mount mechanism with
+  one owner-folder-preserving RO projection root. Each projection entry is a
+  hard link on the same `MC_HOME` filesystem to a finalized immutable trace
+  and must prove `os.SameFile`; active writers, copies, symlinks, and fallback
+  byte materialization reject. The source session directory remains mounted
+  only into its owner, there is still one inode/one set of bytes, and the
+  derived directory entries are rebuildable by polling. This preserves the
+  invariants, deviates least from both clauses, and is reversible if the spec
+  later defines a different bounded view.
+- Spec impact: §15.3 should name a bounded same-inode historical-trace view
+  rather than implying an unbounded number of Docker binds.
+- Needs your decision: no
+
+## 2026-07-13 — Helper uses a component label, not an agent tier
+- Where: Phase-3 orphan/liveness review; spec §11.1, §11.5–§11.6;
+  ADR-016 Decision 7
+- Gap: §11.5 says the stateless helper “carries the mc-tier labeling like
+  every other container,” while §11.1 defines the closed tier values as only
+  `pipeline|homie` and §11.6 uses that label specifically to select the two
+  different agent-liveness domains. The helper belongs to neither.
+- Choice: label it `mc-managed=true,mc-component=helper` with no `mc-tier`.
+  Agent and network-guard containers retain the owning pipeline/Homie tier;
+  sweeps query the closed tier/component taxonomy. This prevents a helper
+  from masquerading as lease- or registry-owned execution, preserves both
+  liveness invariants, and is trivial to revise if a third tier is specified.
+- Spec impact: §11.5 should replace “mc-tier” for the helper with the
+  component label and reserve `mc-tier` for pipeline/Homie execution
+  envelopes.
+- Needs your decision: no
+
+## 2026-07-13 — A null-locator Homie preflight refusal is non-terminal
+- Where: Phase-3 Homie wake adversarial review; spec §15.4–§15.5; ADR-012
+  Decision 2; ADR-016 Decisions 3–4
+- Gap: ending a Homie whose first launch was refused or failed before native
+  locator registration leaves an ended conversation that ADR-012 correctly
+  refuses to resume. The spec's conversation-row fallback is the eventual
+  format-churn answer, but its explicit priming grammar is not yet designed;
+  silently treating a fresh launch as a native resume would be unsafe.
+- Choice: before the first locator only, a stable candidate-policy refusal
+  leaves the canonical status active and stores a code plus fingerprint of
+  the rejected candidate inputs; the same fingerprint is skipped so it
+  cannot starve pipeline work, and any relevant repair makes it eligible.
+  A confirmed pre-start runtime failure retains the durable launch generation
+  for exact retry. Once locators exist, the ordinary launch-fenced end/resume
+  path applies. This preserves the three canonical statuses, avoids inventing
+  an implicit lossy replay, and is reversible when the explicit
+  conversation-row fallback is authored.
+- Spec impact: §15.4/§15.5 should distinguish failure before first native
+  registration from exit/failure of an established resumable session.
+- Needs your decision: no
+
+## 2026-07-13 — Explicit row resume supersedes null-locator refusal suppression
+- Where: second adversarial review of ADR-016; spec §10, §15.4–§15.5;
+  ADR-012 Decision 2
+- Gap: the preceding fingerprinted-refusal choice is not implementable without
+  letting the lock-domain selector observe current host path/config state
+  before candidate selection. Unconditionally skipping the marker would never
+  notice repair; rechecking it as the oldest candidate would starve lower work.
+- Choice: supersede that suppression mechanism with the spec's designed
+  conversation-row fallback. Candidate-policy refusal ends every Homie once.
+  A host-only explicit `homie resume --from-rows` is legal for a null-locator
+  session after repair; it starts a fresh harness primed from a fixed bounded,
+  loss-marked completed-row tail, while native resume remains the default and
+  never silently downgrades. A committed unstarted launch generation remains
+  effect debt for transient pre-start failures. This uses durable records the
+  spec already names, preserves the canonical statuses and no-starvation
+  posture, and removes an unobservable state predicate.
+- Spec impact: §15.4 should give the conversation-row fallback an explicit
+  mode/priming contract; ADR-012's deferred arm is now filled by ADR-016.
+- Needs your decision: no
+
+## 2026-07-13 — Shared trace projection contains pipeline traces only
+- Where: second adversarial review of ADR-017 Decision 7; spec Inv. 22/26,
+  §15.3–§15.4
+- Gap: removing a projected hardlink before a Homie resumes does not revoke an
+  already-open descriptor in another warm Homie. If the source inode is then
+  appended as the resumed native session, that descriptor can observe a live
+  trace despite the directory entry being gone.
+- Choice: restrict the operator projection to finalized, writer-closed
+  **pipeline** traces. §15.3 grants Homie read scope across Worksources'
+  session files; Homie sessions have no Worksource and expose their durable
+  visible history through conversation rows. A Homie still mounts its own
+  native folder for resume. This preserves live-trace owner isolation at the
+  kernel boundary and is safer than treating polling/reopen discipline as a
+  security fence.
+- Spec impact: §15.3 should say “pipeline Worksource session files” if that is
+  the intended boundary; if cross-Homie native trace access is required, it
+  needs a revocable projection mechanism rather than hardlinks/binds.
+- Needs your decision: no
+
+## 2026-07-13 — Standalone tasks use a sanitized task-local Git repository
+- Where: Phase-3 committed-state mount review; spec §5, §6.2, §7, §11.1;
+  ADR-016 Decisions 5–6; ADR-017 Decisions 5–6
+- Gap: §5 requires agents to see committed state only, while the worktree and
+  landing prose implies that `mc/task-<id>` lives in the real Worksource
+  repository before approval. Even with refs filtered, sharing that real
+  object database exposes operator-staged, stashed, aborted, manually hashed,
+  and other unreachable objects through ordinary Git plumbing.
+- Choice: before landing, keep the standalone branch/worktree in an isolated
+  task-local repository containing only the object closure reachable from the
+  pinned base. Never use local-clone hardlinks or real-repository alternates.
+  Worker completion publishes a privileged immutable closure seal; Verifier
+  builds in a disposable same-SHA source while its canonical controls remain
+  RO. Approved landing alone imports the reviewed closure, CAS-creates the
+  real task ref, and performs the required primary-checkout `merge --no-ff`.
+  This changes the location, not the reviewed SHA or landing topology, and is
+  the smallest reversible design that makes §5 literal. Initiative
+  shared-worktree mechanics remain Parked rather than inferred from it.
+- Spec impact: §§6.2, 7, and 11.1 should distinguish the pre-landing isolated
+  task repository from the real ref that landing materializes.
+- Needs your decision: no
+
+## 2026-07-13 — One stale-writer cleanup may precede Console or landing
+- Where: Phase-3 dispatch ordering review; spec §10 and §11.6; ADR-016
+  Decision 3
+- Gap: §11.6 requires orphan cleanup at every tick start, while §10 gives due
+  Console and landing nominal one-tick priority. With one effect per tick, a
+  setup/landing or mismatched agent survivor can still be an active stale
+  writer; selecting new control work first would preserve that unsafe process.
+- Choice: after lease/recovered-health reconciliation, return at most one
+  deterministic exact-id orphan/ephemeral cleanup before Console, landing, or
+  reenter. The next confirmed-absence tick resumes the control table. This can
+  delay those actions by one cleanup tick but preserves the fail-closed and
+  single-writer invariants, never lets ordinary Homie housekeeping displace
+  them, and is easy to reverse if the spec defines a safe concurrent cleanup.
+- Spec impact: §10 should name this bounded stale-writer safety exception to
+  the one-tick Console/landing latency.
+- Needs your decision: no

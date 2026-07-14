@@ -60,8 +60,9 @@ FAST SUITE: mc/check.sh (gofmt+vet+go test ./... — includes substrate + promot
 - [ ] Phase 3 — Boundary conformance (Docker)
   - [x] Contract + adversarial mechanism/ownership review
         (`docs/phase3-contract.md`)
-  - [ ] Delegated boundary ADRs (spawn/wake crossing, mount grammar,
-        gateway/network topology, resource defaults)
+  - [x] Delegated boundary ADRs accepted after adversarial review: ADR-016
+        spawn/wake crossing, ADR-017 mount/file plane, ADR-018 gateway/network
+        topology, ADR-019 finite resource envelopes
 - [ ] Phase 4 — E2E control loops (six scenario families)
 - [ ] Phase 5 — Real-subscription acceptance (operator-scheduled)
 - [ ] Release prep (after Phase 5): swap the repo's construction face for
@@ -1225,3 +1226,50 @@ finite CPU/memory/PID defaults and override bounds. Adversarially review and
 commit those plans before production code. Then TDD the first pure
 `mc/boundary` accept/reject table and its invalid-plan/no-claim transaction
 slice. Do not load launchd or route around the parked initiative-wave model.
+
+- 2026-07-13 — **Quota handoff recovered; Phase-3 boundary ADRs accepted.**
+  Grounding resumed from green `72a39db`: ledger, recent commits, dirty tree,
+  spec/handoff, current seams, and the complete fast lane were re-read/run
+  before new implementation. The preserved work was documentation only and
+  was treated as data. A direct Docker Desktop canary also proved a cached
+  `alpine:3.22` container reaches a server bound only to host `127.0.0.1` via
+  `host.docker.internal`, supporting the loopback-only native gateway; no
+  production container, secret, or launchd state changed.
+
+  ADR-016 now pins the resident-only prepare/attest/commit composition,
+  pre-prepare deployment identity, digest-only raw host files, exact request
+  and action receipts, bounded-memory paged inventories with count-derived
+  progress, one-action lifecycle order, attested landing, launch/container/
+  runner fencing, Homie effect debt, and explicit bounded O(tail) row resume.
+  ADR-017 pins the strict extend-only allowlist and identity walk, complete
+  destination tables, closure-only isolated standalone Git store, privileged
+  completion seal, disposable Verifier source, topology-fenced landing,
+  same-inode pipeline-trace projection, and a crash-safe attachment queue,
+  publication, deduplication, and GC protocol. ADR-018 pins the loopback native
+  gateway, per-launch uid-filtered guard namespace, fixed DNS/raw rules,
+  one-use resident control, registration-generation fencing, an exact
+  five-container preclaim proof, and failure classes. ADR-019 pins six finite
+  deployment-only CPU/memory/PID classes and exact capability/security
+  envelopes.
+
+  Repeated independent audits found and closed response-loss double actions,
+  large-inventory/cardinality wedges, stale Docker states, resident-restart
+  adoption, pipeline/Homie starvation, empty and aggregate-overflow row
+  priming, unsafe real Git object sharing, producer/seal races, bare/external
+  Git-control leakage, setup-parent write authority, attachment intake and
+  dedup-GC crash races, unbounded probe clients, and stale contract prose.
+  The two explicit spec deviations—pre-landing task-local Git and one
+  stale-writer cleanup before Console/landing—are appended to
+  `IMPLEMENTATION-NOTES.md`; initiative shared-worktree/holistic review remains
+  Parked. Complete fast lane green (Go all packages; fake-harness 43,
+  agent-runner 13, runner/image 40, resident 42); diff check green.
+
+NEXT: TDD the first pure `mc/boundary` slice. Start with red table tests for
+strict `mount-allowlist` parsing (deny-all and ordinary accept; unknown/
+duplicate/malformed input), target grammar/collisions, the shipped blocked
+floor plus additive patterns, and bilateral RO/RW results. Implement only the
+pure parser/policy needed to turn those tests green, run the complete fast
+lane, and commit. Then add canonical filesystem identity/symlink and
+cross-Worksource/protected-root checks before integrating invalid-plan/no-claim
+dispatch. Do not load launchd or route around the parked initiative-wave
+model.
