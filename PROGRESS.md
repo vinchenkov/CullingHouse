@@ -63,6 +63,9 @@ FAST SUITE: mc/check.sh (gofmt+vet+go test ./... — includes substrate + promot
   - [x] Delegated boundary ADRs accepted after adversarial review: ADR-016
         spawn/wake crossing, ADR-017 mount/file plane, ADR-018 gateway/network
         topology, ADR-019 finite resource envelopes
+  - [x] Pure mount policy: strict allowlist TOML/limits, POSIX targets and
+        collision rejection, immutable blocked floor + additive patterns,
+        bilateral RO/RW access (`mc/boundary`)
 - [ ] Phase 4 — E2E control loops (six scenario families)
 - [ ] Phase 5 — Real-subscription acceptance (operator-scheduled)
 - [ ] Release prep (after Phase 5): swap the repo's construction face for
@@ -1273,3 +1276,39 @@ lane, and commit. Then add canonical filesystem identity/symlink and
 cross-Worksource/protected-root checks before integrating invalid-plan/no-claim
 dispatch. Do not load launchd or route around the parked initiative-wave
 model.
+
+- 2026-07-13 — **Phase-3 pure mount policy GREEN.** TDD began with a
+  build-red `mc/boundary` table suite, then added a filesystem-free policy
+  package shared by later profile admission and dispatch planning. The
+  allowlist parser now accepts only TOML v1 `version = 1` plus literal
+  `[[allow]]` tables, including valid deny-all, and rejects unknown,
+  duplicate, missing, mistyped, malformed, case-variant, inline/dotted, and
+  over-limit input before allocation or filesystem work. BurntSushi TOML
+  v1.6.0 is pinned as a direct dependency so comments/escapes and duplicate
+  semantics come from a real TOML parser while metadata checks keep the
+  schema syntactically closed.
+
+  Relative targets enforce exact UTF-8/POSIX byte and component limits with
+  no cleaning or renaming; pairwise collision checks reject equality and
+  ancestor overlap without case-folding. A local adversarial pass caught and
+  regression-tested the non-adjacent lexical trap `docs`, `docs-api`,
+  `docs/api` before commit. The private exact 18-component + 22-glob shipped
+  floor is always evaluated—even by a zero-value policy—while validated
+  operator patterns are additive only, bounded, ASCII-case-insensitive, and
+  matched by a closed literal-plus-`*` implementation. The bilateral access
+  table returns the requested mode or rejects RW-over-RO; it never silently
+  downgrades or drops a mount. Two independent read-only reviews accepted the
+  implementation after exact-floor, near-miss, wrong-type, zero-value, and
+  maximum-bound tests were added. Complete serial fast lane green (Go all
+  packages; fake-harness 43, agent-runner 13, runner/image 40, resident 42);
+  diff check green. No Docker, secret, production runtime, or launchd state
+  changed.
+
+NEXT: TDD the filesystem identity half of `mc/boundary`: strict
+`MC_HOME`/`mount-allowlist` owner-mode/non-symlink regular-file trust seams,
+canonical `Abs → Clean → EvalSymlinks` source resolution, raw+resolved blocked
+address checks, filesystem-identity allow-root ancestry with exact-one-root
+authorization and suffix validation, and symlink-stays/escapes fixtures. Keep
+protected-root and cross-Worksource bilateral exclusions as the immediately
+following pure-policy slice, then integrate invalid-plan/no-claim dispatch.
+Do not load launchd or route around the parked initiative-wave model.
