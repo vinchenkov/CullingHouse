@@ -58,6 +58,10 @@ FAST SUITE: mc/check.sh (gofmt+vet+go test ./... — includes substrate + promot
     - [x] tagged dispatch state fuzzer + ineligible-row metamorphism
     - [x] tagged twin-spine lifecycle random walk
 - [ ] Phase 3 — Boundary conformance (Docker)
+  - [x] Contract + adversarial mechanism/ownership review
+        (`docs/phase3-contract.md`)
+  - [ ] Delegated boundary ADRs (spawn/wake crossing, mount grammar,
+        gateway/network topology, resource defaults)
 - [ ] Phase 4 — E2E control loops (six scenario families)
 - [ ] Phase 5 — Real-subscription acceptance (operator-scheduled)
 - [ ] Release prep (after Phase 5): swap the repo's construction face for
@@ -1183,3 +1187,41 @@ symlink, blocked pattern, `..`/`:`, cross-Worksource, and RW-only-when-both-
 agree; an unappliable rule blocks without spawning). Promote S1/S2 as frozen
 canaries, do not load launchd, and do not route around the parked initiative-
 wave representation.
+
+- 2026-07-13 — **Phase 3 grounded and boundary contract adversarially
+  closed.** Before production changes, the full Phase-3 handoff paragraph was
+  reconciled against spec §§5/9/11/16/17, every Phase-0 boundary result,
+  ADR-014/015, the current image/resident/runner/onboarding seams, and all
+  open implementation notes. `docs/phase3-contract.md` now assigns a named
+  real-mechanism test to every handoff group; freezes configuration trust
+  roots, immutable mount/network effects, production-vs-fake identity,
+  S1/S2 promotion, Homie/pipeline scope, orphan/resource semantics, exact
+  no-Docker/Docker lanes, and later-phase exclusions. Three independent
+  read-only audits found that nearly every boundary remains spike- or
+  skeleton-only and caught an unimplementable first draft: it skipped reap
+  reconciliation when readiness was red, promised a spine health write while
+  the macOS runtime crossing was unavailable, assigned native-path
+  resolution to a helper without the host file plane, blurred the same-uid
+  runner grain into kernel authorization, omitted the lease-free Homie wake
+  path, and left gateway/raw-TCP ownership unnamed. The closure requires a
+  single external `mc dispatch` with an ADR-pinned host↔lock-domain handshake
+  before claim, keeps all state consequences inside `mc`, carries separate
+  registry-driven Homie planning, and adds exact secret non-forwarding,
+  identity-matched orphan, plural-mount, and defaulted-resource evidence.
+  The handoff's wildcard-env shorthand and the Homie historical-file/Inv. 26
+  tension are resolved conservatively and logged in
+  `IMPLEMENTATION-NOTES.md`. Complete fast lane green (Go all packages;
+  fake-harness 43, agent-runner 13, runner/image 40, resident 42); diff check
+  green. No Docker, production behavior, secret, or launchd state changed.
+
+NEXT: Author the four Phase-3 pre-code decisions in the next available ADRs:
+ADR-016 pins the one-command host↔lock-domain pipeline/Homie plan handshake,
+candidate/TOCTOU fence, immutable effect/reason schema, and exact
+pipeline/Homie/helper liveness labels; ADR-017 pins the extend-only mount
+allowlist grammar, blocked-pattern floor, and collision-free plural mount
+destinations; ADR-018 pins the Docker Desktop gateway/raw-TCP topology,
+DNS/rebinding posture, injection scope, and audit ownership; ADR-019 pins
+finite CPU/memory/PID defaults and override bounds. Adversarially review and
+commit those plans before production code. Then TDD the first pure
+`mc/boundary` accept/reject table and its invalid-plan/no-claim transaction
+slice. Do not load launchd or route around the parked initiative-wave model.

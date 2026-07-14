@@ -663,3 +663,37 @@ Entry template:
   meanwhile.
 - Spec impact: none (success truth and exact cleanup remain §7 obligations)
 - Needs your decision: no
+
+## 2026-07-13 — Forbidden-env wildcard is a scan shape, not the shipped deny floor
+- Where: Phase-3 handoff forbidden-env `*_API_KEY` mechanism; spec §5,
+  §16.3, Inv. 13; `docs/phase3-contract.md` §2.2
+- Gap: the handoff abbreviates the mechanism as a `*_API_KEY` scan, while
+  the winning spec defines the non-removable default guard as exactly
+  `CODEX_API_KEY` and `ANTHROPIC_API_KEY` and separately permits
+  operator-managed Worksource tool secrets. Treating the handoff glob as an
+  unconditional deny rule would reject legitimate names the spec permits.
+- Choice: enumerate and classify every wildcard-shaped key in both env
+  planes, but reject only the effective extend-only guard whose shipped floor
+  is the spec's two names. A sentinel extension proves arbitrary names can be
+  added and rejected. This preserves Inv. 13 without silently widening it.
+- Spec impact: handoff Part 3 could say “scan `*_API_KEY`; reject the §16.3
+  effective guard” instead of using the glob as shorthand.
+- Needs your decision: no
+
+## 2026-07-13 — Homie historical trace access preserves folder exclusivity
+- Where: Phase-3 mount plan/per-container scope; spec Inv. 22/26, §11.3,
+  §15.3; `docs/phase3-contract.md` §4
+- Gap: Inv. 26 says every run's trace-only session folder is mounted only
+  into its owning container, while §15.3 requires an operator-scope Homie to
+  receive read-only mounts across session files. Mounting the whole sessions
+  tree would violate the invariant and give a live file a second directory
+  alias.
+- Choice: keep each folder owner-exclusive and give a Homie only enumerated,
+  completed native trace **files** as individual read-only references under
+  a deterministic operator-reference tree. Its own session folder remains
+  the only RW trace destination. This satisfies the later file-access clause
+  while preserving the named invariant and is easy to replace if the spec is
+  clarified.
+- Spec impact: §15.3 should distinguish individual historical file mounts
+  from session-directory mounts.
+- Needs your decision: no
