@@ -433,13 +433,24 @@ func ancestorRoutes(p string) ([]string, error) {
 	// Snapshot before iterating: addChain appends to out.
 	chain := append([]string(nil), out...)
 	for _, member := range chain {
+		// A chain member that does not exist has no volume of its own, and ENOENT
+		// here is EXPECTED rather than ambiguous: an absent member's declared path
+		// is exactly the D8 case, and its nearest existing ancestor is on this same
+		// chain and is probed below, yielding the identical mount point. Failing
+		// closed on it would make every absent member reject the whole world.
+		if _, err := os.Lstat(member); err != nil {
+			continue
+		}
 		mnt, err := mountPoint(member)
 		if err != nil {
 			if errors.Is(err, errNoMountPoint) {
 				continue // no firmlink plane here; the Dir chain is the whole answer
 			}
+			// The path is there and the kernel still would not say which volume
+			// hosts it: the alias routes are genuinely unknown, and ambiguity
+			// denies (D8).
 			return nil, mountErrf(CodeDeniedRoot,
-				"cannot determine the volume hosting %q, so HOME's alias routes are unknown "+
+				"cannot determine the volume hosting %q, so its alias routes are unknown "+
 					"and ambiguity denies: %v", member, err)
 		}
 		if !seen[mnt] {
@@ -570,5 +581,88 @@ func (j Jurisdiction) Rejects(id SourceIdentity, claim TypedClaim) error {
 				id.Canonical, j.home.Canonical, r.Canonical)
 		}
 	}
+
+	// D7's precedence, which ADR-017 gives no rule for: when a path is BOTH
+	// another Worksource's root AND (say) a denied_paths entry, cross_worksource
+	// wins. It is the more specific statement of WHY the path is denied and the
+	// one an operator can act on — they can re-scope a Worksource, whereas
+	// "denied_root" tells them only that something, somewhere, said no.
+	// Determinism matters more than the choice, so the order is fixed here and
+	// pinned by a test rather than left to map or slice ordering.
+	if err := j.rejectsUnion(id, true); err != nil {
+		return err
+	}
+	return j.rejectsUnion(id, false)
+}
+
+// rejectsUnion applies D4's bidirectional intersection over the members of one
+// class (cross-Worksource or not).
+func (j Jurisdiction) rejectsUnion(id SourceIdentity, cross bool) error {
+	for _, root := range j.roots {
+		if root.cross != cross {
+			continue
+		}
+		code := CodeDeniedRoot
+		if root.cross {
+			code = CodeCrossWorksource
+		}
+
+		// S == P, and S under P. Both read P.Info, and both are correct to be
+		// false for an absent P: nothing can exist under a root that does not.
+		if root.id.Present() {
+			if sameFile(id.Info, root.id.Info) {
+				return mountErrf(code, "source %q is the protected %s %q",
+					id.Canonical, root.label, root.id.Canonical)
+			}
+			if enclosesByIdentity(resolvedRoot{canonical: root.id.Canonical, info: root.id.Info}, id.Canonical) {
+				return mountErrf(code, "source %q is under the protected %s %q",
+					id.Canonical, root.label, root.id.Canonical)
+			}
+		}
+
+		// S is an ancestor of P — the mirror walk, and the direction that carries
+		// the weight: without it, mounting a parent hands over every protected
+		// descendant inside it (ADR-017:388-389).
+		//
+		// It walks P's CANONICAL PATH and stats the ancestors; it never reads
+		// P.Info. That is the law that makes an absent member safe, and it is why
+		// this branch is outside the Present() guard above.
+		//
+		// It uses ancestorRoutes, not a bare Dir walk, for the same reason
+		// broad_root does: on macOS a volume mount point is an ancestor by
+		// reachability that no Dir walk reaches, and a skeptic proved one
+		// /System/Volumes/Data source slipped past MC_HOME, ~/.ssh, and another
+		// Worksource's root at once.
+		ancestor, err := j.isAncestorOf(id, root.id.Canonical)
+		if err != nil {
+			return err
+		}
+		if ancestor {
+			return mountErrf(code, "source %q is an ancestor of the protected %s %q, and mounting "+
+				"it would expose that root", id.Canonical, root.label, root.id.Canonical)
+		}
+	}
 	return nil
+}
+
+// isAncestorOf reports whether the source is an ancestor of the protected path,
+// by identity, including the alias routes a filepath.Dir walk cannot reach.
+func (j Jurisdiction) isAncestorOf(id SourceIdentity, protected string) (bool, error) {
+	routes, err := ancestorRoutes(protected)
+	if err != nil {
+		return false, err
+	}
+	for _, r := range routes {
+		if r == protected {
+			continue // that is the equality case, handled by the caller
+		}
+		info, statErr := os.Lstat(r)
+		if statErr != nil {
+			continue
+		}
+		if sameFile(id.Info, info) {
+			return true, nil
+		}
+	}
+	return false, nil
 }

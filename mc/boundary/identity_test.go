@@ -269,9 +269,14 @@ func TestAuthorizeIdentityWalk(t *testing.T) {
 
 	resolved := resolveOf(t, allowlistOf(t, entry(root, "workspace", "rw")))
 	var blocked boundary.BlockPolicy
+	// A real constructed jurisdiction with no members: it permits ordinary
+	// sources, while a bare Jurisdiction{} would reject every one of them (ADR-021
+	// D1's zero-value law). The compiler cannot tell these apart — only this
+	// choice does.
+	j := resolvedEmpty(t, dir)
 
 	t.Run("descendant accepted with derived suffix", func(t *testing.T) {
-		got, err := resolved.Authorize(inside, boundary.AccessRO, blocked)
+		got, err := resolved.Authorize(inside, boundary.AccessRO, blocked, j)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -287,7 +292,7 @@ func TestAuthorizeIdentityWalk(t *testing.T) {
 	})
 
 	t.Run("the root itself has an empty suffix", func(t *testing.T) {
-		got, err := resolved.Authorize(root, boundary.AccessRW, blocked)
+		got, err := resolved.Authorize(root, boundary.AccessRW, blocked, j)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -301,7 +306,7 @@ func TestAuthorizeIdentityWalk(t *testing.T) {
 		if err := os.Symlink(inside, link); err != nil {
 			t.Fatal(err)
 		}
-		got, err := resolved.Authorize(link, boundary.AccessRO, blocked)
+		got, err := resolved.Authorize(link, boundary.AccessRO, blocked, j)
 		if err != nil {
 			t.Fatalf("Authorize() = %v, want accept for an in-root symlink", err)
 		}
@@ -315,21 +320,21 @@ func TestAuthorizeIdentityWalk(t *testing.T) {
 		if err := os.Symlink(outside, link); err != nil {
 			t.Fatal(err)
 		}
-		_, err := resolved.Authorize(link, boundary.AccessRO, blocked)
+		_, err := resolved.Authorize(link, boundary.AccessRO, blocked, j)
 		if got := codeOf(t, err); got != boundary.CodeSymlinkEscape {
 			t.Fatalf("code = %q, want %q", got, boundary.CodeSymlinkEscape)
 		}
 	})
 
 	t.Run("sibling prefix never satisfies the root", func(t *testing.T) {
-		_, err := resolved.Authorize(evil, boundary.AccessRO, blocked)
+		_, err := resolved.Authorize(evil, boundary.AccessRO, blocked, j)
 		if got := codeOf(t, err); got != boundary.CodeNotAllowlisted {
 			t.Fatalf("code = %q, want %q", got, boundary.CodeNotAllowlisted)
 		}
 	})
 
 	t.Run("unrelated source is not allowlisted", func(t *testing.T) {
-		_, err := resolved.Authorize(outside, boundary.AccessRO, blocked)
+		_, err := resolved.Authorize(outside, boundary.AccessRO, blocked, j)
 		if got := codeOf(t, err); got != boundary.CodeNotAllowlisted {
 			t.Fatalf("code = %q, want %q", got, boundary.CodeNotAllowlisted)
 		}
@@ -338,7 +343,7 @@ func TestAuthorizeIdentityWalk(t *testing.T) {
 	t.Run("RW over an RO maximum rejects", func(t *testing.T) {
 		roRoot := mkdir(t, filepath.Join(dir, "ro-root"), 0o700)
 		roOnly := resolveOf(t, allowlistOf(t, entry(roRoot, "reference", "ro")))
-		_, err := roOnly.Authorize(roRoot, boundary.AccessRW, blocked)
+		_, err := roOnly.Authorize(roRoot, boundary.AccessRW, blocked, j)
 		if got := codeOf(t, err); got != boundary.CodeRWNotPermitted {
 			t.Fatalf("code = %q, want %q", got, boundary.CodeRWNotPermitted)
 		}
@@ -354,9 +359,14 @@ func TestAuthorizeBlockedMatching(t *testing.T) {
 	ordinary := mkdir(t, filepath.Join(root, "ordinary"), 0o700)
 	resolved := resolveOf(t, allowlistOf(t, entry(root, "workspace", "rw")))
 	var blocked boundary.BlockPolicy
+	// A real constructed jurisdiction with no members: it permits ordinary
+	// sources, while a bare Jurisdiction{} would reject every one of them (ADR-021
+	// D1's zero-value law). The compiler cannot tell these apart — only this
+	// choice does.
+	j := resolvedEmpty(t, dir)
 
 	t.Run("blocked component in the raw-clean address", func(t *testing.T) {
-		_, err := resolved.Authorize(secret, boundary.AccessRO, blocked)
+		_, err := resolved.Authorize(secret, boundary.AccessRO, blocked, j)
 		if got := codeOf(t, err); got != boundary.CodeSourceBlocked {
 			t.Fatalf("code = %q, want %q", got, boundary.CodeSourceBlocked)
 		}
@@ -367,14 +377,14 @@ func TestAuthorizeBlockedMatching(t *testing.T) {
 		if err := os.Symlink(secret, link); err != nil {
 			t.Fatal(err)
 		}
-		_, err := resolved.Authorize(link, boundary.AccessRO, blocked)
+		_, err := resolved.Authorize(link, boundary.AccessRO, blocked, j)
 		if got := codeOf(t, err); got != boundary.CodeSourceBlocked {
 			t.Fatalf("code = %q, want %q — the resolved address carries .ssh", got, boundary.CodeSourceBlocked)
 		}
 	})
 
 	t.Run("a workspace merely containing a blocked name is fine", func(t *testing.T) {
-		if _, err := resolved.Authorize(ordinary, boundary.AccessRO, blocked); err != nil {
+		if _, err := resolved.Authorize(ordinary, boundary.AccessRO, blocked, j); err != nil {
 			t.Fatalf("Authorize() = %v; Rejects classifies address components, not contents", err)
 		}
 	})
@@ -389,21 +399,26 @@ func TestAuthorizeSuffixGrammar(t *testing.T) {
 	plain := mkdir(t, filepath.Join(root, "plain"), 0o700)
 	resolved := resolveOf(t, allowlistOf(t, entry(root, "reference", "ro")))
 	var blocked boundary.BlockPolicy
+	// A real constructed jurisdiction with no members: it permits ordinary
+	// sources, while a bare Jurisdiction{} would reject every one of them (ADR-021
+	// D1's zero-value law). The compiler cannot tell these apart — only this
+	// choice does.
+	j := resolvedEmpty(t, dir)
 
 	t.Run("colon in the allow root itself is legal", func(t *testing.T) {
-		if _, err := resolved.Authorize(root, boundary.AccessRO, blocked); err != nil {
+		if _, err := resolved.Authorize(root, boundary.AccessRO, blocked, j); err != nil {
 			t.Fatalf("Authorize() = %v, want accept for an exact colon-carrying root", err)
 		}
 	})
 
 	t.Run("ordinary descendant of a colon root is legal", func(t *testing.T) {
-		if _, err := resolved.Authorize(plain, boundary.AccessRO, blocked); err != nil {
+		if _, err := resolved.Authorize(plain, boundary.AccessRO, blocked, j); err != nil {
 			t.Fatalf("Authorize() = %v, want accept", err)
 		}
 	})
 
 	t.Run("colon in a descendant suffix rejects", func(t *testing.T) {
-		_, err := resolved.Authorize(child, boundary.AccessRO, blocked)
+		_, err := resolved.Authorize(child, boundary.AccessRO, blocked, j)
 		if got := codeOf(t, err); got != boundary.CodeTargetInvalid {
 			t.Fatalf("code = %q, want %q", got, boundary.CodeTargetInvalid)
 		}

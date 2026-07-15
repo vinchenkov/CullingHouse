@@ -225,10 +225,21 @@ type rootMatch struct {
 	suffix string
 }
 
-// Authorize runs ADR-017 Decision 3 steps 2-4 and Decision 4's access table
-// for one ordinary source. Protected-root and cross-Worksource jurisdiction
-// (step 5) are the following slice and are NOT applied here.
-func (r ResolvedAllowlist) Authorize(source string, requested Access, blocked BlockPolicy) (Authorization, error) {
+// Authorize runs ADR-017 Decision 3 steps 2-5 and Decision 4's access table for
+// one ordinary source.
+//
+// The jurisdiction is a fourth injected parameter mirroring blocked BlockPolicy,
+// not a field on ResolvedAllowlist: typed system sources bypass the allowlist
+// entirely (ADR-017:349-351) yet still owe the check, so a jurisdiction reachable
+// only through the allowlist would be unreachable for the sources that most need
+// it. They call Jurisdiction.Rejects directly with a populated claim; Authorize
+// handles ordinary mounts and therefore always passes the zero claim.
+//
+// NOTE the zero-value trap: a bare Jurisdiction{} rejects EVERY source (ADR-021
+// D1's law). The compiler will find these call sites, but it cannot tell you that
+// passing Jurisdiction{} turns them into runtime rejections. Pass a real
+// constructed value.
+func (r ResolvedAllowlist) Authorize(source string, requested Access, blocked BlockPolicy, j Jurisdiction) (Authorization, error) {
 	identity, err := ResolveSource(source)
 	if err != nil {
 		return Authorization{}, err
@@ -261,6 +272,17 @@ func (r ResolvedAllowlist) Authorize(source string, requested Access, blocked Bl
 		if err := ValidateTarget(matched.suffix); err != nil {
 			return Authorization{}, mountErrf(CodeTargetInvalid, "source %q suffix %q: %v", source, matched.suffix, err)
 		}
+	}
+
+	// Step 5: jurisdiction, AFTER the allow-root match (Decision 3's own
+	// numbering) and BEFORE ResolveAccess.
+	//
+	// Jurisdiction is mode-independent — a protected path is protected for RO as
+	// much as for RW — so resolving access first would let mount.rw_not_permitted
+	// mask mount.denied_root and tell the operator to DOWNGRADE a mount that must
+	// never exist at any access. Jurisdiction-first is the fail-closed choice.
+	if err := j.Rejects(identity, TypedClaim{}); err != nil {
+		return Authorization{}, err
 	}
 
 	root := r.roots[matched.index]
