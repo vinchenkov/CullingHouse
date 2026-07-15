@@ -358,6 +358,245 @@ func TestOwnControlAncestorExemptionIsExactAndAssociated(t *testing.T) {
 	})
 }
 
+// ADR-017:366-386's protected set is closed and mandatory. This sweep is
+// intentionally mechanical: every input collection and every Worksource slot
+// gets a public-API witness, every rejection pins its stable code, and every
+// row proves an unrelated source still passes. A prior combined mutant removed
+// several of these members while the fast suite remained green.
+func TestMandatoryJurisdictionMemberSweep(t *testing.T) {
+	dir := t.TempDir()
+	unrelated := mkdir(t, filepath.Join(dir, "unrelated"), 0o755)
+
+	mcHome := mkdir(t, filepath.Join(dir, "mc-home"), 0o700)
+	quarantine := mkdir(t, filepath.Join(mcHome, "quarantine"), 0o700)
+	homeClass := mkdir(t, filepath.Join(dir, "home", "Library", "Keychains"), 0o700)
+	homeClass2 := mkdir(t, filepath.Join(dir, "home", "credential-class-2"), 0o700)
+	gatewaySecret := mkdir(t, filepath.Join(dir, "gateway-secret"), 0o700)
+	caPrivate := mkdir(t, filepath.Join(dir, "ca-private"), 0o700)
+	selectedRuntime := mkdir(t, filepath.Join(dir, "runtime-selected"), 0o700)
+	otherRuntime := mkdir(t, filepath.Join(dir, "runtime-other"), 0o700)
+	ownWorkspace := mkdir(t, filepath.Join(dir, "control-workspace"), 0o755)
+	ownGit := mkdir(t, filepath.Join(ownWorkspace, "own.git"), 0o700)
+	ownGit2 := mkdir(t, filepath.Join(ownWorkspace, "own-2.git"), 0o700)
+	ownMC := mkdir(t, filepath.Join(ownWorkspace, ".mission-control"), 0o700)
+	ownMC2 := mkdir(t, filepath.Join(ownWorkspace, ".mission-control-2"), 0o700)
+	otherGit := mkdir(t, filepath.Join(dir, "other-git"), 0o700)
+	otherGit2 := mkdir(t, filepath.Join(dir, "other-git-2"), 0o700)
+	otherMC := mkdir(t, filepath.Join(dir, "other-mc"), 0o700)
+	otherMC2 := mkdir(t, filepath.Join(dir, "other-mc-2"), 0o700)
+	deniedParent := mkdir(t, filepath.Join(dir, "denied-parent"), 0o755)
+	deniedExact := mkdir(t, filepath.Join(deniedParent, "declared"), 0o755)
+	deniedChild := mkdir(t, filepath.Join(deniedExact, "child"), 0o755)
+	deniedSecond := mkdir(t, filepath.Join(dir, "denied-second"), 0o755)
+
+	otherWS := boundary.WorksourceRoots{
+		Workspace: mkdirProtectedID(t, filepath.Join(dir, "other-workspace")),
+		Worktree:  mkdirProtectedID(t, filepath.Join(dir, "other-worktree")),
+		Artifacts: []boundary.ProtectedID{
+			mkdirProtectedID(t, filepath.Join(dir, "other-artifact-0")),
+			mkdirProtectedID(t, filepath.Join(dir, "other-artifact-1")),
+		},
+		State:    mkdirProtectedID(t, filepath.Join(dir, "other-state")),
+		Cache:    mkdirProtectedID(t, filepath.Join(dir, "other-cache")),
+		ToolHome: mkdirProtectedID(t, filepath.Join(dir, "other-tool-home")),
+	}
+	secondOtherWorkspace := mkdirProtectedID(t, filepath.Join(dir, "second-other-workspace"))
+
+	type probe struct {
+		name string
+		path string
+	}
+	tests := []struct {
+		name   string
+		in     boundary.JurisdictionInput
+		want   string
+		probes []probe
+	}{
+		{
+			name: "whole MC_HOME catches an unenumerated child",
+			in:   boundary.JurisdictionInput{MCHome: protectedID(t, mcHome)},
+			want: boundary.CodeDeniedRoot,
+			probes: []probe{
+				{name: "quarantine", path: quarantine},
+			},
+		},
+		{
+			name: "present HOME credential class",
+			in: boundary.JurisdictionInput{
+				HomeClassRoots: []boundary.ProtectedID{
+					protectedID(t, homeClass),
+					protectedID(t, homeClass2),
+				},
+			},
+			want: boundary.CodeDeniedRoot,
+			probes: []probe{
+				{name: "Library Keychains", path: homeClass},
+				{name: "second class", path: homeClass2},
+			},
+		},
+		{
+			name: "gateway and CA private roots",
+			in: boundary.JurisdictionInput{
+				GatewaySecrets: []boundary.ProtectedID{
+					protectedID(t, gatewaySecret),
+					protectedID(t, caPrivate),
+				},
+			},
+			want: boundary.CodeDeniedRoot,
+			probes: []probe{
+				{name: "gateway secret", path: gatewaySecret},
+				{name: "CA private root", path: caPrivate},
+			},
+		},
+		{
+			name: "selected and non-selected runtime controls",
+			in: boundary.JurisdictionInput{
+				RuntimeControls: []boundary.ProtectedID{
+					protectedID(t, selectedRuntime),
+					protectedID(t, otherRuntime),
+				},
+			},
+			want: boundary.CodeDeniedRoot,
+			probes: []probe{
+				{name: "selected", path: selectedRuntime},
+				{name: "non-selected", path: otherRuntime},
+			},
+		},
+		{
+			name: "all control ownership collections",
+			in: boundary.JurisdictionInput{
+				OwnWorksource: boundary.WorksourceRoots{Workspace: protectedID(t, ownWorkspace)},
+				OwnGitControls: []boundary.ProtectedID{
+					protectedID(t, ownGit),
+					protectedID(t, ownGit2),
+				},
+				OtherGitControls: []boundary.ProtectedID{
+					protectedID(t, otherGit),
+					protectedID(t, otherGit2),
+				},
+				OwnMissionControlRoots: []boundary.ProtectedID{
+					protectedID(t, ownMC),
+					protectedID(t, ownMC2),
+				},
+				OtherMissionControlRoots: []boundary.ProtectedID{
+					protectedID(t, otherMC),
+					protectedID(t, otherMC2),
+				},
+			},
+			want: boundary.CodeDeniedRoot,
+			probes: []probe{
+				{name: "own Git", path: ownGit},
+				{name: "own Git second", path: ownGit2},
+				{name: "other Git", path: otherGit},
+				{name: "other Git second", path: otherGit2},
+				{name: "own mission-control", path: ownMC},
+				{name: "own mission-control second", path: ownMC2},
+				{name: "other mission-control", path: otherMC},
+				{name: "other mission-control second", path: otherMC2},
+			},
+		},
+		{
+			name: "denied_paths is bidirectional",
+			in:   boundary.JurisdictionInput{DeniedPaths: []string{deniedExact, deniedSecond}},
+			want: boundary.CodeDeniedRoot,
+			probes: []probe{
+				{name: "ancestor", path: deniedParent},
+				{name: "exact", path: deniedExact},
+				{name: "descendant", path: deniedChild},
+				{name: "second entry", path: deniedSecond},
+			},
+		},
+		{
+			name: "every other-Worksource root slot",
+			in: boundary.JurisdictionInput{
+				OtherWorksources: []boundary.WorksourceRoots{
+					otherWS,
+					{Workspace: secondOtherWorkspace},
+				},
+			},
+			want: boundary.CodeCrossWorksource,
+			probes: []probe{
+				{name: "workspace", path: otherWS.Workspace.Canonical},
+				{name: "worktree", path: otherWS.Worktree.Canonical},
+				{name: "artifact 0", path: otherWS.Artifacts[0].Canonical},
+				{name: "artifact 1", path: otherWS.Artifacts[1].Canonical},
+				{name: "state", path: otherWS.State.Canonical},
+				{name: "cache", path: otherWS.Cache.Canonical},
+				{name: "tool home", path: otherWS.ToolHome.Canonical},
+				{name: "second Worksource", path: secondOtherWorkspace.Canonical},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, rejects := unionFixture(t, tt.in, dir)
+			for _, p := range tt.probes {
+				t.Run(p.name, func(t *testing.T) {
+					err := rejects(p.path)
+					if got := codeOf(t, err); got != tt.want {
+						t.Fatalf("code = %q, want %q (error: %v)", got, tt.want, err)
+					}
+				})
+			}
+			if err := rejects(unrelated); err != nil {
+				t.Fatalf("unrelated control source rejected: %v", err)
+			}
+		})
+	}
+
+	t.Run("omitted HOME credential class is not a member", func(t *testing.T) {
+		_, rejects := unionFixture(t, boundary.JurisdictionInput{}, dir)
+		if err := rejects(homeClass); err != nil {
+			t.Fatalf("omitted HOME credential class rejected: %v", err)
+		}
+	})
+}
+
+// The own Worksource is not a protected member. Each source is deliberately
+// also supplied in another Worksource's Workspace slot: it passes only if
+// identity-based own detection actually visits that particular own slot.
+func TestEveryOwnWorksourceRootSlotPermitsByIdentity(t *testing.T) {
+	dir := t.TempDir()
+	members := []struct {
+		name string
+		id   boundary.ProtectedID
+		own  func(boundary.ProtectedID) boundary.WorksourceRoots
+	}{
+		{name: "workspace", id: mkdirProtectedID(t, filepath.Join(dir, "workspace")), own: func(id boundary.ProtectedID) boundary.WorksourceRoots { return boundary.WorksourceRoots{Workspace: id} }},
+		{name: "worktree", id: mkdirProtectedID(t, filepath.Join(dir, "worktree")), own: func(id boundary.ProtectedID) boundary.WorksourceRoots { return boundary.WorksourceRoots{Worktree: id} }},
+		{name: "artifact 0", id: mkdirProtectedID(t, filepath.Join(dir, "artifact-0")), own: func(id boundary.ProtectedID) boundary.WorksourceRoots {
+			return boundary.WorksourceRoots{Artifacts: []boundary.ProtectedID{id}}
+		}},
+		{name: "artifact 1", id: mkdirProtectedID(t, filepath.Join(dir, "artifact-1")), own: func(id boundary.ProtectedID) boundary.WorksourceRoots {
+			return boundary.WorksourceRoots{Artifacts: []boundary.ProtectedID{{}, id}}
+		}},
+		{name: "state", id: mkdirProtectedID(t, filepath.Join(dir, "state")), own: func(id boundary.ProtectedID) boundary.WorksourceRoots { return boundary.WorksourceRoots{State: id} }},
+		{name: "cache", id: mkdirProtectedID(t, filepath.Join(dir, "cache")), own: func(id boundary.ProtectedID) boundary.WorksourceRoots { return boundary.WorksourceRoots{Cache: id} }},
+		{name: "tool home", id: mkdirProtectedID(t, filepath.Join(dir, "tool-home")), own: func(id boundary.ProtectedID) boundary.WorksourceRoots { return boundary.WorksourceRoots{ToolHome: id} }},
+	}
+
+	for _, member := range members {
+		t.Run(member.name, func(t *testing.T) {
+			own := member.own(member.id)
+			_, rejects := unionFixture(t, boundary.JurisdictionInput{
+				OwnWorksource: own,
+				OtherWorksources: []boundary.WorksourceRoots{{
+					Workspace: member.id,
+				}},
+			}, dir)
+			if err := rejects(member.id.Canonical); err != nil {
+				t.Fatalf("own %s rejected through same-file other alias: %v", member.name, err)
+			}
+		})
+	}
+}
+
+func mkdirProtectedID(t *testing.T, path string) boundary.ProtectedID {
+	t.Helper()
+	return protectedID(t, mkdir(t, path, 0o755))
+}
+
 // ADR-021 D6: jurisdiction sits AFTER the allow-root match (Decision 3's own
 // numbering) and BEFORE ResolveAccess.
 func TestAuthorizeOrdering(t *testing.T) {

@@ -1,9 +1,13 @@
 package boundary
 
 import (
+	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
+	"syscall"
 	"testing"
+	"time"
 )
 
 // ADR-021 D1/D8: "an absent member is a MEMBER". The external test can only see
@@ -127,3 +131,75 @@ func TestOwnWorksourceIsNotACrossMember(t *testing.T) {
 		}
 	}
 }
+
+// D5 leg 4 requires a portable device-boundary check in addition to Darwin's
+// mount-point evidence. The injected lookup deliberately reports that no
+// mount-point API exists, so parent.Dev != child.Dev is the only possible
+// reason this can classify the child as a filesystem root.
+func TestFilesystemRootDetectsDeviceBoundaryWithoutMountPointAPI(t *testing.T) {
+	child := deviceFileInfo{name: "volume", stat: &syscall.Stat_t{Dev: 11, Ino: 2}}
+	parent := deviceFileInfo{name: "parent", stat: &syscall.Stat_t{Dev: 10, Ino: 3}}
+
+	root, why := isFilesystemRootWith(
+		"/parent/volume",
+		child,
+		func(path string) (fs.FileInfo, error) {
+			if path != "/parent" {
+				t.Fatalf("Lstat(%q), want parent only", path)
+			}
+			return parent, nil
+		},
+		func(string) (string, error) { return "", errNoMountPoint },
+	)
+	if !root {
+		t.Fatal("device-boundary filesystem root was accepted when mount-point lookup was unavailable")
+	}
+	if !strings.Contains(why, "device") {
+		t.Fatalf("reason %q does not identify the device boundary", why)
+	}
+}
+
+func TestFilesystemRootSameDeviceWithoutMountPointAPIIsOrdinary(t *testing.T) {
+	child := deviceFileInfo{name: "child", stat: &syscall.Stat_t{Dev: 10, Ino: 2}}
+	parent := deviceFileInfo{name: "parent", stat: &syscall.Stat_t{Dev: 10, Ino: 3}}
+
+	root, why := isFilesystemRootWith(
+		"/parent/child",
+		child,
+		func(string) (fs.FileInfo, error) { return parent, nil },
+		func(string) (string, error) { return "", errNoMountPoint },
+	)
+	if root || why != "" {
+		t.Fatalf("ordinary same-device directory = (%v, %q), want (false, empty)", root, why)
+	}
+}
+
+// The device comparison itself is boundary evidence. If either stat object is
+// unavailable, treating the candidate as an ordinary directory would be the
+// fail-open answer.
+func TestFilesystemRootDeviceAmbiguityDenies(t *testing.T) {
+	child := deviceFileInfo{name: "volume", stat: &syscall.Stat_t{Dev: 11, Ino: 2}}
+	parent := deviceFileInfo{name: "parent"}
+
+	root, why := isFilesystemRootWith(
+		"/parent/volume",
+		child,
+		func(string) (fs.FileInfo, error) { return parent, nil },
+		func(string) (string, error) { return "", errNoMountPoint },
+	)
+	if !root || !strings.Contains(why, "ambiguity") {
+		t.Fatalf("unknown parent device = (%v, %q), want ambiguity denial", root, why)
+	}
+}
+
+type deviceFileInfo struct {
+	name string
+	stat *syscall.Stat_t
+}
+
+func (i deviceFileInfo) Name() string     { return i.name }
+func (deviceFileInfo) Size() int64        { return 0 }
+func (deviceFileInfo) Mode() fs.FileMode  { return fs.ModeDir | 0o755 }
+func (deviceFileInfo) ModTime() time.Time { return time.Time{} }
+func (deviceFileInfo) IsDir() bool        { return true }
+func (i deviceFileInfo) Sys() any         { return i.stat }

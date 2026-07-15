@@ -412,30 +412,67 @@ func resolveHome(home string, ownerUID int) (ProtectedID, error) {
 	return ProtectedID{Canonical: canonical, Info: cinfo, IsDir: true}, nil
 }
 
-// isFilesystemRoot implements D5's leg 4. The three tests are complementary: the
-// Dir-self test alone misses a real volume root such as /System/Volumes/Data,
-// whose parent is an ordinary directory.
+// isFilesystemRoot implements D5's leg 4. The three tests are complementary:
+// Dir-self misses a device-boundary root such as /System/Volumes/VM, while the
+// Darwin mount-point identity still catches APFS roots such as
+// /System/Volumes/Data whose parent reports the same device.
 //
 // Ambiguity denies (D8): if the parent cannot be examined, treat the path as a
 // root rather than assume it is not.
 func isFilesystemRoot(clean string, info fs.FileInfo) (bool, string) {
+	return isFilesystemRootWith(clean, info, os.Lstat, mountPoint)
+}
+
+// isFilesystemRootWith carries D5's three complementary root witnesses behind
+// injectable read-only lookups. The seam is deliberately small: it lets the
+// portable device-boundary leg be tested on a host whose Darwin mount-point API
+// would otherwise make that same witness pass for a different reason.
+func isFilesystemRootWith(
+	clean string,
+	info fs.FileInfo,
+	lstat func(string) (fs.FileInfo, error),
+	lookupMountPoint func(string) (string, error),
+) (bool, string) {
 	parent := filepath.Dir(clean)
 	if parent == clean {
 		return true, "it is its own parent"
 	}
-	pinfo, err := os.Lstat(parent)
+	pinfo, err := lstat(parent)
 	if err != nil {
 		return true, "its parent cannot be examined, and ambiguity denies"
 	}
 	if sameFile(info, pinfo) {
 		return true, "it is the same object as its parent"
 	}
+
+	// Portable mount-boundary evidence. A mounted filesystem root may have an
+	// ordinary lexical parent, but stat(2) still exposes the device transition.
+	// If either stat object is unavailable, assuming the devices match would be
+	// the fail-open answer.
+	stat, statOK := info.Sys().(*syscall.Stat_t)
+	parentStat, parentStatOK := pinfo.Sys().(*syscall.Stat_t)
+	if !statOK || stat == nil || !parentStatOK || parentStat == nil {
+		return true, "its device identity cannot be examined, and ambiguity denies"
+	}
+	if parentStat.Dev != stat.Dev {
+		return true, "its device differs from its parent"
+	}
+
 	// The kernel's own answer, where available: a path whose volume mount point is
 	// itself IS a filesystem root, however ordinary its parent looks.
-	if mnt, err := mountPoint(clean); err == nil {
-		if minfo, err := os.Lstat(mnt); err == nil && sameFile(info, minfo) {
-			return true, "it is a volume mount point"
+	mnt, err := lookupMountPoint(clean)
+	if err != nil {
+		if errors.Is(err, errNoMountPoint) {
+			return false, ""
 		}
+		return true, "its volume mount point cannot be examined, and ambiguity denies"
+	}
+	minfo, err := lstat(mnt)
+	if err != nil {
+		return true, "its volume mount point cannot be stat'd, and ambiguity denies"
+	}
+	if sameFile(info, minfo) {
+		return true, "it is a volume mount point"
 	}
 	return false, ""
 }

@@ -3,6 +3,8 @@ package boundary_test
 import (
 	"os"
 	"path/filepath"
+	"runtime"
+	"syscall"
 	"testing"
 
 	"mc/boundary"
@@ -145,6 +147,48 @@ func TestValidateHomeDenyLegs(t *testing.T) {
 			t.Fatal("empty HOME accepted; it must never fall back to $HOME or os.UserHomeDir")
 		}
 	})
+}
+
+// D5's required non-"/" witness. On macOS /System/Volumes/VM is a real volume
+// root whose lexical parent is an ordinary directory, so Dir-self and
+// SameFile(parent) are both false. Its differing device number is the portable
+// leg; Darwin's mount-point query is complementary evidence for the same fact.
+func TestValidateHomeRejectsNonSlashFilesystemRoot(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("the repository's measured non-/ volume witness is macOS-specific")
+	}
+
+	home := "/System/Volumes/VM"
+	info, err := os.Lstat(home)
+	if err != nil {
+		t.Skipf("measured volume root %q is unavailable: %v", home, err)
+	}
+	parentInfo, err := os.Lstat(filepath.Dir(home))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if filepath.Dir(home) == home || os.SameFile(info, parentInfo) {
+		t.Fatalf("fixture inert: %q is detectable by Dir-self or parent identity", home)
+	}
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if !ok {
+		t.Fatalf("cannot read device/owner identity for %q", home)
+	}
+	parentStat, ok := parentInfo.Sys().(*syscall.Stat_t)
+	if !ok {
+		t.Fatalf("cannot read parent device identity for %q", home)
+	}
+	if stat.Dev == parentStat.Dev {
+		t.Fatalf("fixture inert: %q and parent have the same device %d", home, stat.Dev)
+	}
+
+	err = homeOf(t, boundary.JurisdictionInput{Home: home}, int(stat.Uid))
+	if err == nil {
+		t.Fatalf("non-/ filesystem root %q accepted as HOME", home)
+	}
+	if got := codeOf(t, err); got != boundary.CodeDeniedRoot {
+		t.Fatalf("code = %q, want %q", got, boundary.CodeDeniedRoot)
+	}
 }
 
 // D5 is injected, never ambient: mc/boundary must not read $HOME even when one
