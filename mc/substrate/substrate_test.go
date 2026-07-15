@@ -1084,3 +1084,75 @@ func TestTasksRefineNotesColumn(t *testing.T) {
 	}
 	mustExec(t, db, `UPDATE tasks SET refine_notes = NULL WHERE id = ?`, id)
 }
+
+// ---------------------------------------------------------------------------
+// Plan review (ADR-020 D1): the wave child's plan_reviewed carrier, its
+// one-way law, and the storage-side gate on child work.
+// ---------------------------------------------------------------------------
+
+func TestPlanReviewCarrier(t *testing.T) {
+	t.Run("children_born_unreviewed", func(t *testing.T) {
+		db := openSpine(t)
+		ini := mkTask(t, db, "initiative", "seeded")
+		child := mkChild(t, db, ini)
+		if got := taskInt(t, db, child, "plan_reviewed"); got != 0 {
+			t.Fatalf("wave child born plan_reviewed = %d, want 0 (ADR-020 D1)", got)
+		}
+		// Born reviewed is refused outright — the NOTE(P1.2) birth symmetry.
+		wantAbort(t, db, `INSERT INTO tasks (title, scope, status, initiative_id, worksource, plan_reviewed)
+		                  VALUES ('pre-blessed', 'task', 'seeded', ?, 'ws-1', 1)`, ini)
+	})
+
+	t.Run("only_a_wave_child_can_carry_the_mark", func(t *testing.T) {
+		db := openSpine(t)
+		// A standalone task and an initiative are pinned at 0: on them the
+		// column reads "not applicable", never "unreviewed".
+		loose := mkTask(t, db, "task", "seeded")
+		wantAbort(t, db, `UPDATE tasks SET plan_reviewed = 1 WHERE id = ?`, loose)
+		ini := mkTask(t, db, "initiative", "seeded")
+		wantAbort(t, db, `UPDATE tasks SET plan_reviewed = 1 WHERE id = ?`, ini)
+	})
+
+	t.Run("one_way_and_live_rows_only", func(t *testing.T) {
+		db := openSpine(t)
+		ini := mkTask(t, db, "initiative", "seeded")
+		child := mkChild(t, db, ini)
+
+		// 0 -> 1 on a live child is the one legal move.
+		mustExec(t, db, `UPDATE tasks SET plan_reviewed = 1 WHERE id = ?`, child)
+		if got := taskInt(t, db, child, "plan_reviewed"); got != 1 {
+			t.Fatalf("plan_reviewed = %d after pass, want 1", got)
+		}
+		// It never clears: a send-back destroys the children instead (D5).
+		wantAbort(t, db, `UPDATE tasks SET plan_reviewed = 0 WHERE id = ?`, child)
+
+		// Never lands on a decided or archived row.
+		other := mkChild(t, db, ini)
+		mustExec(t, db, `UPDATE tasks SET decision = 'cancelled', decided_at = datetime('now') WHERE id = ?`, other)
+		wantAbort(t, db, `UPDATE tasks SET plan_reviewed = 1 WHERE id = ?`, other)
+		mustExec(t, db, `UPDATE tasks SET archived = 1 WHERE id = ?`, other)
+		wantAbort(t, db, `UPDATE tasks SET plan_reviewed = 1 WHERE id = ?`, other)
+	})
+
+	t.Run("child_work_requires_plan_review", func(t *testing.T) {
+		db := openSpine(t)
+		ini := mkTask(t, db, "initiative", "seeded")
+		child := mkChild(t, db, ini)
+
+		// The fence: the spine cannot record a seeded -> worked advance on a
+		// child the Editor never passed, even if mc dispatch is buggy.
+		wantAbort(t, db, `UPDATE tasks SET status = 'worked' WHERE id = ?`, child)
+
+		// At 1 the same advance commits.
+		mustExec(t, db, `UPDATE tasks SET plan_reviewed = 1 WHERE id = ?`, child)
+		mustExec(t, db, `UPDATE tasks SET status = 'worked' WHERE id = ?`, child)
+		if got := taskStr(t, db, child, "status"); got != "worked" {
+			t.Fatalf("reviewed child status = %q, want worked", got)
+		}
+
+		// A standalone task is untouched by the gate (plan_reviewed = 0 on it
+		// means not-applicable, not unreviewed).
+		loose := mkTask(t, db, "task", "seeded")
+		mustExec(t, db, `UPDATE tasks SET status = 'worked' WHERE id = ?`, loose)
+	})
+}

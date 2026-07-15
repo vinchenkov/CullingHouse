@@ -106,9 +106,23 @@ func mkChild(t *testing.T, db *sql.DB, initiative int64) int64 {
 	return id
 }
 
+// passPlanReview marks a wave child as having passed the Editor's holistic
+// plan review (ADR-020 D1). It is the legal precondition for any advance past
+// seeded: children_work_requires_plan_review fences seeded -> worked at 0.
+// Fixtures that mean to exercise some *other* law on a working child must
+// construct that order, exactly as the packet-first landing fixtures do; the
+// gate itself is owned by TestPlanReviewCarrier.
+func passPlanReview(t *testing.T, db *sql.DB, id int64) {
+	t.Helper()
+	mustExec(t, db, `UPDATE tasks SET plan_reviewed = 1 WHERE id = ?`, id)
+}
+
 // walkChild advances a wave child from seeded to the target status.
 func walkChild(t *testing.T, db *sql.DB, id int64, status string) {
 	t.Helper()
+	if len(walkOrder[status]) > 0 {
+		passPlanReview(t, db, id)
+	}
 	for _, s := range walkOrder[status] {
 		if s == "seeded" {
 			continue // children are born seeded

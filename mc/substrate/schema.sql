@@ -133,6 +133,18 @@ CREATE TABLE tasks (
                          END
                      ) STORED,
 
+    -- ADR-020 D1: the Editor's holistic plan review of a wave (§3, §6.1,
+    -- Inv. 12). Not a status and not part of stage_rank — a dispatchability
+    -- flag in the same family as blocked (§5: a status would destroy pipeline
+    -- position). Born 0 and one-way; a send-back destroys the children rather
+    -- than un-reviewing them.
+    plan_reviewed    INTEGER NOT NULL DEFAULT 0 CHECK (plan_reviewed IN (0, 1)),
+
+    -- Only a wave child can ever carry the reviewed mark; on every other row
+    -- the column is pinned at 0 and reads as "not applicable", never as
+    -- "unreviewed". This is what gives the value 1 exactly one meaning
+    -- anywhere in the spine: a wave child whose plan the Editor passed.
+    CHECK (initiative_id IS NOT NULL OR plan_reviewed = 0),
     -- Blocked requires a reason (§4).
     CHECK (blocked = 0 OR blocked_reason IS NOT NULL),
     -- No archive without a decision (§4).
@@ -169,7 +181,41 @@ BEGIN
             THEN RAISE(ABORT, 'wave children are born only into a live, still-seeded initiative (§6.1)')
         WHEN NEW.decision IS NOT NULL OR NEW.archived <> 0
             THEN RAISE(ABORT, 'tasks are born undecided and unarchived (NOTE(P1.2))')
+        WHEN NEW.plan_reviewed <> 0
+            THEN RAISE(ABORT, 'tasks are born unreviewed (ADR-020 D1)')
     END;
+END;
+
+-- Plan review is one-way, on live wave children only (ADR-020 D1). The mark
+-- never clears (a send-back cancels the children instead), never lands on a
+-- decided or archived row, and never lands on a non-child. Deliberately NOT
+-- in tasks_identity_immutable: it must move, exactly once, 0 -> 1.
+CREATE TRIGGER tasks_plan_review_one_way
+BEFORE UPDATE OF plan_reviewed ON tasks
+WHEN NEW.plan_reviewed <> OLD.plan_reviewed
+BEGIN
+    SELECT CASE
+        WHEN OLD.plan_reviewed = 1
+            THEN RAISE(ABORT, 'plan review never clears (ADR-020 D1)')
+        WHEN OLD.initiative_id IS NULL
+            THEN RAISE(ABORT, 'only a wave child carries the plan-review mark (ADR-020 D1)')
+        WHEN OLD.archived = 1 OR OLD.decision IS NOT NULL
+            THEN RAISE(ABORT, 'plan review never lands on a decided or archived row (ADR-020 D1)')
+    END;
+END;
+
+-- The gate, in storage (ADR-020 D1, §4): a bug in mc dispatch cannot make the
+-- spine RECORD a seeded -> worked advance on a child the Editor never passed.
+-- It cannot prevent the git commit — §6.2's plane is enforced by mc's runtime
+-- and the role briefs, not by SQLite — so this bounds a dispatch bug's damage
+-- rather than eliminating it (ADR-020 D1 names the residual failure mode).
+-- The dispatch-side filter (ADR-020 D2) is the policy; this is the fence.
+CREATE TRIGGER children_work_requires_plan_review
+BEFORE UPDATE OF status ON tasks
+WHEN OLD.initiative_id IS NOT NULL AND OLD.plan_reviewed = 0
+ AND OLD.status = 'seeded' AND NEW.status = 'worked'
+BEGIN
+    SELECT RAISE(ABORT, 'wave children work only after the Editor''s plan review (ADR-020 D1)');
 END;
 
 -- The §6 state machine, both scopes: only the six legal edges move a row.

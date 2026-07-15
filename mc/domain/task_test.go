@@ -860,6 +860,9 @@ func TestCancel(t *testing.T) {
 		init := mkTask(t, db, "initiative", "seeded")
 		c1 := mkChildTask(t, db, init)
 		c2 := mkChildTask(t, db, init)
+		// A child only works after the Editor's plan review (ADR-020 D1); this
+		// case is about the cancel cascade, so it constructs the legal order.
+		passPlanReview(t, db, c2)
 		mustExec(t, db, `UPDATE tasks SET status = 'worked' WHERE id = ?`, c2)
 		mustExec(t, db, `UPDATE tasks SET status = 'verified' WHERE id = ?`, c2)
 		mustExec(t, db, `UPDATE tasks SET status = 'packaged' WHERE id = ?`, c2)
@@ -885,6 +888,7 @@ func TestCancel(t *testing.T) {
 		db := openSpine(t)
 		init := mkTask(t, db, "initiative", "seeded")
 		child := mkChildTask(t, db, init)
+		passPlanReview(t, db, child) // ADR-020 D1: the legal order for a working child.
 		mustExec(t, db, `UPDATE tasks SET status = 'worked' WHERE id = ?`, child)
 		mustExec(t, db, `UPDATE tasks SET status = 'verified' WHERE id = ?`, child)
 		mustExec(t, db, `UPDATE tasks SET status = 'packaged', branch = 'mc/initiative-child', verified_sha = 'abc', target_ref = 'main' WHERE id = ?`, child)
@@ -945,4 +949,12 @@ func TestErrorsNameTheirLaw(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "§") {
 		t.Fatalf("domain rejection should cite its spec law: %v", err)
 	}
+}
+
+// passPlanReview marks a wave child as having passed the Editor's holistic
+// plan review (ADR-020 D1) — the legal precondition for any advance past
+// seeded. Fixtures exercising other laws on a working child construct it.
+func passPlanReview(t *testing.T, db *sql.DB, id int64) {
+	t.Helper()
+	mustExec(t, db, `UPDATE tasks SET plan_reviewed = 1 WHERE id = ?`, id)
 }
