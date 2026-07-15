@@ -468,6 +468,48 @@ func resolveBroadRoots(home ProtectedID) ([]ProtectedID, error) {
 	return out, nil
 }
 
+// rejectsTyped is D10's second predicate: kind-specific confinement.
+//
+// The authorized roots come from the JURISDICTION, keyed by the claimed kind —
+// never from the caller. That is the whole decision. An earlier draft let
+// TypedClaim carry its own Root, which meant this function could only ever
+// compute os.SameFile(source, claim.Root): it catches a planner passing a
+// mismatched pair and can NEVER catch one passing a consistent-but-wrong pair.
+// Measured, with a fixed pair: all ten kinds permitted. The claim certified
+// itself, and D9/D11's drift rules were vacuous on this path because the
+// Jurisdiction was never consulted.
+//
+// So the claim is not trusted, it is CHECKED — and now that sentence is true.
+func (j Jurisdiction) rejectsTyped(id SourceIdentity, claim TypedClaim) error {
+	// A destination that is not a host bind has no host inode: the question is
+	// meaningless and any answer would be a lie. Reaching here means the planner
+	// is confused, so fail loudly rather than permit.
+	if claim.Kind == KindNotABind {
+		return mountErrf(CodeDeniedRoot,
+			"source %q was claimed as %v: that destination is not a host bind "+
+				"(image rootfs or named volume), so it must never be planned as one", id.Canonical, claim.Kind)
+	}
+
+	roots := j.typedRoots[claim.Kind]
+	if len(roots) == 0 {
+		return mountErrf(CodeDeniedRoot,
+			"typed kind %v has no authorized root in this jurisdiction, so nothing can be it "+
+				"(source %q)", claim.Kind, id.Canonical)
+	}
+
+	// Confinement to ONE identity is stricter than avoiding a set: any sibling,
+	// ancestor, descendant, or other identity is denied (ADR-017:399). An absent
+	// authorized root authorizes nothing — a source that exists cannot be it.
+	for _, r := range roots {
+		if r.Present() && sameFile(id.Info, r.Info) {
+			return nil
+		}
+	}
+	return mountErrf(CodeDeniedRoot,
+		"source %q is not the authorized root for typed kind %v; a claimed kind the source does "+
+			"not own is denied, not trusted", id.Canonical, claim.Kind)
+}
+
 // sameFile compares two stat objects by filesystem identity, tolerating the nil
 // Info of an absent member. os.SameFile itself returns false rather than
 // panicking on nil, but going through one helper keeps that fact in one place.
@@ -497,6 +539,19 @@ func (j Jurisdiction) Rejects(id SourceIdentity, claim TypedClaim) error {
 	if !j.resolved {
 		return mountErrf(CodeDeniedRoot,
 			"unresolved jurisdiction rejects every source: %q", id.Canonical)
+	}
+
+	// D10: what the source IS selects the predicate. ADR-017:396-401's
+	// load-bearing word is "instead" — a typed system mount is not exempted from
+	// the union, it answers a STRICTER question. It is never asked "do you
+	// intersect MC_HOME?", because it always does by design (:663 grants
+	// MC_HOME/sessions/<id>/, :681 grants MC_HOME/state/..., and so on); it is
+	// asked "are you exactly the root your kind may occupy?"
+	//
+	// Reading :396-401 as a hole in the union instead of as a second predicate is
+	// what killed this ADR's first draft.
+	if claim.Kind != KindNone {
+		return j.rejectsTyped(id, claim)
 	}
 
 	// D4's broad_root: HOME's DIRECTIONAL weakening. S == HOME or S a strict
