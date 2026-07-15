@@ -1,7 +1,7 @@
 # PROGRESS — Mission Control implementation ledger
 
 <!-- Header block: kept current by every session. -->
-LAST GREEN SHA: ebb7613 (local; the operator pushes manually — decided 2026-07-14, see Parked. Agents: do not push.)
+LAST GREEN SHA: 942985e (local; the operator pushes manually — decided 2026-07-14, see Parked. Agents: do not push.)
 PHASES PASSING: Phase 0 COMPLETE (S1–S8 all green, no fallback ADRs; only operator-leg deferrals remain); Phase 1 COMPLETE (1a substrate 172; 1b walking skeleton reviewed-and-fixed — fake-harness 43, agent-runner 13, runner/image 40, resident 42, dispatch + cmd/mc suites; Docker e2e PASS ×4 total); Phase 2 COMPLETE for every unparked acceptance line (domain/§18 surface, deterministic split-brain convergence, bounded honesty + five mutants, tagged dispatch/metamorphic/twin-spine lifecycle properties; the initiative-wave CLI is no longer isolated — ADR-020 landed 2026-07-14 and closed the last Phase 2 acceptance line)
 KNOWN-FAILING: (none)
 FAST SUITE: mc/check.sh (gofmt + vet on the untagged build AND on the nightly/docker_e2e/test_fake_routing tagged builds — they must compile every commit, added 2026-07-14 after a tagged suite rotted invisibly — + go test ./...; includes substrate + promoted dispatch) + runner/fake-harness/check.sh + runner/agent-runner/check.sh + runner/image/check.sh + resident/check.sh. Docker e2e (phase-completion lane): cd mc && mise exec -- go test -tags docker_e2e -timeout 15m ./e2e/...
@@ -77,14 +77,13 @@ FAST SUITE: mc/check.sh (gofmt + vet on the untagged build AND on the nightly/do
         closed: 10 confirmed / 7 refuted, only 1 of 6 alleged majors survived;
         ADR-017's unrealizable privileged-tree ownership fixed (c6ca202), six
         deviations logged (69c19be), evidence in docs/reviews/ (6636e1e)
-  - [~] Protected set + cross-Worksource jurisdiction (Dec. 3 step 5, Dec. 5):
-        ADR-021 reworked twice; cross-harness takeover revoked steps 1-6
-        acceptance after six reproduced gaps (e78a81c). Registry immutability,
-        destination-confined kinds, own-control ancestry, the mandatory member
-        sweep, and D5's device leg are repaired (3ad3411, f9cfd1e, ea57c82,
-        a097916); next is step 7 (D8 absence/suffix/case, D9/D11 drift), then
-        step 8
-  - [ ] macOS ACL leg of the trust seam (needs the native ACL API)
+  - [x] Protected set + cross-Worksource jurisdiction (Dec. 3 step 5, Dec. 5):
+        ADR-021 steps 1–8 complete after takeover repair, D8 absent-root/case
+        semantics, D9/D11 reconstruction drift, and the planted-mutant sweep
+        (3ad3411..ebb7613)
+  - [x] macOS ACL leg of the trust seam: native no-follow volume/object
+        snapshot, any non-owner allow grant rejected, membership UUID aliases
+        resolved fail-closed, portable/static builds retained (942985e)
 - [ ] Phase 4 — E2E control loops (six scenario families)
 - [ ] Phase 5 — Real-subscription acceptance (operator-scheduled)
 - [ ] Release prep (after Phase 5): swap the repo's construction face for
@@ -2137,3 +2136,36 @@ the ADR-017 trust contract and existing spike/prior evidence first; add a real
 granting-ACE witness, detect any ACL that broadens write authority beyond the
 trusted owner, and fail closed on unsupported or ambiguous ACL inspection while
 preserving the current owner/mode/non-symlink checks and portable builds.
+
+- 2026-07-15 — **macOS native ACL trust seam green** (`942985e`). The prior
+  NEXT narrowed the rule to write authority, but ADR-017 requires rejection of
+  **any** non-owner allow grant, including read/list/search; the implementation
+  and tests follow the ADR. A CGO-free `getattrlist(2)` path first binds native
+  extended-security capability to the expected device, then returns device,
+  file id, type, owner, mode, owner UUID, and ACL in one no-follow snapshot.
+  The platform-neutral parser validates every returned byte and every ACE;
+  deny-only, zero-right, and exact-owner allows remain harmless, while a group,
+  another user, an unknown kind, malformed payload, unsupported capability, or
+  ambiguous membership lookup rejects as `mount.allowlist_untrusted`.
+  A full-gate race exposed that macOS may encode the same owner as either the
+  synthesized `FFFF…uid` UUID or a directory-service UUID while
+  `ATTR_CMN_UUID` is zero. The final CGO-disabled libSystem bridge therefore
+  resolves each non-synthesized qualifier with `mbr_uuid_to_id` and requires
+  both user type and exact operator uid; C return width, output sentinels,
+  resolver wiring, and error propagation are pinned. Real Darwin witnesses
+  cover non-owner read, MC_HOME list/search, deny-only, owner-only, ACL removal,
+  and the deliberate absence of this seam from real operator HOME. The first
+  `O_EVTONLY` attempt was discarded because a deny ACE could blind the open;
+  path `getattrlist` needs only parent search and accepts a 0000 policy file.
+  Isolated mutation sweeps, uncached/race boundary repetitions, CGO-disabled
+  Darwin arm64/amd64 and static Linux/arm64 builds, and the full fast lane (Go
+  all/tagged; Bun 43/13/40/42) are green. `Authorize`/trust construction still
+  has no production planning caller, as intentionally deferred for later
+  Phase-3 wiring. No Docker, secret, or launchd state was touched.
+
+NEXT: Close ADR-017's stable rejection-code contract red-first. Begin with the
+uncoded `ParseMountAllowlist`/entry/access errors and the named missing
+`mount.gate_unhealthy` constant; prove every public boundary rejection maps to
+one of ADR-017's closed codes without string matching, and that every code
+aborts the whole plan. Then implement the invalid-plan/no-claim dispatch
+transaction. Do not wire production planning and do not load launchd.
