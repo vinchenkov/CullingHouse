@@ -169,6 +169,98 @@ func TestTypedVerdictDependsOnTheJurisdiction(t *testing.T) {
 	}
 }
 
+// D11 includes the host-resolved kind registry in the drift surface. The
+// selector path is stable while its target identity changes; an old
+// Jurisdiction must remain an immutable snapshot, and a freshly host-resolved
+// TypedRoots input must flip the typed verdict.
+func TestTypedRootsReconstructionTracksSelectorRetarget(t *testing.T) {
+	dir := t.TempDir()
+	home := tjHome(t, dir)
+	a := tjDir(t, filepath.Join(dir, "sessions", "a"))
+	b := tjDir(t, filepath.Join(dir, "sessions", "b"))
+	selector := filepath.Join(dir, "selected-session")
+	if err := os.Symlink(a, selector); err != nil {
+		t.Fatal(err)
+	}
+	aSource := tjSource(t, a)
+	bSource := tjSource(t, b)
+	if sameFile(aSource.Info, bSource.Info) {
+		t.Fatal("fixture is inert: target A and target B are the same identity")
+	}
+	claim := TypedClaim{Kind: KindOwnSession}
+
+	resolveSelector := func(t *testing.T) (SourceIdentity, ProtectedID) {
+		t.Helper()
+		selected := tjSource(t, selector)
+		return selected, ProtectedID{
+			Canonical: selected.Canonical,
+			Info:      selected.Info,
+			IsDir:     selected.IsDir,
+		}
+	}
+	build := func(t *testing.T, selected ProtectedID) Jurisdiction {
+		t.Helper()
+		j, err := ResolveJurisdiction(JurisdictionInput{
+			Home:       home,
+			TypedRoots: map[TypedKind][]ProtectedID{KindOwnSession: {selected}},
+		}, os.Getuid())
+		if err != nil {
+			t.Fatalf("ResolveJurisdiction() = %v", err)
+		}
+		return j
+	}
+	assertDenied := func(t *testing.T, j Jurisdiction, source SourceIdentity) {
+		t.Helper()
+		err := j.Rejects(source, claim)
+		var me *MountError
+		if !asMountError(err, &me) || me.Code != CodeDeniedRoot {
+			t.Fatalf("source %q error = %v, want %s", source.Canonical, err, CodeDeniedRoot)
+		}
+	}
+	assertPermitted := func(t *testing.T, j Jurisdiction, source SourceIdentity) {
+		t.Helper()
+		if err := j.Rejects(source, claim); err != nil {
+			t.Fatalf("source %q rejected: %v", source.Canonical, err)
+		}
+	}
+
+	selectorBefore, firstRoot := resolveSelector(t)
+	if !sameFile(firstRoot.Info, aSource.Info) || sameFile(firstRoot.Info, bSource.Info) {
+		t.Fatal("fixture selector does not initially resolve only to target A")
+	}
+	first := build(t, firstRoot)
+	assertPermitted(t, first, aSource)
+	assertDenied(t, first, bSource)
+
+	nextSelector := selector + ".next"
+	if err := os.Symlink(b, nextSelector); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(nextSelector, selector); err != nil {
+		t.Fatal(err)
+	}
+	selectorAfter, secondRoot := resolveSelector(t)
+	if selectorAfter.RawClean != selectorBefore.RawClean ||
+		!sameFile(secondRoot.Info, bSource.Info) || sameFile(secondRoot.Info, aSource.Info) {
+		t.Fatal("selector address did not retain its spelling while changing from identity A to B")
+	}
+	aAfter := tjSource(t, a)
+	bAfter := tjSource(t, b)
+	if !sameFile(aAfter.Info, aSource.Info) || !sameFile(bAfter.Info, bSource.Info) {
+		t.Fatal("direct source identities changed; fixture does not isolate TypedRoots drift")
+	}
+
+	// The caller cannot retroactively replace authority in an old snapshot.
+	assertPermitted(t, first, aSource)
+	assertDenied(t, first, bSource)
+
+	// The host rebuilt the pre-resolved registry from the same selector path.
+	// Passing firstRoot again would intentionally reproduce the stale answer.
+	second := build(t, secondRoot)
+	assertDenied(t, second, aSource)
+	assertPermitted(t, second, bSource)
+}
+
 // D2's immutability is about the constructed VALUE, not merely whether its
 // fields are exported. Retaining the caller's map or one of its slices lets a
 // later planner mutation replace authority without another

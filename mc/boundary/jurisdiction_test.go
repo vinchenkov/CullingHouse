@@ -346,9 +346,108 @@ func TestAbsentProtectedPathAmbiguityDeniesConstruction(t *testing.T) {
 	})
 }
 
-// ADR-021 D1's accessor. os.SameFile(nil, x) is false without panicking, which is
-// what makes a nil Info a safe encoding — but only the ancestor branch may rely
-// on it, so the predicate needs to be able to ask.
+// D9/D11: rerunning Rejects against an old value must reproduce that immutable
+// snapshot; observing protected-set drift requires rebuilding Jurisdiction from
+// fresh host inputs. The source identities stay unchanged while only the
+// selector symlink for the absent protected path moves.
+func TestJurisdictionReconstructionTracksAbsentAliasRetarget(t *testing.T) {
+	dir := t.TempDir()
+	home := homeFixture(t, dir)
+	a := mkdir(t, filepath.Join(dir, "target-a"), 0o755)
+	b := mkdir(t, filepath.Join(dir, "target-b"), 0o755)
+	alias := filepath.Join(dir, "protected-selector")
+	if err := os.Symlink(a, alias); err != nil {
+		t.Fatal(err)
+	}
+	declared := filepath.Join(alias, "future", "root")
+
+	aSource, err := boundary.ResolveSource(a)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bSource, err := boundary.ResolveSource(b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if os.SameFile(aSource.Info, bSource.Info) {
+		t.Fatal("fixture is inert: target A and target B are the same identity")
+	}
+	selectorBefore, err := boundary.ResolveSource(alias)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !os.SameFile(selectorBefore.Info, aSource.Info) || os.SameFile(selectorBefore.Info, bSource.Info) {
+		t.Fatal("fixture selector does not initially resolve only to target A")
+	}
+	build := func(t *testing.T) boundary.Jurisdiction {
+		t.Helper()
+		j, err := boundary.ResolveJurisdiction(boundary.JurisdictionInput{
+			Home:        home,
+			DeniedPaths: []string{declared},
+		}, os.Getuid())
+		if err != nil {
+			t.Fatalf("ResolveJurisdiction() = %v", err)
+		}
+		return j
+	}
+	assertDenied := func(t *testing.T, j boundary.Jurisdiction, source boundary.SourceIdentity) {
+		t.Helper()
+		err := j.Rejects(source, boundary.TypedClaim{})
+		if got := codeOf(t, err); got != boundary.CodeDeniedRoot {
+			t.Fatalf("source %q code = %q, want %q (error: %v)",
+				source.Canonical, got, boundary.CodeDeniedRoot, err)
+		}
+	}
+	assertPermitted := func(t *testing.T, j boundary.Jurisdiction, source boundary.SourceIdentity) {
+		t.Helper()
+		if err := j.Rejects(source, boundary.TypedClaim{}); err != nil {
+			t.Fatalf("source %q rejected: %v", source.Canonical, err)
+		}
+	}
+
+	first := build(t)
+	assertDenied(t, first, aSource)
+	assertPermitted(t, first, bSource)
+
+	nextAlias := alias + ".next"
+	if err := os.Symlink(b, nextAlias); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(nextAlias, alias); err != nil {
+		t.Fatal(err)
+	}
+	selectorAfter, err := boundary.ResolveSource(alias)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if selectorAfter.RawClean != selectorBefore.RawClean ||
+		!os.SameFile(selectorAfter.Info, bSource.Info) || os.SameFile(selectorAfter.Info, aSource.Info) {
+		t.Fatal("selector address did not retain its spelling while changing from identity A to B")
+	}
+	aAfter, err := boundary.ResolveSource(a)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bAfter, err := boundary.ResolveSource(b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !os.SameFile(aAfter.Info, aSource.Info) || !os.SameFile(bAfter.Info, bSource.Info) {
+		t.Fatal("direct source identities changed; fixture does not isolate protected-set drift")
+	}
+
+	// Re-running the predicate is not allowed to mutate the old snapshot.
+	assertDenied(t, first, aSource)
+	assertPermitted(t, first, bSource)
+
+	// Fresh reconstruction is what observes drift and flips both controls.
+	second := build(t)
+	assertPermitted(t, second, aSource)
+	assertDenied(t, second, bSource)
+}
+
+// ADR-021 D1's accessor distinguishes a resolved identity from an absent member
+// whose bidirectional verdict comes from D8's private anchor/suffix pair.
 func TestProtectedIDPresent(t *testing.T) {
 	dir := t.TempDir()
 	if got := protectedID(t, dir).Present(); !got {
