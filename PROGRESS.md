@@ -1,7 +1,7 @@
 # PROGRESS — Mission Control implementation ledger
 
 <!-- Header block: kept current by every session. -->
-LAST GREEN SHA: e78a81c (local; the operator pushes manually — decided 2026-07-14, see Parked. Agents: do not push.)
+LAST GREEN SHA: 3ad3411 (local; the operator pushes manually — decided 2026-07-14, see Parked. Agents: do not push.)
 PHASES PASSING: Phase 0 COMPLETE (S1–S8 all green, no fallback ADRs; only operator-leg deferrals remain); Phase 1 COMPLETE (1a substrate 172; 1b walking skeleton reviewed-and-fixed — fake-harness 43, agent-runner 13, runner/image 40, resident 42, dispatch + cmd/mc suites; Docker e2e PASS ×4 total); Phase 2 COMPLETE for every unparked acceptance line (domain/§18 surface, deterministic split-brain convergence, bounded honesty + five mutants, tagged dispatch/metamorphic/twin-spine lifecycle properties; the initiative-wave CLI is no longer isolated — ADR-020 landed 2026-07-14 and closed the last Phase 2 acceptance line)
 KNOWN-FAILING: (none)
 FAST SUITE: mc/check.sh (gofmt + vet on the untagged build AND on the nightly/docker_e2e/test_fake_routing tagged builds — they must compile every commit, added 2026-07-14 after a tagged suite rotted invisibly — + go test ./...; includes substrate + promoted dispatch) + runner/fake-harness/check.sh + runner/agent-runner/check.sh + runner/image/check.sh + resident/check.sh. Docker e2e (phase-completion lane): cd mc && mise exec -- go test -tags docker_e2e -timeout 15m ./e2e/...
@@ -1931,3 +1931,19 @@ own-control ancestry permit pair; (4) mandatory member sweep + D5 device leg.
 Then amend D8's incorrect case paragraph and implement step 7 using a pure-Go
 Darwin `getattrlist` wrapper (the shipped static `mc` forbids copying the probe's
 cgo). Do not wire production planning and do not load launchd.
+
+- 2026-07-15 — **Takeover repair 1 green: typed registry is a closed immutable
+  snapshot** (`3ad3411`). Red witnesses reproduced both alias forms: replacing
+  the caller's map entry and mutating a retained slice element each removed root
+  A and authorized root B in the same already-constructed `Jurisdiction`.
+  `ResolveJurisdiction` now validates every key and deep-copies both layers;
+  `Rejects` independently range-checks claims before lookup. `KindNone`, the
+  non-bind sentinel, `kindMax`, and numeric 255 all reject as registry keys, and
+  every non-zero out-of-domain claim denies. Full fast lane green: Go all/tagged
+  builds, fake-harness 43, agent-runner 13, runner/image 40, resident 42.
+
+NEXT: Repair D10a's cross-destination aliases red-first: strengthen the real-ADR
+guard so every authorized kind occurs in exactly one destination row (only the
+explicit `.codex`/`.claude` runtime-control merge may span two), split the 17
+inert-cover rows and workspace-vs-seeding projection/registered-root kinds, and
+move `KindNotABind` outside `[KindNone+1, kindMax)` as a deny-only sentinel.
