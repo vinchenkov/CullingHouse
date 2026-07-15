@@ -554,3 +554,171 @@ func TestDispatchLoadRecordsProjectsPlanReviewed(t *testing.T) {
 		t.Fatalf("action = %+v, want worker on child 2 once the wave passed", a.Spawn)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// ADR-020 D4: the plan-review brief. The charter and the wave, and — the one
+// finding the ADR's adversarial review rated major — NOT the producer's own
+// completion report.
+// ---------------------------------------------------------------------------
+
+// dvUnreviewedWave builds a seeded initiative with two open, unreviewed
+// children and returns the records that select the plan review.
+func dvUnreviewedWave(t *testing.T, db *sql.DB) {
+	t.Helper()
+	dvExec(t, db, `INSERT INTO tasks (id, title, scope, priority, created_at, status,
+		dispatch_retries, origin, worksource, target_ref)
+		VALUES (1, 'ship the arc', 'initiative', 1, ?, 'proposed', 3, 'user', 'ws-test', 'main')`,
+		dvOld.Format(spineTime))
+	dvExec(t, db, `UPDATE tasks SET status='seeded',
+		description='charter: the arc is done when the gate holds' WHERE id=1`)
+	for id, title := range map[int64]string{2: "first child", 3: "second child"} {
+		dvExec(t, db, `INSERT INTO tasks (id, title, description, scope, status, initiative_id,
+			priority, created_at, dispatch_retries, origin, worksource, target_ref)
+			VALUES (?, ?, 'criterion: the command exits 0', 'task', 'seeded', 1, 1, ?, 3,
+			        'autonomous', 'ws-test', 'main')`, id, title, dvOld.Format(spineTime))
+	}
+}
+
+func TestPlanReviewBrief(t *testing.T) {
+	t.Run("carries_the_charter_and_the_whole_wave", func(t *testing.T) {
+		db := dvSpine(t)
+		dvUnreviewedWave(t, db)
+		rec, err := loadRecords(context.Background(), db)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, got := dvDispatch(t, db, rec, dispatch.Lock{}, dvConfig(24))
+		brief := fmt.Sprint(got["brief"])
+		for _, want := range []string{
+			"charter: the arc is done when the gate holds", // the subject = the charter
+			`"wave"`, "first child", "second child",
+			"criterion: the command exits 0",
+			"Orchestrate by default.",
+		} {
+			if !strings.Contains(brief, want) {
+				t.Fatalf("plan-review brief missing %q: %s", want, brief)
+			}
+		}
+		// The wave is not a contest: no proposal pool rides along.
+		if strings.Contains(brief, `"proposed_pool"`) {
+			t.Fatalf("plan-review brief carries a proposed pool: %s", brief)
+		}
+	})
+
+	// The major finding. An initiative that round-tripped (§6.1's ordinary
+	// packaged → seeded, or the correction rally) carries a mandatory
+	// completion report on a run whose subject IS the initiative — the
+	// producer's own authored prose. buildSpawnBrief loads latest_output_path
+	// for every subject role, so without D4's suppression the judge reads the
+	// producer's reasoning and Inv. 9's decorrelation is defeated.
+	//
+	// A virgin initiative passes this vacuously, so the fixture constructs the
+	// round-trip: a property that holds only until the first one is not a
+	// property.
+	t.Run("never_carries_the_producers_own_completion_report", func(t *testing.T) {
+		db := dvSpine(t)
+		dvUnreviewedWave(t, db)
+		dvExec(t, db, `INSERT INTO runs
+			(id, tier, role, worksource, subject, output_path, ended_at, outcome)
+			VALUES ('prior-strategist', 'pipeline', 'strategist', 'ws-test', 1,
+			        'outputs/strategist-initiative-report.md', datetime('now'), 'completed')`)
+		rec, err := loadRecords(context.Background(), db)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, got := dvDispatch(t, db, rec, dispatch.Lock{}, dvConfig(24))
+		brief := fmt.Sprint(got["brief"])
+		if strings.Contains(brief, "latest_output_path") ||
+			strings.Contains(brief, "outputs/strategist-initiative-report.md") {
+			t.Fatalf("Inv. 9 leak: the plan review reads its own producer's report: %s", brief)
+		}
+		// The suppression is surgical — the charter and wave still arrive.
+		if !strings.Contains(brief, "charter: the arc is done when the gate holds") {
+			t.Fatalf("suppression took the charter with it: %s", brief)
+		}
+	})
+}
+
+// ADR-020 D4's recency rule: the Strategist(initiative) brief carries the
+// latest UNANSWERED objection. activity is append-only and an initiative has
+// many wave boundaries, so an unqualified "latest wave.sent_back" would
+// re-serve a long-answered objection at every future boundary forever. A
+// send-back is answered exactly when a later wave passes.
+func TestStrategistInitiativeBriefSendbackRecency(t *testing.T) {
+	drained := func(t *testing.T, db *sql.DB) dispatch.Records {
+		t.Helper()
+		rec, err := loadRecords(context.Background(), db)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return rec
+	}
+	newInitiative := func(t *testing.T, db *sql.DB) {
+		t.Helper()
+		dvExec(t, db, `INSERT INTO tasks (id, title, scope, priority, created_at, status,
+			dispatch_retries, origin, worksource, target_ref)
+			VALUES (1, 'arc', 'initiative', 1, ?, 'proposed', 3, 'user', 'ws-test', 'main')`,
+			dvOld.Format(spineTime))
+		dvExec(t, db, `UPDATE tasks SET status='seeded', description='charter' WHERE id=1`)
+	}
+
+	t.Run("unanswered_objection_rides_the_replan", func(t *testing.T) {
+		db := dvSpine(t)
+		newInitiative(t, db)
+		dvExec(t, db, `INSERT INTO activity (actor, kind, subject, detail, created_at)
+			VALUES ('editor', 'wave.sent_back', 1, 'child 2 criterion cannot fail', datetime('now'))`)
+		_, got := dvDispatch(t, db, drained(t, db), dispatch.Lock{}, dvConfig(24))
+		brief := fmt.Sprint(got["brief"])
+		if !strings.Contains(brief, "child 2 criterion cannot fail") {
+			t.Fatalf("replan is blind to the objection it must answer: %s", brief)
+		}
+	})
+
+	t.Run("answered_objection_does_not_ride_the_next_boundary", func(t *testing.T) {
+		db := dvSpine(t)
+		newInitiative(t, db)
+		dvExec(t, db, `INSERT INTO activity (actor, kind, subject, detail, created_at)
+			VALUES ('editor', 'wave.sent_back', 1, 'the stale objection', datetime('now', '-2 hours'))`)
+		// The replanned wave passed: the objection is answered, and the wave
+		// it produced has since drained. This boundary is owed nothing.
+		dvExec(t, db, `INSERT INTO activity (actor, kind, subject, detail, created_at)
+			VALUES ('editor', 'wave.passed', 1, '2,3', datetime('now', '-1 hours'))`)
+		_, got := dvDispatch(t, db, drained(t, db), dispatch.Lock{}, dvConfig(24))
+		brief := fmt.Sprint(got["brief"])
+		if strings.Contains(brief, "the stale objection") {
+			t.Fatalf("an answered objection rode a later wave boundary: %s", brief)
+		}
+	})
+
+	t.Run("a_later_sendback_supersedes_an_earlier_pass", func(t *testing.T) {
+		db := dvSpine(t)
+		newInitiative(t, db)
+		dvExec(t, db, `INSERT INTO activity (actor, kind, subject, detail, created_at)
+			VALUES ('editor', 'wave.passed', 1, '2,3', datetime('now', '-2 hours'))`)
+		dvExec(t, db, `INSERT INTO activity (actor, kind, subject, detail, created_at)
+			VALUES ('editor', 'wave.sent_back', 1, 'the live objection', datetime('now', '-1 hours'))`)
+		_, got := dvDispatch(t, db, drained(t, db), dispatch.Lock{}, dvConfig(24))
+		brief := fmt.Sprint(got["brief"])
+		if !strings.Contains(brief, "the live objection") {
+			t.Fatalf("the current round's objection was masked by an older pass: %s", brief)
+		}
+	})
+
+	t.Run("sendback_does_not_clobber_refine_notes", func(t *testing.T) {
+		db := dvSpine(t)
+		newInitiative(t, db)
+		// An initiative under §8 refinement whose replanned wave was sent back
+		// needs BOTH carriers: the operator's revision notes and the Editor's
+		// objection. refine_notes is single-slot and owned by the §7/§8 path.
+		dvExec(t, db, `UPDATE tasks SET refine_notes='operator: deepen the risk proof' WHERE id=1`)
+		dvExec(t, db, `INSERT INTO activity (actor, kind, subject, detail, created_at)
+			VALUES ('editor', 'wave.sent_back', 1, 'editor: child 2 is not actionable', datetime('now'))`)
+		_, got := dvDispatch(t, db, drained(t, db), dispatch.Lock{}, dvConfig(24))
+		brief := fmt.Sprint(got["brief"])
+		for _, want := range []string{"operator: deepen the risk proof", "editor: child 2 is not actionable"} {
+			if !strings.Contains(brief, want) {
+				t.Fatalf("brief lost a carrier (%q): %s", want, brief)
+			}
+		}
+	})
+}

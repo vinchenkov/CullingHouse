@@ -24,6 +24,9 @@ var workerDirective string
 //go:embed directives/verifier.md
 var verifierDirective string
 
+//go:embed directives/editor-plan-review.md
+var editorPlanReviewDirective string
+
 //go:embed directives/packager.md
 var packagerDirective string
 
@@ -40,6 +43,7 @@ func directiveForRole(role dispatch.Role) (string, error) {
 	directives := map[dispatch.Role]string{
 		dispatch.RoleStrategistPropose:    strategistProposeDirective,
 		dispatch.RoleEditor:               editorDirective,
+		dispatch.RoleEditorPlanReview:     editorPlanReviewDirective,
 		dispatch.RoleWorker:               workerDirective,
 		dispatch.RoleVerifier:             verifierDirective,
 		dispatch.RolePackager:             packagerDirective,

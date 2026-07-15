@@ -29,6 +29,12 @@ type briefTask struct {
 	RefineNotes     string `json:"refine_notes"`
 }
 
+// briefSendback carries one wave.sent_back activity row (ADR-020 D4/D5).
+type briefSendback struct {
+	Reason string `json:"reason"`
+	At     string `json:"at"`
+}
+
 type briefVerdict struct {
 	Outcome          string `json:"outcome"`
 	EvidencePath     string `json:"evidence_path"`
@@ -38,17 +44,24 @@ type briefVerdict struct {
 }
 
 type spawnBriefDocument struct {
-	Schema           string        `json:"schema"`
-	Role             string        `json:"role"`
-	Directive        string        `json:"directive"`
-	Subject          *briefTask    `json:"subject,omitempty"`
-	ProposedPool     []briefTask   `json:"proposed_pool,omitempty"`
-	DedupeTitles     []string      `json:"dedupe_titles,omitempty"`
-	LatestCorrection *briefVerdict `json:"latest_correction,omitempty"`
-	LatestVerdict    *briefVerdict `json:"latest_verdict,omitempty"`
-	LatestOutputPath string        `json:"latest_output_path,omitempty"`
-	ReviewQueue      []briefTask   `json:"review_queue,omitempty"`
-	BlockedTasks     []briefTask   `json:"blocked_tasks,omitempty"`
+	Schema       string      `json:"schema"`
+	Role         string      `json:"role"`
+	Directive    string      `json:"directive"`
+	Subject      *briefTask  `json:"subject,omitempty"`
+	ProposedPool []briefTask `json:"proposed_pool,omitempty"`
+	// Wave: editor(plan-review) only — the full record of every open child
+	// the holistic verdict is rendered over (ADR-020 D4).
+	Wave []briefTask `json:"wave,omitempty"`
+	// PlanReviewSendback: strategist(initiative) only — the latest UNANSWERED
+	// plan-review objection (ADR-020 D4). Without it the send-back is a silent
+	// loop: the Strategist replans blind and re-pitches the refused wave.
+	PlanReviewSendback *briefSendback `json:"plan_review_sendback,omitempty"`
+	DedupeTitles       []string       `json:"dedupe_titles,omitempty"`
+	LatestCorrection   *briefVerdict  `json:"latest_correction,omitempty"`
+	LatestVerdict      *briefVerdict  `json:"latest_verdict,omitempty"`
+	LatestOutputPath   string         `json:"latest_output_path,omitempty"`
+	ReviewQueue        []briefTask    `json:"review_queue,omitempty"`
+	BlockedTasks       []briefTask    `json:"blocked_tasks,omitempty"`
 }
 
 // buildSpawnBrief materializes the role's immutable opening input from the
@@ -71,16 +84,27 @@ func buildSpawnBrief(ctx context.Context, q Q, sp *dispatch.Spawn) (string, erro
 			return "", err
 		}
 		doc.Subject = &subject
-		var output sql.NullString
-		err = q.QueryRowContext(ctx, `
-			SELECT output_path FROM runs
-			WHERE subject = ? AND output_path IS NOT NULL
-			ORDER BY created_at DESC, id DESC LIMIT 1`, *sp.SubjectID).Scan(&output)
-		if err != nil && err != sql.ErrNoRows {
-			return "", err
-		}
-		if output.Valid {
-			doc.LatestOutputPath = output.String
+		// Inv. 9, ADR-020 D4: every OTHER subject role is owed the latest
+		// report on its subject, but for the plan review that report is
+		// Strategist(initiative)'s own mandatory done-declaration
+		// (`mc complete --outputs`, on a run whose subject IS this
+		// initiative) — the producer's authored prose, handed to its own
+		// judge. Records-only does not buy the blindness §3 requires: this
+		// record is a pointer to an artifact. Empty on a virgin initiative
+		// and live after any arc round-trip, so it is suppressed here rather
+		// than left to luck.
+		if sp.Role != dispatch.RoleEditorPlanReview {
+			var output sql.NullString
+			err = q.QueryRowContext(ctx, `
+				SELECT output_path FROM runs
+				WHERE subject = ? AND output_path IS NOT NULL
+				ORDER BY created_at DESC, id DESC LIMIT 1`, *sp.SubjectID).Scan(&output)
+			if err != nil && err != sql.ErrNoRows {
+				return "", err
+			}
+			if output.Valid {
+				doc.LatestOutputPath = output.String
+			}
 		}
 	}
 
@@ -92,6 +116,22 @@ func buildSpawnBrief(ctx context.Context, q Q, sp *dispatch.Spawn) (string, erro
 			}
 			doc.ProposedPool = append(doc.ProposedPool, task)
 		}
+	}
+	if sp.Role == dispatch.RoleEditorPlanReview {
+		for _, id := range sp.Wave {
+			task, err := loadBriefTask(ctx, q, id)
+			if err != nil {
+				return "", err
+			}
+			doc.Wave = append(doc.Wave, task)
+		}
+	}
+	if sp.SubjectID != nil && sp.Role == dispatch.RoleStrategistInitiative {
+		sendback, err := loadUnansweredSendback(ctx, q, *sp.SubjectID)
+		if err != nil {
+			return "", err
+		}
+		doc.PlanReviewSendback = sendback
 	}
 	if sp.Role == dispatch.RoleStrategistPropose {
 		doc.DedupeTitles = append([]string(nil), sp.DedupeTitles...)
@@ -213,4 +253,29 @@ func loadLatestVerdict(ctx context.Context, q Q, taskID int64, outcome string) (
 	}
 	v.ExceptionLabeled = v.Outcome == "budget-spent"
 	return &v, nil
+}
+
+// loadUnansweredSendback returns this initiative's latest plan-review
+// objection if it is still unanswered — i.e. no wave has passed since
+// (ADR-020 D4's recency rule). A send-back is answered exactly when a
+// replanned wave passes, so a later wave.passed retires it; activity is
+// append-only, and without this scoping the objection would ride every future
+// wave boundary forever. Reading the two rows the terminal already writes
+// beats dating the field with a new wave-birth event (BirthWave writes none),
+// and follows NOTE(P2.2)'s query-it-from-activity precedent.
+func loadUnansweredSendback(ctx context.Context, q Q, initiativeID int64) (*briefSendback, error) {
+	var detail, at sql.NullString
+	err := q.QueryRowContext(ctx, `
+		SELECT detail, created_at FROM activity
+		WHERE kind = 'wave.sent_back' AND subject = ?
+		  AND created_at > COALESCE((SELECT MAX(created_at) FROM activity
+		                             WHERE kind = 'wave.passed' AND subject = ?), '')
+		ORDER BY created_at DESC, id DESC LIMIT 1`, initiativeID, initiativeID).Scan(&detail, &at)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &briefSendback{Reason: detail.String, At: at.String}, nil
 }
