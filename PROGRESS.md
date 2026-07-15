@@ -86,15 +86,19 @@ FAST SUITE: mc/check.sh (gofmt+vet+go test ./... — includes substrate + promot
 
 ## Parked
 
-- **Push to origin is blocked by an operator deny rule** (new 2026-07-14):
-  `git push origin main` is denied by the Claude Code permission classifier
-  ("User Deny Rules"), so AGENTS.md §4's "push if a remote exists" cannot be
-  honored and commits are accumulating **local-only** — exactly the
-  disk-failure exposure the private remote was created to close. Not worked
-  around. Decision request: either drop/adjust the deny rule for this repo, or
-  confirm you will push manually and agents should stop attempting it (in
-  which case AGENTS.md §4 should say so). Unpushed at time of writing:
-  67c4b61, e01a2af, and the ledger commit that follows them.
+- ~~Push to origin is blocked by an operator deny rule~~ **RESOLVED
+  2026-07-14**: the operator pushes manually; the `~/.claude/settings.json`
+  deny stays. It cannot be overridden per-repo (user-level deny beats
+  project-level allow; hooks and `bypassPermissions` do not clear it).
+  **Agents: keep committing at every green micro-step per AGENTS.md §4, do
+  not attempt the push, and do not route around the rule.** AGENTS.md §4's
+  "push if a remote exists" is superseded for this repo and should be reworded
+  at Release prep.
+
+- **Initiative wave holistic Editor review** — **DECIDED 2026-07-14**: the
+  operator accepts reading (i), a review gate between wave birth and first
+  child dispatch. See the 2026-07-14 session-end NEXT item 3 for the pinned
+  shape; ADR-020 is owed. The old decision request below is closed.
 
 - ~~Secrets in git history~~ **RESOLVED 2026-07-10**: operator explicitly
   accepts the values in local history; no scrub, no rotation. Noted in
@@ -1409,3 +1413,84 @@ macOS ACL leg (a darwin-tagged native read, else an explicit ADR-recorded
 fallback), then the stable-code mapping for the parser's uncoded rejections,
 then integrate the invalid-plan/no-claim dispatch transaction. Do not load
 launchd or route around the parked initiative-wave model.
+
+- 2026-07-14 — **Session end: environment-blocked, three operator decisions
+  recorded.** Landed this session: `67c4b61` (takeover review of the Codex
+  range; mount-target control grammar deviation fixed red-first), `e01a2af`
+  (Phase-3 filesystem identity + containment, 55 cases, four planted mutants
+  killed), `df17dfe` (ledger). All green at commit; all local-only.
+
+  **BLOCKER — macOS TCC on `~/Documents` (read this before diagnosing
+  anything).** Symptom: `getcwd()` inside the repo returns EPERM while
+  path-based reads still work *intermittently*. Because `git` and the Go
+  toolchain call `getcwd()` before anything else, **both die outright** —
+  including `git -C <abspath>` run from a safe cwd, which fails before `-C`
+  applies. `/bin/pwd` appears to work only because it falls back to `$PWD`;
+  `/bin/pwd -P` shows the truth. This is NOT a harness sandbox issue — it
+  persists with `dangerouslyDisableSandbox`. The operator's fix is a fresh
+  terminal (has worked before) or Full Disk Access for the terminal app.
+  If reads flap, STOP: do not run read-dependent review agents (see below).
+
+  **Operator decisions (2026-07-14):**
+  1. **Push**: the operator pushes manually. The `git push origin main` deny
+     lives in `~/.claude/settings.json` and CANNOT be overridden per-repo —
+     verified against the docs: a user-level deny beats a project-level allow,
+     hooks cannot clear it, and `bypassPermissions` does not either. **Agents
+     must not attempt to push and must not route around the rule** (a bare
+     `git push` is evasion, not a fix). Keep committing at every green
+     micro-step exactly as AGENTS.md §4 says — only the push leg is the
+     operator's. This supersedes the "Push to origin is blocked" Parked item.
+  2. **ADR-016..019 findings**: verify before further Phase-3 code (below).
+  3. **Initiative wave**: reading (i) is ACCEPTED — see the Parked entry.
+
+NEXT (in order, once `getcwd` works — prove it with `cd <repo> && /bin/pwd -P`
+and `git status` BEFORE trusting anything else):
+
+1. `git add docs/reviews/2026-07-14-adr-016-019-review.json` and commit it —
+   it is currently **untracked**, written during a readable window. It holds
+   all 17 findings with full evidence from the decorrelated cross-harness
+   review of ADR-016..019 (which Codex had only self-reviewed). Losing it
+   loses the only record.
+2. **Verify the 17 findings, 6 of them major, before any further Phase-3
+   code** (operator decision 2). They are UNVERIFIED — two verification passes
+   were destroyed by the TCC failure, not by refutation. **Do not read the
+   saved verdicts as refutations**: every agent explicitly wrote
+   "confirmed:false means UNVERIFIABLE, NOT refuted". A verifier prompt that
+   says "default to REFUTED" is DANGEROUS under flapping TCC — it silently
+   converts real findings into false all-clears. Gate any such run on a real
+   read probe first. The six majors: ADR-016 gating the lease-free Homie tier
+   behind the pipeline lease (would break Inv. 1/§11.6/§15.5); ADR-017 turning
+   spec §11.3's RW `/workspace` into an RO 0555 bind; ADR-016 packing Git
+   closure extraction into the 60s `spawn_grace_s` budget (would burn the
+   3-retry infra budget and block tasks); ADR-017's uid-10001 0700 roots having
+   no creation mechanism for an unprivileged LaunchAgent; ADR-017 Decision 8
+   requiring the host surface to read a tree it makes unreadable to the host
+   uid; ADR-018 asserting separate user namespaces, which would break its own
+   uid-filtering mechanism. Fix or log what survives, red-first.
+3. **Author the initiative-wave ADR** (ADR-020) — the operator ACCEPTED
+   reading (i) on 2026-07-14, unparking a decision open since 07-12. Shape:
+   a `plan_reviewed` flag on wave children born 0; dispatch query (3) will not
+   dispatch a child at 0; a NEW arm makes an initiative with any unreviewed
+   open child visible to the **Editor** — the one exception to §10's "an
+   initiative with open children is parked" rule, which otherwise wedges the
+   initiative; the Editor terminal either passes the wave (children → 1) or
+   sends it back in prose (children cancelled via the existing cascade,
+   initiative returns to drained and Strategist(initiative) replans). Treat
+   "holistic" as wave-level pass/fail, not per-child rejection, unless the
+   operator says otherwise. Readings (ii) and (iii) are dead: (iii) breaks
+   producer≠judge; (ii) collapses into (i) because seeded children still
+   dispatch before the batch pass runs. Adversarially review the ADR, then TDD
+   it, then wire `strategist wave`.
+4. Then resume the Phase-3 protected-set/jurisdiction slice per the earlier
+   NEXT — but only after (2), since two of the majors target ADR-017
+   Decision 5, which that slice implements.
+
+Two Phase-3 obligations remain deliberately open and must not be lost: the
+macOS **ACL leg** of the trust seam (ADR-017 Dec. 1 requires rejecting any ACE
+granting a non-owner; owner/mode/non-symlink are enforced but a granting ACL
+is currently NOT detected — empirically confirmed 2026-07-14: `chmod +a "staff
+allow read"` is invisible to both mode bits and `xattr`, so `TrustPolicyFile`
+accepts it; needs the native ACL API behind a darwin build tag), and
+**protected-root/cross-Worksource jurisdiction** (`mount.denied_root` /
+`mount.cross_worksource` exist as codes but are unused — `Authorize` must not
+be wired into production planning until that slice lands).
