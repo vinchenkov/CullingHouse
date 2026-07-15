@@ -1,10 +1,10 @@
 # PROGRESS — Mission Control implementation ledger
 
 <!-- Header block: kept current by every session. -->
-LAST GREEN SHA: bc02c42 (local; the operator pushes manually — decided 2026-07-14, see Parked. Agents: do not push.)
+LAST GREEN SHA: 9fc02fd (local; the operator pushes manually — decided 2026-07-14, see Parked. Agents: do not push.)
 PHASES PASSING: Phase 0 COMPLETE (S1–S8 all green, no fallback ADRs; only operator-leg deferrals remain); Phase 1 COMPLETE (1a substrate 172; 1b walking skeleton reviewed-and-fixed — fake-harness 43, agent-runner 13, runner/image 40, resident 42, dispatch + cmd/mc suites; Docker e2e PASS ×4 total); Phase 2 COMPLETE for every unparked acceptance line (domain/§18 surface, deterministic split-brain convergence, bounded honesty + five mutants, tagged dispatch/metamorphic/twin-spine lifecycle properties; the initiative-wave CLI is no longer isolated — ADR-020 landed 2026-07-14 and closed the last Phase 2 acceptance line)
 KNOWN-FAILING: (none)
-FAST SUITE: mc/check.sh (gofmt+vet+go test ./... — includes substrate + promoted dispatch) + runner/fake-harness/check.sh + runner/agent-runner/check.sh + runner/image/check.sh + resident/check.sh. Docker e2e (phase-completion lane): cd mc && mise exec -- go test -tags docker_e2e -timeout 15m ./e2e/...
+FAST SUITE: mc/check.sh (gofmt + vet on the untagged build AND on the nightly/docker_e2e/test_fake_routing tagged builds — they must compile every commit, added 2026-07-14 after a tagged suite rotted invisibly — + go test ./...; includes substrate + promoted dispatch) + runner/fake-harness/check.sh + runner/agent-runner/check.sh + runner/image/check.sh + resident/check.sh. Docker e2e (phase-completion lane): cd mc && mise exec -- go test -tags docker_e2e -timeout 15m ./e2e/...
 
 ## Phases
 
@@ -1577,3 +1577,100 @@ Two Phase-3 obligations remain deliberately open (unchanged): the macOS **ACL
 leg** of the trust seam (owner/mode/non-symlink are enforced; a granting ACE is
 not detected — `chmod +a` is invisible to both mode bits and `xattr`), and
 **protected-root/cross-Worksource jurisdiction** per the NEXT above.
+
+- 2026-07-14 — **ADR-020's implementation adversarially reviewed: 6 raised, 6
+  CONFIRMED, 0 refuted, 5 major. All closed (`9fc02fd`).** I built ADR-020, so
+  a fresh judge audited it — the system's own decorrelated producer/judge
+  principle applied to its own construction (AGENTS.md §2's spirit; 4 lenses +
+  an independent skeptic per finding, no default verdict, read probe first).
+  The skeptics did not reason from quotes: they drove the real production path
+  against a real spine, reproduced every failure, and verified each fix flips
+  it. Record: `docs/reviews/2026-07-14-adr-020-implementation-review.json`.
+
+  **The headline, found independently by 4 of 4 lenses.** `applySpawn` gated
+  the snapshot write on `RoleEditor` alone, so every plan-review claim wrote
+  `runs.pool_snapshot` NULL: the pure layer computed `Spawn.Wave` and the seam
+  discarded it. The **pass arm was unreachable for every wave** (pool-mismatch
+  always) — `plan_reviewed` never reached 1, `childGate` never opened, no child
+  ever dispatched — so the lane ADR-020 exists to unblock was still dead **while
+  my previous ledger entry and the ADR's own Status called it green**. The
+  **send-back arm was a silent live-lock**: accepted terminal (no
+  `dispatch_retries` charged, so it never self-blocks), lease released,
+  `wave.sent_back` written, nothing cancelled, next tick re-dispatching the same
+  review forever.
+
+  **Why my tests missed it, which is the transferable part.** Both *sides* of
+  the seam were tested and the seam was not: the dispatch test stopped at
+  `Decide` asserting `Spawn.Wave`, and the CLI test's helper hand-wrote
+  `pool_snapshot` — its own comment says it "fakes the claim transaction". This
+  is the **exact mirror** of the read-side bug (`loadRecords` never read
+  `plan_reviewed`) that the build had caught one commit earlier and that the ADR
+  Status held up as a lesson. Same seam, other direction, one commit later. The
+  new tests drive `verbs.Dispatch` into the real terminal.
+
+  **The tagged suite.** `domain.Cancel`'s actor parameter missed
+  `property/lifecycle_nightly_test.go:1159`, so the nightly lattice walk had not
+  compiled since `bc02c42` while the fast lane stayed green. Fixed (passes
+  `"operator"`, matching the model arm it is differentially compared against;
+  nightly suite verified passing). **Systemic fix: `mc/check.sh` now vets the
+  nightly / docker_e2e / test_fake_routing builds on every commit** — they still
+  do not run here, but they must compile. That hole is why the break hid.
+
+  **Defense in depth.** `SendBackWave` trusted its snapshot; it now asserts D5's
+  own postcondition (drained) and refuses whole, while still tolerating a member
+  the operator cancelled mid-review. D5's "asserts nothing about the set"
+  licenses skipping an individual already-archived member — not accepting a
+  degenerate snapshot and reporting success.
+
+  Complete fast lane green including tagged compiles; nightly green.
+
+- 2026-07-14 — **Phase 3 resumed: the jurisdiction slice's real requirements
+  extracted (`d089858`), and ADR-021 authored (`c120c5c`).** A read-only pass
+  over ADR-017 (current post-`c6ca202` text), the spec, the contract, and
+  `mc/boundary` found that this ledger's own NEXT line — written from memory —
+  **understates the slice**: the `MC_HOME` protected list is **fifteen** root
+  classes, not the six named (workflow, correction, revision, context,
+  projection, seal, landing, state, cache were all missing) and includes the
+  allowlist itself; `<workspace_root>/.mission-control` roots are a member in
+  their own right; "every runtime control dir" means every, not just
+  non-selected; the predicate must be callable **without** an allow-root match
+  (typed system sources bypass the allowlist yet still owe the cross-Worksource
+  check), so it cannot be buried in `Authorize`'s tail; a protected-set change
+  alone with the source inode unchanged must reject (forbidding the obvious
+  cache); and absent deny paths need the nearest-existing-ancestor rule. Extract
+  committed at `docs/reviews/2026-07-14-adr-017-jurisdiction-extract.md`.
+
+  **ADR-021** (`docs/adr/021-mount-jurisdiction.md`, Proposed) resolves the nine
+  ambiguities ADR-017 leaves in its own Decision 5 and adds no policy of its
+  own. Load-bearing: D1 injects `Jurisdiction` as a fourth `Authorize` parameter
+  mirroring `BlockPolicy`, with `Rejects` exported so typed sources can reach it;
+  D3 protects `MC_HOME` **whole** (only a whole-tree rule reconciles the
+  enumeration with ADR-017:345's "complete MC_HOME" and contract:178's "broad
+  MC_HOME"; an enumeration drifts the day someone adds a directory); D4 is
+  bidirectional by `os.SameFile` and treats `broad_root`'s `($HOME, /Users, /)`
+  as the **illustrative** ancestor chain, not a literal set (hardcoding it would
+  under-protect any non-`/Users` HOME); D5 injects HOME rather than reading
+  `$HOME` (a boundary an env var can relocate is not a boundary); D6 puts
+  jurisdiction before `ResolveAccess` so `rw_not_permitted` cannot mask
+  `denied_root`; D7 pins the `denied_root`/`cross_worksource` split ADR-017 never
+  states, and its precedence when a path is both.
+
+NEXT: Adversarially review ADR-021 before TDD — same shape as ADR-020's review
+(decorrelated lenses + an independent skeptic per finding, no default verdict),
+and this time **the lenses must be told to drive real paths where they can**,
+since that is what caught the ADR-020 seam that four static reviews of the ADR
+text had missed. Then TDD the slice red-first per ADR-021's "Tests that pin it",
+including the planted mutants (identity→prefix, ancestor direction removed,
+`broad_root` as a literal `/Users` list, jurisdiction after `ResolveAccess`,
+`denied_paths` made subtractable). `Authorize` must not be wired into production
+planning until it lands.
+
+Then: the macOS **ACL leg** of the trust seam (owner/mode/non-symlink are
+enforced; a granting ACE is not detected — `chmod +a` is invisible to both mode
+bits and `xattr`, so it needs the native ACL API behind a darwin build tag),
+then the stable-code mapping for the parser's uncoded rejections, then the
+invalid-plan/no-claim dispatch transaction. Do not load launchd.
+
+Adjacent gap, deliberately NOT swept into the jurisdiction slice:
+`mount.gate_unhealthy` exists in ADR-017 (:1162, added by `c6ca202`) but is
+missing from `mc/boundary/identity.go`'s code block.
