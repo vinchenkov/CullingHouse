@@ -514,9 +514,9 @@ func resolveDeclared(path string) (ProtectedID, error) {
 // stock macOS (drwxr-x---) and 0755 elsewhere; 0750 & 0o077 = 0o050, so routing
 // HOME through that seam rejects every real HOME and no plan can ever be made.
 // HOME's mode is not MC's business, which is why D5 has five legs and NO MODE
-// LEG. For the same reason D5 refuses the pending macOS ACL obligation
-// (identity.go:52-54): the real HOME carries an ACL today, and a managed or
-// network HOME may carry allow ACEs. Reuse the lstat seam only. !!
+// LEG. For the same reason D5 refuses MC_HOME's macOS ACL trust seam: the real
+// HOME carries an ACL today, and a managed or network HOME may carry allow
+// ACEs. Reuse the lstat seam only. !!
 func resolveHome(home string, ownerUID int) (ProtectedID, error) {
 	if home == "" {
 		return ProtectedID{}, mountErrf(CodeDeniedRoot,

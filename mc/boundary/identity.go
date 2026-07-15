@@ -47,11 +47,8 @@ func mountErrf(code, format string, a ...any) error {
 // TrustPolicyFile enforces the ADR-017 Decision 1 trust seam for the
 // allowlist: a non-symlink regular file owned by the real operator uid, with
 // owner read/write and no group or other permission bits. A stricter owner
-// mode is not a grant, so it is accepted.
-//
-// The macOS ACL leg ("any allow ACE granting a non-owner access rejects") is
-// NOT implemented here; it needs the native ACL API and is carried as an
-// explicit obligation in PROGRESS.md.
+// mode is not a grant, so it is accepted. On macOS, any native allow ACE that
+// grants a non-owner access also rejects.
 func TrustPolicyFile(path string, ownerUID int) error {
 	info, err := trustedLstat(path)
 	if err != nil {
@@ -64,7 +61,8 @@ func TrustPolicyFile(path string, ownerUID int) error {
 }
 
 // TrustHomeDir enforces the same seam for MC_HOME: a non-symlink
-// operator-owned directory with owner rwx and no group or other bits.
+// operator-owned directory with owner rwx, no group or other bits, and no
+// native macOS allow ACE granting a non-owner access.
 func TrustHomeDir(path string, ownerUID int) error {
 	info, err := trustedLstat(path)
 	if err != nil {
@@ -100,7 +98,7 @@ func trustedOwnerMode(path string, info fs.FileInfo, ownerUID int) error {
 	if int(stat.Uid) != ownerUID {
 		return mountErrf(CodeAllowlistUntrusted, "%q is owned by uid %d, not the operator uid %d", path, stat.Uid, ownerUID)
 	}
-	return nil
+	return trustedNoGrantingACL(path, info, ownerUID)
 }
 
 // SourceIdentity is one canonically resolved mount source. RawClean is the

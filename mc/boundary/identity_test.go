@@ -64,6 +64,13 @@ func TestTrustPolicyFile(t *testing.T) {
 		}
 	})
 
+	t.Run("no owner permissions is still not a grant", func(t *testing.T) {
+		path := writeFile(t, filepath.Join(dir, "no-access"), 0o000)
+		if err := boundary.TrustPolicyFile(path, uid); err != nil {
+			t.Fatalf("TrustPolicyFile() = %v, want accept", err)
+		}
+	})
+
 	rejects := []struct {
 		name string
 		make func(t *testing.T) string
