@@ -1,7 +1,7 @@
 # PROGRESS — Mission Control implementation ledger
 
 <!-- Header block: kept current by every session. -->
-LAST GREEN SHA: 1abf7c2 (local; the operator pushes manually — decided 2026-07-14, see Parked. Agents: do not push.)
+LAST GREEN SHA: 53afcc5 (local; the operator pushes manually — decided 2026-07-14, see Parked. Agents: do not push.)
 PHASES PASSING: Phase 0 COMPLETE (S1–S8 all green, no fallback ADRs; only operator-leg deferrals remain); Phase 1 COMPLETE (1a substrate 172; 1b walking skeleton reviewed-and-fixed — fake-harness 43, agent-runner 13, runner/image 40, resident 42, dispatch + cmd/mc suites; Docker e2e PASS ×4 total); Phase 2 COMPLETE for every unparked acceptance line (domain/§18 surface, deterministic split-brain convergence, bounded honesty + five mutants, tagged dispatch/metamorphic/twin-spine lifecycle properties; the initiative-wave CLI is no longer isolated — ADR-020 landed 2026-07-14 and closed the last Phase 2 acceptance line)
 KNOWN-FAILING: (none)
 FAST SUITE: mc/check.sh (gofmt + vet on the untagged build AND on the nightly/docker_e2e/test_fake_routing tagged builds — they must compile every commit, added 2026-07-14 after a tagged suite rotted invisibly — + go test ./...; includes substrate + promoted dispatch) + runner/fake-harness/check.sh + runner/agent-runner/check.sh + runner/image/check.sh + resident/check.sh. Docker e2e (phase-completion lane): cd mc && mise exec -- go test -tags docker_e2e -timeout 15m ./e2e/...
@@ -2048,3 +2048,21 @@ NEXT: Step 7.2 red-first: add platform-independent capability-word parsing and
 a Darwin smoke witness, then implement the CGO-free `SYS_GETATTRLIST` wrapper
 with a `!darwin` unknown arm. Make `x/sys` direct and prove both Darwin/arm64 and
 Linux/arm64 compile with `CGO_ENABLED=0` before committing.
+
+- 2026-07-15 — **Step 7.2 green: Darwin volume case capability is queried
+  without cgo** (`53afcc5`). A platform-independent parser requires both the
+  case-sensitive capability and its validity bit. The Darwin arm calls
+  `SYS_GETATTRLIST` with `ATTR_VOL_INFO | ATTR_VOL_CAPABILITIES`; the non-Darwin
+  arm reports unknown. Parser short/valid/invalid cases and a real temporary-
+  volume smoke witness are green. CGO-disabled Darwin/arm64 and Linux/arm64
+  boundary builds plus the Linux tagged `cmd/mc` build pass. An independent ABI
+  review found the 36-byte capability layout, syscall arguments, validity test,
+  and pointer lifetimes clean. Full fast lane green: Go all/tagged builds and
+  Bun 43/13/40/42.
+
+NEXT: Step 7.3 red-first: enrich every absent protected union member with its
+nearest existing canonical anchor and original-spelling suffix. Peel only
+ENOENT, resolve the anchor exactly once, deny ENOTDIR/dangling/permission/I/O
+and race ambiguity, compare ancestry by identity and suffixes by D8 volume
+semantics, and keep unrelated paths decidable. Cover denied paths and other-
+Worksource artifacts through the public API before advancing to drift tests.
