@@ -10,6 +10,7 @@ toolchain go1.25.12
 
 require (
 	github.com/BurntSushi/toml v1.6.0
+	golang.org/x/text v0.37.0
 	modernc.org/sqlite v1.53.0
 )
 
