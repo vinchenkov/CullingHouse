@@ -1108,3 +1108,43 @@ Entry template:
 - Spec impact: none — ADR-019's header should cite the handoff's operator-input
   row and say GB, matching the source.
 - Needs your decision: no
+
+## 2026-07-14 — ADR-017's privileged seal/attachment roots required a host inode nothing could create
+- Where: ADR-017 Decisions 4/5/6/8 vs. spec §12, §15.5, Inv. 23; found by the
+  decorrelated ADR-016..019 verification pass
+  (`docs/reviews/2026-07-14-adr-016-019-verification.json`, finding #7
+  CONFIRMED major and finding #6 CONFIRMED minor — one root cause)
+- Gap: ADR-017 said the outbound attachment bind's "source root and parents are
+  owned by the setuid uid at mode 0700", and Decision 6's "Typed source and
+  access" column said the same of `MC_HOME/attachments/<session-id>/out` and
+  `MC_HOME/seals/<run-id>/`. That column is about *host* inodes — Decision 5
+  has the resident build the task skeleton "as the host operator" and tune only
+  modes for the container uid — so the text was unrealizable three ways. (a)
+  "and parents" reaches `MC_HOME`, which Decision 1 requires to be
+  operator-owned and rejects on "Another owner". (b) A host tree owned by uid
+  10001 at 0700 denies the operator uid traversal, but spec §15.5 requires the
+  native surface to read those bytes directly and §12/Inv. 23 fix it as an
+  unprivileged per-user LaunchAgent — the ADR made the spec's mandate
+  unreachable, inbound creates included. (c) Nothing could create the inode
+  anyway: every host actor is the unprivileged operator, containers hold
+  `CapDrop=ALL`, and ADR-017 authorized no chown/sudo/root step.
+- Choice: amended ADR-017 in place (dated 2026-07-14 amendment block quoting
+  the replaced text; it stays Accepted). Host sources stay operator-owned
+  beneath the operator-owned mode-0700 `MC_HOME` — the shape Decision 5 already
+  used — and the uid-10002 denial now comes from the mount shape instead of an
+  impossible chown: the privileged RW binds moved beneath `/mc/private`, a
+  gate directory baked into the base image at owner `10001:10001` mode 0700.
+  The image build's root sets it, the kernel checks its traversal bits against
+  the process fsuid before any bind beneath it, so uid 10002 is denied and
+  setuid `mc` at euid/fsuid 10001 passes. The ADR now also states which view
+  (host inode vs. container inode/mount property) each ownership/mode claim
+  describes, and asserts nothing about VirtioFS uid presentation — no prior
+  exists for it, so every presentation-dependent mode is routed to Decision 8's
+  already-mandatory canary. Conservative: confinement is unchanged (uid 10002
+  still cannot traverse/create/overwrite/delete in either tree; §15.3's write
+  boundary and the setuid publisher's exclusivity survive), it deviates least
+  from the ADR's own text and mental model, and it is reversible — the gate is
+  one image directory and two destination rows.
+- Spec impact: none. §11.5's kernel ownership gate is scoped to the spine's
+  named volume, which is unaffected; this was a defect in a delegated design.
+- Needs your decision: no

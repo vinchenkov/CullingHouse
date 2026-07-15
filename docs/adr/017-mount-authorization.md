@@ -7,6 +7,131 @@
   consent, and two enumerated cross-Worksource RO profiles without fixing
   their grammar or collision-free container destinations.
 
+## Amendment — 2026-07-14 (view discipline and the privileged-tree gate)
+
+This ADR stays Accepted; this amendment corrects it in place rather than
+superseding it, and quotes what it replaces so the correction is visible.
+
+**What was wrong.** The review in
+`docs/reviews/2026-07-14-adr-016-019-verification.json` (finding #7, CONFIRMED
+major; finding #6, CONFIRMED minor — one root cause) established that
+Decision 8's "its source root and parents are owned by the setuid uid at mode
+0700", and the matching Decision 6 rows for `MC_HOME/attachments/<session-id>/
+out` and `MC_HOME/seals/<run-id>/` ("privileged-owned mode 0700"), are claims
+about **host** inodes. Decision 6's column is headed "Typed source and access",
+and Decision 5 fixes that column's view by having the resident create the
+`/workspace` skeleton "as the host operator" and then tune **modes** for the
+container's final uid. Read in that view — the only view the text supports —
+those claims were unrealizable and self-contradictory:
+
+1. "source root and parents" reaches `MC_HOME` itself, which Decision 1
+   independently requires to be a non-symlink operator-owned root and rejects
+   on "Another owner". Both could not hold.
+2. Spec §15.5 requires that "the native surface reads the file directly", and
+   spec §12 with Inv. 23 fix that surface as an ordinary per-user LaunchAgent
+   in the operator's GUI session. A host tree owned by uid 10001 at mode 0700
+   denies the operator uid traversal, so the ADR made unreachable exactly what
+   the spec mandates. The inbound arm died with it: an operator-uid surface
+   cannot create under a 0700 `<session-id>/` it cannot traverse.
+3. Nothing could create such an inode. Every host actor is the unprivileged
+   operator (§12 forecloses LaunchDaemons), containers hold `CapDrop=ALL`
+   (ADR-019) so the setuid wrapper has no CAP_CHOWN and cannot reach its own
+   bind's unmounted parents, and this ADR authorizes no `chown`, `sudo`, or
+   root step anywhere.
+
+**What changed, and what did not.** The confinement goal is unchanged and is
+not weakened: model/harness uid 10002 still may not traverse, create,
+overwrite, or delete in the outbound attachment tree or the seal tree; §15.3's
+Homie write boundary and the setuid publisher's exclusivity still hold. Two
+things change:
+
+1. **A view rule**: every ownership/mode claim now states which view it
+   describes. The ambiguity between the two views is what let this defect hide.
+2. **The uid-10002 denial moves from host ownership to the mount shape.** Host
+   sources stay operator-owned, exactly as Decision 5 already had the resident
+   create the task skeleton; the denial comes from a baked image-rootfs **gate
+   directory** `/mc/private` (owner `10001:10001`, mode 0700) that the
+   privileged RW binds now sit beneath. No host process chowns anything to uid
+   10001, because none can.
+
+Corrected below: Decision 4's seal and attachment bullets, Decision 5's seal
+paragraphs and canary, Decision 6's destination table (two rows replaced, two
+structural rows added), Decision 8's outbound paragraph and canary, one
+rejection code, and the matching acceptance lines. The mount plane is otherwise
+untouched.
+
+### The view rule
+
+Every ownership/mode statement in this ADR describes exactly one of two views,
+and now says which:
+
+- **Host view** — the macOS APFS inode of a bind *source*, created by
+  onboarding or the resident acting as the host operator. Every `MC_HOME` inode
+  is operator-owned. Nothing in this design chowns a host inode to a container
+  uid.
+- **Container view** — either a Linux inode of the container's own root
+  filesystem, baked at image build where the build's root sets owner and mode,
+  or the read-only/read-write property of a mount.
+
+This ADR asserts **no** fact about how the Docker Desktop/VirtioFS share
+*presents* a host inode's uid, gid, or mode inside the container. That
+presentation is an unproven platform behavior — `docs/priors/` holds no
+VirtioFS ownership prior, and none is invented here. No denial protecting the
+seal tree or the outbound attachment tree rests on it. Where a *presented* mode
+must permit an access, the required shape is whatever the mandatory canaries
+prove, exactly as Decision 5 already says for the task skeleton's
+"canary-proved final-uid writable shape". Where a *denial* is required, it is
+taken from a mechanism the kernel enforces on an inode this design controls: an
+image-rootfs gate directory's traversal bits, a read-only bind, or the absence
+of a mount.
+
+One pre-existing claim is presentation-dependent and is named here rather than
+silently repaired: Decision 5's "uid 10002 cannot chmod the parent or create a
+sibling" on the operator-owned mode-0555 task root holds only if the share
+presents that host inode's owner and mode faithfully to the container. It is
+therefore an arm of the existing ADR-019 final-uid VirtioFS canary, not an
+assumption; a red arm refuses mutable dispatch like every other red arm. No
+seal or attachment confinement depends on it.
+
+### The privileged-tree gate
+
+The seal staging root and the outbound attachment root are confined twice, in
+different views, and neither layer depends on the share's uid presentation:
+
+- **Host view**: both sources are operator-owned, created by the resident as
+  the host operator before launch, beneath Decision 1's operator-owned
+  mode-0700 `MC_HOME`. That root is what denies every host actor except the
+  operator; the trees' own bits are not the host boundary. The operator uid —
+  hence §15.5's native surface and the resident — keeps the direct outbound
+  read and the inbound create the spec mandates.
+- **Container view**: both bind beneath `/mc/private`, an ordinary directory
+  baked into the base image at owner `10001:10001`, mode 0700 — image rootfs,
+  never a bind, so the image build's root sets it and no host chown is needed.
+  The kernel checks that gate's traversal bits against the process fsuid before
+  any bind beneath it is reached, so uid 10002 fails at the gate and cannot
+  traverse, create, overwrite, or delete anywhere under it whatever the share
+  presents the bind itself as. Setuid `mc` at euid/fsuid 10001 passes; ADR-019
+  keeps `no-new-privileges` absent for exactly that reason, and its
+  `CapDrop=ALL` leaves no CAP_DAC_OVERRIDE or in-container mount road around
+  the gate. The gate is the mechanism; presented ownership of the bind source
+  is not, and is never relied on.
+
+The gate is verified, not assumed: a launch whose image lacks `/mc/private` as
+a directory owned `10001:10001` at mode 0700, or that would place any other
+destination beneath it, refuses with `mount.gate_unhealthy`.
+
+Because the denial now lives at the gate, each source's host mode must let
+euid/fsuid 10001 create and write *through the share* — the canary-proved
+privileged-publisher-writable shape, whatever the canary proves that to be.
+That is not a host exposure: the only host actor that can reach the path is the
+operator, who owns `MC_HOME`'s mode-0700 root, and the only container process
+that can reach it has already passed the 0700 gate.
+
+Inbound needs no gate. `in/published` denies uid 10002 writes through its
+read-only bind — MS_RDONLY in the container's mount namespace, kernel-enforced
+and equally independent of the share's presentation — and `in/staging` and
+`in/journal` are denied by absence: they are never mounted.
+
 ## Decision 1 — strict allowlist grammar
 
 `MC_HOME/mount-allowlist` is strict TOML v1:
@@ -190,9 +315,11 @@ authorize them:
   branch/loose objects, Verifier may mutate only its disposable same-SHA
   source overlay, and Packager/Refiner receive canonical source/control RO;
   fixed pointer/config/control covers remain RO in every role;
-- the current standalone Worker's exact completion-seal staging root: Docker
-  RW but privileged-owned mode 0700, usable only by the setuid completion
-  wrapper; uid 10002 has no direct traversal/write authority;
+- the current standalone Worker's exact completion-seal staging root: an
+  operator-owned host source, Docker RW at its destination beneath the
+  mode-0700 `/mc/private` image gate, usable only by the setuid completion
+  wrapper; uid 10002 fails the gate and has no direct traversal/write
+  authority;
 - clean committed-tree single-Worksource and cross-Worksource seeding projections
   created from pinned committed refs: RO;
 - own Worksource synthetic home and package caches: RW at MC-derived fixed
@@ -206,8 +333,9 @@ authorize them:
   and the exact current Verifier correction output: RW only for that
   `(task,correction_number,run)`;
 - own Homie attachment published-input directory: RO; own outbound publisher
-  root: Docker RW but mode-0700/setuid-owned so uid 10002 direct access is
-  denied and only the runner's private `mc` publisher can commit bytes; no
+  root: an operator-owned host source, Docker RW at its destination beneath the
+  mode-0700 `/mc/private` image gate, so uid 10002 direct access is denied at
+  the gate and only the runner's private `mc` publisher can commit bytes; no
   pipeline or other Homie attachment root;
 - the derived historical-trace projection root from Decision 7: one RO mount
   into Homie only; and
@@ -369,22 +497,28 @@ The setuid `mc complete` wrapper first requires the exact local task branch,
 no second ref, safe fixed controls, a clean index/tracked tree, and stable
 head, then uses fixed config-free plumbing to stream **only** that head's
 complete reachable closure into the current
-run's privileged `/mc/completion-seal` staging root. It writes a manifest
+run's gated `/mc/private/completion-seal` staging root. It writes a manifest
 binding a 16-lowercase-hex `completion_request_id`, run/task/branch, object
 format, SHA/tree, object count, closure digest, and pack/index digests; verifies
 the pack independently; fsyncs files and directories; atomically publishes
-the seal; and makes it privileged-owned read-only. It rechecks the branch/head
+the seal; and makes it read-only at mode 0444. It rechecks the branch/head
 around packing. The helper transaction stores that request id, exact seal
 identity/digest, completion consequence, and result receipt atomically. Any
 concurrent deletion, replacement, or incomplete closure makes completion
 refuse before changing the spine. Model uid 10002 cannot traverse or mutate
-the seal root.
+the seal root: it fails the mode-0700 `/mc/private` gate its destination sits
+beneath, so the denial holds whatever the share presents the operator-owned
+host source as.
 
 Mutable-task confinement is healthy only after the same-share VirtioFS
 capability canary proves, with mounts live, that euid/fsuid 10001 can publish
 and fsync a seal, uid 10002 gets `EACCES`, and a restarted setup container can
-read that seal RO while the host verifies its identity/digest. A red arm
-refuses mutable dispatch; ownership/mode widening is not a fallback.
+read that seal RO while the host verifies its identity/digest. The canary
+proves the composed shape — operator-owned host source under `MC_HOME`, gated
+container destination — and assumes no uid presentation; the host mode the
+privileged publisher needs is whatever it proves. A red arm refuses mutable
+dispatch; relaxing the gate, changing ownership, or widening modes/ACLs beyond
+the proved shape is not a fallback.
 
 Only then does the same invocation commit completion, including the immutable
 seal identity/digest. A run-keyed unaccepted seal is not cleanup-eligible
@@ -527,9 +661,11 @@ path that is not a strict descendant or collides with another destination.
 | `/mc/run.json` | resident-materialized exact launch envelope, RO | every agent |
 | `/mc/sandbox.json` | validated non-secret sandbox projection, RO | every agent |
 | `/mc/session` | `MC_HOME/sessions/<run-or-session-id>/`, RW | owner only; trace-only |
-| `/mc/completion-seal` | exact `MC_HOME/seals/<run-id>/`, Docker RW but privileged-owned mode 0700 | current standalone Worker's setuid completion wrapper only; uid 10002 direct access fails |
-| `/mc/attachments/in` | `MC_HOME/attachments/<session-id>/in/published`, RO | owning Homie only |
-| `/mc/attachments/out` | `MC_HOME/attachments/<session-id>/out`, Docker RW but privileged-uid mode 0700; published leaves immutable | owning Homie runner's private setuid publisher only; model uid direct open/write fails |
+| `/mc/attachments/in` | `MC_HOME/attachments/<session-id>/in/published`, operator-owned host source, RO | owning Homie only |
+| `/mc/private` | image-rootfs directory owned `10001:10001` at mode 0700, never a bind and never a bind's parent-by-accident; the kernel traversal gate for every privileged destination beneath it | every agent; uid 10002 fails the gate, so nothing beneath it is reachable to the model/harness |
+| `/mc/private/completion-seal` | exact `MC_HOME/seals/<run-id>/`, operator-owned host source, Docker RW beneath the gate | current standalone Worker's setuid completion wrapper only; uid 10002 fails the gate |
+| `/mc/private/attachments` | image-rootfs structural directory beneath the gate | owning Homie only |
+| `/mc/private/attachments/out` | `MC_HOME/attachments/<session-id>/out`, operator-owned host source, Docker RW beneath the gate; published leaves immutable at mode 0444 | owning Homie runner's private setuid publisher only; uid 10002 fails the gate |
 | `/mc/records/output` | `MC_HOME/outputs/<run-id>/`, RW | current authorized output-writing pipeline run only |
 | `/mc/records/inputs/outputs/run-<producer-run-id>/item-<n>` | one exact completed output/evidence file or directory, RO | role/subject brief reference only |
 | `/mc/records/inputs/corrections/correction-<n>` | exact `corrections/mc-<task-id>-corrections<n>`, RO | exact role/subject brief reference only; one destination per correction number |
@@ -557,7 +693,7 @@ mount tables; they never inherit the agent table:
 | setup `/repo/task` | exact mode-0555 task-local skeleton root, always RO |
 | setup `/repo/task/source` | exact skeleton child, RW only for first create, accepted-seal rebuild, retry reconciliation, or exact pre-removal emptying; omitted otherwise |
 | setup `/repo/task/git` | exact skeleton child, RW for the same closed task-repository operations; omitted otherwise |
-| setup `/repo/seal` | exact completion-referenced privileged seal root, RO; present only while rebuilding/reconciling the matching task-local repository |
+| setup `/repo/seal` | exact completion-referenced seal root, RO; present only while rebuilding/reconciling the matching task-local repository. No gate: setup carries no model or harness, and the read-only bind is the whole denial |
 | setup `/repo/projection` | exact precreated execution projection root, RW; present only while materializing a committed-tree or disposable Verifier source |
 | setup `/mc/setup.json` | action-bound operation, pinned/accepted SHA, derived path, expected identities, and source-object-format evidence, RO |
 | landing `/repo/source` | one exact registered real Git Worksource root, RW, intentionally including its primary checkout solely for import/ref/merge/branch-cleanup |
@@ -844,7 +980,7 @@ changed declarations refuse.
 
 Both directions use the same crash-safe publisher. It writes only the exact
 reserved staging name with `O_EXCL`, stops at the exact declared byte count,
-hashes/fsyncs/closes it, and changes the stage leaf to publisher-owned 0444. It
+hashes/fsyncs/closes it, and changes the stage leaf to read-only mode 0444. It
 writes the journal under the one exact temporary name, fsyncs it, atomically
 no-replace renames it to the final journal name, and fsyncs the journal
 directory. The journal binds the staging identity, digest, size, canonical
@@ -946,9 +1082,15 @@ and deletion receipts do not grow without a terminating rule or require an
 unbounded in-memory scan.
 
 Outbound preserves §15.3's Homie write boundary. The Docker bind at
-`/mc/attachments/out` is RW for the privileged publisher but its source root
-and parents are owned by the setuid uid at mode 0700, so model/harness uid
-10002 cannot traverse, create, overwrite, or delete there. After a turn, the
+`/mc/private/attachments/out` is RW for the privileged publisher, but its
+destination sits beneath the `/mc/private` image gate (owner `10001:10001`,
+mode 0700), so model/harness uid 10002 fails the kernel's traversal check at
+the gate and cannot traverse, create, overwrite, or delete there. Its host
+source root and parents stay operator-owned beneath the operator-owned
+mode-0700 `MC_HOME` of Decision 1 — no host actor can chown them to the setuid
+uid, and none needs to — so §15.5's operator-uid native surface keeps the
+direct read of published outbound leaves that the spec mandates, and can create
+under the sibling `in/staging`. After a turn, the
 trusted runner first closes the harness result's complete attachment manifest
 and exact sizes, atomically reserves that bounded batch, then streams each
 ephemeral result to a private own-session `mc attachment-publish` capability
@@ -972,11 +1114,15 @@ host-native surface publishes a new inbound object and the warm uid-10002
 consumer reads it through the RO mount; setuid euid/fsuid 10001 then publishes
 a new outbound object and the already-running host-native surface opens it.
 The same warm uid 10002 receives `EACCES` for direct outbound traverse/open/
-create/rename/unlink. The canary restarts the container and reopens both old
-objects to prove persistence. Failure leaves attachment/Homie confinement
-unhealthy and refuses launch; there is no fallback that changes ownership,
-widens modes/ACLs, gives uid 10002 writable staging, or transports bytes
-through the spine.
+create/rename/unlink at the `/mc/private` gate. The canary restarts the
+container and reopens both old objects to prove persistence. It proves the
+composed shape — operator-owned host sources under `MC_HOME`, gated container
+destinations — and assumes nothing about how the share presents a host inode's
+uid, gid, or mode; the host modes the privileged publisher and the native
+surface need are whatever it proves. Failure leaves attachment/Homie
+confinement unhealthy and refuses launch; there is no fallback that relaxes the
+gate, changes ownership, widens modes/ACLs beyond the proved shape, gives uid
+10002 writable staging, or transports bytes through the spine.
 
 An attachment reference is typed by `(session_id,direction,sha256,size,
 media_type,display_name)`. The digest selects the fixed sharded path; no row
@@ -1013,6 +1159,7 @@ mount.source_alias
 mount.target_collision
 mount.identity_changed
 mount.runtime_unappliable
+mount.gate_unhealthy
 ```
 
 Every code aborts the whole plan; none drops one mount.
@@ -1127,7 +1274,9 @@ appends. A pipeline history larger than both one 256-row page and the old
 mount limit still produces one projection mount.
 
 Attachment tests prove stable warm visibility, inbound RO, uid-10002 direct
-outbound `EACCES`, private own-session publisher success, cross-session and
+outbound `EACCES` at the `/mc/private` gate, private own-session publisher
+success, operator-uid host reads of published outbound leaves and creates under
+inbound staging, cross-session and
 direction/stale-claim denial, content-address/digest/size/canonical-identity
 fencing, symlink/staging/journal-name refusal, atomic no-replace publication,
 and old-reference bytes unchanged across later turns/restart. Every cut around
@@ -1176,7 +1325,11 @@ source-alias rejection. Three correction inputs map to three numbered
 destinations without collision.
 
 The Docker mechanism test proves a source with spaces/colon applies through
-structured mounts; Docker-unshared/unappliable sources abort pre-claim; and
+structured mounts; an image whose `/mc/private` is missing, not a directory,
+not owner `10001:10001`, or not mode 0700, and any plan placing a
+non-privileged destination beneath the gate, reject with
+`mount.gate_unhealthy` before start; Docker-unshared/unappliable sources abort
+pre-claim; and
 an inspect-reported RW/target/source mismatch, missing fixed destination,
 extra destination, or host identity change is removed before start. In-agent
 probes prove the dirty/real primary and object store, sibling task/projection/
