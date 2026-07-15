@@ -105,7 +105,9 @@ func TestParseMountAllowlistRejectsInvalidSchema(t *testing.T) {
 		{name: "relative path", input: "version = 1\n[[allow]]\npath = 'relative'\ntarget = 'safe'\naccess = 'ro'\n"},
 		{name: "path newline", input: "version = 1\n[[allow]]\npath = \"/safe\\nother\"\ntarget = 'safe'\naccess = 'ro'\n"},
 		{name: "path NUL", input: "version = 1\n[[allow]]\npath = \"/safe\\u0000other\"\ntarget = 'safe'\naccess = 'ro'\n"},
-		{name: "path invalid UTF-8", input: "version = 1\n[[allow]]\npath = '" + invalidUTF8 + "'\ntarget = 'safe'\naccess = 'ro'\n"},
+		// The document-level UTF-8 gate (not the per-entry path check) is what
+		// rejects this; the per-entry check is an unreachable redundant guard.
+		{name: "document invalid UTF-8 carried by path", input: "version = 1\n[[allow]]\npath = '" + invalidUTF8 + "'\ntarget = 'safe'\naccess = 'ro'\n"},
 		{name: "path over 4096 bytes", input: "version = 1\n[[allow]]\npath = '" + longPath + "'\ntarget = 'safe'\naccess = 'ro'\n"},
 		{name: "empty target", input: "version = 1\n[[allow]]\npath = '/safe'\ntarget = ''\naccess = 'ro'\n"},
 		{name: "invalid target", input: "version = 1\n[[allow]]\npath = '/safe'\ntarget = '../safe'\naccess = 'ro'\n"},
@@ -191,7 +193,17 @@ func TestValidateTarget(t *testing.T) {
 		{name: "DEL", target: "reference\x7flibrary", wantErr: true},
 		{name: "component over 255 bytes", target: strings.Repeat("a", 256), wantErr: true},
 		{name: "total over 1024 bytes", target: strings.Repeat("a", 205) + "/" + strings.Repeat("b", 205) + "/" + strings.Repeat("c", 205) + "/" + strings.Repeat("d", 205) + "/" + strings.Repeat("e", 205), wantErr: true},
+		{name: "total exactly 1025 bytes", target: strings.Repeat("a", 204) + "/" + strings.Repeat("b", 204) + "/" + strings.Repeat("c", 204) + "/" + strings.Repeat("d", 204) + "/" + strings.Repeat("e", 205), wantErr: true},
 		{name: "invalid UTF-8", target: string([]byte{0xff}), wantErr: true},
+		// ADR-017 Decision 1 says "control" without qualification; C1 and the
+		// Unicode line/paragraph separators are line-break-equivalent to the
+		// serializers that render these targets.
+		{name: "C1 NEL", target: "referencelibrary", wantErr: true},
+		{name: "line separator", target: "reference library", wantErr: true},
+		{name: "paragraph separator", target: "reference library", wantErr: true},
+		{name: "zero width space", target: "reference​library", wantErr: true},
+		{name: "right-to-left override", target: "reference‮library", wantErr: true},
+		{name: "non-breaking space stays legal", target: "reference library"},
 	}
 
 	for _, tt := range tests {

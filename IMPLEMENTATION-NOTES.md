@@ -852,3 +852,58 @@ Entry template:
 - Spec impact: §10 should name this bounded stale-writer safety exception to
   the one-tick Console/landing latency.
 - Needs your decision: no
+
+## 2026-07-14 — Mount targets reject Unicode format/line separators, not just ASCII controls
+- Where: Phase-3 cross-harness takeover review of 4380e0d (`mc/boundary`);
+  ADR-017 Decision 1 target grammar
+- Gap: ADR-017 says a target component contains "no empty, `.`, `..`, colon,
+  backslash, NUL, control, or leading-slash component" — "control" is
+  unqualified, but the shipped byte-wise check only rejected ASCII controls
+  (`< 0x20`, `0x7f`). An adversarial probe confirmed C1 NEL (U+0085), LINE
+  SEPARATOR (U+2028), PARAGRAPH SEPARATOR (U+2029), ZWSP (U+200B) and the
+  RTL override (U+202E) all passed `ValidateTarget`.
+- Choice: reject `unicode.IsControl` (which covers C0 and C1, so U+0085 is
+  caught by the ADR's own word) plus the `Cf`, `Zl`, and `Zp` categories.
+  `Zl`/`Zp` are line-break-equivalent to serializers that render targets
+  line-wise; `Cf` carries invisible reordering/spoofing (U+202E). This is
+  strictly narrower than the ADR text, so it is the conservative direction:
+  fail-closed, no new acceptance, and a one-line revert if an operator ever
+  needs a format rune in a container path. NBSP (`Zs`) stays legal because
+  ASCII space is already legal — excluding it would be new scope, not a fix.
+  Fullwidth solidus (U+FF0F) also stays legal: it is not a POSIX separator,
+  and Docker receives structured bind objects rather than concatenated `-v`
+  strings (ADR-017 Decision 3), so it cannot smuggle a path break.
+- Spec impact: ADR-017 Decision 1 should say "Unicode control, format, or
+  line/paragraph separator" where it now says "control".
+- Needs your decision: no
+
+## 2026-07-14 — Takeover-review residue on the pure mount policy (informational)
+- Where: Phase-3 cross-harness takeover review of 4380e0d; two independent
+  read-only lenses (claims-vs-tests audit, adversarial bypass hunt)
+- Gap: neither lens found a major defect, a blocked-floor bypass, an RW-over-RO
+  escalation, or a target-collision bypass; the shipped 18-component + 22-glob
+  floor is pinned exactly and the star-glob matcher survived ~3M fuzzed cases
+  against `path.Match`. Four smaller mismatches between the ledger's prose and
+  the code remain worth recording:
+  (1) the per-entry `path` UTF-8 check is unreachable — the document-level gate
+      always fires first; the test named for it was proving the wrong check.
+  (2) "rejects over-limit input before allocation" is literally true only of
+      the 256 KiB pre-decode size cap; the 256-entry bound is checked after the
+      decoder has already materialized the entries.
+  (3) two `[[allow]]` entries may share one identical source `path` (only
+      targets are de-overlapped here).
+  (4) the pure layer de-overlaps container targets only; allow-root identity
+      and overlap are wholly deferred to the identity layer.
+- Choice: kept the unreachable check as a redundant guard (removing a
+  fail-closed assertion to chase dead code is the wrong direction in this
+  system) and commented it as redundant; renamed the mislabeled test to name
+  the check it actually exercises; added the missing regressions (exact
+  1025-byte target boundary; ASCII-case-insensitive matching of operator
+  additions in both directions). (2) is prose, not behavior — the pre-decode
+  cap bounds what the decoder can allocate, so no fix. (3) and (4) are the
+  next slice's obligation: ADR-017 Decision 3 makes canonical `os.SameFile`
+  identity — not string arithmetic — the authority that rejects identical and
+  ancestor/descendant-overlapping allow roots. Recorded here so that seam
+  cannot be quietly left open.
+- Spec impact: none
+- Needs your decision: no

@@ -8,6 +8,7 @@ import (
 	"path"
 	"path/filepath"
 	"strings"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/BurntSushi/toml"
@@ -128,6 +129,8 @@ func validateAllowEntry(index int, raw allowlistEntryTOML) (AllowEntry, error) {
 	if raw.Path == "" {
 		return AllowEntry{}, fmt.Errorf("%s: path is required", label)
 	}
+	// Redundant guard: ParseMountAllowlist gates the whole document on UTF-8
+	// validity before decoding, so this cannot fire through that path.
 	if !utf8.ValidString(raw.Path) {
 		return AllowEntry{}, fmt.Errorf("%s: path is not valid UTF-8", label)
 	}
@@ -173,10 +176,16 @@ func ValidateTarget(target string) error {
 		if len(component) > maxTargetComponent {
 			return fmt.Errorf("component exceeds %d bytes", maxTargetComponent)
 		}
-		for i := 0; i < len(component); i++ {
-			b := component[i]
-			if b == ':' || b == '\\' || b == 0 || b < 0x20 || b == 0x7f {
+		for _, r := range component {
+			if r == ':' || r == '\\' || r == 0 || r < 0x20 || r == 0x7f {
 				return fmt.Errorf("component contains colon, backslash, NUL, or ASCII control")
+			}
+			// ADR-017 Decision 1 forbids a "control" component without
+			// qualifying it to ASCII. C1 controls and the Unicode line and
+			// paragraph separators are line-break-equivalent to serializers
+			// that render targets; format runes carry invisible reordering.
+			if unicode.IsControl(r) || unicode.In(r, unicode.Cf, unicode.Zl, unicode.Zp) {
+				return fmt.Errorf("component contains a Unicode control, format, or line separator character")
 			}
 		}
 	}

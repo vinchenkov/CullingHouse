@@ -98,6 +98,34 @@ func TestBlockPolicyExtensionsAreAdditive(t *testing.T) {
 	}
 }
 
+// Operator additions match ASCII-case-insensitively in both directions: an
+// uppercase spelling on the address side and on the pattern side.
+func TestBlockPolicyExtensionsMatchASCIIInsensitive(t *testing.T) {
+	policy, err := boundary.NewBlockPolicy([]boundary.BlockPattern{
+		{Kind: boundary.PatternComponent, Pattern: ".terraform.d"},
+		{Kind: boundary.PatternBasenameGlob, Pattern: "*.agekey"},
+		{Kind: boundary.PatternComponent, Pattern: "SECRETSTUFF"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, path := range []string{
+		"/safe/.TERRAFORM.D/plugin",
+		"/safe/OPERATOR.AGEKEY",
+		"/safe/secretstuff/x",
+		"/safe/SecretStuff/x",
+	} {
+		if !policy.Rejects(path, "/safe/ordinary") {
+			t.Errorf("extended policy did not reject %q case-insensitively", path)
+		}
+	}
+
+	if policy.Rejects("/safe/terraform/plugin", "/safe/ordinary") {
+		t.Error("extended policy rejected a near-miss component")
+	}
+}
+
 func TestBlockPolicyRejectsInvalidExtensions(t *testing.T) {
 	tests := []struct {
 		name    string
