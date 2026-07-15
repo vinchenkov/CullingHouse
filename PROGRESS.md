@@ -1,7 +1,7 @@
 # PROGRESS — Mission Control implementation ledger
 
 <!-- Header block: kept current by every session. -->
-LAST GREEN SHA: ea57c82 (local; the operator pushes manually — decided 2026-07-14, see Parked. Agents: do not push.)
+LAST GREEN SHA: a097916 (local; the operator pushes manually — decided 2026-07-14, see Parked. Agents: do not push.)
 PHASES PASSING: Phase 0 COMPLETE (S1–S8 all green, no fallback ADRs; only operator-leg deferrals remain); Phase 1 COMPLETE (1a substrate 172; 1b walking skeleton reviewed-and-fixed — fake-harness 43, agent-runner 13, runner/image 40, resident 42, dispatch + cmd/mc suites; Docker e2e PASS ×4 total); Phase 2 COMPLETE for every unparked acceptance line (domain/§18 surface, deterministic split-brain convergence, bounded honesty + five mutants, tagged dispatch/metamorphic/twin-spine lifecycle properties; the initiative-wave CLI is no longer isolated — ADR-020 landed 2026-07-14 and closed the last Phase 2 acceptance line)
 KNOWN-FAILING: (none)
 FAST SUITE: mc/check.sh (gofmt + vet on the untagged build AND on the nightly/docker_e2e/test_fake_routing tagged builds — they must compile every commit, added 2026-07-14 after a tagged suite rotted invisibly — + go test ./...; includes substrate + promoted dispatch) + runner/fake-harness/check.sh + runner/agent-runner/check.sh + runner/image/check.sh + resident/check.sh. Docker e2e (phase-completion lane): cd mc && mise exec -- go test -tags docker_e2e -timeout 15m ./e2e/...
@@ -80,9 +80,10 @@ FAST SUITE: mc/check.sh (gofmt + vet on the untagged build AND on the nightly/do
   - [~] Protected set + cross-Worksource jurisdiction (Dec. 3 step 5, Dec. 5):
         ADR-021 reworked twice; cross-harness takeover revoked steps 1-6
         acceptance after six reproduced gaps (e78a81c). Registry immutability,
-        destination-confined kinds, and own-control ancestry are repaired
-        (3ad3411, f9cfd1e, ea57c82); mandatory member/device witnesses remain
-        before step 7 (D8 absence/suffix/case, D9/D11 drift), then step 8
+        destination-confined kinds, own-control ancestry, the mandatory member
+        sweep, and D5's device leg are repaired (3ad3411, f9cfd1e, ea57c82,
+        a097916); next is step 7 (D8 absence/suffix/case, D9/D11 drift), then
+        step 8
   - [ ] macOS ACL leg of the trust seam (needs the native ACL API)
 - [ ] Phase 4 — E2E control loops (six scenario families)
 - [ ] Phase 5 — Real-subscription acceptance (operator-scheduled)
@@ -1991,3 +1992,27 @@ two artifacts, and the own-Worksource identity permit counterparts. Each deny
 row must also prove an unrelated permit. Then add D5's portable
 `parentStat.Dev != stat.Dev` leg with a mutation-killing non-`/` filesystem-root
 witness while retaining the Darwin mount-point evidence.
+
+- 2026-07-15 — **Takeover repair 4 green: the protected union is exhaustively
+  witnessed and D5 has both portable and Darwin volume-root evidence**
+  (`a097916`). The public sweep now covers whole-tree `MC_HOME/quarantine`, two
+  present and one omitted HOME classes, both gateway/CA secrets, selected and
+  non-selected runtime controls, two entries in each own/other Git and
+  `.mission-control` collection, two `denied_paths` entries in all three
+  directions, two other Worksources, every root slot and two artifacts, plus
+  mutation-sensitive own-root permits. Every deny row pins its code and proves
+  an unrelated permit. Deliberately dropping gateway roots and truncating
+  `OtherWorksources` after element zero both went red. D5's missing
+  `parentStat.Dev != stat.Dev` leg went red with mount-point lookup disabled;
+  same-device permit and ambiguity-deny controls are green, as is the real
+  non-`/` `/System/Volumes/VM` witness. An independent review found the D5 seam
+  clean and verified a CGO-disabled Linux/arm64 compile. Full fast lane green:
+  Go all/tagged builds and Bun 43/13/40/42.
+
+NEXT: Begin ADR-021 step 7 by editing D8's incorrect case paragraph before
+implementation. Scope case/normalization to the absent suffix only; the ancestor
+half remains `os.SameFile`. Pin nearest-existing canonical ancestor plus the
+original component suffix, fail closed on ENOTDIR/dangling/permission ambiguity,
+and use NFC plus volume-reported case sensitivity from a pure-Go Darwin
+`getattrlist(2)` wrapper (full Unicode fold on insensitive volumes). Then add
+D9/D11 fresh-reconstruction drift witnesses for denied paths and `TypedRoots`.
