@@ -23,4 +23,16 @@ for tag in nightly docker_e2e test_fake_routing; do
     mise exec -- go vet -tags "$tag" ./...
 done
 
+# The ADR-021 D10a derivation guard reads docs/adr/017-mount-authorization.md at
+# run time, so that a destination row added to ADR-017 fails a test instead of
+# failing a container launch. Go's test cache does NOT track that read — the ADR
+# lives outside this module — so `go test ./...` reports "ok (cached)" after
+# ADR-017 changes and the guard never runs. Measured, not assumed: mutating the
+# ADR's table left the cached PASS in place, while -count=1 caught it.
+#
+# A guard against silent drift that is itself silently skipped is worth less
+# than no guard, because it also buys false confidence. Force it to run. It is
+# one small package-local test; the rest of the suite keeps its cache.
+mise exec -- go test -count=1 ./boundary/ -run 'TestTypedKindCoversEveryADR017Row|TestNoOrphanTypedKind|TestNoPhantomTableRows'
+
 exec mise exec -- go test ./...
