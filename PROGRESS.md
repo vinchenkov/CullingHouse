@@ -1,7 +1,7 @@
 # PROGRESS — Mission Control implementation ledger
 
 <!-- Header block: kept current by every session. -->
-LAST GREEN SHA: fbc4ec6 (local; the operator pushes manually — decided 2026-07-14, see Parked. Agents: do not push.)
+LAST GREEN SHA: e78a81c (local; the operator pushes manually — decided 2026-07-14, see Parked. Agents: do not push.)
 PHASES PASSING: Phase 0 COMPLETE (S1–S8 all green, no fallback ADRs; only operator-leg deferrals remain); Phase 1 COMPLETE (1a substrate 172; 1b walking skeleton reviewed-and-fixed — fake-harness 43, agent-runner 13, runner/image 40, resident 42, dispatch + cmd/mc suites; Docker e2e PASS ×4 total); Phase 2 COMPLETE for every unparked acceptance line (domain/§18 surface, deterministic split-brain convergence, bounded honesty + five mutants, tagged dispatch/metamorphic/twin-spine lifecycle properties; the initiative-wave CLI is no longer isolated — ADR-020 landed 2026-07-14 and closed the last Phase 2 acceptance line)
 KNOWN-FAILING: (none)
 FAST SUITE: mc/check.sh (gofmt + vet on the untagged build AND on the nightly/docker_e2e/test_fake_routing tagged builds — they must compile every commit, added 2026-07-14 after a tagged suite rotted invisibly — + go test ./...; includes substrate + promoted dispatch) + runner/fake-harness/check.sh + runner/agent-runner/check.sh + runner/image/check.sh + resident/check.sh. Docker e2e (phase-completion lane): cd mc && mise exec -- go test -tags docker_e2e -timeout 15m ./e2e/...
@@ -78,8 +78,9 @@ FAST SUITE: mc/check.sh (gofmt + vet on the untagged build AND on the nightly/do
         ADR-017's unrealizable privileged-tree ownership fixed (c6ca202), six
         deviations logged (69c19be), evidence in docs/reviews/ (6636e1e)
   - [~] Protected set + cross-Worksource jurisdiction (Dec. 3 step 5, Dec. 5):
-        ADR-021 reworked twice by review; TDD steps 1-6 of 8 green (fbc4ec6).
-        Remaining: step 7 (D8 absence/suffix/case, D9/D11 drift), step 8
+        ADR-021 reworked twice; cross-harness takeover revoked steps 1-6
+        acceptance after six reproduced gaps (e78a81c). Repairing those red-first
+        before step 7 (D8 absence/suffix/case, D9/D11 drift), then step 8
   - [ ] macOS ACL leg of the trust seam (needs the native ACL API)
 - [ ] Phase 4 — E2E control loops (six scenario families)
 - [ ] Phase 5 — Real-subscription acceptance (operator-scheduled)
@@ -1906,3 +1907,27 @@ text review — it required statting `/System/Volumes/Data`. **Corollary earned 
 session: apply the same skepticism to your own tests.** Four of seventeen mutants
 died only after the test that should have caught them was rewritten; the fast lane
 had cached the derivation guard away entirely.
+
+- 2026-07-15 — **Codex takeover review complete; outgoing ADR-021 steps 1–6 are
+  NOT accepted** (`e78a81c`). Session ritual complete: clean worktree on entry,
+  `git log/status` inspected, and the full fast lane green (Go boundary/all
+  packages; fake-harness 43, agent-runner 13, runner/image 40, resident 42).
+  Three decorrelated read-only lenses plus local review drove public-API probes
+  rather than trusting the green suite. Confirmed: own workspace rejects once
+  its real `.mission-control` root is present; caller mutation of the aliased
+  `TypedRoots` map/slice changes a constructed jurisdiction; arbitrary numeric
+  kinds authorize; kinds cross destination rows (one inert-cover kind spans 17
+  rows); ambiguity errors are skipped; and the required union-member sweep is
+  absent. D5 also lacks its portable device-boundary leg. The exact findings,
+  conservative repairs, and the previously missing D8 generalization log are in
+  `IMPLEMENTATION-NOTES.md`. Refuted: whole-tree MC_HOME, the alternate typed
+  predicate, raw HOME/deny paths, and the absence of production wiring are all
+  deliberate. No operator input, Docker, secret, or launchd state is involved.
+
+NEXT: Repair the takeover findings red-first, in smallest-green order: (1) typed
+registry immutability + closed numeric domain; (2) D10a destination-slot
+uniqueness and `KindNotABind` outside the authorized domain; (3) own-workspace /
+own-control ancestry permit pair; (4) mandatory member sweep + D5 device leg.
+Then amend D8's incorrect case paragraph and implement step 7 using a pure-Go
+Darwin `getattrlist` wrapper (the shipped static `mc` forbids copying the probe's
+cgo). Do not wire production planning and do not load launchd.
