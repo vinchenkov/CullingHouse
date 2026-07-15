@@ -237,6 +237,15 @@ func TestAbsentDeniedPathRejectsCanonicalParentAndKeepsSiblingDecidable(t *testi
 	if err != nil {
 		t.Fatalf("ResolveJurisdiction() = %v", err)
 	}
+	aboveAnchor := filepath.Dir(anchor)
+	aboveID, err := boundary.ResolveSource(aboveAnchor)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := j.Rejects(aboveID, boundary.TypedClaim{}); codeOf(t, err) != boundary.CodeDeniedRoot {
+		t.Fatalf("source above canonical anchor code = %q, want %q (error: %v)",
+			codeOf(t, err), boundary.CodeDeniedRoot, err)
+	}
 
 	// These appear only after the jurisdiction snapshot. The protected member
 	// remains absent in that snapshot, so the verdict must come from its stored

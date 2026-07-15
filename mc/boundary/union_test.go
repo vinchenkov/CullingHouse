@@ -97,6 +97,49 @@ func TestUnionMatchesByIdentityNotByString(t *testing.T) {
 	}
 }
 
+// A symlink alias canonicalizes to the protected spelling, so it cannot by
+// itself distinguish filesystem identity from a separator-aware canonical
+// prefix comparison. A regular-file hardlink can: the spellings are unrelated
+// while os.SameFile says they are the same protected object.
+func TestUnionMatchesHardlinkIdentityAcrossUnrelatedSpellings(t *testing.T) {
+	dir := t.TempDir()
+	protected := filepath.Join(dir, "protected-secret")
+	if err := os.WriteFile(protected, []byte("secret"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	alias := filepath.Join(dir, "unrelated-alias")
+	if err := os.Link(protected, alias); err != nil {
+		t.Fatal(err)
+	}
+	unrelated := filepath.Join(dir, "ordinary")
+	if err := os.WriteFile(unrelated, []byte("ordinary"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	protectedID, err := boundary.ResolveSource(protected)
+	if err != nil {
+		t.Fatal(err)
+	}
+	aliasID, err := boundary.ResolveSource(alias)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if protectedID.Canonical == aliasID.Canonical || !os.SameFile(protectedID.Info, aliasID.Info) {
+		t.Fatal("fixture is inert: need different canonical spellings for one inode")
+	}
+
+	_, rejects := unionFixture(t, boundary.JurisdictionInput{
+		DeniedPaths: []string{protected},
+	}, dir)
+	if err := rejects(alias); codeOf(t, err) != boundary.CodeDeniedRoot {
+		t.Fatalf("hardlink alias code = %q, want %q (error: %v)",
+			codeOf(t, err), boundary.CodeDeniedRoot, err)
+	}
+	if err := rejects(unrelated); err != nil {
+		t.Fatalf("unrelated file rejected: %v", err)
+	}
+}
+
 // ADR-021 D4's worked example, and the reason the ancestor direction is not
 // redundant with the blocked floor: ~/Library is an ancestor of the protected
 // ~/Library/Keychains. The floor does not match it ("library" is no pattern),
