@@ -70,8 +70,8 @@ func Init(a InitArgs) (any, error) {
 	deployment := hex.EncodeToString(uuid[:])
 	err = inTx(db, func(ctx context.Context, q Q) error {
 		if _, err := q.ExecContext(ctx,
-			`INSERT INTO meta (id, deployment_uuid, schema_version) VALUES (1, ?, 1)`,
-			deployment); err != nil {
+			`INSERT INTO meta (id, deployment_uuid, schema_version) VALUES (1, ?, ?)`,
+			deployment, substrate.CurrentSchemaVersion); err != nil {
 			return err
 		}
 		// One sandbox profile: the fake family is deterministic and

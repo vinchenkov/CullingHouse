@@ -726,45 +726,15 @@ END;
 ------------------------------------------------------------------------------
 
 CREATE TABLE activity (
-    id                  INTEGER PRIMARY KEY,
-    created_at          TEXT NOT NULL DEFAULT (datetime('now')),
-    actor               TEXT NOT NULL,
-    kind                TEXT NOT NULL,   -- e.g. 'daily.briefing' (§10 step 0b, §14)
-    subject             TEXT,
-    detail              TEXT,
-    -- ADR-016 D2 replay fences. Both length() and GLOB stop at the first NUL
-    -- byte, so each hex shape is pinned by character length AND byte length:
-    -- 64 hex + NUL + junk passes a character test (65+ bytes stored), and
-    -- 63 hex + NUL passes a byte test (GLOB never sees the NUL). Requiring the
-    -- two lengths to agree admits only NUL-free ASCII, which GLOB then reads
-    -- whole. Without this a forged key stores as a distinct UNIQUE value that
-    -- its own receipt lookup cannot find, and the replay fence fails open.
-    dispatch_key        TEXT
-                        CHECK (dispatch_key IS NULL OR
-                               (length(dispatch_key) = 64 AND
-                                length(CAST(dispatch_key AS BLOB)) = 64 AND
-                                dispatch_key NOT GLOB '*[^0-9a-f]*')),
-    dispatch_request_id TEXT
-                        CHECK (dispatch_request_id IS NULL OR
-                               (length(dispatch_request_id) = 16 AND
-                                length(CAST(dispatch_request_id AS BLOB)) = 16 AND
-                                dispatch_request_id NOT GLOB '*[^0-9a-f]*')),
-    dispatch_result     TEXT
-                        CHECK (dispatch_result IS NULL OR
-                               (length(CAST(dispatch_result AS BLOB)) <= 65536 AND
-                                json_valid(dispatch_result) AND
-                                json_type(dispatch_result) = 'object')),
-    CHECK ((dispatch_request_id IS NULL) = (dispatch_result IS NULL))
+    id         INTEGER PRIMARY KEY,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    actor      TEXT NOT NULL,
+    kind       TEXT NOT NULL,   -- e.g. 'daily.briefing' (§10 step 0b, §14)
+    subject    TEXT,
+    detail     TEXT
 );
 
 CREATE INDEX activity_by_kind ON activity (kind, created_at);
-
--- Uniqueness is declared as named indexes, not inline UNIQUE: SQLite cannot
--- ALTER a UNIQUE column onto an existing table, so an inline constraint would
--- be unreachable for the v1 -> v2 migration and a migrated spine could never
--- carry the same fence as a fresh one (Migrate, substrate.go).
-CREATE UNIQUE INDEX activity_dispatch_key ON activity (dispatch_key);
-CREATE UNIQUE INDEX activity_dispatch_request_id ON activity (dispatch_request_id);
 
 CREATE TRIGGER activity_append_only_update
 BEFORE UPDATE ON activity
@@ -995,27 +965,17 @@ END;
 ------------------------------------------------------------------------------
 
 CREATE TABLE outbox (
-    id                    INTEGER PRIMARY KEY,
-    kind                  TEXT NOT NULL CHECK (kind IN
-                          ('homie_reply', 'homie_echo', 'blocked_alert', 'console', 'health')),
-    session_id            TEXT REFERENCES homie_sessions(id),
-    surface               TEXT NOT NULL CHECK (surface IN ('discord', 'dashboard', 'cli')),
-    channel_ref           TEXT,
-    payload               TEXT NOT NULL    -- small inline JSON; anything large rides as a path reference
-                          CHECK (json_valid(payload) AND json_type(payload) = 'object'),
-    source_activity_id    INTEGER REFERENCES activity(id),
-    -- Same dual-length NUL fence as activity's ADR-016 D2 keys above.
-    event_destination_key TEXT
-                          CHECK (event_destination_key IS NULL OR
-                                 (length(event_destination_key) = 64 AND
-                                  length(CAST(event_destination_key AS BLOB)) = 64 AND
-                                  event_destination_key NOT GLOB '*[^0-9a-f]*')),
-    created_at            TEXT NOT NULL DEFAULT (datetime('now')),
-    delivered_at          TEXT,
-    CHECK ((source_activity_id IS NULL) = (event_destination_key IS NULL))
+    id           INTEGER PRIMARY KEY,
+    kind         TEXT NOT NULL CHECK (kind IN
+                 ('homie_reply', 'homie_echo', 'blocked_alert', 'console', 'health')),
+    session_id   TEXT REFERENCES homie_sessions(id),
+    surface      TEXT NOT NULL CHECK (surface IN ('discord', 'dashboard', 'cli')),
+    channel_ref  TEXT,
+    payload      TEXT NOT NULL    -- small inline JSON; anything large rides as a path reference
+                 CHECK (json_valid(payload) AND json_type(payload) = 'object'),
+    created_at   TEXT NOT NULL DEFAULT (datetime('now')),
+    delivered_at TEXT
 );
-
-CREATE UNIQUE INDEX outbox_event_destination_key ON outbox (event_destination_key);
 
 CREATE INDEX outbox_undelivered ON outbox (surface, id) WHERE delivered_at IS NULL;
 
@@ -1036,8 +996,6 @@ WHEN NEW.id <> OLD.id
   OR NEW.surface <> OLD.surface
   OR NEW.channel_ref IS NOT OLD.channel_ref
   OR NEW.payload <> OLD.payload
-  OR NEW.source_activity_id IS NOT OLD.source_activity_id
-  OR NEW.event_destination_key IS NOT OLD.event_destination_key
   OR NEW.created_at <> OLD.created_at
 BEGIN
     SELECT RAISE(ABORT, 'outbox content is immutable; only delivery bookkeeping advances (§15.5)');

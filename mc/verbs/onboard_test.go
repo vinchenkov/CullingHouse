@@ -3,6 +3,7 @@ package verbs
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 
@@ -51,6 +52,123 @@ func TestOnboardHomeProvisioningIsAtomicAndRetryable(t *testing.T) {
 	if uuid == "" {
 		t.Fatal("retry did not create the deployment identity")
 	}
+}
+
+// §16.4: "First-ever provisioning writes a meta table — deployment UUID,
+// schema version, created-at". The version it writes must be the version of
+// the schema it just applied. Stamping a literal leaves meta describing a
+// spine that no longer exists: onboard would then read its own fresh spine
+// back as migratable and run ALTER TABLE against columns already there.
+func TestProvisioningStampsTheSchemaItApplied(t *testing.T) {
+	home := filepath.Join(t.TempDir(), "mc-home")
+	spine := filepath.Join(home, "spine.db")
+	t.Setenv("MC_HOME", home)
+
+	if _, _, err := onboardHome(spine); err != nil {
+		t.Fatalf("onboard: %v", err)
+	}
+	db, err := substrate.Open(spine)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	var version int
+	if err := db.QueryRow(`SELECT schema_version FROM meta WHERE id = 1`).Scan(&version); err != nil {
+		t.Fatal(err)
+	}
+	if version != substrate.CurrentSchemaVersion {
+		t.Errorf("onboard stamped schema_version %d, want %d — meta must name the schema on disk",
+			version, substrate.CurrentSchemaVersion)
+	}
+	// The self-consistency proof: a spine mc just provisioned has nothing to
+	// migrate. If this reports a change, provisioning and Schema disagree.
+	changed, err := substrate.Migrate(db)
+	if err != nil {
+		t.Fatalf("Migrate a freshly provisioned spine: %v", err)
+	}
+	if changed {
+		t.Error("a freshly provisioned spine reported a pending migration")
+	}
+}
+
+// §16.4: "present with an older schema → migrate". Accepting an older spine
+// without converting it is the worst of both worlds — mc then drives a v1
+// spine with code that expects the current one — so onboard owns the
+// conversion, and it must preserve the deployment's identity and history.
+func TestOnboardMigratesAnOlderSpine(t *testing.T) {
+	home := filepath.Join(t.TempDir(), "mc-home")
+	spine := filepath.Join(home, "spine.db")
+	t.Setenv("MC_HOME", home)
+	if err := os.MkdirAll(home, 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	// A real v1 deployment carrying history.
+	db, err := substrate.Open(spine)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(schemaV1ForOnboard(t)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(
+		`INSERT INTO meta (id, deployment_uuid, schema_version) VALUES (1, 'legacy-uuid', 1)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(
+		`INSERT INTO activity (actor, kind, detail) VALUES ('operator', 'task.added', '{}')`); err != nil {
+		t.Fatal(err)
+	}
+	db.Close()
+
+	if _, _, err := onboardHome(spine); err != nil {
+		t.Fatalf("onboard an older spine: %v", err)
+	}
+
+	db, err = substrate.Open(spine)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	var version int
+	var uuid string
+	if err := db.QueryRow(`SELECT schema_version, deployment_uuid FROM meta WHERE id = 1`).
+		Scan(&version, &uuid); err != nil {
+		t.Fatal(err)
+	}
+	if version != substrate.CurrentSchemaVersion {
+		t.Errorf("onboard left schema_version %d, want %d — the older spine was accepted but never migrated",
+			version, substrate.CurrentSchemaVersion)
+	}
+	if uuid != "legacy-uuid" {
+		t.Errorf("migration changed the deployment identity to %q", uuid)
+	}
+	var history int
+	if err := db.QueryRow(`SELECT count(*) FROM activity`).Scan(&history); err != nil {
+		t.Fatal(err)
+	}
+	if history != 1 {
+		t.Errorf("migration lost history: %d activity rows, want 1", history)
+	}
+	// The converted spine carries the fences, not just the columns.
+	if _, err := db.Exec(`INSERT INTO activity (actor, kind, dispatch_key)
+		VALUES ('mc', 'dispatch.health', ?)`, strings.Repeat("a", 64)); err != nil {
+		t.Fatalf("migrated spine rejects a legal receipt: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO activity (actor, kind, dispatch_key)
+		VALUES ('mc', 'dispatch.health', ?)`, strings.Repeat("a", 64)); err == nil {
+		t.Error("migrated spine accepted a duplicate dispatch_key — the D2 replay fence is missing")
+	}
+}
+
+func schemaV1ForOnboard(t *testing.T) string {
+	t.Helper()
+	b, err := os.ReadFile(filepath.Join("..", "substrate", "testdata", "schema-v1.sql"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(b)
 }
 
 func TestOnboardConcurrentReplaysSerialize(t *testing.T) {

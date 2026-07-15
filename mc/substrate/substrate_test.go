@@ -5,7 +5,9 @@
 package substrate_test
 
 import (
+	"database/sql"
 	"fmt"
+	"strings"
 	"testing"
 )
 
@@ -754,6 +756,85 @@ func TestActivityAppendOnly(t *testing.T) {
 	}
 }
 
+// ADR-016 Decision 2: every mutation-producing dispatch action has one
+// database-backed replay fence. Commit-side actions use a 32-byte action hash;
+// prepare-side actions pair a command-scoped request id with the exact final
+// JSON result. The spine rejects malformed, half-paired, or duplicate receipts
+// even if the Go layer regresses.
+func TestDispatchActivityReceiptBackstops(t *testing.T) {
+	assertActivityReceiptBackstops(t, openSpine(t))
+}
+
+// assertActivityReceiptBackstops states D2's activity-side storage contract
+// once. A migrated spine is held to it byte-for-byte alongside a fresh one
+// (see TestMigrateV1ToCurrent): a fence the migration fails to carry over is
+// a fence that does not exist on any real deployment.
+func assertActivityReceiptBackstops(t *testing.T, db *sql.DB) {
+	t.Helper()
+	dispatchKey := strings.Repeat("a", 64)
+	requestID := strings.Repeat("b", 16)
+	result := `{"action":"health","code":"health.runtime_unavailable"}`
+
+	mustExec(t, db, `
+		INSERT INTO activity (actor, kind, detail, dispatch_key)
+		VALUES ('mc', 'dispatch.health', '{}', ?)`, dispatchKey)
+	wantAbort(t, db, `
+		INSERT INTO activity (actor, kind, detail, dispatch_key)
+		VALUES ('mc', 'dispatch.health', '{}', ?)`, dispatchKey)
+
+	// nulTail and nulPad are the two halves of the same hole: length() and
+	// GLOB both stop at the first NUL, so a character test misses the trailing
+	// bytes and a byte test never shows the NUL to GLOB. Either shape would
+	// store a key whose own receipt lookup cannot find it, so a replayed commit
+	// would duplicate the activity, its consequence, and its outbox fan-out.
+	for name, key := range map[string]string{
+		"short":     strings.Repeat("a", 63),
+		"uppercase": strings.Repeat("A", 64),
+		"non_hex":   strings.Repeat("a", 63) + "g",
+		"nul_tail":  strings.Repeat("a", 64) + "\x00EVIL",
+		"nul_pad":   strings.Repeat("a", 63) + "\x00",
+	} {
+		t.Run("dispatch_key_"+name, func(t *testing.T) {
+			wantAbort(t, db, `
+				INSERT INTO activity (actor, kind, detail, dispatch_key)
+				VALUES ('mc', 'dispatch.health', '{}', ?)`, key)
+		})
+	}
+
+	// The prepare-side receipt is all-or-nothing and stores an object-shaped,
+	// bounded final result. A retry can therefore return the original bytes
+	// without re-entering selection.
+	wantAbort(t, db, `
+		INSERT INTO activity (actor, kind, dispatch_request_id)
+		VALUES ('mc', 'dispatch.reap', ?)`, requestID)
+	wantAbort(t, db, `
+		INSERT INTO activity (actor, kind, dispatch_result)
+		VALUES ('mc', 'dispatch.reap', ?)`, result)
+	mustExec(t, db, `
+		INSERT INTO activity (actor, kind, dispatch_request_id, dispatch_result)
+		VALUES ('mc', 'dispatch.reap', ?, ?)`, requestID, result)
+	wantAbort(t, db, `
+		INSERT INTO activity (actor, kind, dispatch_request_id, dispatch_result)
+		VALUES ('mc', 'dispatch.reap', ?, ?)`, requestID, result)
+
+	for name, args := range map[string][]any{
+		"request_short":     {strings.Repeat("b", 15), result},
+		"request_upper":     {strings.Repeat("B", 16), result},
+		"request_nonhex":    {strings.Repeat("b", 15) + "z", result},
+		"request_nul_tail":  {strings.Repeat("b", 16) + "\x00X", result},
+		"request_nul_pad":   {strings.Repeat("b", 15) + "\x00", result},
+		"result_not_json":   {strings.Repeat("c", 16), "not-json"},
+		"result_not_object": {strings.Repeat("d", 16), `[]`},
+		"result_oversize":   {strings.Repeat("e", 16), `{"x":"` + strings.Repeat("x", 65536) + `"}`},
+	} {
+		t.Run(name, func(t *testing.T) {
+			wantAbort(t, db, `
+				INSERT INTO activity (actor, kind, dispatch_request_id, dispatch_result)
+				VALUES ('mc', 'dispatch.reap', ?, ?)`, args...)
+		})
+	}
+}
+
 // ---------------------------------------------------------------------------
 // stage_rank generation (§5, §10): status → rank, packaged = 0, unwritable.
 // ---------------------------------------------------------------------------
@@ -917,6 +998,61 @@ func TestOutboxPayloadIsJSONObject(t *testing.T) {
 	wantAbort(t, db, `INSERT INTO outbox (kind, surface, payload) VALUES ('health', 'dashboard', 'not-json')`)
 	wantAbort(t, db, `INSERT INTO outbox (kind, surface, payload) VALUES ('health', 'dashboard', '[]')`)
 	mustExec(t, db, `INSERT INTO outbox (kind, surface, payload) VALUES ('health', 'dashboard', '{"status":"ok"}')`)
+}
+
+// ADR-016 Decision 2: one activity fans out at most once to each tagged
+// destination. Both columns are nullable for pre-Phase-3 history, but a new
+// keyed row must carry the pair and the event/destination key is globally
+// unique.
+func TestOutboxDispatchDestinationBackstops(t *testing.T) {
+	assertOutboxDestinationBackstops(t, openSpine(t))
+}
+
+// assertOutboxDestinationBackstops states D2's outbox-side storage contract
+// once, for both a fresh and a migrated spine.
+func assertOutboxDestinationBackstops(t *testing.T, db *sql.DB) {
+	t.Helper()
+	res := mustExec(t, db, `INSERT INTO activity (actor, kind, detail) VALUES ('mc', 'dispatch.health', '{}')`)
+	activityID, err := res.LastInsertId()
+	if err != nil {
+		t.Fatalf("last insert id: %v", err)
+	}
+	eventKey := strings.Repeat("f", 64)
+
+	mustExec(t, db, `
+		INSERT INTO outbox (kind, surface, payload, source_activity_id, event_destination_key)
+		VALUES ('health', 'dashboard', '{"status":"unavailable"}', ?, ?)`, activityID, eventKey)
+	wantAbort(t, db, `
+		INSERT INTO outbox (kind, surface, payload, source_activity_id, event_destination_key)
+		VALUES ('health', 'cli', '{"status":"unavailable"}', ?, ?)`, activityID, eventKey)
+	wantAbort(t, db, `
+		INSERT INTO outbox (kind, surface, payload, source_activity_id)
+		VALUES ('health', 'dashboard', '{"status":"unavailable"}', ?)`, activityID)
+	wantAbort(t, db, `
+		INSERT INTO outbox (kind, surface, payload, event_destination_key)
+		VALUES ('health', 'dashboard', '{"status":"unavailable"}', ?)`, strings.Repeat("1", 64))
+	wantAbort(t, db, `
+		INSERT INTO outbox (kind, surface, payload, source_activity_id, event_destination_key)
+		VALUES ('health', 'dashboard', '{"status":"unavailable"}', 999999, ?)`, strings.Repeat("2", 64))
+	wantAbort(t, db, `
+		INSERT INTO outbox (kind, surface, payload, source_activity_id, event_destination_key)
+		VALUES ('health', 'dashboard', '{"status":"unavailable"}', ?, ?)`, activityID, strings.Repeat("F", 64))
+
+	// The destination key carries activity's NUL fence, for the same reason.
+	for name, key := range map[string]string{
+		"nul_tail": strings.Repeat("4", 64) + "\x00EVIL",
+		"nul_pad":  strings.Repeat("4", 63) + "\x00",
+	} {
+		t.Run("event_destination_key_"+name, func(t *testing.T) {
+			wantAbort(t, db, `
+				INSERT INTO outbox (kind, surface, payload, source_activity_id, event_destination_key)
+				VALUES ('health', 'dashboard', '{"status":"unavailable"}', ?, ?)`, activityID, key)
+		})
+	}
+
+	// The existing append-only content fence covers the new provenance too.
+	wantAbort(t, db, `UPDATE outbox SET source_activity_id = NULL`)
+	wantAbort(t, db, `UPDATE outbox SET event_destination_key = ?`, strings.Repeat("3", 64))
 }
 
 // Takeover finding — the outbox was the only communication table without a

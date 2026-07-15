@@ -206,8 +206,11 @@ func Doctor(id *RunIdentity, spine string) (any, error) {
 				switch {
 				case err != nil:
 					add("spine", "fail", fmt.Sprintf("spine has no meta identity (%v) — restore from backup (§16.4)", err), "home")
-				case version != 1:
-					add("spine", "fail", fmt.Sprintf("schema version %d, expected 1", version), "home")
+				case version > substrate.CurrentSchemaVersion:
+					add("spine", "fail", fmt.Sprintf("schema version %d is newer than this build's %d — upgrade mc or restore from backup (§16.4)", version, substrate.CurrentSchemaVersion), "home")
+				case version < substrate.CurrentSchemaVersion:
+					// §16.4's migrate arm is onboard's; doctor names the repair.
+					add("spine", "fail", fmt.Sprintf("schema version %d, expected %d", version, substrate.CurrentSchemaVersion), "home")
 				default:
 					add("spine", "ok", fmt.Sprintf("deployment %s schema %d", uuid, version), "home")
 					spineOK = true

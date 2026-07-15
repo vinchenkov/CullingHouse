@@ -236,11 +236,35 @@ func writeDeploymentMirror(home, uuid string) error {
 	return nil
 }
 
+// migrateSpine is §16.4's "present with an older schema → migrate" arm. It
+// runs only after validateInspection has vouched for the version, and
+// substrate.Migrate is itself idempotent by version, so a current spine is a
+// no-op rather than a special case here.
+func migrateSpine(spine string) (bool, error) {
+	db, err := substrate.Open(spine)
+	if err != nil {
+		return false, Usagef("%v", err)
+	}
+	defer db.Close()
+	changed, err := substrate.Migrate(db)
+	if err != nil {
+		return false, Domainf("migrate spine at %q: %v — restore from backup (§16.4)", spine, err)
+	}
+	return changed, nil
+}
+
 func validateInspection(spine string, inspection spineInspection) error {
 	if inspection.tables == 0 || !inspection.hasMeta {
 		return Domainf("spine at %q has %d tables but no meta identity — no onboarding path may re-initialize it; restore from backup (§16.4)", spine, inspection.tables)
 	}
-	if inspection.version != 1 {
+	// §16.4: "present and current → skip; present with an older schema →
+	// migrate". A version this build has never heard of is the loud-abort arm:
+	// a spine written by a newer mc is refused, never downgraded or guessed at.
+	if inspection.version > substrate.CurrentSchemaVersion {
+		return Domainf("spine schema_version %d is newer than this build's %d — upgrade mc or restore from backup (§16.4)",
+			inspection.version, substrate.CurrentSchemaVersion)
+	}
+	if inspection.version < 1 {
 		return Domainf("spine schema_version %d has no defined migration; refusing (§16.4)", inspection.version)
 	}
 	if inspection.uuid == "" {
@@ -398,10 +422,15 @@ func onboardHome(spine string) (string, string, error) {
 		if mirrorExists && mirrored != inspection.uuid {
 			return "", "", Domainf("deployment identity mismatch: MC_HOME has %s but spine has %s — restore the matching backup (§16.4)", mirrored, inspection.uuid)
 		}
+		migrated, err := migrateSpine(spine)
+		if err != nil {
+			return "", "", err
+		}
 		changed, err := scaffoldOnboardHome(home)
 		if err != nil {
 			return "", "", err
 		}
+		changed = changed || migrated
 		if !mirrorExists {
 			if err := writeDeploymentMirror(home, inspection.uuid); err != nil {
 				return "", "", err
@@ -436,7 +465,9 @@ func onboardHome(spine string) (string, string, error) {
 		if _, err := q.ExecContext(ctx, substrate.Schema); err != nil {
 			return err
 		}
-		_, err := q.ExecContext(ctx, `INSERT INTO meta (id, deployment_uuid, schema_version) VALUES (1, ?, 1)`, uuid)
+		_, err := q.ExecContext(ctx,
+			`INSERT INTO meta (id, deployment_uuid, schema_version) VALUES (1, ?, ?)`,
+			uuid, substrate.CurrentSchemaVersion)
 		return err
 	})
 	if err != nil {
