@@ -1,7 +1,7 @@
 # PROGRESS — Mission Control implementation ledger
 
 <!-- Header block: kept current by every session. -->
-LAST GREEN SHA: 3ad3411 (local; the operator pushes manually — decided 2026-07-14, see Parked. Agents: do not push.)
+LAST GREEN SHA: f9cfd1e (local; the operator pushes manually — decided 2026-07-14, see Parked. Agents: do not push.)
 PHASES PASSING: Phase 0 COMPLETE (S1–S8 all green, no fallback ADRs; only operator-leg deferrals remain); Phase 1 COMPLETE (1a substrate 172; 1b walking skeleton reviewed-and-fixed — fake-harness 43, agent-runner 13, runner/image 40, resident 42, dispatch + cmd/mc suites; Docker e2e PASS ×4 total); Phase 2 COMPLETE for every unparked acceptance line (domain/§18 surface, deterministic split-brain convergence, bounded honesty + five mutants, tagged dispatch/metamorphic/twin-spine lifecycle properties; the initiative-wave CLI is no longer isolated — ADR-020 landed 2026-07-14 and closed the last Phase 2 acceptance line)
 KNOWN-FAILING: (none)
 FAST SUITE: mc/check.sh (gofmt + vet on the untagged build AND on the nightly/docker_e2e/test_fake_routing tagged builds — they must compile every commit, added 2026-07-14 after a tagged suite rotted invisibly — + go test ./...; includes substrate + promoted dispatch) + runner/fake-harness/check.sh + runner/agent-runner/check.sh + runner/image/check.sh + resident/check.sh. Docker e2e (phase-completion lane): cd mc && mise exec -- go test -tags docker_e2e -timeout 15m ./e2e/...
@@ -1947,3 +1947,23 @@ guard so every authorized kind occurs in exactly one destination row (only the
 explicit `.codex`/`.claude` runtime-control merge may span two), split the 17
 inert-cover rows and workspace-vs-seeding projection/registered-root kinds, and
 move `KindNotABind` outside `[KindNone+1, kindMax)` as a deny-only sentinel.
+
+- 2026-07-15 — **Takeover repair 2 green: a typed kind cannot cross destination
+  rows** (`f9cfd1e`). The new third derivation-guard direction went red on the
+  exact hidden aliases: `KindInertCover` crossed 17 agent/setup/landing rows;
+  committed-projection and registered-root each crossed ordinary/seeding rows;
+  and the non-bind marker occupied four rows inside the real domain. Cover kinds
+  and the two projection classes are now destination-specific; only the ADR's
+  explicit `.codex`/`.claude` selected-runtime-control merge may span two rows.
+  `KindNotABind` is numeric 255, outside `[KindNone+1, kindMax)`, accepted by no
+  registry or ADR row, and handled only as a loud deny sentinel. The ADR now
+  states the previously missing inverse law, and the ADR-017 closed-source-kind
+  deviation is finally logged. Full boundary permit sweep covers all 59 real
+  kinds; full fast lane green (Go all/tagged, 43/13/40/42 Bun suites).
+
+NEXT: Repair D4's own-control ancestry pair red-first. The flat Git-control list
+cannot safely infer ownership, so amend the pure input seam to associate own Git
+controls explicitly. Permit only the exact own workspace (by `os.SameFile`) as
+an ancestor of its own `.mission-control` and explicitly owned Git controls;
+keep equality, descendants, intermediate ancestors, other/external controls,
+own artifacts, and absent own roots denied. Then add the full member sweep.
