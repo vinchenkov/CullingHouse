@@ -172,6 +172,96 @@ func TestTypedVerdictDependsOnTheJurisdiction(t *testing.T) {
 	}
 }
 
+// D2's immutability is about the constructed VALUE, not merely whether its
+// fields are exported. Retaining the caller's map or one of its slices lets a
+// later planner mutation replace authority without another
+// ResolveJurisdiction call — exactly the stale-input seam D11 forbids.
+func TestTypedRootsInputCannotMutateConstructedJurisdiction(t *testing.T) {
+	dir := t.TempDir()
+	home := tjHome(t, dir)
+	a := tjDir(t, filepath.Join(dir, "sessions", "a"))
+	b := tjDir(t, filepath.Join(dir, "sessions", "b"))
+	aID, bID := tjID(t, a), tjID(t, b)
+	aSource, bSource := tjSource(t, a), tjSource(t, b)
+	claim := TypedClaim{Kind: KindOwnSession}
+
+	assertSnapshot := func(t *testing.T, mutate func(map[TypedKind][]ProtectedID)) {
+		t.Helper()
+		roots := map[TypedKind][]ProtectedID{KindOwnSession: {aID}}
+		j, err := ResolveJurisdiction(JurisdictionInput{Home: home, TypedRoots: roots}, os.Getuid())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := j.Rejects(aSource, claim); err != nil {
+			t.Fatalf("fixture: original root does not authorize: %v", err)
+		}
+		if err := j.Rejects(bSource, claim); err == nil {
+			t.Fatal("fixture: replacement root authorized before the caller mutation")
+		}
+
+		mutate(roots)
+
+		if err := j.Rejects(aSource, claim); err != nil {
+			t.Errorf("caller mutation removed authority from an already-constructed Jurisdiction: %v", err)
+		}
+		if err := j.Rejects(bSource, claim); err == nil {
+			t.Error("caller mutation ADDED authority to an already-constructed Jurisdiction; " +
+				"ResolveJurisdiction retained the input map/slice by alias")
+		}
+	}
+
+	t.Run("map entry replacement", func(t *testing.T) {
+		assertSnapshot(t, func(roots map[TypedKind][]ProtectedID) {
+			roots[KindOwnSession] = []ProtectedID{bID}
+		})
+	})
+	t.Run("retained slice element replacement", func(t *testing.T) {
+		assertSnapshot(t, func(roots map[TypedKind][]ProtectedID) {
+			roots[KindOwnSession][0] = bID
+		})
+	})
+}
+
+// D10a says the TypedKind domain is closed. Go's exported uint8 enum does not
+// enforce that itself: every numeric value is constructible, so both the
+// constructor and Rejects must reject values outside the declared domain before
+// a caller-supplied map entry can turn one into authority.
+func TestOutOfDomainTypedKindsDeny(t *testing.T) {
+	dir := t.TempDir()
+	home := tjHome(t, dir)
+	root := tjDir(t, filepath.Join(dir, "root"))
+	rootID := tjID(t, root)
+	source := tjSource(t, root)
+
+	invalid := []TypedKind{KindNone, KindNotABind, kindMax, TypedKind(255)}
+	for _, kind := range invalid {
+		t.Run(kind.String(), func(t *testing.T) {
+			_, err := ResolveJurisdiction(JurisdictionInput{
+				Home:       home,
+				TypedRoots: map[TypedKind][]ProtectedID{kind: {rootID}},
+			}, os.Getuid())
+			if err == nil {
+				t.Fatalf("ResolveJurisdiction accepted unauthorized typed-registry key %v", kind)
+			}
+
+			// Pin the use-side check independently of constructor validation. A
+			// future alternate constructor or deserializer must not make the map
+			// lookup itself fail open. KindNone is the deliberate exception here:
+			// as a CLAIM it means the ordinary union predicate, even though it is
+			// never legal as a TypedRoots registry key.
+			if kind != KindNone {
+				j := Jurisdiction{
+					resolved:   true,
+					typedRoots: map[TypedKind][]ProtectedID{kind: {rootID}},
+				}
+				if err := j.Rejects(source, TypedClaim{Kind: kind}); err == nil {
+					t.Fatalf("Rejects authorized out-of-domain typed claim %v", kind)
+				}
+			}
+		})
+	}
+}
+
 // ADR-017:399's own case, and the one a planner is most likely to get wrong:
 // /home/agent is MC_HOME/state/worksources/<scope-id>/home, so the own scope's
 // home must plan and a SIBLING scope's home must not — both derived from one
@@ -270,14 +360,18 @@ func TestKindWithNoAuthorizedRootDenies(t *testing.T) {
 func TestNotABindAlwaysDenies(t *testing.T) {
 	dir := t.TempDir()
 	root := tjDir(t, filepath.Join(dir, "whatever"))
-	j, err := ResolveJurisdiction(JurisdictionInput{
+	if _, err := ResolveJurisdiction(JurisdictionInput{
 		Home:       tjHome(t, dir),
 		TypedRoots: map[TypedKind][]ProtectedID{KindNotABind: {tjID(t, root)}},
-	}, os.Getuid())
+	}, os.Getuid()); err == nil {
+		t.Fatal("KindNotABind was accepted as an authorized registry key")
+	}
+
+	j, err := ResolveJurisdiction(JurisdictionInput{Home: tjHome(t, dir)}, os.Getuid())
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Even registered, even against its own "root", even for the exact path.
+	// Even for an exact real path, the deny sentinel never reaches a root lookup.
 	if err := j.Rejects(tjSource(t, root), TypedClaim{Kind: KindNotABind}); err == nil {
 		t.Fatal("KindNotABind planned; a destination that is not a host bind must never reach " +
 			"jurisdiction with an answer other than deny")

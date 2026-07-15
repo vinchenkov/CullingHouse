@@ -162,7 +162,11 @@ func ResolveJurisdiction(in JurisdictionInput, ownerUID int) (Jurisdiction, erro
 			"profile denied_paths: %d entries exceeds the %d limit", len(in.DeniedPaths), maxDeniedPaths)
 	}
 
-	j := Jurisdiction{typedRoots: in.TypedRoots}
+	typedRoots, err := cloneTypedRoots(in.TypedRoots)
+	if err != nil {
+		return Jurisdiction{}, err
+	}
+	j := Jurisdiction{typedRoots: typedRoots}
 
 	home, err := resolveHome(in.Home, ownerUID)
 	if err != nil {
@@ -224,6 +228,25 @@ func ResolveJurisdiction(in JurisdictionInput, ownerUID int) (Jurisdiction, erro
 
 	j.resolved = true
 	return j, nil
+}
+
+// cloneTypedRoots validates the closed D10a domain and takes an immutable
+// snapshot of the caller's registry. Copying only the map is insufficient: its
+// []ProtectedID values are reference-bearing too, and mutating one retained
+// element used to replace authority in an already-constructed Jurisdiction.
+func cloneTypedRoots(in map[TypedKind][]ProtectedID) (map[TypedKind][]ProtectedID, error) {
+	if in == nil {
+		return nil, nil
+	}
+	out := make(map[TypedKind][]ProtectedID, len(in))
+	for kind, roots := range in {
+		if kind == KindNone || kind == KindNotABind || kind >= kindMax {
+			return nil, mountErrf(CodeDeniedRoot,
+				"typed registry contains out-of-domain kind %v; the D10a domain is closed", kind)
+		}
+		out[kind] = append([]ProtectedID(nil), roots...)
+	}
+	return out, nil
 }
 
 // addRoot registers one member. A zero ProtectedID (no canonical path at all) is
@@ -499,6 +522,11 @@ func (j Jurisdiction) rejectsTyped(id SourceIdentity, claim TypedClaim) error {
 		return mountErrf(CodeDeniedRoot,
 			"source %q was claimed as %v: that destination is not a host bind "+
 				"(image rootfs or named volume), so it must never be planned as one", id.Canonical, claim.Kind)
+	}
+	if claim.Kind == KindNone || claim.Kind >= kindMax {
+		return mountErrf(CodeDeniedRoot,
+			"source %q claimed out-of-domain typed kind %v; the D10a domain is closed",
+			id.Canonical, claim.Kind)
 	}
 
 	roots := j.typedRoots[claim.Kind]
