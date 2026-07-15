@@ -5,6 +5,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 	"syscall"
 )
 
@@ -52,15 +53,11 @@ type ProtectedID struct {
 	IsDir     bool
 }
 
-// Present reports whether this root exists on disk. An absent member is still a
-// member (ADR-021 D8): only the ancestor direction can fire for it.
-//
-// The law that makes a nil Info safe: Rejects's ANCESTOR branch walks
-// P.Canonical upward and stats the ancestors — it must NEVER read P.Info. The
-// equality and descendant branches do read P.Info, and their correct answer for
-// an absent P is already false: os.SameFile(nil, x) returns false without
-// panicking, and ResolveSource returns mount.source_missing for anything under an
-// absent root, so no descendant can exist to test.
+// Present reports whether this value carries a resolved filesystem identity.
+// An absent input is still a member (ADR-021 D8): ResolveJurisdiction either
+// promotes it if the full path has appeared, or enriches it with a canonical
+// existing anchor and the original unresolved suffix. That pair can reject a
+// source in either direction even though the member's Info remains nil.
 func (p ProtectedID) Present() bool { return p.Info != nil }
 
 // WorksourceRoots is one Worksource's six root classes (ADR-017:368-369).
@@ -121,9 +118,36 @@ type JurisdictionInput struct {
 	TypedRoots map[TypedKind][]ProtectedID
 }
 
+// absentRoot is D8's comparison pair for a declared member with no inode of its
+// own. anchor is the nearest existing original prefix after one canonicalization;
+// suffix preserves the unresolved components from the cleaned original spelling.
+type absentRoot struct {
+	anchor ProtectedID
+	suffix []string
+	mode   suffixCaseMode
+}
+
+// protectedPathOps is the deliberately narrow filesystem seam behind D8. It
+// makes the distinction between ENOENT and every ambiguity deterministic in
+// tests without making filesystem operations injectable across the package.
+type protectedPathOps struct {
+	lstat        func(string) (fs.FileInfo, error)
+	evalSymlinks func(string) (string, error)
+	stat         func(string) (fs.FileInfo, error)
+	caseMode     func(string) (suffixCaseMode, error)
+}
+
+var liveProtectedPathOps = protectedPathOps{
+	lstat:        os.Lstat,
+	evalSymlinks: filepath.EvalSymlinks,
+	stat:         os.Stat,
+	caseMode:     suffixCaseModeForPath,
+}
+
 // protectedRoot is one resolved union member plus the code it reports.
 type protectedRoot struct {
 	id                        ProtectedID
+	absent                    *absentRoot
 	cross                     bool   // D7: another Worksource's root -> mount.cross_worksource
 	allowOwnWorkspaceAncestor bool   // D4: own control root's one directional exemption
 	label                     string // for the operator-facing message
@@ -196,30 +220,50 @@ func ResolveJurisdiction(in JurisdictionInput, ownerUID int) (Jurisdiction, erro
 	// separately — a belt was measured to change 0 of 10 verdicts, and the
 	// enumeration is not even transcribable (four of the fifteen name no
 	// directory at all).
-	j.addRoot(in.MCHome, false, "MC_HOME")
+	if err := j.addRoot(in.MCHome, false, "MC_HOME"); err != nil {
+		return Jurisdiction{}, err
+	}
 
 	for _, id := range in.OwnMissionControlRoots {
-		j.addOwnControlRoot(id, "own <workspace_root>/.mission-control root")
+		if err := j.addOwnControlRoot(id, "own <workspace_root>/.mission-control root"); err != nil {
+			return Jurisdiction{}, err
+		}
 	}
 	for _, id := range in.OtherMissionControlRoots {
-		j.addRoot(id, false, "<workspace_root>/.mission-control root")
+		if err := j.addRoot(id, false, "<workspace_root>/.mission-control root"); err != nil {
+			return Jurisdiction{}, err
+		}
 	}
 	for _, id := range in.OwnGitControls {
-		j.addOwnControlRoot(id, "own registered Git control dir")
+		if err := j.addOwnControlRoot(id, "own registered Git control dir"); err != nil {
+			return Jurisdiction{}, err
+		}
 	}
 	for _, id := range in.OtherGitControls {
-		j.addRoot(id, false, "registered Git control dir")
+		if err := j.addRoot(id, false, "registered Git control dir"); err != nil {
+			return Jurisdiction{}, err
+		}
 	}
 	for _, id := range in.GatewaySecrets {
-		j.addRoot(id, false, "gateway secret / CA private-key root")
+		if err := j.addRoot(id, false, "gateway secret / CA private-key root"); err != nil {
+			return Jurisdiction{}, err
+		}
 	}
 	for _, id := range in.RuntimeControls {
-		j.addRoot(id, false, "runtime control dir")
+		if err := j.addRoot(id, false, "runtime control dir"); err != nil {
+			return Jurisdiction{}, err
+		}
 	}
 	// ADR-017:383's "when present" carve-out: the caller omits absent ones, so
-	// anything here is a real member.
+	// anything here is a real member. A nil-Info entry is omission, not a D8
+	// absent member; this is the one collection the general rule excludes.
 	for _, id := range in.HomeClassRoots {
-		j.addRoot(id, false, "home credential root")
+		if !id.Present() {
+			continue
+		}
+		if err := j.addRoot(id, false, "home credential root"); err != nil {
+			return Jurisdiction{}, err
+		}
 	}
 
 	// D7: another Worksource's roots report cross_worksource. The OWN Worksource
@@ -227,10 +271,9 @@ func ResolveJurisdiction(in JurisdictionInput, ownerUID int) (Jurisdiction, erro
 	// ordinary sources — and own/other is decided by identity, never by name.
 	for _, ws := range in.OtherWorksources {
 		for _, id := range worksourceMembers(ws) {
-			if j.isOwn(in.OwnWorksource, id) {
-				continue
+			if err := j.addOtherWorksourceRoot(in.OwnWorksource, id); err != nil {
+				return Jurisdiction{}, err
 			}
-			j.addRoot(id, true, "another Worksource's root")
 		}
 	}
 
@@ -240,7 +283,9 @@ func ResolveJurisdiction(in JurisdictionInput, ownerUID int) (Jurisdiction, erro
 		if err != nil {
 			return Jurisdiction{}, err
 		}
-		j.addRoot(id, false, "profile denied_paths entry")
+		if err := j.addRoot(id, false, "profile denied_paths entry"); err != nil {
+			return Jurisdiction{}, err
+		}
 	}
 
 	j.resolved = true
@@ -269,22 +314,150 @@ func cloneTypedRoots(in map[TypedKind][]ProtectedID) (map[TypedKind][]ProtectedI
 // addRoot registers one member. A zero ProtectedID (no canonical path at all) is
 // not a member: the caller supplied nothing. An ABSENT member — a declared path
 // with a nil Info — IS a member, and is registered.
-func (j *Jurisdiction) addRoot(id ProtectedID, cross bool, label string) {
-	if id.Canonical == "" {
-		return
+func (j *Jurisdiction) addRoot(id ProtectedID, cross bool, label string) error {
+	root, ok, err := prepareProtectedRoot(id, cross, false, label)
+	if err != nil {
+		return err
 	}
-	j.roots = append(j.roots, protectedRoot{id: id, cross: cross, label: label})
+	if ok {
+		j.roots = append(j.roots, root)
+	}
+	return nil
 }
 
-func (j *Jurisdiction) addOwnControlRoot(id ProtectedID, label string) {
-	if id.Canonical == "" {
-		return
+func (j *Jurisdiction) addOwnControlRoot(id ProtectedID, label string) error {
+	root, ok, err := prepareProtectedRoot(id, false, true, label)
+	if err != nil {
+		return err
 	}
-	j.roots = append(j.roots, protectedRoot{
-		id:                        id,
-		allowOwnWorkspaceAncestor: true,
+	if ok {
+		j.roots = append(j.roots, root)
+	}
+	return nil
+}
+
+// addOtherWorksourceRoot prepares before own/other discrimination. A path that
+// was nil-Info in the caller's snapshot may have appeared before this fresh
+// construction; once promoted to a present identity it must not be misfiled as
+// another Worksource merely because the stale nil could not compare.
+func (j *Jurisdiction) addOtherWorksourceRoot(own WorksourceRoots, id ProtectedID) error {
+	root, ok, err := prepareProtectedRoot(id, true, false, "another Worksource's root")
+	if err != nil {
+		return err
+	}
+	if !ok || j.isOwn(own, root.id) {
+		return nil
+	}
+	j.roots = append(j.roots, root)
+	return nil
+}
+
+func prepareProtectedRoot(id ProtectedID, cross, allowOwnWorkspaceAncestor bool, label string) (protectedRoot, bool, error) {
+	if id.Canonical == "" {
+		return protectedRoot{}, false, nil
+	}
+	resolved, absent, err := resolveProtectedIDWith(id, liveProtectedPathOps)
+	if err != nil {
+		code := CodeDeniedRoot
+		if cross {
+			code = CodeCrossWorksource
+		}
+		return protectedRoot{}, false, mountErrf(code,
+			"cannot resolve protected %s %q: %v", label, id.Canonical, err)
+	}
+	return protectedRoot{
+		id:                        resolved,
+		absent:                    absent,
+		cross:                     cross,
+		allowOwnWorkspaceAncestor: allowOwnWorkspaceAncestor,
 		label:                     label,
-	})
+	}, true, nil
+}
+
+// resolveProtectedIDWith turns a nil-Info declaration into D8's stable
+// canonical-anchor/original-suffix pair. Only ENOENT peels: every other lookup
+// result leaves the boundary unknowable and therefore denies construction.
+//
+// If the full path appeared since the caller made its nil-Info snapshot, it is
+// promoted to an ordinary present identity. That is fresh reconstruction, not
+// mutation of an already-constructed Jurisdiction.
+func resolveProtectedIDWith(id ProtectedID, ops protectedPathOps) (ProtectedID, *absentRoot, error) {
+	if id.Present() || id.Canonical == "" {
+		return id, nil, nil
+	}
+	if strings.ContainsAny(id.Canonical, "\x00\r\n") {
+		return ProtectedID{}, nil, mountErrf(CodeDeniedRoot,
+			"protected path %q contains NUL or newline", id.Canonical)
+	}
+	if !filepath.IsAbs(id.Canonical) {
+		return ProtectedID{}, nil, mountErrf(CodeDeniedRoot,
+			"protected path %q is not absolute", id.Canonical)
+	}
+
+	declared := filepath.Clean(id.Canonical)
+	current := declared
+	var suffix []string
+
+	for {
+		_, err := ops.lstat(current)
+		if err == nil {
+			canonical, evalErr := ops.evalSymlinks(current)
+			if evalErr != nil {
+				return ProtectedID{}, nil, mountErrf(CodeDeniedRoot,
+					"protected path %q reached existing prefix %q but it cannot be canonicalized: %v; ambiguity denies",
+					declared, current, evalErr)
+			}
+			canonical = filepath.Clean(canonical)
+			if !filepath.IsAbs(canonical) {
+				return ProtectedID{}, nil, mountErrf(CodeDeniedRoot,
+					"protected path %q resolved prefix %q to non-absolute %q; ambiguity denies",
+					declared, current, canonical)
+			}
+			info, statErr := ops.stat(canonical)
+			if statErr != nil {
+				return ProtectedID{}, nil, mountErrf(CodeDeniedRoot,
+					"protected path %q resolved prefix %q to %q but it cannot be stat'd: %v; ambiguity denies",
+					declared, current, canonical, statErr)
+			}
+
+			anchor := ProtectedID{Canonical: canonical, Info: info, IsDir: info.IsDir()}
+			if len(suffix) == 0 {
+				return anchor, nil, nil
+			}
+			if !info.IsDir() {
+				return ProtectedID{}, nil, mountErrf(CodeDeniedRoot,
+					"protected path %q has unresolved suffix below non-directory prefix %q; ambiguity denies",
+					declared, canonical)
+			}
+
+			mode, modeErr := ops.caseMode(canonical)
+			if modeErr != nil || (mode != suffixCaseSensitive && mode != suffixCaseInsensitive) {
+				// Unknown case semantics do not make every comparison ambiguous.
+				// Exact NFC components and different full folds remain decidable;
+				// suffixComponentEqual denies only a fold-equivalent variant.
+				mode = suffixCaseUnknown
+			}
+			return ProtectedID{Canonical: declared}, &absentRoot{
+				anchor: anchor,
+				suffix: append([]string(nil), suffix...),
+				mode:   mode,
+			}, nil
+		}
+
+		if !errors.Is(err, syscall.ENOENT) {
+			return ProtectedID{}, nil, mountErrf(CodeDeniedRoot,
+				"protected path %q cannot be examined at %q: %v; only ENOENT is absence and ambiguity denies",
+				declared, current, err)
+		}
+
+		parent := filepath.Dir(current)
+		if parent == current {
+			return ProtectedID{}, nil, mountErrf(CodeDeniedRoot,
+				"protected path %q has no existing ancestor; ambiguity denies", declared)
+		}
+		suffix = append([]string{filepath.Base(current)}, suffix...)
+		current = parent
+	}
 }
 
 func worksourceMembers(ws WorksourceRoots) []ProtectedID {
@@ -316,22 +489,17 @@ func resolveDeclared(path string) (ProtectedID, error) {
 	if path == "" {
 		return ProtectedID{}, mountErrf(CodeDeniedRoot, "denied_paths entry is empty")
 	}
+	if strings.ContainsAny(path, "\x00\r\n") {
+		return ProtectedID{}, mountErrf(CodeDeniedRoot,
+			"denied_paths entry %q contains NUL or newline", path)
+	}
 	if !filepath.IsAbs(path) {
 		return ProtectedID{}, mountErrf(CodeDeniedRoot, "denied_paths entry %q is not absolute", path)
 	}
-	clean := filepath.Clean(path)
-	id, err := ResolveSource(clean)
-	if err != nil {
-		// Absent is legal and expected. Anything else — a middle component that is
-		// a regular file, a resolution race — is ambiguity, and ambiguity denies.
-		var me *MountError
-		if asMountError(err, &me) && me.Code == CodeSourceMissing {
-			return ProtectedID{Canonical: clean}, nil
-		}
-		return ProtectedID{}, mountErrf(CodeDeniedRoot,
-			"denied_paths entry %q cannot be resolved: %v", path, err)
-	}
-	return ProtectedID{Canonical: id.Canonical, Info: id.Info, IsDir: id.IsDir}, nil
+	// Registration performs the one authoritative D8 resolution. Routing this
+	// through ResolveSource first would collapse ENOTDIR, dangling links, and
+	// resolution races into mount.source_missing and falsely legalize ambiguity.
+	return ProtectedID{Canonical: filepath.Clean(path)}, nil
 }
 
 // resolveHome implements ADR-021 D5: the injected HOME is validated, not trusted.
@@ -521,13 +689,12 @@ func ancestorRoutes(p string) ([]string, error) {
 	// Snapshot before iterating: addChain appends to out.
 	chain := append([]string(nil), out...)
 	for _, member := range chain {
-		// A chain member that does not exist has no volume of its own, and ENOENT
-		// here is EXPECTED rather than ambiguous: an absent member's declared path
-		// is exactly the D8 case, and its nearest existing ancestor is on this same
-		// chain and is probed below, yielding the identical mount point. Failing
-		// closed on it would make every absent member reject the whole world.
 		if _, err := os.Lstat(member); err != nil {
-			continue
+			// D8 declarations are enriched before this helper is called, so every
+			// input here is a present canonical root or source route. Missing and
+			// unreadable members are races/ambiguity, never expected absence.
+			return nil, mountErrf(CodeDeniedRoot,
+				"cannot examine ancestor route %q: %v; ambiguity denies", member, err)
 		}
 		mnt, err := mountPoint(member)
 		if err != nil {
@@ -549,8 +716,8 @@ func ancestorRoutes(p string) ([]string, error) {
 }
 
 // resolveBroadRoots computes D4's broad_root set: HOME, its ancestors, and its
-// alias routes. Members that cannot be stat'd are skipped rather than fatal —
-// they cannot be os.SameFile with any source, so they cannot decide anything.
+// alias routes. HOME was validated and every route is present; a failed lookup
+// is a resolution race, not evidence that the member is irrelevant.
 func resolveBroadRoots(home ProtectedID) ([]ProtectedID, error) {
 	routes, err := ancestorRoutes(home.Canonical)
 	if err != nil {
@@ -560,7 +727,8 @@ func resolveBroadRoots(home ProtectedID) ([]ProtectedID, error) {
 	for _, r := range routes {
 		info, err := os.Lstat(r)
 		if err != nil {
-			continue
+			return nil, mountErrf(CodeDeniedRoot,
+				"cannot stat HOME ancestor route %q: %v; ambiguity denies", r, err)
 		}
 		out = append(out, ProtectedID{Canonical: r, Info: info, IsDir: info.IsDir()})
 	}
@@ -700,45 +868,174 @@ func (j Jurisdiction) rejectsUnion(id SourceIdentity, cross bool) error {
 			code = CodeCrossWorksource
 		}
 
-		// S == P, and S under P. Both read P.Info, and both are correct to be
-		// false for an absent P: nothing can exist under a root that does not.
+		// Present roots use identity in all three directions. The descendant walk
+		// is strict: a failed parent lookup is ambiguity rather than "not under".
 		if root.id.Present() {
 			if sameFile(id.Info, root.id.Info) {
 				return mountErrf(code, "source %q is the protected %s %q",
 					id.Canonical, root.label, root.id.Canonical)
 			}
-			if enclosesByIdentity(resolvedRoot{canonical: root.id.Canonical, info: root.id.Info}, id.Canonical) {
+			_, below, err := remainderBelowIdentityWith(root.id.Info, id, os.Lstat)
+			if err != nil {
+				return unionComparisonError(code, id, root, err)
+			}
+			if !below {
+				// A Darwin firmlink route can make the protected identity an
+				// ancestor even when it is absent from the lexical Dir chain.
+				below, err = identityOnAncestorRoutes(id.Canonical, root.id.Info)
+				if err != nil {
+					return unionComparisonError(code, id, root, err)
+				}
+			}
+			if below {
 				return mountErrf(code, "source %q is under the protected %s %q",
 					id.Canonical, root.label, root.id.Canonical)
 			}
+
+			// S is a strict ancestor of present P — the mirror walk, including
+			// volume alias routes that no bare filepath.Dir chain reaches.
+			ancestor, err := j.isAncestorOf(id, root.id.Canonical)
+			if err != nil {
+				return unionComparisonError(code, id, root, err)
+			}
+			if ancestor {
+				if root.allowOwnWorkspaceAncestor && j.sourceIsOwnWorkspace(id) {
+					continue
+				}
+				return mountErrf(code, "source %q is an ancestor of the protected %s %q, and mounting "+
+					"it would expose that root", id.Canonical, root.label, root.id.Canonical)
+			}
+			continue
 		}
 
-		// S is an ancestor of P — the mirror walk, and the direction that carries
-		// the weight: without it, mounting a parent hands over every protected
-		// descendant inside it (ADR-017:388-389).
-		//
-		// It walks P's CANONICAL PATH and stats the ancestors; it never reads
-		// P.Info. That is the law that makes an absent member safe, and it is why
-		// this branch is outside the Present() guard above.
-		//
-		// It uses ancestorRoutes, not a bare Dir walk, for the same reason
-		// broad_root does: on macOS a volume mount point is an ancestor by
-		// reachability that no Dir walk reaches, and a skeptic proved one
-		// /System/Volumes/Data source slipped past MC_HOME, ~/.ssh, and another
-		// Worksource's root at once.
-		ancestor, err := j.isAncestorOf(id, root.id.Canonical)
+		if root.absent == nil {
+			return mountErrf(code,
+				"protected %s %q is absent but has no canonical-anchor/suffix pair; ambiguity denies",
+				root.label, root.id.Canonical)
+		}
+		intersects, sourceAncestor, err := j.intersectsAbsent(id, *root.absent)
 		if err != nil {
-			return err
+			return unionComparisonError(code, id, root, err)
 		}
-		if ancestor {
-			if root.allowOwnWorkspaceAncestor && j.sourceIsOwnWorkspace(id) {
-				continue
-			}
-			return mountErrf(code, "source %q is an ancestor of the protected %s %q, and mounting "+
-				"it would expose that root", id.Canonical, root.label, root.id.Canonical)
+		if !intersects {
+			continue
 		}
+		// D4's control exception is directional. It applies only when the exact
+		// own workspace is an ancestor of the would-be control; equality with or
+		// a descendant of that control remains protected.
+		if sourceAncestor && root.allowOwnWorkspaceAncestor && j.sourceIsOwnWorkspace(id) {
+			continue
+		}
+		return mountErrf(code, "source %q intersects absent protected %s %q, and mounting it "+
+			"would expose that root", id.Canonical, root.label, root.id.Canonical)
 	}
 	return nil
+}
+
+func unionComparisonError(code string, id SourceIdentity, root protectedRoot, err error) error {
+	return mountErrf(code,
+		"cannot safely compare source %q with protected %s %q: %v",
+		id.Canonical, root.label, root.id.Canonical, err)
+}
+
+// intersectsAbsent compares D8's two halves with their respective laws:
+// filesystem identity for the anchor, component semantics for the suffix.
+// sourceAncestor is returned separately because only that direction can earn
+// the exact-own-workspace control exemption.
+func (j Jurisdiction) intersectsAbsent(id SourceIdentity, absent absentRoot) (intersects, sourceAncestor bool, err error) {
+	remainder, below, err := remainderBelowIdentityWith(absent.anchor.Info, id, os.Lstat)
+	if err != nil {
+		return false, false, err
+	}
+	if below {
+		overlaps, overlapErr := suffixesOverlap(absent.suffix, remainder, absent.mode)
+		if overlapErr != nil {
+			return false, false, overlapErr
+		}
+		if !overlaps {
+			return false, false, nil
+		}
+		return true, len(remainder) < len(absent.suffix), nil
+	}
+
+	// If a firmlink says the anchor is reachable above the source but the
+	// lexical identity walk could not derive a remainder, the relationship is
+	// real and its suffix is unknowable. Treating it as unrelated would be the
+	// fail-open answer.
+	reachable, routeErr := identityOnAncestorRoutes(id.Canonical, absent.anchor.Info)
+	if routeErr != nil {
+		return false, false, routeErr
+	}
+	if reachable {
+		return false, false, mountErrf(CodeDeniedRoot,
+			"canonical anchor %q is reachable above source %q only through an alias route; "+
+				"the corresponding suffix is unknown and ambiguity denies",
+			absent.anchor.Canonical, id.Canonical)
+	}
+
+	above, aboveErr := j.isAncestorOf(id, absent.anchor.Canonical)
+	if aboveErr != nil {
+		return false, false, aboveErr
+	}
+	if above {
+		return true, true, nil
+	}
+	return false, false, nil
+}
+
+// remainderBelowIdentityWith identity-walks an existing source upward and
+// returns its canonical component remainder below ancestor. The source leaf's
+// FileInfo is the already-resolved snapshot; every parent lookup is strict.
+func remainderBelowIdentityWith(
+	ancestor fs.FileInfo,
+	id SourceIdentity,
+	lstat func(string) (fs.FileInfo, error),
+) ([]string, bool, error) {
+	current := id.Canonical
+	currentInfo := id.Info
+	var remainder []string
+	for {
+		if sameFile(currentInfo, ancestor) {
+			return remainder, true, nil
+		}
+		parent := filepath.Dir(current)
+		if parent == current {
+			return nil, false, nil
+		}
+		remainder = append([]string{filepath.Base(current)}, remainder...)
+		parentInfo, err := lstat(parent)
+		if err != nil {
+			return nil, false, mountErrf(CodeDeniedRoot,
+				"cannot examine source ancestor %q: %v; ambiguity denies", parent, err)
+		}
+		if parentInfo.Mode()&os.ModeSymlink != 0 {
+			return nil, false, mountErrf(CodeDeniedRoot,
+				"source ancestor %q became a symlink after canonicalization; ambiguity denies", parent)
+		}
+		current = parent
+		currentInfo = parentInfo
+	}
+}
+
+// identityOnAncestorRoutes reports whether target is an ancestor of canonical
+// by reachability, including Darwin volume aliases. Every route is expected to
+// exist; lookup failure is ambiguity.
+func identityOnAncestorRoutes(canonical string, target fs.FileInfo) (bool, error) {
+	routes, err := ancestorRoutes(canonical)
+	if err != nil {
+		return false, err
+	}
+	for _, route := range routes {
+		info, statErr := os.Lstat(route)
+		if statErr != nil {
+			return false, mountErrf(CodeDeniedRoot,
+				"cannot stat ancestor route %q: %v; ambiguity denies", route, statErr)
+		}
+		if sameFile(info, target) {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 func (j Jurisdiction) sourceIsOwnWorkspace(id SourceIdentity) bool {
@@ -758,7 +1055,8 @@ func (j Jurisdiction) isAncestorOf(id SourceIdentity, protected string) (bool, e
 		}
 		info, statErr := os.Lstat(r)
 		if statErr != nil {
-			continue
+			return false, mountErrf(CodeDeniedRoot,
+				"cannot stat protected ancestor route %q: %v; ambiguity denies", r, statErr)
 		}
 		if sameFile(id.Info, info) {
 			return true, nil

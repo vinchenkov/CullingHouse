@@ -332,6 +332,21 @@ func TestOwnControlAncestorExemptionIsExactAndAssociated(t *testing.T) {
 		}
 	})
 
+	t.Run("absent own control anchored at exact workspace permits only that ancestor", func(t *testing.T) {
+		directAbsent := filepath.Join(workspace, "future-control", "git")
+		in := boundary.JurisdictionInput{
+			OwnWorksource:  boundary.WorksourceRoots{Workspace: workspaceID},
+			OwnGitControls: []boundary.ProtectedID{absentID(directAbsent)},
+		}
+		if err := rejects(t, in, workspace); err != nil {
+			t.Fatalf("exact own workspace rejected when it is the absent control's anchor: %v", err)
+		}
+		intermediate := mkdir(t, filepath.Join(workspace, "future-control"), 0o755)
+		if err := rejects(t, in, intermediate); err == nil {
+			t.Fatal("intermediate absent-control ancestor inherited the workspace-only exemption")
+		}
+	})
+
 	t.Run("control without an own workspace association fails closed", func(t *testing.T) {
 		in := boundary.JurisdictionInput{
 			OwnGitControls: []boundary.ProtectedID{protectedID(t, ownControl)},

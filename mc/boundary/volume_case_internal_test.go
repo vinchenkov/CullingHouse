@@ -30,6 +30,7 @@ func TestAbsentSuffixOverlapIsComponentAndVolumeAware(t *testing.T) {
 		{name: "NFC and NFD overlap when insensitive", protected: []string{"CAFÉ"}, source: []string{nfdCafe}, mode: suffixCaseInsensitive, want: true},
 		{name: "unknown mode still decides exact NFC", protected: []string{"café"}, source: []string{nfdCafe}, mode: suffixCaseUnknown, want: true},
 		{name: "unknown mode still decides different folds", protected: []string{"alpha"}, source: []string{"beta"}, mode: suffixCaseUnknown},
+		{name: "later mismatch resolves an earlier unknown case variant", protected: []string{"A", "x"}, source: []string{"a", "y"}, mode: suffixCaseUnknown},
 		{name: "unknown mode denies only fold-equal variant", protected: []string{".ssh"}, source: []string{".SSH"}, mode: suffixCaseUnknown, wantErr: true},
 	}
 

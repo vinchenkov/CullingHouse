@@ -53,14 +53,25 @@ func parseVolumeCaseCapabilities(words volumeCapabilityWords) (suffixCaseMode, e
 // source may be an ancestor or a descendant of the would-be protected path.
 func suffixesOverlap(protected, source []string, mode suffixCaseMode) (bool, error) {
 	limit := min(len(protected), len(source))
+	var caseAmbiguity error
 	for i := 0; i < limit; i++ {
 		equal, err := suffixComponentEqual(protected[i], source[i], mode)
 		if err != nil {
-			return false, err
+			// Unknown case semantics make this component conditional, not the
+			// whole path immediately ambiguous. A later component may differ
+			// under both case modes, proving non-overlap regardless of this one.
+			// Defer the error until the complete candidate prefix has matched.
+			if caseAmbiguity == nil {
+				caseAmbiguity = err
+			}
+			continue
 		}
 		if !equal {
 			return false, nil
 		}
+	}
+	if caseAmbiguity != nil {
+		return false, caseAmbiguity
 	}
 	return true, nil
 }

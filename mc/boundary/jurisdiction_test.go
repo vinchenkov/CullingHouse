@@ -221,6 +221,131 @@ func TestAbsentMembersDoNotFailConstruction(t *testing.T) {
 	}
 }
 
+func TestAbsentDeniedPathRejectsCanonicalParentAndKeepsSiblingDecidable(t *testing.T) {
+	dir := t.TempDir()
+	home := homeFixture(t, dir)
+	anchor := mkdir(t, filepath.Join(dir, "real", "deep", "anchor"), 0o755)
+	alias := filepath.Join(dir, "alias")
+	if err := os.Symlink(anchor, alias); err != nil {
+		t.Fatal(err)
+	}
+
+	j, err := boundary.ResolveJurisdiction(boundary.JurisdictionInput{
+		Home:        home,
+		DeniedPaths: []string{filepath.Join(alias, "blocked", "child")},
+	}, os.Getuid())
+	if err != nil {
+		t.Fatalf("ResolveJurisdiction() = %v", err)
+	}
+
+	// These appear only after the jurisdiction snapshot. The protected member
+	// remains absent in that snapshot, so the verdict must come from its stored
+	// canonical-anchor/original-suffix pair.
+	blockedParent := mkdir(t, filepath.Join(anchor, "blocked"), 0o755)
+	nearPrefixSibling := mkdir(t, filepath.Join(anchor, "blocked-near"), 0o755)
+
+	blockedID, err := boundary.ResolveSource(blockedParent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := j.Rejects(blockedID, boundary.TypedClaim{}); codeOf(t, err) != boundary.CodeDeniedRoot {
+		t.Fatalf("absent denied-path parent code = %q, want %q (error: %v)",
+			codeOf(t, err), boundary.CodeDeniedRoot, err)
+	}
+
+	protectedPath := mkdir(t, filepath.Join(blockedParent, "child"), 0o755)
+	protectedDescendant := mkdir(t, filepath.Join(protectedPath, "deeper"), 0o755)
+	for _, path := range []string{protectedPath, protectedDescendant} {
+		id, err := boundary.ResolveSource(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := j.Rejects(id, boundary.TypedClaim{}); codeOf(t, err) != boundary.CodeDeniedRoot {
+			t.Fatalf("absent denied-path intersection %q code = %q, want %q (error: %v)",
+				path, codeOf(t, err), boundary.CodeDeniedRoot, err)
+		}
+	}
+
+	siblingID, err := boundary.ResolveSource(nearPrefixSibling)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := j.Rejects(siblingID, boundary.TypedClaim{}); err != nil {
+		t.Fatalf("component near-prefix sibling rejected: %v", err)
+	}
+}
+
+func TestAbsentOtherWorksourceArtifactRejectsItsCanonicalParent(t *testing.T) {
+	dir := t.TempDir()
+	home := homeFixture(t, dir)
+	anchor := mkdir(t, filepath.Join(dir, "other", "artifacts"), 0o755)
+	j, err := boundary.ResolveJurisdiction(boundary.JurisdictionInput{
+		Home: home,
+		OtherWorksources: []boundary.WorksourceRoots{{
+			Artifacts: []boundary.ProtectedID{
+				absentID(filepath.Join(anchor, "future", "artifact")),
+			},
+		}},
+	}, os.Getuid())
+	if err != nil {
+		t.Fatalf("ResolveJurisdiction() = %v", err)
+	}
+
+	id, err := boundary.ResolveSource(anchor)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := j.Rejects(id, boundary.TypedClaim{}); codeOf(t, err) != boundary.CodeCrossWorksource {
+		t.Fatalf("absent other-artifact parent code = %q, want %q (error: %v)",
+			codeOf(t, err), boundary.CodeCrossWorksource, err)
+	}
+}
+
+func TestAbsentProtectedPathAmbiguityDeniesConstruction(t *testing.T) {
+	dir := t.TempDir()
+	home := homeFixture(t, dir)
+
+	regular := filepath.Join(dir, "regular")
+	if err := os.WriteFile(regular, []byte("not a directory"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	dangling := filepath.Join(dir, "dangling")
+	if err := os.Symlink(filepath.Join(dir, "missing-target"), dangling); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, path := range []string{
+		filepath.Join(regular, "child"),
+		filepath.Join(dangling, "child"),
+	} {
+		t.Run(filepath.Base(filepath.Dir(path)), func(t *testing.T) {
+			_, err := boundary.ResolveJurisdiction(boundary.JurisdictionInput{
+				Home:        home,
+				DeniedPaths: []string{path},
+			}, os.Getuid())
+			if err == nil {
+				t.Fatalf("ambiguous absent path %q was accepted", path)
+			}
+			if got := codeOf(t, err); got != boundary.CodeDeniedRoot {
+				t.Fatalf("code = %q, want %q (error: %v)", got, boundary.CodeDeniedRoot, err)
+			}
+		})
+	}
+
+	t.Run("other-Worksource ambiguity keeps cross code", func(t *testing.T) {
+		path := filepath.Join(regular, "other-artifact")
+		_, err := boundary.ResolveJurisdiction(boundary.JurisdictionInput{
+			Home: home,
+			OtherWorksources: []boundary.WorksourceRoots{{
+				Artifacts: []boundary.ProtectedID{absentID(path)},
+			}},
+		}, os.Getuid())
+		if got := codeOf(t, err); got != boundary.CodeCrossWorksource {
+			t.Fatalf("code = %q, want %q (error: %v)", got, boundary.CodeCrossWorksource, err)
+		}
+	})
+}
+
 // ADR-021 D1's accessor. os.SameFile(nil, x) is false without panicking, which is
 // what makes a nil Info a safe encoding — but only the ancestor branch may rely
 // on it, so the predicate needs to be able to ask.
