@@ -1,8 +1,8 @@
 # PROGRESS — Mission Control implementation ledger
 
 <!-- Header block: kept current by every session. -->
-LAST GREEN SHA: e01a2af (local; push blocked by an operator deny rule — see Parked)
-PHASES PASSING: Phase 0 COMPLETE (S1–S8 all green, no fallback ADRs; only operator-leg deferrals remain); Phase 1 COMPLETE (1a substrate 172; 1b walking skeleton reviewed-and-fixed — fake-harness 43, agent-runner 13, runner/image 40, resident 42, dispatch + cmd/mc suites; Docker e2e PASS ×4 total); Phase 2 COMPLETE for every unparked acceptance line (domain/§18 surface, deterministic split-brain convergence, bounded honesty + five mutants, tagged dispatch/metamorphic/twin-spine lifecycle properties; initiative-wave CLI remains explicitly isolated under Parked)
+LAST GREEN SHA: bc02c42 (local; the operator pushes manually — decided 2026-07-14, see Parked. Agents: do not push.)
+PHASES PASSING: Phase 0 COMPLETE (S1–S8 all green, no fallback ADRs; only operator-leg deferrals remain); Phase 1 COMPLETE (1a substrate 172; 1b walking skeleton reviewed-and-fixed — fake-harness 43, agent-runner 13, runner/image 40, resident 42, dispatch + cmd/mc suites; Docker e2e PASS ×4 total); Phase 2 COMPLETE for every unparked acceptance line (domain/§18 surface, deterministic split-brain convergence, bounded honesty + five mutants, tagged dispatch/metamorphic/twin-spine lifecycle properties; the initiative-wave CLI is no longer isolated — ADR-020 landed 2026-07-14 and closed the last Phase 2 acceptance line)
 KNOWN-FAILING: (none)
 FAST SUITE: mc/check.sh (gofmt+vet+go test ./... — includes substrate + promoted dispatch) + runner/fake-harness/check.sh + runner/agent-runner/check.sh + runner/image/check.sh + resident/check.sh. Docker e2e (phase-completion lane): cd mc && mise exec -- go test -tags docker_e2e -timeout 15m ./e2e/...
 
@@ -44,8 +44,9 @@ FAST SUITE: mc/check.sh (gofmt+vet+go test ./... — includes substrate + promot
         domain aggregates; completion/fencing/two budgets; process flock +
         independent CAS; strict role/runner identity; immutable routing,
         directives, and claimed-state briefs; adversarial review closed
-  - [!] Strategist wave CLI: isolated under Parked (durable holistic Editor
-        plan-review representation is operator/spec input)
+  - [x] Strategist wave CLI: UNPARKED and landed 2026-07-14 via ADR-020 (the
+        Editor's holistic plan review now has a durable state, a dispatch arm,
+        and a terminal)
   - [x] Wave 2 full unparked §18 verb/error/scope surface
   - [x] Split-brain kill-point convergence suite
     - [x] action selected / before effect; session folder / before run.json
@@ -72,6 +73,10 @@ FAST SUITE: mc/check.sh (gofmt+vet+go test ./... — includes substrate + promot
   - [x] Filesystem identity + containment: trust seams, canonical resolution,
         raw+resolved blocked matching, `os.SameFile` allow-root uniqueness and
         ancestry, derived/validated suffix, symlink stays-vs-escapes (e01a2af)
+  - [x] ADR-016..019 findings VERIFIED (operator decision 2 of 2026-07-14) and
+        closed: 10 confirmed / 7 refuted, only 1 of 6 alleged majors survived;
+        ADR-017's unrealizable privileged-tree ownership fixed (c6ca202), six
+        deviations logged (69c19be), evidence in docs/reviews/ (6636e1e)
   - [ ] Protected set + cross-Worksource jurisdiction (Dec. 3 step 5, Dec. 5)
   - [ ] macOS ACL leg of the trust seam (needs the native ACL API)
 - [ ] Phase 4 — E2E control loops (six scenario families)
@@ -95,10 +100,12 @@ FAST SUITE: mc/check.sh (gofmt+vet+go test ./... — includes substrate + promot
   "push if a remote exists" is superseded for this repo and should be reworded
   at Release prep.
 
-- **Initiative wave holistic Editor review** — **DECIDED 2026-07-14**: the
-  operator accepts reading (i), a review gate between wave birth and first
-  child dispatch. See the 2026-07-14 session-end NEXT item 3 for the pinned
-  shape; ADR-020 is owed. The old decision request below is closed.
+- ~~**Initiative wave holistic Editor review**~~ **CLOSED 2026-07-14**: the
+  operator accepted reading (i); ADR-020 was authored, adversarially reviewed
+  (11 of 12 findings confirmed and folded in), accepted, and **implemented**
+  (D1–D5 green, `mc strategist wave` CLI-wired). Nothing about waves is parked
+  any more — the older decision request further down is dead text, kept only as
+  chronology.
 
 - ~~Secrets in git history~~ **RESOLVED 2026-07-10**: operator explicitly
   accepts the values in local history; no scrub, no rotation. Noted in
@@ -1494,3 +1501,79 @@ accepts it; needs the native ACL API behind a darwin build tag), and
 **protected-root/cross-Worksource jurisdiction** (`mount.denied_root` /
 `mount.cross_worksource` exist as codes but are unused — `Authorize` must not
 be wired into production planning until that slice lands).
+
+- 2026-07-14 — **ADR-020 authored, adversarially reviewed, and IMPLEMENTED —
+  the initiative-wave hole is closed and Phase 2 has no parked acceptance
+  lines left.** The decision had been open since 07-12; the operator accepted
+  reading (i) on 07-14.
+
+  **The ADR** (`docs/adr/020-initiative-wave-plan-review.md`) pins: a
+  `plan_reviewed` flag on wave children born 0 and one-way; dispatch's child
+  gate; a new Editor arm making an initiative with an unreviewed wave the one
+  exception to §10's parked rule (which would otherwise wedge it forever); and
+  a wave-level pass/send-back terminal. Readings (ii) and (iii) are recorded as
+  dead so they are not re-litigated.
+
+  **The review** (4 decorrelated lenses + an independent skeptic per finding,
+  no default verdict, `docs/reviews/2026-07-14-adr-020-review.json`, committed
+  at `d19c7e9` before any fix): 12 raised, **11 confirmed**, 1 refuted. All 11
+  folded in at `7416a1a`. The major: D4 claimed the Editor's Inv. 9 blindness
+  came "for free" from the brief being records-only — but `brief.go:74-84`
+  loads `LatestOutputPath` outside every role gate, and on an initiative
+  subject that resolves to Strategist(initiative)'s own *mandatory* completion
+  report. The judge would have read its own producer's prose. Records-only
+  never bought that blindness: the record is a pointer to an artifact. Also
+  fixed: D2(b)'s SQL had dropped its own `status='seeded'` conjunct (fail-open
+  side); D1 over-claimed a git guarantee a SQLite trigger cannot make; D5 cited
+  `initiatives_archive_cascade` as precedent for a non-operator `cancelled`
+  when every firing is rooted in an operator Cancel; D1's §4 row named a schema
+  structure that does not exist; `plan_review_sendback` had no recency bound;
+  plus two wrong cites.
+
+  **The build** (red-first throughout, 5 commits): `4618a23` D1 substrate
+  (column + 3 rules, 4 subtests, 3 pre-existing fixtures taught the legal
+  order); `02b4340` D2 dispatch (gate + arm in *both* selecting queries — (2a)
+  is not optional, or an initiative bounced back from operator review makes no
+  autonomous progress ever again); `5a0809c` D3/D4 (frozen
+  `editor-plan-review.md` directive, `wave` brief field, the Inv. 9
+  suppression, the send-back recency rule); `bc02c42` D5 (the terminal,
+  `domain.Cancel`'s actor param, the reciprocal `requireExactRole` tightening
+  on `editor decide`, the D6 scope row, and **`mc strategist wave` finally
+  CLI-wired**).
+
+  **What the build found that no review lens did**: `loadRecords` never
+  selected `plan_reviewed`, so every real spine child would have projected as
+  unreviewed — children never dispatching, the Editor re-reviewing forever.
+  Caught by a red SQL↔dispatch differential, not by inspection. The pure layer
+  is only as true as its projection.
+
+  Three deviations logged (IMPLEMENTATION-NOTES): the additive §4-class rule
+  (recorded, not written into the spec, which wins on conflict); the Editor as
+  the first non-operator-rooted writer of `decision='cancelled'` (with the
+  suggested §6 gloss fix); and the pre-existing, non-ADR-020 fact that role
+  terminals open the spine before their role check (logged, not fixed — it is
+  cross-cutting, owns no invariant, and this slice does not own that code).
+  ADR-008's field list updated for the two new brief fields and the one
+  suppression. Complete fast lane green at every commit: Go all packages, plus
+  fake-harness 43, agent-runner 13, resident 42.
+
+NEXT: Resume the Phase-3 protected-set/jurisdiction slice, the item ADR-020
+displaced — TDD `mc/boundary`'s ADR-017 Decision 5 + Decision 3 step 5: the
+non-subtractable protected union (profile `denied_paths`, other Worksources'
+roots, real Git control dirs, `MC_HOME/sessions` and the
+attachment/output/config/control/backup/runtime-auth roots, gateway/CA key
+roots, and the `~/.ssh`-class home roots), bidirectional intersection so a
+source that is an *ancestor* of a protected root also rejects, and the
+directional `broad_root` rule (a source may not equal or be an ancestor of
+`$HOME`, `/Users`, `/`, while `~/src/project` stays eligible). Codes
+`mount.denied_root`/`mount.cross_worksource` already exist unused. Then the
+macOS ACL leg (a darwin-tagged native read, else an explicit ADR-recorded
+fallback), then the stable-code mapping for the parser's uncoded rejections,
+then integrate the invalid-plan/no-claim dispatch transaction. `Authorize`
+must not be wired into production planning until the jurisdiction slice lands.
+Do not load launchd.
+
+Two Phase-3 obligations remain deliberately open (unchanged): the macOS **ACL
+leg** of the trust seam (owner/mode/non-symlink are enforced; a granting ACE is
+not detected — `chmod +a` is invisible to both mode bits and `xattr`), and
+**protected-root/cross-Worksource jurisdiction** per the NEXT above.

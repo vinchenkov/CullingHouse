@@ -1148,3 +1148,85 @@ Entry template:
 - Spec impact: none. §11.5's kernel ownership gate is scoped to the spine's
   named volume, which is unaffected; this was a defect in a delegated design.
 - Needs your decision: no
+
+## 2026-07-14 — A new §4-class substrate rule: wave children work only after the plan review
+- Where: ADR-020 D1 (initiative wave plan review); spec §4's
+  make-impossible-states-impossible table; `mc/substrate/schema.sql`
+- Gap: ADR-020 adds a storage rule of §4's kind —
+  `children_work_requires_plan_review` aborts a wave child's `seeded → worked`
+  while `plan_reviewed = 0` — but §4's table lives in the spec, which AGENTS.md
+  makes the behavioral contract that wins on conflict. An ADR may not quietly
+  edit it. (An earlier draft of D1 directed the row into a "spec-mirroring rule
+  list in the schema header"; its adversarial review found no such structure
+  exists anywhere in the repo — the header is continuous prose, and the file
+  has no table at all.)
+- Choice: record the row here rather than write it into the spec, and let the
+  trigger carry a comment naming the rule it enforces (matching how every other
+  trigger in the file cites its spec clause). The row, in §4's own format:
+  "| Wave children work only after the Editor's plan review |
+  `children_work_requires_plan_review` trigger |". This is the conservative
+  option: it preserves the invariant and the fail-closed posture, deviates least
+  from the spec's text (it adds nothing to it), and reverses by deleting one
+  trigger.
+- Scope note, stated because D1 originally overstated it: the trigger fences the
+  *record* of child work, not the git commit. §6.2 is explicit that the git
+  plane is "contract enforced by `mc`'s runtime and the role briefs, not by
+  SQLite", and the ordering is commit-then-record. Under the dispatch bug the
+  fence exists for, unreviewed changes reach the initiative's shared branch, the
+  Worker's `mc complete` aborts, and the run is recovered by the lease rules
+  (charging `dispatch_retries`). The blast radius is bounded by Inv. 25: the
+  bytes sit on the initiative's own branch, and merging to main needs an
+  operator approval a never-packaged child cannot reach.
+- Spec impact: §4's table gains the row above if the operator wants the spec to
+  mirror the substrate exactly; the spec is otherwise unchanged.
+- Needs your decision: no
+
+## 2026-07-14 — The Editor is the first non-operator-rooted writer of `decision = 'cancelled'`
+- Where: ADR-020 D5 (the wave send-back arm); spec §6, §6.1
+- Gap: a send-back destroys its wave, and §6.1's own word for what happens to an
+  initiative's open children is "cancelled". But §6 glosses `cancelled` as "by
+  the operator at any stage". ADR-020's draft claimed the precedent already
+  existed — that `initiatives_archive_cascade` writes the mark "with no operator
+  in the loop". Its review refuted that by enumerating every writer of
+  `archived = 1`: `Approve`/`land.go` require `packaged`, reachable only through
+  a strict-drain-guarded `worked`, so the cascade updates zero rows;
+  `RejectProposal` is `proposed`-only, and birth rules admit children only into a
+  `seeded` initiative, so it fires as a no-op; and `Cancel` is operator-gated at
+  both call sites. Every firing that actually writes the mark onto a child is
+  rooted in an operator decision. The cascade is mechanical propagation of an
+  operator's cancel, not an independent writer.
+- Choice: widen who may root the mark, and log it as the deviation it is rather
+  than dressing it as precedent. `domain.Cancel` gained an `actor` parameter
+  (Inv. 7: actor is the logical originator), so the send-back's activity row
+  reads `actor = 'editor'` and the operator's still reads `'operator'`. This is
+  conservative on all three tests: no invariant moves (the children are
+  unreviewed, so Inv. 25 guarantees they have no commit to revert); it deviates
+  least from §6.1's own vocabulary; and it reverses by deleting the parameter.
+  The alternative, `decision = 'rejected'`, is unavailable — `RejectProposal` is
+  `proposed`-only and these children are `seeded`.
+- Spec impact: §6's gloss "`cancelled` by the operator at any stage" should read
+  "by the operator at any stage, or by the Editor when it sends a wave back
+  (§6.1)" — the gloss describes the operator's verb, not an exclusive writer.
+- Needs your decision: no
+
+## 2026-07-14 — Role terminals open the spine before their role check
+- Where: ADR-020 D5's scope-matrix arm (`mc editor plan-review`); wave-2
+  contract §1 ("every refusal precedes spine mutation")
+- Gap: writing the D6 scope test surfaced that a wrong-scope caller pointed at a
+  fresh `MC_SPINE` still creates an empty spine file before being refused: the
+  CLI loads identity, `withSpine` opens the database, and only then does the
+  verb run `requireExactRole`. This is not new and not ADR-020's — `mc editor
+  decide` behaves identically (verified directly), as does every role terminal.
+  The wave-2 contract's refusal-precedes-bytes rule is asserted only for the
+  host/operator verbs it names (`land report`, `outbox poll|ack`), which do
+  check scope ahead of `withSpine`.
+- Choice: log, don't fix, and do not let the new test assert a property the
+  codebase does not hold. The plan-review scope test asserts the refusal and
+  that no rows are written, and says in a comment why it stops there. Fixing it
+  would mean hoisting the identity/scope check ahead of `withSpine` for every
+  role terminal — a cross-cutting change to code this slice does not own, with
+  no invariant at stake (an empty spine file is not state; no row is written,
+  no lease moves). Recorded so the gap is a decision, not an oversight.
+- Spec impact: none. If the operator wants the contract rule to cover role
+  terminals, that is a small, separable slice.
+- Needs your decision: no

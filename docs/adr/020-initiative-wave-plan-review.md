@@ -2,8 +2,18 @@
 
 ## Status
 
-**Accepted after adversarial review** (2026-07-14). TDD next, then
-`mc strategist wave` is CLI-wired.
+**Accepted after adversarial review, and implemented** (2026-07-14). D1–D5 are
+green on the fast lane and `mc strategist wave` is CLI-wired — the Parked entry
+this ADR exists to close is retired.
+
+Two things the build changed from the text above, both recorded in
+IMPLEMENTATION-NOTES.md rather than silently: D1's §4 row is logged as an
+additive §4-class rule instead of edited into the spec, and D5's send-back is
+logged as the first non-operator-rooted `decision = 'cancelled'`. One thing the
+build found that no lens did: `loadRecords` never read `plan_reviewed`, so
+without D2(e) every real spine child projected as unreviewed and the whole wave
+lane inverted — children never dispatching, the Editor re-reviewing forever. A
+red differential caught it; the pure layer is only as true as its projection.
 
 Resolves ADR-001 Open Question 1, `docs/phase2-contract.md` A-P2-7, and the
 `## Parked` entry "Initiative wave holistic Editor review" — parked 2026-07-12,
