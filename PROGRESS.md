@@ -1,7 +1,7 @@
 # PROGRESS — Mission Control implementation ledger
 
 <!-- Header block: kept current by every session. -->
-LAST GREEN SHA: a097916 (local; the operator pushes manually — decided 2026-07-14, see Parked. Agents: do not push.)
+LAST GREEN SHA: b31eba6 (local; the operator pushes manually — decided 2026-07-14, see Parked. Agents: do not push.)
 PHASES PASSING: Phase 0 COMPLETE (S1–S8 all green, no fallback ADRs; only operator-leg deferrals remain); Phase 1 COMPLETE (1a substrate 172; 1b walking skeleton reviewed-and-fixed — fake-harness 43, agent-runner 13, runner/image 40, resident 42, dispatch + cmd/mc suites; Docker e2e PASS ×4 total); Phase 2 COMPLETE for every unparked acceptance line (domain/§18 surface, deterministic split-brain convergence, bounded honesty + five mutants, tagged dispatch/metamorphic/twin-spine lifecycle properties; the initiative-wave CLI is no longer isolated — ADR-020 landed 2026-07-14 and closed the last Phase 2 acceptance line)
 KNOWN-FAILING: (none)
 FAST SUITE: mc/check.sh (gofmt + vet on the untagged build AND on the nightly/docker_e2e/test_fake_routing tagged builds — they must compile every commit, added 2026-07-14 after a tagged suite rotted invisibly — + go test ./...; includes substrate + promoted dispatch) + runner/fake-harness/check.sh + runner/agent-runner/check.sh + runner/image/check.sh + resident/check.sh. Docker e2e (phase-completion lane): cd mc && mise exec -- go test -tags docker_e2e -timeout 15m ./e2e/...
@@ -2016,3 +2016,21 @@ original component suffix, fail closed on ENOTDIR/dangling/permission ambiguity,
 and use NFC plus volume-reported case sensitivity from a pure-Go Darwin
 `getattrlist(2)` wrapper (full Unicode fold on insensitive volumes). Then add
 D9/D11 fresh-reconstruction drift witnesses for denied paths and `TypedRoots`.
+
+- 2026-07-15 — **D8 case and absent-pair mechanism corrected before step-7
+  code** (`b31eba6`). Case/normalization now applies only to suffix components:
+  NFC + exact on case-sensitive volumes, NFC + full Unicode fold on insensitive
+  volumes, with the pure-Go Darwin capability bit deciding only fold-equal case
+  variants. The earlier handoff's `PathError.Path` "gift" was rejected after an
+  independent code lens proved it cannot recover the original suffix when a
+  symlink target changes component depth or repeats names. The normative
+  algorithm instead peels only ENOENT components from the cleaned original
+  spelling and resolves the first existing original prefix once. Full fast lane
+  green (Go all/tagged and Bun 43/13/40/42).
+
+NEXT: Implement D8 red-first in four separable pieces: (1) pure suffix overlap
+with NFC/full-fold and sensitive/insensitive/unknown modes; (2) pure-Go Darwin
+`SYS_GETATTRLIST` capability parsing plus static cross-builds; (3) absent-root
+canonical anchor/original suffix enrichment and strict ambiguity handling for
+every union collection; (4) public absent deny/other-artifact and D9/D11 fresh
+reconstruction drift witnesses, including same-path/new-identity `TypedRoots`.
