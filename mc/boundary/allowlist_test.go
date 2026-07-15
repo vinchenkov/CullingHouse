@@ -119,8 +119,12 @@ func TestParseMountAllowlistRejectsInvalidSchema(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if _, err := boundary.ParseMountAllowlist([]byte(tt.input)); err == nil {
+			_, err := boundary.ParseMountAllowlist([]byte(tt.input))
+			if err == nil {
 				t.Fatal("ParseMountAllowlist() error = nil, want rejection")
+			}
+			if got := codeOf(t, err); got != boundary.CodeAllowlistInvalid {
+				t.Fatalf("code = %q, want %q", got, boundary.CodeAllowlistInvalid)
 			}
 		})
 	}
@@ -148,6 +152,8 @@ func TestParseMountAllowlistEnforcesClosedBounds(t *testing.T) {
 		input = append(input, []byte(strings.Repeat("x", 256*1024+1-len(input)))...)
 		if _, err := boundary.ParseMountAllowlist(input); err == nil {
 			t.Fatal("oversize policy accepted")
+		} else if got := codeOf(t, err); got != boundary.CodeAllowlistInvalid {
+			t.Fatalf("code = %q, want %q", got, boundary.CodeAllowlistInvalid)
 		}
 	})
 
@@ -164,6 +170,11 @@ func TestParseMountAllowlistEnforcesClosedBounds(t *testing.T) {
 			}
 			if n == 257 && err == nil {
 				t.Fatal("entry count over maximum accepted")
+			}
+			if n == 257 {
+				if got := codeOf(t, err); got != boundary.CodeAllowlistInvalid {
+					t.Fatalf("code = %q, want %q", got, boundary.CodeAllowlistInvalid)
+				}
 			}
 		})
 	}
@@ -212,6 +223,11 @@ func TestValidateTarget(t *testing.T) {
 			if (err != nil) != tt.wantErr {
 				t.Fatalf("ValidateTarget(%q) error = %v, wantErr %v", tt.target, err, tt.wantErr)
 			}
+			if tt.wantErr {
+				if got := codeOf(t, err); got != boundary.CodeTargetInvalid {
+					t.Fatalf("code = %q, want %q", got, boundary.CodeTargetInvalid)
+				}
+			}
 		})
 	}
 }
@@ -237,6 +253,11 @@ func TestParseMountAllowlistTargetCollisionSemantics(t *testing.T) {
 			if (err != nil) != tt.wantErr {
 				t.Fatalf("ParseMountAllowlist() error = %v, wantErr %v", err, tt.wantErr)
 			}
+			if tt.wantErr {
+				if got := codeOf(t, err); got != boundary.CodeAllowlistInvalid {
+					t.Fatalf("code = %q, want %q", got, boundary.CodeAllowlistInvalid)
+				}
+			}
 		})
 	}
 
@@ -244,6 +265,9 @@ func TestParseMountAllowlistTargetCollisionSemantics(t *testing.T) {
 		_, err := boundary.ParseMountAllowlist([]byte(allowlistWithTargets("docs", "docs-api", "docs/api")))
 		if err == nil {
 			t.Fatal("interleaved ancestor targets accepted")
+		}
+		if got := codeOf(t, err); got != boundary.CodeAllowlistInvalid {
+			t.Fatalf("code = %q, want %q", got, boundary.CodeAllowlistInvalid)
 		}
 	})
 }

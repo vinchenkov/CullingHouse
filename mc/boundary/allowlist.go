@@ -66,37 +66,42 @@ type allowlistEntryTOML struct {
 // the identity-validation layer.
 func ParseMountAllowlist(data []byte) (MountAllowlist, error) {
 	if len(data) > maxAllowlistBytes {
-		return MountAllowlist{}, fmt.Errorf("mount-allowlist: %d bytes exceeds %d-byte limit", len(data), maxAllowlistBytes)
+		return MountAllowlist{}, mountErrf(CodeAllowlistInvalid,
+			"mount-allowlist: %d bytes exceeds %d-byte limit", len(data), maxAllowlistBytes)
 	}
 	if !utf8.Valid(data) {
-		return MountAllowlist{}, fmt.Errorf("mount-allowlist: input is not valid UTF-8")
+		return MountAllowlist{}, mountErrf(CodeAllowlistInvalid,
+			"mount-allowlist: input is not valid UTF-8")
 	}
 
 	var document allowlistDocument
 	metadata, err := toml.NewDecoder(bytes.NewReader(data)).Decode(&document)
 	if err != nil {
-		return MountAllowlist{}, fmt.Errorf("mount-allowlist: invalid TOML: %w", err)
+		return MountAllowlist{}, mountErrf(CodeAllowlistInvalid,
+			"mount-allowlist: invalid TOML: %v", err)
 	}
 	if err := validateAllowlistShape(&metadata); err != nil {
-		return MountAllowlist{}, err
+		return MountAllowlist{}, mountErrf(CodeAllowlistInvalid, "%v", err)
 	}
 	if document.Version != requiredAllowVersion {
-		return MountAllowlist{}, fmt.Errorf("mount-allowlist: version must be integer %d", requiredAllowVersion)
+		return MountAllowlist{}, mountErrf(CodeAllowlistInvalid,
+			"mount-allowlist: version must be integer %d", requiredAllowVersion)
 	}
 	if len(document.Allow) > maxAllowEntries {
-		return MountAllowlist{}, fmt.Errorf("mount-allowlist: %d allow entries exceeds %d-entry limit", len(document.Allow), maxAllowEntries)
+		return MountAllowlist{}, mountErrf(CodeAllowlistInvalid,
+			"mount-allowlist: %d allow entries exceeds %d-entry limit", len(document.Allow), maxAllowEntries)
 	}
 
 	entries := make([]AllowEntry, len(document.Allow))
 	for i, raw := range document.Allow {
 		entry, err := validateAllowEntry(i, raw)
 		if err != nil {
-			return MountAllowlist{}, err
+			return MountAllowlist{}, mountErrf(CodeAllowlistInvalid, "%v", err)
 		}
 		entries[i] = entry
 	}
 	if err := validateTargetSet(entries); err != nil {
-		return MountAllowlist{}, err
+		return MountAllowlist{}, mountErrf(CodeAllowlistInvalid, "%v", err)
 	}
 	return MountAllowlist{entries: entries}, nil
 }
@@ -157,35 +162,37 @@ func validateAllowEntry(index int, raw allowlistEntryTOML) (AllowEntry, error) {
 // cleaning or rewriting the supplied spelling.
 func ValidateTarget(target string) error {
 	if target == "" {
-		return fmt.Errorf("must not be empty")
+		return mountErrf(CodeTargetInvalid, "must not be empty")
 	}
 	if !utf8.ValidString(target) {
-		return fmt.Errorf("must be valid UTF-8")
+		return mountErrf(CodeTargetInvalid, "must be valid UTF-8")
 	}
 	if len(target) > maxTargetBytes {
-		return fmt.Errorf("exceeds %d bytes", maxTargetBytes)
+		return mountErrf(CodeTargetInvalid, "exceeds %d bytes", maxTargetBytes)
 	}
 	if path.IsAbs(target) || path.Clean(target) != target {
-		return fmt.Errorf("must be relative and already POSIX-clean")
+		return mountErrf(CodeTargetInvalid, "must be relative and already POSIX-clean")
 	}
 
 	for _, component := range strings.Split(target, "/") {
 		if component == "" || component == "." || component == ".." {
-			return fmt.Errorf("contains an empty, dot, or dot-dot component")
+			return mountErrf(CodeTargetInvalid, "contains an empty, dot, or dot-dot component")
 		}
 		if len(component) > maxTargetComponent {
-			return fmt.Errorf("component exceeds %d bytes", maxTargetComponent)
+			return mountErrf(CodeTargetInvalid, "component exceeds %d bytes", maxTargetComponent)
 		}
 		for _, r := range component {
 			if r == ':' || r == '\\' || r == 0 || r < 0x20 || r == 0x7f {
-				return fmt.Errorf("component contains colon, backslash, NUL, or ASCII control")
+				return mountErrf(CodeTargetInvalid,
+					"component contains colon, backslash, NUL, or ASCII control")
 			}
 			// ADR-017 Decision 1 forbids a "control" component without
 			// qualifying it to ASCII. C1 controls and the Unicode line and
 			// paragraph separators are line-break-equivalent to serializers
 			// that render targets; format runes carry invisible reordering.
 			if unicode.IsControl(r) || unicode.In(r, unicode.Cf, unicode.Zl, unicode.Zp) {
-				return fmt.Errorf("component contains a Unicode control, format, or line separator character")
+				return mountErrf(CodeTargetInvalid,
+					"component contains a Unicode control, format, or line separator character")
 			}
 		}
 	}
@@ -208,13 +215,16 @@ func validateTargetSet(entries []AllowEntry) error {
 // request is rejected; it is never silently downgraded to RO.
 func ResolveAccess(requested, maximum Access) (Access, error) {
 	if !validAccess(requested) {
-		return "", fmt.Errorf("requested access must be exactly %q or %q", AccessRO, AccessRW)
+		return "", mountErrf(CodeRWNotPermitted,
+			"requested access must be exactly %q or %q", AccessRO, AccessRW)
 	}
 	if !validAccess(maximum) {
-		return "", fmt.Errorf("maximum access must be exactly %q or %q", AccessRO, AccessRW)
+		return "", mountErrf(CodeRWNotPermitted,
+			"maximum access must be exactly %q or %q", AccessRO, AccessRW)
 	}
 	if requested == AccessRW && maximum == AccessRO {
-		return "", fmt.Errorf("requested RW access exceeds RO allowlist maximum")
+		return "", mountErrf(CodeRWNotPermitted,
+			"requested RW access exceeds RO allowlist maximum")
 	}
 	return requested, nil
 }

@@ -31,6 +31,11 @@ func TestResolveAccessBilateralTruthTable(t *testing.T) {
 			if got != tt.want {
 				t.Fatalf("ResolveAccess(%q, %q) = %q, want %q", tt.requested, tt.maximum, got, tt.want)
 			}
+			if tt.wantErr {
+				if gotCode := codeOf(t, err); gotCode != boundary.CodeRWNotPermitted {
+					t.Fatalf("code = %q, want %q", gotCode, boundary.CodeRWNotPermitted)
+				}
+			}
 		})
 	}
 }

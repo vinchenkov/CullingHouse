@@ -29,6 +29,7 @@ const (
 	CodeTargetCollision    = "mount.target_collision"
 	CodeIdentityChanged    = "mount.identity_changed"
 	CodeRuntimeUnappliable = "mount.runtime_unappliable"
+	CodeGateUnhealthy      = "mount.gate_unhealthy"
 )
 
 // MountError is a boundary rejection carrying one ADR-017 code, mirroring the
