@@ -156,6 +156,24 @@ func SendBackWave(ctx context.Context, q Q, initiativeID int64, snapshot []int64
 			return err
 		}
 	}
+	// Assert D5's own postcondition rather than trust the snapshot. The
+	// license above — this arm asserts nothing about the set, it destroys it —
+	// covers an individual member already in the target state; it is NOT a
+	// license to accept a degenerate snapshot, destroy nothing, and report
+	// success. That failure is silent and worse than the pass arm's: the
+	// terminal is ACCEPTED, so no dispatch_retries are charged and it never
+	// self-blocks, while planReviewPending stays true and the next tick
+	// re-dispatches the same plan review forever. The transaction is the
+	// atomicity boundary, so refusing here rolls the whole arm back.
+	remaining, err := openChildIDs(ctx, q, initiativeID)
+	if err != nil {
+		return err
+	}
+	if len(remaining) > 0 {
+		return Errf(CodePoolMismatch,
+			"send-back must drain the wave: snapshot %v left open children %v (ADR-020 D5)",
+			snapshot, remaining)
+	}
 	return recordWaveEvent(ctx, q, "wave.sent_back", initiativeID, reason)
 }
 

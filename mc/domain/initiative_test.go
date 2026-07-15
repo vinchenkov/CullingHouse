@@ -240,3 +240,68 @@ func TestInitiativeBlockCascades(t *testing.T) {
 		}
 	})
 }
+
+// ADR-020 D5, defense in depth: the send-back's license to skip an
+// already-archived member ("this arm asserts nothing about the set, it
+// destroys it") covers INDIVIDUAL members — it is not a license to accept a
+// degenerate snapshot and report success having destroyed nothing. The arm
+// asserts its own postcondition (drained) instead of trusting its input.
+func TestSendBackWaveAssertsItsPostcondition(t *testing.T) {
+	t.Run("a_degenerate_snapshot_fails_closed", func(t *testing.T) {
+		db := openSpine(t)
+		ini := mkTask(t, db, "initiative", "seeded")
+		c1 := mkChildTask(t, db, ini)
+
+		// An empty snapshot would destroy nothing while reporting success and
+		// leaving the wave intact — a silent live-lock, since the terminal is
+		// accepted and charges no dispatch_retries.
+		wantCode(t, db, domain.CodePoolMismatch, func(ctx context.Context, q domain.Q) error {
+			return domain.SendBackWave(ctx, q, ini, nil, "the objection")
+		})
+		if got := taskInt(t, db, c1, "archived"); got != 0 {
+			t.Fatalf("the refused send-back still archived child %d", c1)
+		}
+	})
+
+	t.Run("a_partial_snapshot_fails_closed", func(t *testing.T) {
+		db := openSpine(t)
+		ini := mkTask(t, db, "initiative", "seeded")
+		c1 := mkChildTask(t, db, ini)
+		c2 := mkChildTask(t, db, ini)
+
+		// Naming only one of two open children would leave the initiative
+		// undrained, so planReviewPending stays true and the Editor is
+		// re-dispatched forever.
+		wantCode(t, db, domain.CodePoolMismatch, func(ctx context.Context, q domain.Q) error {
+			return domain.SendBackWave(ctx, q, ini, []int64{c1}, "the objection")
+		})
+		_ = c2
+	})
+
+	t.Run("an_already_archived_member_is_still_tolerated", func(t *testing.T) {
+		db := openSpine(t)
+		ini := mkTask(t, db, "initiative", "seeded")
+		c1 := mkChildTask(t, db, ini)
+		c2 := mkChildTask(t, db, ini)
+		// The operator cancels one child mid-review: the snapshot still names
+		// it, and the arm must destroy the rest rather than refuse — it is
+		// already in the target state. The postcondition still holds.
+		mustTx(t, db, func(ctx context.Context, q domain.Q) error {
+			return domain.Cancel(ctx, q, c1, "operator changed their mind", "operator")
+		})
+		mustTx(t, db, func(ctx context.Context, q domain.Q) error {
+			return domain.SendBackWave(ctx, q, ini, []int64{c1, c2}, "the objection")
+		})
+		if got := taskStr(t, db, c2, "decision"); got != "cancelled" {
+			t.Fatalf("survivor decision = %q, want cancelled", got)
+		}
+		var open int
+		if err := db.QueryRow(
+			`SELECT COUNT(*) FROM tasks WHERE initiative_id = ? AND archived = 0`, ini).Scan(&open); err != nil {
+			t.Fatal(err)
+		}
+		if open != 0 {
+			t.Fatalf("initiative not drained: %d open", open)
+		}
+	})
+}

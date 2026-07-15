@@ -1156,7 +1156,9 @@ func cancelLikeOp(name string, id int64, reason string, packet bool) walkOperati
 			if packet {
 				err = domain.CancelPacket(ctx, q, id, reason)
 			} else {
-				err = domain.Cancel(ctx, q, id, reason)
+				// actor "operator": this walk models the operator's own cancel,
+				// which the model arm mirrors as VALUES ('operator', ...) below.
+				err = domain.Cancel(ctx, q, id, reason, "operator")
 			}
 			return "cancelled", err
 		},

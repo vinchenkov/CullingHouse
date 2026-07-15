@@ -356,11 +356,21 @@ func applySpawn(ctx context.Context, q Q, now time.Time, sp *dispatch.Spawn, tun
 		return nil, err
 	}
 
-	// Editor runs snapshot the entire proposed pool at claim (§10 step 3;
-	// ADR-001 D4 coverage check reads it back).
+	// Both Editor modes snapshot at claim the exact id set they were shown and
+	// must act on (§10 step 3; ADR-001 D4 and ADR-020 D5 read it back):
+	// runs.pool_snapshot carries the proposed pool for the contrastive pass and
+	// the wave for the holistic plan review. A switch, not an if-chain, so the
+	// two modes are visibly exhaustive — omitting one here computes the set in
+	// the pure layer and silently discards it at the seam.
 	var pool []int64
-	if sp.Role == dispatch.RoleEditor {
+	switch sp.Role {
+	case dispatch.RoleEditor:
 		pool = sp.ProposedPool
+		if pool == nil {
+			pool = []int64{}
+		}
+	case dispatch.RoleEditorPlanReview:
+		pool = sp.Wave // ADR-020 D4
 		if pool == nil {
 			pool = []int64{}
 		}

@@ -12,4 +12,15 @@ if [ -n "$fmt" ]; then
     exit 1
 fi
 mise exec -- go vet ./...
+
+# The tagged suites do not RUN here (nightly is slow; docker_e2e needs Docker),
+# but they must still COMPILE on every commit. Without this, a signature change
+# rots a tagged suite invisibly while the fast lane stays green — which is
+# exactly how ADR-020's domain.Cancel actor parameter broke the nightly
+# lattice walk and went unnoticed until an adversarial review found it.
+# vet is cheap and needs neither Docker nor a nightly budget.
+for tag in nightly docker_e2e test_fake_routing; do
+    mise exec -- go vet -tags "$tag" ./...
+done
+
 exec mise exec -- go test ./...

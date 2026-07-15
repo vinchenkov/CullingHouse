@@ -722,3 +722,106 @@ func TestStrategistInitiativeBriefSendbackRecency(t *testing.T) {
 		}
 	})
 }
+
+// ---------------------------------------------------------------------------
+// ADR-020 D4's SEAM: the wave the pure layer computes must survive the claim.
+//
+// Both sides of this seam were tested and the seam itself was not: the
+// dispatch-side test stops at Decide (asserting Spawn.Wave), and the terminal's
+// CLI test hand-writes runs.pool_snapshot, faking the claim. The wave was
+// computed and discarded in between, and the full fast suite stayed green.
+// These drive the real path — verbs.Dispatch (which calls applySpawn), then
+// the real terminal — so nothing between them can be assumed.
+// ---------------------------------------------------------------------------
+
+func TestPlanReviewSnapshotSurvivesTheClaim(t *testing.T) {
+	t.Run("applySpawn_persists_the_wave", func(t *testing.T) {
+		db := dvSpine(t)
+		dvUnreviewedWave(t, db)
+		rec, err := loadRecords(context.Background(), db)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, got := dvDispatch(t, db, rec, dispatch.Lock{}, dvConfig(24))
+		run := fmt.Sprint(got["run_id"])
+
+		var snap sql.NullString
+		if err := db.QueryRow(`SELECT pool_snapshot FROM runs WHERE id = ?`, run).Scan(&snap); err != nil {
+			t.Fatal(err)
+		}
+		if !snap.Valid {
+			t.Fatalf("runs.pool_snapshot is NULL on a plan-review run: the wave was computed and discarded at the claim (ADR-020 D4)")
+		}
+		if snap.String != "[2,3]" {
+			t.Fatalf("runs.pool_snapshot = %q, want the wave [2,3]", snap.String)
+		}
+	})
+
+	// The pass arm, end to end through the real claim. Without the seam the
+	// snapshot is empty, so the exact-set rule refuses EVERY wave: plan_reviewed
+	// never reaches 1, childGate never opens, and no child ever dispatches —
+	// the lane ADR-020 exists to unblock stays dead.
+	t.Run("pass_reaches_the_children_through_a_real_claim", func(t *testing.T) {
+		db := dvSpine(t)
+		dvUnreviewedWave(t, db)
+		rec, err := loadRecords(context.Background(), db)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, got := dvDispatch(t, db, rec, dispatch.Lock{}, dvConfig(24))
+		run := fmt.Sprint(got["run_id"])
+
+		id := &RunIdentity{RunID: run, Tier: "pipeline", Role: "editor(plan-review)"}
+		if _, err := EditorPlanReview(db, id, PlanReviewArgs{
+			Run: run, Initiative: 1, Verdict: "pass"}); err != nil {
+			t.Fatalf("pass through a real claim: %v", err)
+		}
+		var marked int
+		if err := db.QueryRow(
+			`SELECT COUNT(*) FROM tasks WHERE initiative_id = 1 AND plan_reviewed = 1`).Scan(&marked); err != nil {
+			t.Fatal(err)
+		}
+		if marked != 2 {
+			t.Fatalf("children marked plan_reviewed = %d, want 2", marked)
+		}
+	})
+
+	// The send-back arm. Its failure mode is worse than the pass arm's, because
+	// it is SILENT: the terminal is accepted (so no dispatch_retries are
+	// charged, so it never self-blocks), the lease releases, wave.sent_back is
+	// written — and nothing is cancelled. The next tick re-dispatches the same
+	// plan review forever, burning an Editor run per tick.
+	t.Run("send_back_drains_through_a_real_claim_and_the_next_tick_replans", func(t *testing.T) {
+		db := dvSpine(t)
+		dvUnreviewedWave(t, db)
+		rec, err := loadRecords(context.Background(), db)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, got := dvDispatch(t, db, rec, dispatch.Lock{}, dvConfig(24))
+		run := fmt.Sprint(got["run_id"])
+
+		id := &RunIdentity{RunID: run, Tier: "pipeline", Role: "editor(plan-review)"}
+		if _, err := EditorPlanReview(db, id, PlanReviewArgs{
+			Run: run, Initiative: 1, Verdict: "send-back", Reason: "criteria are not checkable"}); err != nil {
+			t.Fatalf("send-back through a real claim: %v", err)
+		}
+		var open int
+		if err := db.QueryRow(
+			`SELECT COUNT(*) FROM tasks WHERE initiative_id = 1 AND archived = 0`).Scan(&open); err != nil {
+			t.Fatal(err)
+		}
+		if open != 0 {
+			t.Fatalf("send-back left %d open children: D5's drained postcondition failed", open)
+		}
+		// Drained ⇒ the next tick owes a replan, not another plan review.
+		rec, err = loadRecords(context.Background(), db)
+		if err != nil {
+			t.Fatal(err)
+		}
+		next := dispatch.Decide(rec, dispatch.Lock{}, dvConfig(24), dispatch.Clock{Now: dvNow(t, db)})
+		if next.Spawn == nil || next.Spawn.Role != dispatch.RoleStrategistInitiative {
+			t.Fatalf("next tick = %+v, want strategist(initiative) to replan (a live-lock otherwise)", next.Spawn)
+		}
+	})
+}
