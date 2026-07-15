@@ -1,7 +1,7 @@
 # PROGRESS — Mission Control implementation ledger
 
 <!-- Header block: kept current by every session. -->
-LAST GREEN SHA: 9fc02fd (local; the operator pushes manually — decided 2026-07-14, see Parked. Agents: do not push.)
+LAST GREEN SHA: f2b06b4 (local; the operator pushes manually — decided 2026-07-14, see Parked. Agents: do not push.)
 PHASES PASSING: Phase 0 COMPLETE (S1–S8 all green, no fallback ADRs; only operator-leg deferrals remain); Phase 1 COMPLETE (1a substrate 172; 1b walking skeleton reviewed-and-fixed — fake-harness 43, agent-runner 13, runner/image 40, resident 42, dispatch + cmd/mc suites; Docker e2e PASS ×4 total); Phase 2 COMPLETE for every unparked acceptance line (domain/§18 surface, deterministic split-brain convergence, bounded honesty + five mutants, tagged dispatch/metamorphic/twin-spine lifecycle properties; the initiative-wave CLI is no longer isolated — ADR-020 landed 2026-07-14 and closed the last Phase 2 acceptance line)
 KNOWN-FAILING: (none)
 FAST SUITE: mc/check.sh (gofmt + vet on the untagged build AND on the nightly/docker_e2e/test_fake_routing tagged builds — they must compile every commit, added 2026-07-14 after a tagged suite rotted invisibly — + go test ./...; includes substrate + promoted dispatch) + runner/fake-harness/check.sh + runner/agent-runner/check.sh + runner/image/check.sh + resident/check.sh. Docker e2e (phase-completion lane): cd mc && mise exec -- go test -tags docker_e2e -timeout 15m ./e2e/...
@@ -1736,3 +1736,100 @@ run in their own worktrees and be told to *drive real paths*. Static review of
 ADR text missed a defect that made every container unlaunchable; one agent that
 compiled and ran the design found it in minutes. Apply the same to the slice's
 own tests — pin the permit side, not just the deny side.
+
+- 2026-07-14 — **ADR-021 probed before TDD: 6 raised, 5 CONFIRMED (all major),
+  1 partial. Reworked a second time, then TDD step 1 landed (`e415c10`,
+  `f2b06b4`).** The previous session's NEXT line said "TDD the jurisdiction slice
+  red-first against ADR-021 **as reworked**". Following it literally would have
+  shipped four majors. A 4-agent read-only probe drove real paths and a real
+  filesystem to extract the slice's facts; each defect then went to an
+  independent skeptic **in its own worktree**, told to refute by implementing the
+  design verbatim and running it. Record:
+  `docs/reviews/2026-07-14-adr-021-implementation-probe.json`.
+
+  **The headline is a measured key leak.** D4's `broad_root` was computed from
+  HOME's `filepath.Dir` chain. `/Users` is an APFS **firmlink**: `lstat` shows a
+  plain directory, `EvalSymlinks` does not see through it, and HOME's real volume
+  root `/System/Volumes/Data` is in **no** `Dir` chain and `os.SameFile` with
+  nothing in one. The blocked floor is blind to it. The skeptic's witness:
+  `/System/Volumes/Data` **AUTHORIZED rw**, reading 419 bytes of the operator's
+  real OpenSSH private key. Independently reproduced here — `ReadDir` through the
+  alias returns 7 real `~/.ssh` entries. Fix: `statfs(A).f_mntonname` adds the
+  alias route (kernel's own mount table, no macOS literal, correct for a
+  relocated HOME, a no-op on Linux). It is **not** `broad_root`-only: every
+  ancestor-direction member had the same blind spot.
+
+  **The other four.** (1) D10's `TypedClaim{Kind, Root}` was **self-certifying** —
+  the caller supplied both the source and the root it was checked against, so
+  `Rejects` computed `SameFile(x, x)` and `claim.Kind` was provably inert (all ten
+  kinds permitted one fixed pair). D10's own *"the claim is not trusted, it is
+  checked"* was false, and D9/D11 were vacuous on the typed path. The binding
+  moved into `Jurisdiction.TypedRoots`. (2) D10's nine-item permit list was **not
+  the closed set**: :380-381 governs, :396-401 is illustrative — the *same
+  misreading that killed the draft*, surviving one rework because the fix was
+  applied to the mechanism and not to the list. ~13 grants had no kind. (3)+(4)
+  D5 was unimplementable against D1's own types (no `ownerUID` parameter; a
+  pre-resolved `ProtectedID` destroys the symlink leg's only evidence), and its
+  lone code cite aimed the implementer at `TrustHomeDir`, whose `0o077` check
+  **rejects the real 0750 macOS HOME**. D5's legs were otherwise right.
+
+  **Park list: EMPTY.** The insight that collapses every alleged blocker:
+  `mc/boundary` is **pure and receives every root pre-resolved**, so a missing
+  host-path *formula* is the host planner's later slice and fixture realism — not
+  a TDD blocker.
+
+  **One skeptic refuted its own finding with running code** (predicted a
+  fail-open in the absent-member handling, wrote the test, the test failed). That
+  is the decorrelated producer/judge principle working in the direction that is
+  easy to fake.
+
+  **Step 1 green: `TypedKind` + the D10a derivation guard.** The enum is
+  **derived** — the guard *parses ADR-017's real table* and runs both directions
+  (no row without a kind, no kind without a row). 61 rows mapped. Mutants die
+  with witnesses.
+
+  **And step 1 caught the same defect in its own guard.** The test reads a file
+  **outside this module**, which Go's test cache does not track: measured,
+  `go test ./...` reported `ok (cached)` against a mutated ADR-017 while
+  `-count=1` caught it. A drift guard that is itself silently skipped is worth
+  *less* than no guard, because it also buys false confidence. `mc/check.sh` now
+  forces it with `-count=1` (verified: exit 1 on drift, exit 0 clean) — the same
+  shape as the tagged-compile loop `9fc02fd` added for the same reason.
+
+NEXT: Continue the jurisdiction slice red-first in **ADR-021's own TDD order**
+(at the end of `docs/adr/021-mount-jurisdiction.md` — it replaces the five-step
+order this ledger carried before the probe, which was written against the
+defective D1/D5/D10). Step 1 is DONE (`f2b06b4`). Next is step 2:
+`ProtectedID.Present()` + the absent-member law (the ancestor branch must never
+read `P.Info`), `ResolveJurisdiction(in, ownerUID)` + the zero-value law (an
+unexported `resolved` flag; a bare `Jurisdiction{}` rejects everything) + D2
+non-subtractability + the 512-`DeniedPaths` bound checked **before any stat**.
+Then step 3 (D5 `validateHome`, **permit side first — the real
+`os.UserHomeDir()` at 0750 ACL-carrying must be ACCEPTED**; a 0700 `t.TempDir()`
+HOME is forbidden for that test, it is what makes the suite structurally blind),
+then 4 (D4 `ancestorRoutes`/`statfs`), 5 (D10 typed confinement, permit side
+first), 6 (union + D7 + D6 + the 13-call-site `Authorize` migration), 7 (D8/D9/
+D11), 8 (planted mutants).
+
+`Authorize` must not be wired into production planning until this lands. Do not
+load launchd.
+
+Then: the macOS **ACL leg** of the trust seam, then the stable-code mapping for
+the parser's uncoded rejections, then the invalid-plan/no-claim dispatch
+transaction.
+
+Adjacent gaps, deliberately NOT swept in: `mount.gate_unhealthy` missing from
+`mc/boundary/identity.go`'s code block (ADR-017:1162); and **new** — an ADR-017
+amendment item, since ADR-021 Sharp Edge 6 now defines `KindInertCover` and
+`KindSealedPack`, which are absent from ADR-017:354-362's **closed** source-kind
+list. Defining them is stricter than omitting them (log-and-go, AGENTS.md §6),
+and the predicate is parametric in the enum, so it blocks nothing — but ADR-017
+should say whether that list means to exclude generated inert covers or is
+simply incomplete.
+
+**Process note, now earned three times:** the worktree + drive-real-paths
+instruction found what two rounds of careful ADR reading did not. F5 was
+invisible to any amount of text review — it required statting
+`/System/Volumes/Data`. Corollary earned this session: **apply the same
+skepticism to your own guard**. Step 1's derivation guard was green and proving
+nothing until it was mutation-tested; the fast lane had cached it away.
