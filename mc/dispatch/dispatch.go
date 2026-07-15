@@ -85,15 +85,19 @@ const (
 // dispatch reads. Proposals, ordinary tasks, initiatives and wave children
 // are all Task rows; Scope/Status/InitiativeID say which.
 type Task struct {
-	ID               int64
-	Title            string
-	Scope            Scope
-	InitiativeID     *int64 // set on wave children only (substrate forbids nesting)
-	Priority         int    // -1 = expedited, 0–3 = P0–P3; lower wins
-	CreatedAt        time.Time
-	Status           Status
-	Blocked          bool // dispatchability flag, deliberately not a status (§5, §6)
-	DispatchRetries  int  // infra-death budget; decremented only by the reaper (§10)
+	ID           int64
+	Title        string
+	Scope        Scope
+	InitiativeID *int64 // set on wave children only (substrate forbids nesting)
+	Priority     int    // -1 = expedited, 0–3 = P0–P3; lower wins
+	CreatedAt    time.Time
+	Status       Status
+	Blocked      bool // dispatchability flag, deliberately not a status (§5, §6)
+	// PlanReviewed: the Editor passed this wave child's plan (ADR-020 D1).
+	// Meaningful only on a child; on every other row the substrate pins it
+	// false, where it reads "not applicable", never "unreviewed".
+	PlanReviewed     bool
+	DispatchRetries  int // infra-death budget; decremented only by the reaper (§10)
 	Decision         TaskDecision
 	DecidedAt        *time.Time
 	Archived         bool
@@ -224,7 +228,15 @@ const (
 type Role string
 
 const (
-	RoleEditor               Role = "editor"
+	RoleEditor Role = "editor"
+	// RoleEditorPlanReview is the Editor's second mode: the holistic plan
+	// review of one wave (§3, §6.1, Inv. 12; ADR-020 D3). A mode, exactly like
+	// Strategist's three — baseRole() strips it, so lock.owner and runs.role
+	// still store the flat "editor" the schema CHECKs permit, and routing
+	// resolves by base role (Inv. 9 holds by construction: the producer is
+	// Strategist(initiative), the judge a fresh Editor on a decorrelated
+	// runtime).
+	RoleEditorPlanReview     Role = "editor(plan-review)"
 	RoleWorker               Role = "worker"
 	RoleVerifier             Role = "verifier"
 	RolePackager             Role = "packager"
@@ -276,6 +288,12 @@ type Spawn struct {
 	// pool for contrastive rank-then-cut, never the subject row alone (§10
 	// step 3 table). Ascending id order (deterministic snapshot).
 	ProposedPool []int64
+	// Wave: editor(plan-review) only — the id set of every open child the
+	// holistic verdict is rendered over (ADR-020 D4). Ascending id order.
+	// Distinct from ProposedPool, which is named for what it is; both ride
+	// runs.pool_snapshot, whose meaning generalizes to "the id set this Editor
+	// run was shown and must act on exactly".
+	Wave []int64
 	// DedupeTitles: Strategist(propose) only — the 20 most recently rejected
 	// titles, newest first (§10 step 4).
 	DedupeTitles []string
@@ -528,7 +546,10 @@ func inFlightRefinement(rec Records) (Task, bool) {
 		if !linked {
 			continue
 		}
-		if t.Scope == ScopeInitiative && hasOpenChildren(rec, t.ID) {
+		if !childGate(t) {
+			continue // unreviewed wave child (ADR-020 D2(a))
+		}
+		if t.Scope == ScopeInitiative && hasOpenChildren(rec, t.ID) && !planReviewPending(rec, t) {
 			continue
 		}
 		cand = append(cand, t)
@@ -619,7 +640,10 @@ func nextDispatch(rec Records) (Task, bool) {
 		if !worksourceActive(t) || t.Archived || t.Blocked || t.Status.Rank() <= 0 {
 			continue
 		}
-		if t.Scope == ScopeInitiative && hasOpenChildren(rec, t.ID) {
+		if !childGate(t) {
+			continue // unreviewed wave child (ADR-020 D2(a))
+		}
+		if t.Scope == ScopeInitiative && hasOpenChildren(rec, t.ID) && !planReviewPending(rec, t) {
 			continue // parked — its children are its dispatch presence
 		}
 		cand = append(cand, t)
@@ -658,9 +682,15 @@ func spawnFor(rec Records, t Task) Action {
 		sp.Role = RoleEditor
 		sp.ProposedPool = proposedPool(rec) // batch-wise: the entire pool, never this row alone
 	case StatusSeeded:
-		if t.Scope == ScopeInitiative {
+		switch {
+		case t.Scope == ScopeInitiative && planReviewPending(rec, t):
+			// The one exception to §10's parked rule: the wave, held to
+			// Inv. 12's bar before any child can be worked (ADR-020 D2(c)).
+			sp.Role = RoleEditorPlanReview
+			sp.Wave = wave(rec, t.ID)
+		case t.Scope == ScopeInitiative:
 			sp.Role = RoleStrategistInitiative // drained ⇒ owed the next wave or the done-declaration
-		} else {
+		default:
 			sp.Role = RoleWorker
 		}
 	case StatusWorked:
@@ -701,6 +731,44 @@ func hasOpenChildren(rec Records, initiativeID int64) bool {
 		}
 	}
 	return false
+}
+
+// planReviewPending: this initiative's wave is owed the Editor's holistic
+// plan review (ADR-020 D2). The status conjunct is load-bearing and travels
+// with the SQL rendering: without it an initiative past seeded with an open
+// child would map to Verifier/Packager rather than the review. It is
+// currently unreachable (the birth rules and the strict-drain trigger forbid
+// it), but the two forms of one predicate must not disagree.
+func planReviewPending(rec Records, t Task) bool {
+	if t.Scope != ScopeInitiative || t.Status != StatusSeeded {
+		return false
+	}
+	for _, c := range rec.Tasks {
+		if c.InitiativeID != nil && *c.InitiativeID == t.ID && !c.Archived && !c.PlanReviewed {
+			return true
+		}
+	}
+	return false
+}
+
+// childGate: an unreviewed wave child is invisible to dispatch, full stop
+// (ADR-020 D2(a)). On a non-child the flag is not applicable, so it passes.
+func childGate(t Task) bool {
+	return t.InitiativeID == nil || t.PlanReviewed
+}
+
+// wave snapshots every open child of the initiative (ascending id) — the set
+// the holistic verdict is rendered over (ADR-020 D4). Archived children are
+// not part of the wave: a partially cancelled wave shows only survivors.
+func wave(rec Records, initiativeID int64) []int64 {
+	var ids []int64
+	for _, c := range rec.Tasks {
+		if c.InitiativeID != nil && *c.InitiativeID == initiativeID && !c.Archived {
+			ids = append(ids, c.ID)
+		}
+	}
+	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+	return ids
 }
 
 // proposedPool snapshots every open proposal (ascending id) for the Editor's

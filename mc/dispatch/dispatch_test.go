@@ -503,7 +503,9 @@ func TestStep2a_WaveChildOfPacketHoldingInitiative_AdvancesAtCap(t *testing.T) {
 	// initiative bounced back from review could never advance its waves.
 	rec := recs([]Task{
 		tk(1, StatusSeeded, initiative()), // re-entered arc; parked (open child)
-		tk(10, StatusSeeded, childOf(1)),  // the wave child: no packet of its own
+		// reviewed: a child dispatches only after the Editor passed its wave
+		// (ADR-020 D2); this case is about the join's second arm.
+		tk(10, StatusSeeded, childOf(1), reviewed()), // the wave child: no packet of its own
 		tk(2, StatusPackaged), tk(3, StatusPackaged),
 	}, atCapPackets(1, 2, 3))
 	a := decide(t, rec, freeLock())
@@ -514,7 +516,7 @@ func TestStep2a_ParkedInitiativeInvisible_ChildWins(t *testing.T) {
 	// The re-entered initiative itself would win (created earlier, same
 	// rank) but is parked while a child is open — the child is selected.
 	init := tk(1, StatusSeeded, initiative(), created(at(-100)))
-	child := tk(10, StatusSeeded, childOf(1), created(at(-1)))
+	child := tk(10, StatusSeeded, childOf(1), created(at(-1)), reviewed()) // ADR-020 D2: parked means the wave passed
 	rec := recs([]Task{init, child, tk(2, StatusPackaged), tk(3, StatusPackaged)},
 		atCapPackets(1, 2, 3))
 	a := decide(t, rec, freeLock())
@@ -820,7 +822,7 @@ func TestStep3_ParkedInitiativeInvisible_ChildrenAreItsPresence(t *testing.T) {
 	// Would-otherwise-win: initiative (older, same rank) vs its child.
 	rec := recs([]Task{
 		tk(1, StatusSeeded, initiative(), created(at(-100))),
-		tk(2, StatusSeeded, childOf(1), created(at(-1))),
+		tk(2, StatusSeeded, childOf(1), created(at(-1)), reviewed()), // ADR-020 D2
 	}, nil)
 	a := decide(t, rec, freeLock())
 	wantSpawn(t, a, RoleWorker, pi64(2))
@@ -839,9 +841,9 @@ func TestStep3_BlockedInitiative_UnblockedChildKeepsFlowing(t *testing.T) {
 	// One blocked child blocks the initiative (propagated flag); unblocked
 	// siblings keep dispatching on their own flags.
 	rec := recs([]Task{
-		tk(1, StatusSeeded, initiative(), blocked()), // propagated block
-		tk(2, StatusSeeded, childOf(1), blocked()),   // the blocked child
-		tk(3, StatusSeeded, childOf(1)),              // unblocked sibling
+		tk(1, StatusSeeded, initiative(), blocked()),           // propagated block
+		tk(2, StatusSeeded, childOf(1), blocked(), reviewed()), // the blocked child
+		tk(3, StatusSeeded, childOf(1), reviewed()),            // unblocked sibling
 	}, nil)
 	a := decide(t, rec, freeLock())
 	wantSpawn(t, a, RoleWorker, pi64(3))
@@ -860,8 +862,8 @@ func TestStep4_OnlyBlockedPackagedParkedRows_SpawnsPropose(t *testing.T) {
 	rec := recs([]Task{
 		tk(1, StatusSeeded, blocked()),
 		tk(2, StatusPackaged),
-		tk(3, StatusSeeded, initiative()), // parked: open child 4
-		tk(4, StatusSeeded, childOf(3), blocked()),
+		tk(3, StatusSeeded, initiative()),                      // parked: open child 4
+		tk(4, StatusSeeded, childOf(3), blocked(), reviewed()), // ADR-020 D2: parked means the wave passed
 	}, []Packet{pk(2)})
 	a := decide(t, rec, freeLock())
 	wantSpawn(t, a, RoleStrategistPropose, nil)
@@ -999,4 +1001,155 @@ func TestPrecedenceCascade_ManyObligationState(t *testing.T) {
 			t.Fatalf("want Strategist(propose) fallback, got %+v", a)
 		}
 	})
+}
+
+// ---------------------------------------------------------------------------
+// ADR-020 D2: the plan-review gate and the Editor arm, in both selecting
+// queries. An unreviewed child is invisible to dispatch; an initiative whose
+// wave is unreviewed is the one exception to §10's parked rule.
+// ---------------------------------------------------------------------------
+
+func reviewed() tmod { return func(t *Task) { t.PlanReviewed = true } }
+
+func TestPlanReviewGate(t *testing.T) {
+	// (3): an unreviewed child is never selected, and its initiative — which
+	// §10 would otherwise park — is dispatched to the Editor instead.
+	t.Run("with_room_unreviewed_wave_goes_to_editor", func(t *testing.T) {
+		rec := recs([]Task{
+			tk(1, StatusSeeded, initiative()),
+			tk(2, StatusSeeded, childOf(1)),
+			tk(3, StatusSeeded, childOf(1)),
+		}, nil)
+		got := Decide(rec, freeLock(), DefaultConfig(), noonClock())
+		if got.Kind != KindSpawn {
+			t.Fatalf("kind = %v, want spawn", got.Kind)
+		}
+		if got.Spawn.Role != RoleEditorPlanReview {
+			t.Fatalf("role = %q, want %q", got.Spawn.Role, RoleEditorPlanReview)
+		}
+		if *got.Spawn.SubjectID != 1 {
+			t.Fatalf("subject = %d, want the initiative (1)", *got.Spawn.SubjectID)
+		}
+		// The brief is shown the whole wave, ascending id — the set the
+		// holistic verdict is rendered over (D4).
+		if !reflect.DeepEqual(got.Spawn.Wave, []int64{2, 3}) {
+			t.Fatalf("wave = %v, want [2 3]", got.Spawn.Wave)
+		}
+		if got.Spawn.ProposedPool != nil {
+			t.Fatalf("plan review carries no proposed pool: %v", got.Spawn.ProposedPool)
+		}
+	})
+
+	// A pending plan review outranks the proposal pool (furthest-first: the
+	// initiative is seeded/rank 2, proposals rank 1) — D2(d)'s stated
+	// consequence, pinned so it cannot regress silently.
+	t.Run("pending_review_outranks_the_proposed_pool", func(t *testing.T) {
+		rec := recs([]Task{
+			tk(1, StatusSeeded, initiative()),
+			tk(2, StatusSeeded, childOf(1)),
+			tk(9, StatusProposed),
+		}, nil)
+		got := Decide(rec, freeLock(), DefaultConfig(), noonClock())
+		if got.Spawn.Role != RoleEditorPlanReview {
+			t.Fatalf("role = %q, want the plan review to outrank the pool", got.Spawn.Role)
+		}
+	})
+
+	// ...but the expedite lane still partitions ahead of it (D2(d)).
+	t.Run("expedited_proposal_still_outranks_a_pending_review", func(t *testing.T) {
+		rec := recs([]Task{
+			tk(1, StatusSeeded, initiative()),
+			tk(2, StatusSeeded, childOf(1)),
+			tk(9, StatusProposed, prio(-1)),
+		}, nil)
+		got := Decide(rec, freeLock(), DefaultConfig(), noonClock())
+		if got.Spawn.Role != RoleEditor {
+			t.Fatalf("role = %q, want the expedited pool pass", got.Spawn.Role)
+		}
+	})
+
+	// Once passed: the initiative parks again (drain rule unchanged) and the
+	// children dispatch to Workers through the untouched (status, scope) table.
+	t.Run("passed_wave_parks_the_initiative_and_dispatches_children", func(t *testing.T) {
+		rec := recs([]Task{
+			tk(1, StatusSeeded, initiative()),
+			tk(2, StatusSeeded, childOf(1), reviewed()),
+			tk(3, StatusSeeded, childOf(1), reviewed()),
+		}, nil)
+		got := Decide(rec, freeLock(), DefaultConfig(), noonClock())
+		if got.Spawn.Role != RoleWorker {
+			t.Fatalf("role = %q, want worker", got.Spawn.Role)
+		}
+		if *got.Spawn.SubjectID != 2 {
+			t.Fatalf("subject = %d, want the first child", *got.Spawn.SubjectID)
+		}
+	})
+
+	// Drained (no children at all) is unchanged: Strategist(initiative).
+	t.Run("drained_initiative_unchanged", func(t *testing.T) {
+		rec := recs([]Task{tk(1, StatusSeeded, initiative())}, nil)
+		got := Decide(rec, freeLock(), DefaultConfig(), noonClock())
+		if got.Spawn.Role != RoleStrategistInitiative {
+			t.Fatalf("role = %q, want strategist(initiative)", got.Spawn.Role)
+		}
+	})
+
+	// An archived child is not part of the wave: a partially cancelled wave
+	// shows the Editor only the survivors (sharp edge 4).
+	t.Run("wave_excludes_archived_children", func(t *testing.T) {
+		rec := recs([]Task{
+			tk(1, StatusSeeded, initiative()),
+			tk(2, StatusSeeded, childOf(1), decided(DecisionCancelled, at(-5)), archived()),
+			tk(3, StatusSeeded, childOf(1)),
+		}, nil)
+		got := Decide(rec, freeLock(), DefaultConfig(), noonClock())
+		if got.Spawn.Role != RoleEditorPlanReview {
+			t.Fatalf("role = %q, want the plan review over the survivors", got.Spawn.Role)
+		}
+		if !reflect.DeepEqual(got.Spawn.Wave, []int64{3}) {
+			t.Fatalf("wave = %v, want only the open child [3]", got.Spawn.Wave)
+		}
+	})
+
+	// A blocked initiative takes its unreviewed wave out of sight and waits
+	// for the operator (sharp edge 5) — a wait, not a wedge. Neither the
+	// review nor the children are dispatched; the tick falls through to §10
+	// step 4's ordinary no-eligible-work move.
+	t.Run("blocked_initiative_with_unreviewed_wave_is_invisible", func(t *testing.T) {
+		rec := recs([]Task{
+			tk(1, StatusSeeded, initiative(), blocked()),
+			tk(2, StatusSeeded, childOf(1)),
+		}, nil)
+		got := Decide(rec, freeLock(), DefaultConfig(), noonClock())
+		if got.Spawn.Role != RoleStrategistPropose {
+			t.Fatalf("role = %q, want the blocked wave invisible (propose falls through)", got.Spawn.Role)
+		}
+	})
+}
+
+// Sharp edge 1: the at-cap deadlock. An initiative bounced back from operator
+// review births a refinement wave; at cap, (2a) must reach the plan review or
+// the initiative never makes autonomous progress again — its packet holds a
+// slot nothing can free.
+func TestPlanReviewGateAtCap(t *testing.T) {
+	// Cap of 1, filled by the initiative's own live arc packet.
+	rec := recs([]Task{
+		tk(1, StatusSeeded, initiative()), // bounced back: packaged → seeded
+		tk(2, StatusSeeded, childOf(1)),   // the refinement wave, unreviewed
+	}, []Packet{pk(1)})
+	c := DefaultConfig()
+	c.ReviewWIPCap = 1
+
+	got := Decide(rec, freeLock(), c, noonClock())
+	if got.Kind == KindIdle {
+		t.Fatalf("at-cap tick idled (%v) — the sharp-edge-1 deadlock", got.Idle)
+	}
+	if got.Spawn == nil || got.Spawn.Role != RoleEditorPlanReview {
+		t.Fatalf("action = %+v, want the plan review reachable at cap via (2a)", got)
+	}
+
+	// The gate also holds in (2a): an unreviewed child is not dispatched at cap.
+	if got.Spawn.SubjectID != nil && *got.Spawn.SubjectID == 2 {
+		t.Fatalf("(2a) dispatched the unreviewed child")
+	}
 }

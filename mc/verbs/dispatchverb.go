@@ -192,7 +192,7 @@ func loadRecords(ctx context.Context, q Q) (dispatch.Records, error) {
 	rows, err := q.QueryContext(ctx, `
 		SELECT t.id, t.title, t.scope, t.initiative_id, t.priority, t.created_at, t.status,
 		       blocked, dispatch_retries, decision, decided_at, archived,
-		       worksource, branch, verified_sha, target_ref, w.status
+		       worksource, branch, verified_sha, target_ref, plan_reviewed, w.status
 		FROM tasks t JOIN worksources w ON w.id = t.worksource`)
 	if err != nil {
 		return rec, err
@@ -205,19 +205,21 @@ func loadRecords(ctx context.Context, q Q) (dispatch.Records, error) {
 			initiativeID                sql.NullInt64
 			createdAt                   string
 			blocked, archived           int
+			planReviewed                int
 			decision, decidedAt         sql.NullString
 			branch, verifiedSHA, target sql.NullString
 		)
 		if err := rows.Scan(&t.ID, &t.Title, &scope, &initiativeID, &t.Priority,
 			&createdAt, &status, &blocked, &t.DispatchRetries, &decision,
 			&decidedAt, &archived, &t.Worksource, &branch, &verifiedSHA,
-			&target, &t.WorksourceStatus); err != nil {
+			&target, &planReviewed, &t.WorksourceStatus); err != nil {
 			return rec, err
 		}
 		t.Scope = dispatch.Scope(scope)
 		t.Status = dispatch.Status(status)
 		t.Blocked = blocked == 1
 		t.Archived = archived == 1
+		t.PlanReviewed = planReviewed == 1 // ADR-020 D2(e)
 		if initiativeID.Valid {
 			v := initiativeID.Int64
 			t.InitiativeID = &v

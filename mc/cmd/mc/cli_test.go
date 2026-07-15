@@ -3532,6 +3532,12 @@ func TestCompletePhase2Terminals(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
+		// A child reaches worked only after the Editor's plan review (ADR-020
+		// D1); this case is about the shared-branch rule, so it builds the
+		// legal order.
+		if _, err := db.Exec(`UPDATE tasks SET plan_reviewed = 1 WHERE id=?`, childID); err != nil {
+			t.Fatal(err)
+		}
 		run := "initiative-child-worker"
 		if _, err := db.Exec(`INSERT INTO runs
 			(id, tier, role, worksource, subject)

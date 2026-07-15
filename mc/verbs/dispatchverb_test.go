@@ -494,3 +494,63 @@ func TestDispatchReapsStaleLeaseBeforeReadingInvalidConsoleTimezone(t *testing.T
 }
 
 func ptr64(v int64) *int64 { return &v }
+
+// ---------------------------------------------------------------------------
+// ADR-020 D2(e): the SQL↔dispatch differential for the plan-review predicate.
+// The pure layer is only as true as its projection: if loadRecords does not
+// read plan_reviewed, every real child reads unreviewed and the whole wave
+// lane inverts (children never dispatch; the Editor re-reviews forever).
+// ---------------------------------------------------------------------------
+
+func TestDispatchLoadRecordsProjectsPlanReviewed(t *testing.T) {
+	db := dvSpine(t)
+
+	dvExec(t, db, `INSERT INTO tasks (id, title, scope, priority, created_at, status,
+		dispatch_retries, origin, worksource, target_ref)
+		VALUES (1, 'arc', 'initiative', 1, ?, 'proposed', 3, 'user', 'ws-test', 'main')`,
+		dvOld.Format(spineTime))
+	dvExec(t, db, `UPDATE tasks SET status='seeded' WHERE id=1`)
+	for _, id := range []int64{2, 3} {
+		dvExec(t, db, `INSERT INTO tasks (id, title, scope, status, initiative_id,
+			priority, created_at, dispatch_retries, origin, worksource, target_ref)
+			VALUES (?, 'child', 'task', 'seeded', 1, 1, ?, 3, 'autonomous', 'ws-test', 'main')`,
+			id, dvOld.Format(spineTime))
+	}
+	// Child 2 passed the plan review; child 3 has not.
+	dvExec(t, db, `UPDATE tasks SET plan_reviewed = 1 WHERE id = 2`)
+
+	rec, err := loadRecords(context.Background(), db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[int64]bool{}
+	for _, task := range rec.Tasks {
+		got[task.ID] = task.PlanReviewed
+	}
+	want := map[int64]bool{1: false, 2: true, 3: false}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("projected plan_reviewed = %v, want %v", got, want)
+	}
+
+	// The real projection must drive the real decision: an unreviewed child
+	// keeps the wave under review, and the initiative — which §10 would park —
+	// is the Editor's, over the whole open wave.
+	a := dispatch.Decide(rec, dispatch.Lock{}, dvConfig(24), dispatch.Clock{Now: dvNow(t, db)})
+	if a.Kind != dispatch.KindSpawn || a.Spawn.Role != dispatch.RoleEditorPlanReview {
+		t.Fatalf("action = %+v, want the plan review from real spine rows", a.Spawn)
+	}
+	if !reflect.DeepEqual(a.Spawn.Wave, []int64{2, 3}) {
+		t.Fatalf("wave = %v, want both open children [2 3]", a.Spawn.Wave)
+	}
+
+	// Pass the rest of the wave: the initiative parks and the children work.
+	dvExec(t, db, `UPDATE tasks SET plan_reviewed = 1 WHERE id = 3`)
+	rec, err = loadRecords(context.Background(), db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a = dispatch.Decide(rec, dispatch.Lock{}, dvConfig(24), dispatch.Clock{Now: dvNow(t, db)})
+	if a.Spawn.Role != dispatch.RoleWorker || *a.Spawn.SubjectID != 2 {
+		t.Fatalf("action = %+v, want worker on child 2 once the wave passed", a.Spawn)
+	}
+}
