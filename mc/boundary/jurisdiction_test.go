@@ -201,7 +201,7 @@ func TestAbsentMembersDoNotFailConstruction(t *testing.T) {
 	j, err := boundary.ResolveJurisdiction(boundary.JurisdictionInput{
 		Home:   homeFixture(t, dir),
 		MCHome: absentID(filepath.Join(dir, "mc-home-not-created-yet")),
-		MissionControlRoots: []boundary.ProtectedID{
+		OtherMissionControlRoots: []boundary.ProtectedID{
 			absentID(filepath.Join(dir, "ws", ".mission-control")),
 		},
 		DeniedPaths: []string{filepath.Join(dir, "deny-does-not-exist")},

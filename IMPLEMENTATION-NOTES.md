@@ -1311,3 +1311,20 @@ Entry template:
 - Spec impact: none; ADR-017:354-362 needs an amendment consistent with its own
   destination table.
 - Needs your decision: no
+
+## 2026-07-15 — Own-control ancestry requires explicit ownership association
+- Where: Phase 3 ADR-021 D1/D4 takeover repair; ADR-017:370-374
+- Gap: D4 must permit the own workspace even though it is an ancestor of its
+  own `.mission-control` and Git controls, but D1 exposed all controls in flat
+  lists. Path containment cannot infer ownership safely: another Worksource's
+  external Git control can be nested beneath the own workspace. Exempting every
+  own Worksource root would also let an artifact/state/cache/tool-home expose a
+  nested control.
+- Choice: split Git and `.mission-control` inputs into explicit own/other
+  collections. Only the exact own workspace identity (`os.SameFile`) bypasses
+  the ancestor arm for an explicitly own control. Equality, descendants,
+  intermediate own roots, other controls, absent/unassociated ownership, and
+  additive `denied_paths` continue to deny. Absent own controls remain members;
+  their intermediate ancestors still deny.
+- Spec impact: none; this makes ADR-021's existing qualification executable.
+- Needs your decision: no

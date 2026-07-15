@@ -3,6 +3,7 @@ package boundary_test
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"mc/boundary"
@@ -41,7 +42,7 @@ func TestUnionIsBidirectional(t *testing.T) {
 	unrelated := mkdir(t, filepath.Join(dir, "unrelated"), 0o755)
 
 	_, rejects := unionFixture(t, boundary.JurisdictionInput{
-		MissionControlRoots: []boundary.ProtectedID{protectedID(t, member)},
+		OtherMissionControlRoots: []boundary.ProtectedID{protectedID(t, member)},
 	}, dir)
 
 	t.Run("permit: an unrelated source", func(t *testing.T) {
@@ -84,7 +85,7 @@ func TestUnionMatchesByIdentityNotByString(t *testing.T) {
 	sibling := mkdir(t, filepath.Join(dir, "protected-evil"), 0o755)
 
 	_, rejects := unionFixture(t, boundary.JurisdictionInput{
-		MissionControlRoots: []boundary.ProtectedID{protectedID(t, member)},
+		OtherMissionControlRoots: []boundary.ProtectedID{protectedID(t, member)},
 	}, dir)
 
 	if err := rejects(alias); err == nil {
@@ -203,6 +204,160 @@ func TestJurisdictionCodes(t *testing.T) {
 	})
 }
 
+// D4's load-bearing qualification: the own workspace is necessarily an
+// ancestor of its own .mission-control root, and ADR-017:302 requires that
+// ordinary workspace mount to pass. Equality and descendants of the control
+// root remain protected; only the exact own workspace earns the ancestor
+// exemption.
+func TestOwnWorkspaceMayContainItsOwnMissionControlRoot(t *testing.T) {
+	dir := t.TempDir()
+	workspace := mkdir(t, filepath.Join(dir, "own-workspace"), 0o755)
+	control := mkdir(t, filepath.Join(workspace, ".mission-control"), 0o755)
+	controlChild := mkdir(t, filepath.Join(control, "tasks"), 0o755)
+
+	allowlist, err := boundary.ParseMountAllowlist([]byte(`version = 1
+[[allow]]
+path = "` + workspace + `"
+target = "workspace"
+access = "rw"
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolved, err := boundary.ResolveAllowlist(allowlist)
+	if err != nil {
+		t.Fatal(err)
+	}
+	j, err := boundary.ResolveJurisdiction(boundary.JurisdictionInput{
+		Home:                   mkdir(t, filepath.Join(dir, "home"), 0o750),
+		OwnWorksource:          boundary.WorksourceRoots{Workspace: protectedID(t, workspace)},
+		OwnMissionControlRoots: []boundary.ProtectedID{protectedID(t, control)},
+	}, os.Getuid())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := resolved.Authorize(workspace, boundary.AccessRW, boundary.BlockPolicy{}, j); err != nil {
+		t.Fatalf("own workspace rejected because it contains its own .mission-control root: %v", err)
+	}
+
+	for _, path := range []string{control, controlChild} {
+		id, err := boundary.ResolveSource(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := j.Rejects(id, boundary.TypedClaim{}); err == nil {
+			t.Errorf("protected own control path %q permitted; the exemption is ancestor-only", path)
+		}
+	}
+}
+
+// D4's exemption is deliberately narrower than "a source belongs to the own
+// Worksource" and narrower than "a control root is below the own workspace".
+// The host must associate each control with its owner, and only the exact own
+// workspace identity may pass the ancestor arm for an explicitly own control.
+func TestOwnControlAncestorExemptionIsExactAndAssociated(t *testing.T) {
+	dir := t.TempDir()
+	home := mkdir(t, filepath.Join(dir, "home"), 0o750)
+	workspace := mkdir(t, filepath.Join(dir, "own-workspace"), 0o755)
+	artifact := mkdir(t, filepath.Join(workspace, "artifact"), 0o755)
+	ownControl := mkdir(t, filepath.Join(artifact, "own.git"), 0o755)
+	nested := mkdir(t, filepath.Join(workspace, "nested"), 0o755)
+	absentOwnControl := filepath.Join(nested, "deeper", "control")
+	otherControl := mkdir(t, filepath.Join(workspace, "vendor", "other.git"), 0o755)
+	workspaceID := protectedID(t, workspace)
+
+	rejects := func(t *testing.T, in boundary.JurisdictionInput, source string) error {
+		t.Helper()
+		in.Home = home
+		j, err := boundary.ResolveJurisdiction(in, os.Getuid())
+		if err != nil {
+			t.Fatalf("ResolveJurisdiction() = %v", err)
+		}
+		id, err := boundary.ResolveSource(source)
+		if err != nil {
+			t.Fatalf("ResolveSource(%q) = %v", source, err)
+		}
+		return j.Rejects(id, boundary.TypedClaim{})
+	}
+
+	base := boundary.JurisdictionInput{
+		OwnWorksource: boundary.WorksourceRoots{
+			Workspace: workspaceID,
+			Artifacts: []boundary.ProtectedID{protectedID(t, artifact)},
+		},
+		OwnGitControls: []boundary.ProtectedID{protectedID(t, ownControl)},
+	}
+
+	t.Run("exact own workspace identity permits", func(t *testing.T) {
+		if err := rejects(t, base, workspace); err != nil {
+			t.Fatalf("exact own workspace rejected: %v", err)
+		}
+	})
+
+	t.Run("same-file different-spelling workspace permits", func(t *testing.T) {
+		// A symlink alias is inert here because ResolveSource canonicalizes both
+		// spellings to the same string. On a case-insensitive volume this pair has
+		// different canonical strings but one inode, so a string-based ownership
+		// mutation fails the test.
+		caseVariant := filepath.Join(filepath.Dir(workspace), strings.ToUpper(filepath.Base(workspace)))
+		variantID, err := boundary.ResolveSource(caseVariant)
+		if err != nil || !os.SameFile(workspaceID.Info, variantID.Info) {
+			t.Skip("case-sensitive volume: no same-file/different-spelling pair available")
+		}
+		if workspaceID.Canonical == variantID.Canonical {
+			t.Fatalf("fixture inert: both spellings canonicalized to %q", workspaceID.Canonical)
+		}
+		if err := rejects(t, base, caseVariant); err != nil {
+			t.Fatalf("same-file different-spelling own workspace rejected: %v", err)
+		}
+	})
+
+	t.Run("own artifact ancestor remains denied", func(t *testing.T) {
+		if err := rejects(t, base, artifact); err == nil {
+			t.Fatal("own artifact was granted the workspace-only control ancestry exemption")
+		}
+	})
+
+	t.Run("absent own control is retained and the exemption stays exact", func(t *testing.T) {
+		in := boundary.JurisdictionInput{
+			OwnWorksource:  boundary.WorksourceRoots{Workspace: workspaceID},
+			OwnGitControls: []boundary.ProtectedID{absentID(absentOwnControl)},
+		}
+		if err := rejects(t, in, workspace); err != nil {
+			t.Fatalf("exact own workspace rejected for an absent own control: %v", err)
+		}
+		if err := rejects(t, in, nested); err == nil {
+			t.Fatal("absent own control was skipped or its intermediate ancestor was exempted")
+		}
+	})
+
+	t.Run("control without an own workspace association fails closed", func(t *testing.T) {
+		in := boundary.JurisdictionInput{
+			OwnGitControls: []boundary.ProtectedID{protectedID(t, ownControl)},
+		}
+		if err := rejects(t, in, workspace); err == nil {
+			t.Fatal("control ancestry was exempted without an own workspace identity")
+		}
+	})
+
+	t.Run("another Worksource control beneath own workspace remains denied", func(t *testing.T) {
+		in := base
+		in.OtherGitControls = []boundary.ProtectedID{protectedID(t, otherControl)}
+		if err := rejects(t, in, workspace); err == nil {
+			t.Fatal("own workspace exposed another Worksource's nested Git control")
+		}
+	})
+
+	t.Run("denied_paths remains additive", func(t *testing.T) {
+		in := base
+		in.DeniedPaths = []string{workspace}
+		if err := rejects(t, in, workspace); err == nil {
+			t.Fatal("own-control exemption subtracted an explicit denied_paths member")
+		}
+	})
+}
+
 // ADR-021 D6: jurisdiction sits AFTER the allow-root match (Decision 3's own
 // numbering) and BEFORE ResolveAccess.
 func TestAuthorizeOrdering(t *testing.T) {
@@ -225,8 +380,8 @@ access = "rw"
 	}
 	var blocked boundary.BlockPolicy
 	j, err := boundary.ResolveJurisdiction(boundary.JurisdictionInput{
-		Home:                mkdir(t, filepath.Join(dir, "home"), 0o750),
-		MissionControlRoots: []boundary.ProtectedID{protectedID(t, protected)},
+		Home:                     mkdir(t, filepath.Join(dir, "home"), 0o750),
+		OtherMissionControlRoots: []boundary.ProtectedID{protectedID(t, protected)},
 	}, os.Getuid())
 	if err != nil {
 		t.Fatal(err)
@@ -261,8 +416,8 @@ access = "ro"
 			t.Fatal(err)
 		}
 		roJ, err := boundary.ResolveJurisdiction(boundary.JurisdictionInput{
-			Home:                mkdir(t, filepath.Join(dir, "home3"), 0o750),
-			MissionControlRoots: []boundary.ProtectedID{protectedID(t, roProtected)},
+			Home:                     mkdir(t, filepath.Join(dir, "home3"), 0o750),
+			OtherMissionControlRoots: []boundary.ProtectedID{protectedID(t, roProtected)},
 		}, os.Getuid())
 		if err != nil {
 			t.Fatal(err)
@@ -293,8 +448,8 @@ access = "ro"
 	t.Run("a non-allowlisted protected path exits at not_allowlisted", func(t *testing.T) {
 		outside := mkdir(t, filepath.Join(dir, "outside"), 0o755)
 		jOutside, err := boundary.ResolveJurisdiction(boundary.JurisdictionInput{
-			Home:                mkdir(t, filepath.Join(dir, "home2"), 0o750),
-			MissionControlRoots: []boundary.ProtectedID{protectedID(t, outside)},
+			Home:                     mkdir(t, filepath.Join(dir, "home2"), 0o750),
+			OtherMissionControlRoots: []boundary.ProtectedID{protectedID(t, outside)},
 		}, os.Getuid())
 		if err != nil {
 			t.Fatal(err)

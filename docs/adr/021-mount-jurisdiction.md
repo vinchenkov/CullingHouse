@@ -17,6 +17,15 @@ merge may span two. `KindNotABind` is now a deny-only sentinel outside the
 authorized domain. This is the smallest correction because no production
 planner consumes the seam yet.
 
+The same takeover found that D4's own-control qualification was not representable
+by D1's flat `GitControls` / `MissionControlRoots` lists. Inferring ownership from
+path containment is unsafe: another Worksource's external Git control may be
+nested beneath the own workspace. D1 therefore associates control roots
+explicitly as own or other, and D4 exempts only the exact own `workspace_root`
+identity from the ancestor arm for an explicitly own control. Equality,
+descendants, intermediate own roots, other controls, and every other protected
+member remain denied.
+
 **The second review (`docs/reviews/2026-07-14-adr-021-implementation-probe.json`)
 raised 6, confirmed 5 (all major) and 1 partial.** Unlike the first, it found
 the ADR *salvageable* — every defect is local to one decision and the predicate
@@ -218,10 +227,15 @@ type JurisdictionInput struct {
     HomeClassRoots  []ProtectedID // ~/.ssh etc., only those present (D8)
     GatewaySecrets  []ProtectedID
     RuntimeControls []ProtectedID // EVERY runtime control dir, not just non-selected
-    OwnWorksource   WorksourceRoots   // identity-based own/other discrimination (D7)
+    OwnWorksource   WorksourceRoots    // identity-based own/other discrimination (D7)
     OtherWorksources []WorksourceRoots // workspace/worktree/artifact/state/cache/tool-home
-    GitControls     []ProtectedID // pre-resolved: this package owns no Git resolver
-    MissionControlRoots []ProtectedID // <workspace_root>/.mission-control
+
+    // Ownership is explicit. A flat list cannot distinguish the own external
+    // Git dir from another Worksource's control nested beneath the own workspace.
+    OwnGitControls           []ProtectedID
+    OtherGitControls         []ProtectedID
+    OwnMissionControlRoots   []ProtectedID // own <workspace_root>/.mission-control
+    OtherMissionControlRoots []ProtectedID
 
     // The kind -> authorized-root binding (D10). THIS is what makes a typed
     // claim checkable rather than self-certifying. A kind absent from this map
@@ -427,17 +441,23 @@ The ancestor direction applies to:
 - **other** Worksources' roots (`mount.cross_worksource`) — **yes**: this is
   precisely ADR-017:388-389's stated purpose, *"so mounting a parent of another
   Worksource cannot expose a denied descendant"*;
-- the **own** Worksource's own `.mission-control` / Git-control roots — **no**.
+- the **own** Worksource's own `.mission-control` / Git-control roots — **no,
+  but only when `S` is the exact own `workspace_root` identity and the control
+  was supplied in the explicit own-control collection**.
   ADR-017:371-373 already names what the own tree may reach: *"only the exact own
   task-local root, committed-tree materializations, trusted setup/landing, and
   Homie's type-matched inert nested covers"*. Own ancestry is governed by that
   clause, not by a blanket ancestor rejection.
 
-Own/other is decided by **identity**, never by name (D7), so this qualification
-cannot be spoofed by a path that merely looks like the own workspace. The
-descendant direction is unqualified for every member: the own workspace being an
-ancestor of `.mission-control` is legal; a mount *inside* `.mission-control` is
-not, except through the :371-373 clause.
+Own/other is decided from the host's explicit association, and the source is
+matched to the own workspace by **identity**, never by name (D7), so this
+qualification cannot be spoofed by a path that merely looks like the own
+workspace. It does not extend to an own artifact/state/cache/tool-home or an
+intermediate directory, even if that root contains the control. A control with
+no own-workspace identity fails closed. The descendant direction is unqualified
+for every member: the own workspace being an ancestor of `.mission-control` is
+legal; a mount *inside* `.mission-control` is not, except through the :371-373
+clause. `denied_paths` remains additive and can still deny the own workspace.
 
 The ancestor direction is **load-bearing, not redundant with the blocked floor**.
 Worked example, which is also a required test: `~/Library` is an ancestor of the

@@ -101,12 +101,18 @@ type JurisdictionInput struct {
 	// ~/.aws is simply not a member and is omitted, never encoded with a nil Info.
 	HomeClassRoots []ProtectedID
 
-	GatewaySecrets      []ProtectedID
-	RuntimeControls     []ProtectedID // EVERY runtime control dir, not just non-selected
-	OwnWorksource       WorksourceRoots
-	OtherWorksources    []WorksourceRoots
-	GitControls         []ProtectedID // pre-resolved: this package owns no Git resolver
-	MissionControlRoots []ProtectedID // <workspace_root>/.mission-control
+	GatewaySecrets   []ProtectedID
+	RuntimeControls  []ProtectedID // EVERY runtime control dir, not just non-selected
+	OwnWorksource    WorksourceRoots
+	OtherWorksources []WorksourceRoots
+	// Control roots are ownership-associated explicitly. A flat list cannot tell
+	// an own external Git dir from another Worksource's control nested beneath
+	// the own workspace, and guessing would turn D4's ancestor exemption into a
+	// cross-Worksource leak.
+	OwnGitControls           []ProtectedID
+	OtherGitControls         []ProtectedID
+	OwnMissionControlRoots   []ProtectedID // own <workspace_root>/.mission-control
+	OtherMissionControlRoots []ProtectedID
 
 	// TypedRoots is the kind -> authorized-root binding (D10). THIS is what makes
 	// a typed claim checkable rather than self-certifying: the root a typed source
@@ -117,9 +123,10 @@ type JurisdictionInput struct {
 
 // protectedRoot is one resolved union member plus the code it reports.
 type protectedRoot struct {
-	id    ProtectedID
-	cross bool   // D7: another Worksource's root -> mount.cross_worksource
-	label string // for the operator-facing message
+	id                        ProtectedID
+	cross                     bool   // D7: another Worksource's root -> mount.cross_worksource
+	allowOwnWorkspaceAncestor bool   // D4: own control root's one directional exemption
+	label                     string // for the operator-facing message
 }
 
 // Jurisdiction is the non-subtractable protected set (ADR-017 Decision 5).
@@ -142,8 +149,12 @@ type Jurisdiction struct {
 
 	home       ProtectedID
 	broadRoots []ProtectedID // D4: HOME's chain UNION its alias routes
-	roots      []protectedRoot
-	typedRoots map[TypedKind][]ProtectedID
+	// Only this exact identity can earn the own-control ancestor exemption.
+	// Artifacts/state/cache/tool-home are own roots too, but have no entitlement
+	// to contain Git or .mission-control controls.
+	ownWorkspace ProtectedID
+	roots        []protectedRoot
+	typedRoots   map[TypedKind][]ProtectedID
 }
 
 // ResolveJurisdiction is the only constructor (D2).
@@ -166,7 +177,7 @@ func ResolveJurisdiction(in JurisdictionInput, ownerUID int) (Jurisdiction, erro
 	if err != nil {
 		return Jurisdiction{}, err
 	}
-	j := Jurisdiction{typedRoots: typedRoots}
+	j := Jurisdiction{typedRoots: typedRoots, ownWorkspace: in.OwnWorksource.Workspace}
 
 	home, err := resolveHome(in.Home, ownerUID)
 	if err != nil {
@@ -187,10 +198,16 @@ func ResolveJurisdiction(in JurisdictionInput, ownerUID int) (Jurisdiction, erro
 	// directory at all).
 	j.addRoot(in.MCHome, false, "MC_HOME")
 
-	for _, id := range in.MissionControlRoots {
+	for _, id := range in.OwnMissionControlRoots {
+		j.addOwnControlRoot(id, "own <workspace_root>/.mission-control root")
+	}
+	for _, id := range in.OtherMissionControlRoots {
 		j.addRoot(id, false, "<workspace_root>/.mission-control root")
 	}
-	for _, id := range in.GitControls {
+	for _, id := range in.OwnGitControls {
+		j.addOwnControlRoot(id, "own registered Git control dir")
+	}
+	for _, id := range in.OtherGitControls {
 		j.addRoot(id, false, "registered Git control dir")
 	}
 	for _, id := range in.GatewaySecrets {
@@ -257,6 +274,17 @@ func (j *Jurisdiction) addRoot(id ProtectedID, cross bool, label string) {
 		return
 	}
 	j.roots = append(j.roots, protectedRoot{id: id, cross: cross, label: label})
+}
+
+func (j *Jurisdiction) addOwnControlRoot(id ProtectedID, label string) {
+	if id.Canonical == "" {
+		return
+	}
+	j.roots = append(j.roots, protectedRoot{
+		id:                        id,
+		allowOwnWorkspaceAncestor: true,
+		label:                     label,
+	})
 }
 
 func worksourceMembers(ws WorksourceRoots) []ProtectedID {
@@ -666,11 +694,18 @@ func (j Jurisdiction) rejectsUnion(id SourceIdentity, cross bool) error {
 			return err
 		}
 		if ancestor {
+			if root.allowOwnWorkspaceAncestor && j.sourceIsOwnWorkspace(id) {
+				continue
+			}
 			return mountErrf(code, "source %q is an ancestor of the protected %s %q, and mounting "+
 				"it would expose that root", id.Canonical, root.label, root.id.Canonical)
 		}
 	}
 	return nil
+}
+
+func (j Jurisdiction) sourceIsOwnWorkspace(id SourceIdentity) bool {
+	return j.ownWorkspace.Present() && sameFile(id.Info, j.ownWorkspace.Info)
 }
 
 // isAncestorOf reports whether the source is an ancestor of the protected path,
