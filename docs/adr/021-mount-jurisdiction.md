@@ -6,6 +6,17 @@
 Proposed draft, then again as an Accepted document by a pre-TDD implementation
 probe. TDD next, in the order at the end of this document.
 
+**Amended by the cross-harness implementation takeover** (2026-07-15): the
+two-direction derivation guard proved row coverage and enum coverage but not
+their inverse relation. One `KindInertCover` consequently spanned seventeen
+agent/setup/landing destinations, and projection/registered-root kinds crossed
+the ordinary and seeding rows. D10a's stated destination confinement was not
+expressible. The amended guard requires every authorized kind to occur in one
+destination row; only the explicit `.codex`/`.claude` selected-runtime-control
+merge may span two. `KindNotABind` is now a deny-only sentinel outside the
+authorized domain. This is the smallest correction because no production
+planner consumes the seam yet.
+
 **The second review (`docs/reviews/2026-07-14-adr-021-implementation-probe.json`)
 raised 6, confirmed 5 (all major) and 1 partial.** Unlike the first, it found
 the ADR *salvageable* — every defect is local to one decision and the predicate
@@ -791,15 +802,19 @@ ADR-017:354-362's closed source-kind list names *"envelope, sandbox,
 resolver/network projection, CA certificate, workflow capture, and current
 correction output"* explicitly.
 
-Granularity: **one kind per destination row, merged only where ADR-017 merges
-them** (`.codex`/`.claude` are two arms of one *"selected runtime-control dir"*;
-the four package caches are one row). Setup/landing never share a kind with the
+Granularity: **each kind belongs to exactly one destination row, merged only
+where ADR-017 merges rows**. A row may have several source arms and therefore
+several kinds (`/workspace/source` is the example), and a parameterized row may
+authorize several resolved identities. The inverse is forbidden: one kind may
+not authorize roots for two destinations. The sole explicit cross-row merge is
+`.codex`/`.claude`, two arms of one *"selected runtime-control dir"*; the four
+package caches are already one row. Setup/landing never share a kind with the
 agent table — ADR-017:686-687 says so verbatim (*"their own complete mount
 tables; they never inherit the agent table"*), and the collision is not
 theoretical: setup `/repo/source` is **RO** (:691) while landing `/repo/source`
-is **RW** (:699), *"intentionally including its primary checkout"*. A
-destination-keyed table that merged them would silently fuse the least- and
-most-privileged grants in the system.
+is **RW** (:699), *"intentionally including its primary checkout"*. A kind that
+crossed those rows would silently fuse the least- and most-privileged grants in
+the system.
 
 **No kind is blocked on a missing formula.** Every root marked *host-side* below
 arrives pre-resolved in `TypedRoots`; `mc/boundary` compares identities and
@@ -815,22 +830,42 @@ slice rather than this slice's blocker.
 type TypedKind uint8
 
 const (
-	KindNone TypedKind = iota // zero value: NOT a claim. Selects D10's union predicate.
+    KindNone TypedKind = iota // zero value: NOT a claim. Selects D10's union predicate.
 
-	// Task-local skeleton (:636-650; host formulas :713-714)
-	KindTaskRoot   // :636  <workspace_root>/.mission-control/tasks/task-<task-id>
-	KindTaskSource // :637  <task-root>/source
-	KindTaskGit    // :640  <task-root>/git
-	KindSealedPack // :645  <task-git>/objects/pack      [see Sharp Edge 6]
-	KindInertCover // :638,:641-644,:646-650,:654,:656-658,:692,:700  [see Sharp Edge 6]
+    // Agent task/workspace rows (:636-650). Every cover has its own slot.
+    KindTaskRoot
+    KindTaskSource
+    KindWorkspaceSourceGitCover
+    KindWorkspaceSourceMissionControlCover
+    KindTaskGit
+    KindTaskGitConfigCover
+    KindTaskGitHooksCover
+    KindTaskGitInfoCover
+    KindTaskGitObjectsInfoCover
+    KindSealedPack // [see Sharp Edge 6]
+    KindTaskGitPackedRefsCover
+    KindTaskGitShallowCover
+    KindTaskGitWorktreeCommondirCover
+    KindTaskGitWorktreeGitdirCover
+    KindTaskGitWorktreeConfigCover
 
-	// Projections and spine-registered roots (:637,:653,:655,:659,:660,:697)
-	KindCommittedProjection // :637,:653   host-side
-	KindExecutionProjection // :637        host-side
-	KindRegisteredRoot      // :637,:653   spine-registered, host-side
-	KindOperatorWorksource  // :655        spine-registered, host-side
-	KindOperatorArtifact    // :659        spine-registered, host-side
-	KindTraceProjection     // :660        ADR-017 Decision 7's root, host-side
+    // Several source arms, all confined to /workspace/source (:637).
+    KindWorkspaceCommittedProjection
+    KindExecutionProjection
+    KindWorkspaceRegisteredRoot
+
+    // Seeding rows (:653-654), never shared with /workspace/source.
+    KindSeedingCommittedProjection
+    KindSeedingRegisteredRoot
+    KindSeedingSourceGitCover
+
+    // Operator/Homie workspace rows (:655-660).
+    KindOperatorWorksource
+    KindOperatorSourceGitCover
+    KindOperatorRegisteredControlCover
+    KindOperatorMissionControlCover
+    KindOperatorArtifact
+    KindTraceProjection
 
 	// MC_HOME typed own-source grants (:663-684)
 	KindOwnSession       // :663  MC_HOME/sessions/<run-or-session-id>/   NOTE: run-OR-SESSION
@@ -860,19 +895,25 @@ const (
 	KindRunnerSource // :680  release runner tree, host-side install path
 
 	// Setup/landing effect classes (:691-702). Separate by ADR-017:686-687.
-	KindSetupWorksource   // :691  RO
-	KindSetupTaskRoot     // :693
-	KindSetupTaskSource   // :694
-	KindSetupTaskGit      // :695
-	KindSetupSeal         // :696
-	KindSetupProjection   // :697
-	KindSetupEnvelope     // :698
-	KindLandingWorksource // :699  RW — the ONLY grant that gets a real Worksource repo RW
-	KindLandingTaskRoot   // :701
-	KindLandingEnvelope   // :702
+    KindSetupWorksource
+    KindSetupMissionControlCover
+    KindSetupTaskRoot
+    KindSetupTaskSource
+    KindSetupTaskGit
+    KindSetupSeal
+    KindSetupProjection
+    KindSetupEnvelope
+    KindLandingWorksource // :699 RW — the only real Worksource repo RW grant
+    KindLandingMissionControlCover
+    KindLandingTaskRoot
+    KindLandingEnvelope
 
-	kindMax
+    kindMax // exclusive upper bound of real host-bind kinds
 )
+
+// Confused-planner deny sentinel. Non-bind rows have no authorized kind and
+// KindNotABind never appears in TypedRoots or the derivation table.
+const KindNotABind TypedKind = ^TypedKind(0)
 ```
 
 `KindRecordInputCorrection` and `KindCorrectionOutput` share a formula *string*
@@ -881,11 +922,13 @@ authorize a Verifier to overwrite a prior correction. The formula is the same;
 the resolved root is not.
 
 **The guard test, which is the structural fix.** Go cannot make this a build-time
-check, so it is a required test, and it must run in **both** directions: a static
-`adr017Rows` table (destination + line cite + kind) fails if any row maps to
-`KindNone`, **and** fails if any kind in `[KindNone+1, kindMax)` appears in no
-row. One-directional coverage is exactly how a nine-item list survived a full
-adversarial review.
+check, so it is required in **three** directions: a static `adr017Rows` table
+(destination + line cite + kind) fails if any bind row maps to `KindNone`, fails
+if any kind in `[KindNone+1, kindMax)` appears in no row, **and fails if a kind
+appears in more than one destination row** (except the exact runtime-control
+pair). `KindNotABind` must appear in no authorized row. The first two directions
+alone stayed green over the seventeen-row `KindInertCover` collapse; structural
+coverage without confinement is another false confidence signal.
 
 ### D11. `ResolveJurisdiction` re-runs; the verdict is never cached — and neither is the input
 
@@ -962,13 +1005,15 @@ source. That is a second reason the seam had to move.
 
 6. **OUT OF CHARTER, stated rather than smuggled.** This ADR's Status claims it
    *"adds nothing to ADR-017's policy."* One item breaks that claim:
-   **`KindInertCover` and `KindSealedPack` are not in ADR-017:354-362's
-   source-kind list, and that list is declared CLOSED** (*"Allowed source kinds
-   are closed: …"*). The generated inert covers (:638-650, :654, :656-658, :692,
-   :700) and the setup-generated sealed pack directory (:645) are real host binds
-   with real host sources, and ADR-017 names no kind for either. **Adding a kind
-   to a list ADR-017 declares closed is an ADR-017 amendment, not an ADR-021
-   resolution.**
+   **The destination-specific inert-cover kinds and `KindSealedPack` are not in
+   ADR-017:354-362's source-kind list, and that list is declared CLOSED**
+   (*"Allowed source kinds are closed: …"*). The generated inert covers
+   (:638-650, :654, :656-658, :692, :700) and the setup-generated sealed pack
+   directory (:645) are real host binds with real host sources, and ADR-017
+   names no kind for either. **Adding kinds to a list ADR-017 declares closed is
+   an ADR-017 amendment, not an ADR-021 resolution.** Splitting the provisional
+   cover class by destination fixes D10a confinement; it does not resolve this
+   separate charter gap.
 
    Handling, per AGENTS.md §6 (log-and-go — defining them is *stricter* than
    omitting them, so no invariant breaks): this ADR defines both provisionally,
@@ -1021,10 +1066,11 @@ Fast lane, red-first, `mc/boundary`:
   `cross_worksource`, deterministically; own roots do **not** trip it.
 - **Ordering** (D6): jurisdiction beats `ResolveAccess` (an RW request on a
   protected path reports `denied_root`, not `rw_not_permitted`).
-- **The enum derivation guard** (D10a), **both directions**: the `adr017Rows`
-  table fails if any host-bind row of :634-702 maps to `KindNone`, AND fails if
-  any kind in `[KindNone+1, kindMax)` appears in no row. This test is the thing
-  that stops the next hand-copied list.
+- **The enum derivation guard** (D10a), **all three directions**: the
+  `adr017Rows` table fails if any host-bind row of :634-702 maps to `KindNone`,
+  fails if any kind in `[KindNone+1, kindMax)` appears in no row, AND fails if a
+  kind crosses destination rows (except the exact `.codex`/`.claude` pair).
+  `KindNotABind` is outside the interval and appears in no authorized row.
 - **Typed sources** (D1, D10) — **the permit side first, because pinning only
   the deny side is exactly how the first draft's fatal defect stayed
   invisible**: **every host-bind row of :634-702** PLANS SUCCESSFULLY through
@@ -1109,8 +1155,9 @@ Authoritative; it replaces the five-step order the ledger carried before the
 second review, which was written against the defective D1/D5/D10.
 
 1. **`TypedKind` + the derivation guard** (D10a). Pure data, no dependencies.
-   RED first, **both directions**: a kindless `:634-702` row fails, and an
-   orphaned kind fails.
+   RED first, **all three directions**: a kindless `:634-702` row fails, an
+   orphaned kind fails, and a kind reused across destination rows fails (except
+   the exact selected-runtime-control pair).
 2. **`ProtectedID.Present()` + the absent-member law; `ResolveJurisdiction(in,
    ownerUID)`** + the zero-value law (unexported `resolved`; a bare
    `Jurisdiction{}` rejects everything) + D2 non-subtractability + the

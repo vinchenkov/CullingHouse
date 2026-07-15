@@ -1293,3 +1293,21 @@ Entry template:
 - Spec impact: ADR-017 Decision 5 may generalize :275-276 from declared deny
   paths to all protected members except its explicit "when present" HOME class.
 - Needs your decision: no
+
+## 2026-07-15 — Generated cover and sealed-pack kinds extend ADR-017's closed source-kind list
+- Where: ADR-021 D10a and Sharp Edge 6; ADR-017:354-362 and destination rows
+  :638-650, :654, :656-658, :692, :700
+- Gap: ADR-017 declares its allowed source kinds closed, but its destination
+  table separately requires generated inert host-bind covers and a sealed pack
+  without naming either in that closed list. ADR-021 must classify those binds
+  to keep the kind-specific predicate total; after the takeover fix, each cover
+  destination has a distinct kind so roots cannot cross rows.
+- Choice: provisionally define destination-specific cover kinds and
+  `KindSealedPack`. This is stricter than omission (an unclassified bind cannot
+  plan), preserves fail-closed behavior, and stays parametric/reversible. It
+  does not pretend to amend ADR-017; that document still needs to say whether
+  generated covers were meant to be outside its source-kind sentence or the
+  closed list is incomplete.
+- Spec impact: none; ADR-017:354-362 needs an amendment consistent with its own
+  destination table.
+- Needs your decision: no

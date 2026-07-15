@@ -24,20 +24,43 @@ const (
 	// Authorize always passes this.
 	KindNone TypedKind = iota
 
-	// Task-local skeleton (ADR-017:636-650; host formulas :713-714).
-	KindTaskRoot   // :636  <workspace_root>/.mission-control/tasks/task-<task-id>
-	KindTaskSource // :637  <task-root>/source
-	KindTaskGit    // :640  <task-root>/git
-	KindSealedPack // :645  <task-git>/objects/pack
-	KindInertCover // :638-:650, :654, :656-:658, :692, :700 — generated RO covers
+	// Agent task/workspace rows (ADR-017:636-650). Cover kinds are deliberately
+	// destination-specific: sharing one semantic "inert cover" kind across rows
+	// made roots for seventeen agent/setup/landing destinations interchangeable.
+	KindTaskRoot
+	KindTaskSource
+	KindWorkspaceSourceGitCover
+	KindWorkspaceSourceMissionControlCover
+	KindTaskGit
+	KindTaskGitConfigCover
+	KindTaskGitHooksCover
+	KindTaskGitInfoCover
+	KindTaskGitObjectsInfoCover
+	KindSealedPack
+	KindTaskGitPackedRefsCover
+	KindTaskGitShallowCover
+	KindTaskGitWorktreeCommondirCover
+	KindTaskGitWorktreeGitdirCover
+	KindTaskGitWorktreeConfigCover
 
-	// Projections and spine-registered roots (:637, :653, :655, :659, :660).
-	KindCommittedProjection // :637, :653  clean pinned committed-tree projection
-	KindExecutionProjection // :637        execution-scoped sealed-tree materialization
-	KindRegisteredRoot      // :637, :653  registered non-repository root
-	KindOperatorWorksource  // :655        Homie's registered live Worksource root
-	KindOperatorArtifact    // :659        Homie's registered artifact source
-	KindTraceProjection     // :660        ADR-017 Decision 7's hardlink projection root
+	// The several source arms of /workspace/source share that destination row,
+	// but no kind crosses into the seeding row.
+	KindWorkspaceCommittedProjection
+	KindExecutionProjection
+	KindWorkspaceRegisteredRoot
+
+	// Seeding rows (:653-654).
+	KindSeedingCommittedProjection
+	KindSeedingRegisteredRoot
+	KindSeedingSourceGitCover
+
+	// Operator/Homie workspace rows (:655-660).
+	KindOperatorWorksource
+	KindOperatorSourceGitCover
+	KindOperatorRegisteredControlCover
+	KindOperatorMissionControlCover
+	KindOperatorArtifact
+	KindTraceProjection
 
 	// MC_HOME typed own-source grants (:663-:684).
 	KindOwnSession       // :663  MC_HOME/sessions/<run-or-session-id>/  NOTE: run-OR-session
@@ -76,77 +99,98 @@ const (
 	// landing /repo/source is RW (:699) — the only grant in the system that gets
 	// a real Worksource repository RW, "intentionally including its primary
 	// checkout".
-	KindSetupWorksource   // :691  RO
-	KindSetupTaskRoot     // :693
-	KindSetupTaskSource   // :694
-	KindSetupTaskGit      // :695
-	KindSetupSeal         // :696
-	KindSetupProjection   // :697
-	KindSetupEnvelope     // :698
-	KindLandingWorksource // :699  RW
-	KindLandingTaskRoot   // :701
-	KindLandingEnvelope   // :702
-
-	// KindNotABind names a destination that is NOT a host bind: an image-rootfs
-	// directory (:636's non-standalone arm, :665 "never a bind", :667) or the
-	// runtime-local named volume (:679, whose boundary is setuid mc ownership).
-	// These have no host inode, so a jurisdiction question about them is
-	// meaningless and any answer would be a lie. Reaching Rejects with this kind
-	// means the planner is confused: it denies, loudly, rather than permitting.
-	KindNotABind
+	KindSetupWorksource
+	KindSetupMissionControlCover
+	KindSetupTaskRoot
+	KindSetupTaskSource
+	KindSetupTaskGit
+	KindSetupSeal
+	KindSetupProjection
+	KindSetupEnvelope
+	KindLandingWorksource
+	KindLandingMissionControlCover
+	KindLandingTaskRoot
+	KindLandingEnvelope
 
 	kindMax
 )
 
+// KindNotABind is a confused-planner DENY SENTINEL, not an authorized kind.
+// Image-rootfs rows and the named volume carry no host inode and therefore no
+// entry in TypedRoots. Keeping the sentinel outside [KindNone+1, kindMax)
+// preserves D10a's exact host-bind domain while still letting Rejects fail
+// loudly if a caller tries to ask a meaningless jurisdiction question.
+const KindNotABind TypedKind = ^TypedKind(0)
+
 // kindNames is indexed by TypedKind. A kind missing here yields a numeric
 // fallback rather than a panic; the orphan guard is what keeps it honest.
 var kindNames = [...]string{
-	KindNone:                  "none",
-	KindTaskRoot:              "task-root",
-	KindTaskSource:            "task-source",
-	KindTaskGit:               "task-git",
-	KindSealedPack:            "sealed-pack",
-	KindInertCover:            "inert-cover",
-	KindCommittedProjection:   "committed-projection",
-	KindExecutionProjection:   "execution-projection",
-	KindRegisteredRoot:        "registered-root",
-	KindOperatorWorksource:    "operator-worksource",
-	KindOperatorArtifact:      "operator-artifact",
-	KindTraceProjection:       "trace-projection",
-	KindOwnSession:            "own-session",
-	KindOwnState:              "own-state",
-	KindPackageCache:          "package-cache",
-	KindRuntimeControl:        "runtime-control",
-	KindRunOutput:             "run-output",
-	KindCompletionSeal:        "completion-seal",
-	KindAttachmentIn:          "attachment-in",
-	KindAttachmentOut:         "attachment-out",
-	KindWorkflowCapture:       "workflow-capture",
-	KindCorrectionOutput:      "correction-output",
-	KindRecordInputOutput:     "record-input-output",
-	KindRecordInputCorrection: "record-input-correction",
-	KindRecordInputRevision:   "record-input-revision",
-	KindRecordInputContext:    "record-input-context",
-	KindEnvelope:              "envelope",
-	KindSandbox:               "sandbox",
-	KindNetworkProjection:     "network-projection",
-	KindGatewayCA:             "gateway-ca",
-	KindResolverProjection:    "resolver-projection",
-	KindRunnerSource:          "runner-source",
-	KindSetupWorksource:       "setup-worksource",
-	KindSetupTaskRoot:         "setup-task-root",
-	KindSetupTaskSource:       "setup-task-source",
-	KindSetupTaskGit:          "setup-task-git",
-	KindSetupSeal:             "setup-seal",
-	KindSetupProjection:       "setup-projection",
-	KindSetupEnvelope:         "setup-envelope",
-	KindLandingWorksource:     "landing-worksource",
-	KindLandingTaskRoot:       "landing-task-root",
-	KindLandingEnvelope:       "landing-envelope",
-	KindNotABind:              "not-a-bind",
+	KindNone:                               "none",
+	KindTaskRoot:                           "task-root",
+	KindTaskSource:                         "task-source",
+	KindWorkspaceSourceGitCover:            "workspace-source-git-cover",
+	KindWorkspaceSourceMissionControlCover: "workspace-source-mission-control-cover",
+	KindTaskGit:                            "task-git",
+	KindTaskGitConfigCover:                 "task-git-config-cover",
+	KindTaskGitHooksCover:                  "task-git-hooks-cover",
+	KindTaskGitInfoCover:                   "task-git-info-cover",
+	KindTaskGitObjectsInfoCover:            "task-git-objects-info-cover",
+	KindSealedPack:                         "sealed-pack",
+	KindTaskGitPackedRefsCover:             "task-git-packed-refs-cover",
+	KindTaskGitShallowCover:                "task-git-shallow-cover",
+	KindTaskGitWorktreeCommondirCover:      "task-git-worktree-commondir-cover",
+	KindTaskGitWorktreeGitdirCover:         "task-git-worktree-gitdir-cover",
+	KindTaskGitWorktreeConfigCover:         "task-git-worktree-config-cover",
+	KindWorkspaceCommittedProjection:       "workspace-committed-projection",
+	KindExecutionProjection:                "execution-projection",
+	KindWorkspaceRegisteredRoot:            "workspace-registered-root",
+	KindSeedingCommittedProjection:         "seeding-committed-projection",
+	KindSeedingRegisteredRoot:              "seeding-registered-root",
+	KindSeedingSourceGitCover:              "seeding-source-git-cover",
+	KindOperatorWorksource:                 "operator-worksource",
+	KindOperatorSourceGitCover:             "operator-source-git-cover",
+	KindOperatorRegisteredControlCover:     "operator-registered-control-cover",
+	KindOperatorMissionControlCover:        "operator-mission-control-cover",
+	KindOperatorArtifact:                   "operator-artifact",
+	KindTraceProjection:                    "trace-projection",
+	KindOwnSession:                         "own-session",
+	KindOwnState:                           "own-state",
+	KindPackageCache:                       "package-cache",
+	KindRuntimeControl:                     "runtime-control",
+	KindRunOutput:                          "run-output",
+	KindCompletionSeal:                     "completion-seal",
+	KindAttachmentIn:                       "attachment-in",
+	KindAttachmentOut:                      "attachment-out",
+	KindWorkflowCapture:                    "workflow-capture",
+	KindCorrectionOutput:                   "correction-output",
+	KindRecordInputOutput:                  "record-input-output",
+	KindRecordInputCorrection:              "record-input-correction",
+	KindRecordInputRevision:                "record-input-revision",
+	KindRecordInputContext:                 "record-input-context",
+	KindEnvelope:                           "envelope",
+	KindSandbox:                            "sandbox",
+	KindNetworkProjection:                  "network-projection",
+	KindGatewayCA:                          "gateway-ca",
+	KindResolverProjection:                 "resolver-projection",
+	KindRunnerSource:                       "runner-source",
+	KindSetupWorksource:                    "setup-worksource",
+	KindSetupMissionControlCover:           "setup-mission-control-cover",
+	KindSetupTaskRoot:                      "setup-task-root",
+	KindSetupTaskSource:                    "setup-task-source",
+	KindSetupTaskGit:                       "setup-task-git",
+	KindSetupSeal:                          "setup-seal",
+	KindSetupProjection:                    "setup-projection",
+	KindSetupEnvelope:                      "setup-envelope",
+	KindLandingWorksource:                  "landing-worksource",
+	KindLandingMissionControlCover:         "landing-mission-control-cover",
+	KindLandingTaskRoot:                    "landing-task-root",
+	KindLandingEnvelope:                    "landing-envelope",
 }
 
 func (k TypedKind) String() string {
+	if k == KindNotABind {
+		return "not-a-bind"
+	}
 	if int(k) < len(kindNames) && kindNames[k] != "" {
 		return kindNames[k]
 	}

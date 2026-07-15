@@ -53,9 +53,6 @@ func tjSource(t *testing.T, path string) SourceIdentity {
 func realKinds() []TypedKind {
 	var out []TypedKind
 	for k := KindNone + 1; k < kindMax; k++ {
-		if k == KindNotABind {
-			continue
-		}
 		out = append(out, k)
 	}
 	return out
@@ -233,7 +230,7 @@ func TestOutOfDomainTypedKindsDeny(t *testing.T) {
 	rootID := tjID(t, root)
 	source := tjSource(t, root)
 
-	invalid := []TypedKind{KindNone, KindNotABind, kindMax, TypedKind(255)}
+	invalid := []TypedKind{KindNone, KindNotABind, kindMax, TypedKind(254)}
 	for _, kind := range invalid {
 		t.Run(kind.String(), func(t *testing.T) {
 			_, err := ResolveJurisdiction(JurisdictionInput{

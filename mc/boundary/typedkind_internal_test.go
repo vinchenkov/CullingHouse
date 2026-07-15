@@ -27,11 +27,17 @@ const adr017Path = "../../docs/adr/017-mount-authorization.md"
 type disposition struct {
 	kinds    []TypedKind // typed system source(s); one row may have several arms
 	ordinary bool        // ADR-017 marks it "allowlisted": union predicate, zero claim
+	nonBind  bool        // image-rootfs/named-volume row: no host inode, no kind
 }
 
 func typed(kinds ...TypedKind) disposition { return disposition{kinds: kinds} }
 
+func typedWithNonBind(kinds ...TypedKind) disposition {
+	return disposition{kinds: kinds, nonBind: true}
+}
+
 var ordinary = disposition{ordinary: true}
+var nonBind = disposition{nonBind: true}
 
 // adr017Rows maps every destination in ADR-017:634-702 to its disposition.
 //
@@ -43,33 +49,33 @@ var ordinary = disposition{ordinary: true}
 // path would fuse the least- and most-privileged grants in the system.
 var adr017Rows = map[string]disposition{
 	// Task-local skeleton (:636-650)
-	"`/workspace`":                                              typed(KindTaskRoot, KindNotABind), // bind arm, else image-rootfs
-	"`/workspace/source`":                                       typed(KindTaskSource, KindCommittedProjection, KindExecutionProjection, KindRegisteredRoot),
-	"`/workspace/source/.git`":                                  typed(KindInertCover),
-	"`/workspace/source/.mission-control`":                      typed(KindInertCover),
+	"`/workspace`":                                              typedWithNonBind(KindTaskRoot), // bind arm, else image-rootfs
+	"`/workspace/source`":                                       typed(KindTaskSource, KindWorkspaceCommittedProjection, KindExecutionProjection, KindWorkspaceRegisteredRoot),
+	"`/workspace/source/.git`":                                  typed(KindWorkspaceSourceGitCover),
+	"`/workspace/source/.mission-control`":                      typed(KindWorkspaceSourceMissionControlCover),
 	"`/workspace/git`":                                          typed(KindTaskGit),
-	"`/workspace/git/config`":                                   typed(KindInertCover),
-	"`/workspace/git/hooks`":                                    typed(KindInertCover),
-	"`/workspace/git/info`":                                     typed(KindInertCover),
-	"`/workspace/git/objects/info`":                             typed(KindInertCover),
+	"`/workspace/git/config`":                                   typed(KindTaskGitConfigCover),
+	"`/workspace/git/hooks`":                                    typed(KindTaskGitHooksCover),
+	"`/workspace/git/info`":                                     typed(KindTaskGitInfoCover),
+	"`/workspace/git/objects/info`":                             typed(KindTaskGitObjectsInfoCover),
 	"`/workspace/git/objects/pack`":                             typed(KindSealedPack),
-	"`/workspace/git/packed-refs`":                              typed(KindInertCover),
-	"`/workspace/git/shallow`":                                  typed(KindInertCover),
-	"`/workspace/git/worktrees/<mc-task-name>/commondir`":       typed(KindInertCover),
-	"`/workspace/git/worktrees/<mc-task-name>/gitdir`":          typed(KindInertCover),
-	"`/workspace/git/worktrees/<mc-task-name>/config.worktree`": typed(KindInertCover),
+	"`/workspace/git/packed-refs`":                              typed(KindTaskGitPackedRefsCover),
+	"`/workspace/git/shallow`":                                  typed(KindTaskGitShallowCover),
+	"`/workspace/git/worktrees/<mc-task-name>/commondir`":       typed(KindTaskGitWorktreeCommondirCover),
+	"`/workspace/git/worktrees/<mc-task-name>/gitdir`":          typed(KindTaskGitWorktreeGitdirCover),
+	"`/workspace/git/worktrees/<mc-task-name>/config.worktree`": typed(KindTaskGitWorktreeConfigCover),
 
 	// Allowlisted ordinary sources: the union predicate, zero claim (:651-652).
 	"`/workspace/artifacts/<artifact-target>/<suffix>`":   ordinary,
 	"`/workspace/references/<reference-target>/<suffix>`": ordinary,
 
 	// Projections and spine-registered roots (:653-660)
-	"`/workspace/seeding/<workspace-target>/source`":                                                 typed(KindCommittedProjection, KindRegisteredRoot),
-	"`/workspace/seeding/<workspace-target>/source/.git`":                                            typed(KindInertCover),
+	"`/workspace/seeding/<workspace-target>/source`":                                                 typed(KindSeedingCommittedProjection, KindSeedingRegisteredRoot),
+	"`/workspace/seeding/<workspace-target>/source/.git`":                                            typed(KindSeedingSourceGitCover),
 	"`/workspace/operator/worksources/<workspace-target>/source`":                                    typed(KindOperatorWorksource),
-	"`/workspace/operator/worksources/<workspace-target>/source/.git`":                               typed(KindInertCover),
-	"`/workspace/operator/worksources/<workspace-target>/source/<registered-control-relative-path>`": typed(KindInertCover),
-	"`/workspace/operator/worksources/<workspace-target>/source/.mission-control`":                   typed(KindInertCover),
+	"`/workspace/operator/worksources/<workspace-target>/source/.git`":                               typed(KindOperatorSourceGitCover),
+	"`/workspace/operator/worksources/<workspace-target>/source/<registered-control-relative-path>`": typed(KindOperatorRegisteredControlCover),
+	"`/workspace/operator/worksources/<workspace-target>/source/.mission-control`":                   typed(KindOperatorMissionControlCover),
 	"`/workspace/operator/worksources/<workspace-target>/artifacts/<artifact-target>/<suffix>`":      typed(KindOperatorArtifact),
 	"`/workspace/operator/traces`":                                                                   typed(KindTraceProjection),
 
@@ -85,9 +91,9 @@ var adr017Rows = map[string]disposition{
 	// MC_HOME typed own-source grants (:663-684)
 	"`/mc/session`":                 typed(KindOwnSession),
 	"`/mc/attachments/in`":          typed(KindAttachmentIn),
-	"`/mc/private`":                 typed(KindNotABind), // ":665 never a bind"
+	"`/mc/private`":                 nonBind, // ":665 never a bind"
 	"`/mc/private/completion-seal`": typed(KindCompletionSeal),
-	"`/mc/private/attachments`":     typed(KindNotABind), // image-rootfs structural dir
+	"`/mc/private/attachments`":     nonBind, // image-rootfs structural dir
 	"`/mc/private/attachments/out`": typed(KindAttachmentOut),
 	"`/mc/records/output`":          typed(KindRunOutput),
 	"`/mc/records/inputs/outputs/run-<producer-run-id>/item-<n>`": typed(KindRecordInputOutput),
@@ -96,7 +102,7 @@ var adr017Rows = map[string]disposition{
 	"`/mc/records/inputs/context`":                                typed(KindRecordInputContext),
 	"`/mc/records/correction`":                                    typed(KindCorrectionOutput),
 	"`/mc/workflow/plan.js`":                                      typed(KindWorkflowCapture),
-	"`/mc/spine`":                                                 typed(KindNotABind), // named volume, no host path
+	"`/mc/spine`":                                                 nonBind, // named volume, no host path
 	"`/app/src`":                                                  typed(KindRunnerSource),
 	"`/home/agent`":                                               typed(KindOwnState),
 	"`/home/agent/.cache/pnpm`, `/home/agent/.cache/uv`, `/home/agent/.cache/pip`, `/home/agent/.cache/cargo`": typed(KindPackageCache),
@@ -105,7 +111,7 @@ var adr017Rows = map[string]disposition{
 
 	// Setup and landing: separate tables by ADR-017:686-687 (:691-702).
 	"setup `/repo/source`":                    typed(KindSetupWorksource),
-	"setup `/repo/source/.mission-control`":   typed(KindInertCover),
+	"setup `/repo/source/.mission-control`":   typed(KindSetupMissionControlCover),
 	"setup `/repo/task`":                      typed(KindSetupTaskRoot),
 	"setup `/repo/task/source`":               typed(KindSetupTaskSource),
 	"setup `/repo/task/git`":                  typed(KindSetupTaskGit),
@@ -113,7 +119,7 @@ var adr017Rows = map[string]disposition{
 	"setup `/repo/projection`":                typed(KindSetupProjection),
 	"setup `/mc/setup.json`":                  typed(KindSetupEnvelope),
 	"landing `/repo/source`":                  typed(KindLandingWorksource),
-	"landing `/repo/source/.mission-control`": typed(KindInertCover),
+	"landing `/repo/source/.mission-control`": typed(KindLandingMissionControlCover),
 	"landing `/repo/task`":                    typed(KindLandingTaskRoot),
 	"landing `/mc/landing.json`":              typed(KindLandingEnvelope),
 }
@@ -175,8 +181,21 @@ func TestTypedKindCoversEveryADR017Row(t *testing.T) {
 				adr017Path, line, dest)
 			continue
 		}
-		if !d.ordinary && len(d.kinds) == 0 {
+		if !d.ordinary && !d.nonBind && len(d.kinds) == 0 {
 			t.Errorf("%s:%d: destination %s reached KindNone by default, not by decision", adr017Path, line, dest)
+		}
+		classes := 0
+		if d.ordinary {
+			classes++
+		}
+		if d.nonBind {
+			classes++
+		}
+		if len(d.kinds) > 0 {
+			classes++
+		}
+		if classes != 1 && !(d.nonBind && len(d.kinds) > 0) {
+			t.Errorf("%s:%d: destination %s has contradictory disposition %+v", adr017Path, line, dest, d)
 		}
 	}
 }
@@ -194,6 +213,63 @@ func TestNoOrphanTypedKind(t *testing.T) {
 	for k := KindNone + 1; k < kindMax; k++ {
 		if !claimed[k] {
 			t.Errorf("TypedKind %v appears in no ADR-017:634-702 row — it is an orphan (ADR-021 D10a)", k)
+		}
+	}
+}
+
+// D10a's granularity rule is directional too: every real kind is confined to
+// one destination row. Merely proving that every row has some kind and every
+// kind has some row misses the dangerous many-to-many case — one
+// KindInertCover previously spanned seventeen agent/setup/landing destinations,
+// so a root authorized for one row could satisfy another row's claim.
+//
+// The sole explicit merge license is the selected runtime-control directory:
+// ADR-021 names .codex/.claude as two arms of one decision.
+func TestTypedKindDoesNotCrossDestinationRows(t *testing.T) {
+	rowsByKind := map[TypedKind][]string{}
+	for dest, d := range adr017Rows {
+		for _, kind := range d.kinds {
+			rowsByKind[kind] = append(rowsByKind[kind], dest)
+		}
+	}
+
+	for kind := KindNone + 1; kind < kindMax; kind++ {
+		rows := rowsByKind[kind]
+		if kind == KindRuntimeControl {
+			if len(rows) != 2 || !containsString(rows, "`/home/agent/.codex`") ||
+				!containsString(rows, "`/home/agent/.claude`") {
+				t.Errorf("%v rows = %v; only the exact .codex/.claude pair may share a kind", kind, rows)
+			}
+			continue
+		}
+		if len(rows) != 1 {
+			t.Errorf("%v crosses %d destination rows: %v; D10a confines each kind to one row", kind, len(rows), rows)
+		}
+	}
+}
+
+func containsString(values []string, want string) bool {
+	for _, got := range values {
+		if got == want {
+			return true
+		}
+	}
+	return false
+}
+
+// Non-bind rows carry no authorized kind. KindNotABind is useful as a
+// confused-planner deny sentinel, but it must sit outside the real domain and
+// must never appear among a row's authorized roots.
+func TestNotABindIsOutsideAuthorizedKindDomain(t *testing.T) {
+	if KindNotABind < kindMax {
+		t.Fatalf("KindNotABind=%d is inside [KindNone+1, kindMax=%d); non-bind rows carry no kind",
+			KindNotABind, kindMax)
+	}
+	for dest, d := range adr017Rows {
+		for _, kind := range d.kinds {
+			if kind == KindNotABind {
+				t.Errorf("non-bind sentinel appears as an authorized kind for %s", dest)
+			}
 		}
 	}
 }
