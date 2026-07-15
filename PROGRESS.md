@@ -1,7 +1,7 @@
 # PROGRESS — Mission Control implementation ledger
 
 <!-- Header block: kept current by every session. -->
-LAST GREEN SHA: d0f6a3a (local; the operator pushes manually — decided 2026-07-14, see Parked. Agents: do not push.)
+LAST GREEN SHA: 468251b (local; the operator pushes manually — decided 2026-07-14, see Parked. Agents: do not push.)
 PHASES PASSING: Phase 0 COMPLETE (S1–S8 all green, no fallback ADRs; only operator-leg deferrals remain); Phase 1 COMPLETE (1a substrate 172; 1b walking skeleton reviewed-and-fixed — fake-harness 43, agent-runner 13, runner/image 40, resident 42, dispatch + cmd/mc suites; Docker e2e PASS ×4 total); Phase 2 COMPLETE for every unparked acceptance line (domain/§18 surface, deterministic split-brain convergence, bounded honesty + five mutants, tagged dispatch/metamorphic/twin-spine lifecycle properties; the initiative-wave CLI is no longer isolated — ADR-020 landed 2026-07-14 and closed the last Phase 2 acceptance line)
 KNOWN-FAILING: (none)
 FAST SUITE: mc/check.sh (gofmt + vet on the untagged build AND on the nightly/docker_e2e/test_fake_routing tagged builds — they must compile every commit, added 2026-07-14 after a tagged suite rotted invisibly — + go test ./...; includes substrate + promoted dispatch) + runner/fake-harness/check.sh + runner/agent-runner/check.sh + runner/image/check.sh + resident/check.sh. Docker e2e (phase-completion lane): cd mc && mise exec -- go test -tags docker_e2e -timeout 15m ./e2e/...
@@ -2093,3 +2093,26 @@ A-deny/B-permit snapshot after retargeting alias→B, and prove a freshly rebuil
 Jurisdiction flips to A-permit/B-deny. Then pin the typed path with a selector
 symlink retargeted from one identity to another: the original typed snapshot
 keeps its verdict while a fresh host-resolved `TypedRoots` registry flips it.
+
+- 2026-07-15 — **Step 7.4 green: D9/D11 old-snapshot versus fresh-input drift
+  is explicit** (`468251b`). Two four-verdict matrices reuse unchanged A/B
+  source identities while atomically retargeting one stable selector address.
+  For a raw absent `denied_paths` member, the old Jurisdiction remains
+  A-deny/B-permit and a fresh construction flips to A-permit/B-deny. For a
+  typed session root, the old pre-resolved registry remains A-permit/B-deny and
+  a freshly host-resolved `TypedRoots` input flips to A-deny/B-permit. Both
+  fixtures prove the selector spelling is unchanged, its identity actually
+  changed, the direct sources did not change, and every denial carries its
+  stable code. A call-site audit found no production `ResolveJurisdiction` or
+  `Authorize` caller yet; per ADR-021, the four host reconstruction gates are
+  later Phase-3 wiring, so this micro-step correctly changes acceptance coverage
+  only. Uncached and race-enabled boundary suites plus the full fast lane (Go
+  all/tagged; Bun 43/13/40/42) are green.
+
+NEXT: Complete ADR-021 step 8 by auditing every named planted mutant against an
+exercised witness, not test names. Re-run or add the missing mutation-sensitive
+controls for identity→prefix, removed ancestor direction, literal/Dir-only
+`broad_root`, jurisdiction after `ResolveAccess`, subtractable denied paths,
+kind-inert/self-certified typed claims, and HOME mode/`TrustHomeDir` traps. Once
+all named mutants are demonstrably dead, close the jurisdiction slice and move
+to the macOS ACL trust-seam leg recorded in the Phase-3 order.
