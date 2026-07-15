@@ -1,7 +1,7 @@
 # PROGRESS — Mission Control implementation ledger
 
 <!-- Header block: kept current by every session. -->
-LAST GREEN SHA: (this commit)
+LAST GREEN SHA: e01a2af (local; push blocked by an operator deny rule — see Parked)
 PHASES PASSING: Phase 0 COMPLETE (S1–S8 all green, no fallback ADRs; only operator-leg deferrals remain); Phase 1 COMPLETE (1a substrate 172; 1b walking skeleton reviewed-and-fixed — fake-harness 43, agent-runner 13, runner/image 40, resident 42, dispatch + cmd/mc suites; Docker e2e PASS ×4 total); Phase 2 COMPLETE for every unparked acceptance line (domain/§18 surface, deterministic split-brain convergence, bounded honesty + five mutants, tagged dispatch/metamorphic/twin-spine lifecycle properties; initiative-wave CLI remains explicitly isolated under Parked)
 KNOWN-FAILING: (none)
 FAST SUITE: mc/check.sh (gofmt+vet+go test ./... — includes substrate + promoted dispatch) + runner/fake-harness/check.sh + runner/agent-runner/check.sh + runner/image/check.sh + resident/check.sh. Docker e2e (phase-completion lane): cd mc && mise exec -- go test -tags docker_e2e -timeout 15m ./e2e/...
@@ -66,6 +66,14 @@ FAST SUITE: mc/check.sh (gofmt+vet+go test ./... — includes substrate + promot
   - [x] Pure mount policy: strict allowlist TOML/limits, POSIX targets and
         collision rejection, immutable blocked floor + additive patterns,
         bilateral RO/RW access (`mc/boundary`)
+  - [x] Cross-harness takeover review of the Codex range (72a39db..4380e0d):
+        no majors; mount-target control grammar deviation fixed red-first
+        (67c4b61). ADR-vs-spec lens re-run separately (credit exhaustion)
+  - [x] Filesystem identity + containment: trust seams, canonical resolution,
+        raw+resolved blocked matching, `os.SameFile` allow-root uniqueness and
+        ancestry, derived/validated suffix, symlink stays-vs-escapes (e01a2af)
+  - [ ] Protected set + cross-Worksource jurisdiction (Dec. 3 step 5, Dec. 5)
+  - [ ] macOS ACL leg of the trust seam (needs the native ACL API)
 - [ ] Phase 4 — E2E control loops (six scenario families)
 - [ ] Phase 5 — Real-subscription acceptance (operator-scheduled)
 - [ ] Release prep (after Phase 5): swap the repo's construction face for
@@ -77,6 +85,16 @@ FAST SUITE: mc/check.sh (gofmt+vet+go test ./... — includes substrate + promot
       deliverable (handoff §4.2 row 1) — no separate folder.
 
 ## Parked
+
+- **Push to origin is blocked by an operator deny rule** (new 2026-07-14):
+  `git push origin main` is denied by the Claude Code permission classifier
+  ("User Deny Rules"), so AGENTS.md §4's "push if a remote exists" cannot be
+  honored and commits are accumulating **local-only** — exactly the
+  disk-failure exposure the private remote was created to close. Not worked
+  around. Decision request: either drop/adjust the deny rule for this repo, or
+  confirm you will push manually and agents should stop attempting it (in
+  which case AGENTS.md §4 should say so). Unpushed at time of writing:
+  67c4b61, e01a2af, and the ledger commit that follows them.
 
 - ~~Secrets in git history~~ **RESOLVED 2026-07-10**: operator explicitly
   accepts the values in local history; no scrub, no rotation. Noted in
@@ -1312,3 +1330,82 @@ authorization and suffix validation, and symlink-stays/escapes fixtures. Keep
 protected-root and cross-Worksource bilateral exclusions as the immediately
 following pure-policy slice, then integrate invalid-plan/no-claim dispatch.
 Do not load launchd or route around the parked initiative-wave model.
+
+- 2026-07-14 — **Claude Code takeover from quota-interrupted Codex session;
+  mount-target control grammar closed.** Resume ritual found `4380e0d` clean,
+  pushed, and green — the complete fast lane reproduced exactly the ledger's
+  header counts (Go all packages; fake-harness 43, agent-runner 13,
+  runner/image 40, resident 42). Nothing was uncommitted; nothing discarded.
+  The cross-harness adversarial takeover review of `72a39db..4380e0d` (the
+  Codex range: four accepted Phase-3 ADRs + the pure mount policy) launched
+  before any code edit per AGENTS.md §2, as five read-only lenses with
+  independent skeptical verification of every finding.
+
+  **Credit exhaustion killed three of the five lenses mid-run** (allowlist
+  grammar, blocked floor, ADR-vs-spec conformance); the two that completed
+  were recovered from the workflow journal rather than lost. Neither found a
+  major defect: the shipped 18-component + 22-glob floor is pinned exactly by
+  `reflect.DeepEqual`, the closed star-glob matcher survived ~3M fuzzed cases
+  against `path.Match`, and there is no blocked-floor bypass, RW-over-RO
+  escalation, or target-collision bypass. The surviving lenses substantially
+  cover the grammar/floor lenses' territory; the ADR-vs-spec lens is the real
+  gap and was relaunched separately.
+
+  One confirmed deviation, FIXED red-first: ADR-017 Decision 1 forbids a
+  `control` target component without qualification, but `ValidateTarget` only
+  rejected ASCII controls, so C1 NEL (U+0085), U+2028/U+2029, ZWSP, and the
+  RTL override all passed. Targets now reject `unicode.IsControl` plus
+  `Cf`/`Zl`/`Zp`; NBSP and fullwidth solidus stay legal with recorded reasons.
+  Also filled the test gaps the claims-vs-tests audit named: the exact
+  1025-byte target boundary, ASCII-case-insensitive matching of operator
+  additions in both directions, and the mislabeled test that claimed to prove
+  the (unreachable) per-entry UTF-8 check. Two entries appended to
+  IMPLEMENTATION-NOTES (the control-grammar deviation; the informational
+  residue, incl. the allow-root overlap/identity seam left to the next slice).
+
+- 2026-07-14 — **Phase-3 filesystem identity and containment GREEN**
+  (`e01a2af`). TDD from a build-red suite; 55 cases. Trust seams: allowlist =
+  non-symlink regular file, MC_HOME = non-symlink directory, both
+  operator-owned with no group/other bits, `Lstat` so a symlink to a trusted
+  object is not itself trusted, stricter owner mode not a grant. Resolution
+  retains raw-clean AND canonical (`Abs → Clean → EvalSymlinks` + stat)
+  because the floor matches both — a symlink named `innocent` pointing at
+  `.ssh` rejects. Containment is filesystem identity, never string
+  arithmetic: `ResolveAllowlist` enforces Decision 1's uniqueness law with
+  `os.SameFile` (byte-identical, symlink-aliased, and ancestor-overlapping
+  roots all reject `mount.source_alias`), closing both seams the takeover
+  audit named as deferred. `Authorize` walks the resolved source's ancestors
+  by identity, accepts at exactly one root, derives the suffix from that walk
+  and validates it: in-root symlink accepted, escaping one `symlink_escape`
+  (distinguished from `not_allowlisted` by where the raw address lived),
+  `safe-root-evil` never satisfies `safe-root`, colon legal in the matched
+  root's own spelling but not in a descendant suffix. Coded rejections use
+  ADR-017's stable `mount.*` slugs via the domain's `errors.As` convention.
+  Four planted mutants (identity→prefix, blocked-on-raw-only, unvalidated
+  suffix, overlap check removed) each die with exercised witnesses. Complete
+  fast lane green; gofmt/vet and both tagged builds clean.
+
+  **Two obligations deliberately NOT in this slice** (named so they cannot be
+  quietly lost): (1) the macOS **ACL leg** of the trust seam — ADR-017
+  Decision 1 requires "any allow ACE granting a non-owner access rejects",
+  which needs the native ACL API (no stdlib path; cgo would need a
+  darwin-only build tag since `mc` also builds for the Linux container). Owner/
+  mode/non-symlink are enforced; a granting ACL is currently NOT detected.
+  (2) **Protected-root and cross-Worksource jurisdiction** (Decision 3 step 5,
+  Decision 5) — `Authorize` applies no `denied_root`/`cross_worksource` check
+  yet, so it must not be wired into production planning before that slice
+  lands.
+
+NEXT: TDD the protected-set/jurisdiction slice of `mc/boundary` (ADR-017
+Decision 5 + Decision 3 step 5): the non-subtractable protected union
+(profile `denied_paths`, other Worksources' roots, real Git control dirs,
+`MC_HOME/sessions` and the attachment/output/config/control/backup/runtime-auth
+roots, gateway/CA key roots, and the `~/.ssh`-class home roots), bidirectional
+intersection so a source that is an ancestor of a protected root also rejects,
+and the directional `broad_root` rule (a source may not equal or be an ancestor
+of `$HOME`, `/Users`, `/`, while `~/src/project` stays eligible). Codes
+`mount.denied_root`/`mount.cross_worksource` already exist unused. Then the
+macOS ACL leg (a darwin-tagged native read, else an explicit ADR-recorded
+fallback), then the stable-code mapping for the parser's uncoded rejections,
+then integrate the invalid-plan/no-claim dispatch transaction. Do not load
+launchd or route around the parked initiative-wave model.
