@@ -124,7 +124,7 @@ func TestBirthWave(t *testing.T) {
 		db := openSpine(t)
 		init := mkTask(t, db, "initiative", "seeded")
 		mustTx(t, db, func(ctx context.Context, q domain.Q) error {
-			return domain.Cancel(ctx, q, init, "descoped")
+			return domain.Cancel(ctx, q, init, "descoped", "operator")
 		})
 		err := tx(t, db, func(ctx context.Context, q domain.Q) error {
 			_, err := domain.BirthWave(ctx, q, init, []domain.WaveChild{{Title: "c"}})
@@ -208,7 +208,7 @@ func TestInitiativeBlockCascades(t *testing.T) {
 			return domain.Block(ctx, q, children[0], "dead end")
 		})
 		mustTx(t, db, func(ctx context.Context, q domain.Q) error {
-			return domain.Cancel(ctx, q, children[0], "abandon this line")
+			return domain.Cancel(ctx, q, children[0], "abandon this line", "operator")
 		})
 		if got := taskInt(t, db, init, "blocked"); got != 0 {
 			t.Fatalf("cancel-archive of the last blocked child did not clear the initiative (§6.1)")

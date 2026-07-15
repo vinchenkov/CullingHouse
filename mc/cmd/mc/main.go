@@ -604,8 +604,12 @@ func batchReader(batch string, stdin io.Reader) (io.Reader, error) {
 }
 
 func cmdEditor(args []string, stdin io.Reader) (any, error) {
-	if len(args) == 0 || args[0] != "decide" {
-		return nil, verbs.Usagef("usage: mc editor decide --run <id> --batch -")
+	if len(args) == 0 || (args[0] != "decide" && args[0] != "plan-review") {
+		return nil, verbs.Usagef("usage: mc editor decide --run <id> --batch - | " +
+			"mc editor plan-review --run <id> --initiative <id> --verdict pass|send-back [--reason <prose>]")
+	}
+	if args[0] == "plan-review" {
+		return cmdEditorPlanReview(args[1:])
 	}
 	fs := newFlags("mc editor decide")
 	run := fs.String("run", "", "fencing token")
@@ -627,9 +631,68 @@ func cmdEditor(args []string, stdin io.Reader) (any, error) {
 	return withSpine(func(db *sql.DB) (any, error) { return verbs.EditorDecide(db, id, *run, r) })
 }
 
+// cmdEditorPlanReview wires the Editor's holistic wave terminal (ADR-020 D5).
+func cmdEditorPlanReview(args []string) (any, error) {
+	fs := newFlags("mc editor plan-review")
+	run := fs.String("run", "", "fencing token")
+	initiative := fs.Int64("initiative", 0, "the initiative under review")
+	verdict := fs.String("verdict", "", "pass | send-back")
+	reason := fs.String("reason", "", "the objection (required for send-back, forbidden for pass)")
+	if err := parse(fs, args); err != nil {
+		return nil, err
+	}
+	if *run == "" {
+		return nil, verbs.Usagef("mc editor plan-review requires --run")
+	}
+	if *initiative == 0 {
+		return nil, verbs.Usagef("mc editor plan-review requires --initiative")
+	}
+	if *verdict == "" {
+		return nil, verbs.Usagef("mc editor plan-review requires --verdict pass|send-back")
+	}
+	id, err := verbs.LoadIdentity()
+	if err != nil {
+		return nil, err
+	}
+	return withSpine(func(db *sql.DB) (any, error) {
+		return verbs.EditorPlanReview(db, id, verbs.PlanReviewArgs{
+			Run: *run, Initiative: *initiative, Verdict: *verdict, Reason: *reason,
+		})
+	})
+}
+
 func cmdStrategist(args []string, stdin io.Reader) (any, error) {
-	if len(args) == 0 || args[0] != "propose" {
-		return nil, verbs.Usagef("usage: mc strategist propose --run <id> --batch -")
+	if len(args) == 0 || (args[0] != "propose" && args[0] != "wave") {
+		return nil, verbs.Usagef("usage: mc strategist propose --run <id> --batch - | " +
+			"mc strategist wave --run <id> --initiative <id> --batch -")
+	}
+	// The wave terminal: unblocked by ADR-020, which gives the Editor's
+	// mandatory holistic plan review a durable state and a dispatch slot.
+	if args[0] == "wave" {
+		fs := newFlags("mc strategist wave")
+		run := fs.String("run", "", "fencing token")
+		initiative := fs.Int64("initiative", 0, "the initiative the wave is born into")
+		batch := fs.String("batch", "", "batch payload source")
+		if err := parse(fs, args[1:]); err != nil {
+			return nil, err
+		}
+		if *run == "" {
+			return nil, verbs.Usagef("mc strategist wave requires --run")
+		}
+		if *initiative == 0 {
+			return nil, verbs.Usagef("mc strategist wave requires --initiative")
+		}
+		r, err := batchReader(*batch, stdin)
+		if err != nil {
+			return nil, err
+		}
+		id, err := verbs.LoadIdentity()
+		if err != nil {
+			return nil, err
+		}
+		return withSpine(func(db *sql.DB) (any, error) {
+			return verbs.StrategistWave(db, id, *run, *initiative, r)
+		})
 	}
 	fs := newFlags("mc strategist propose")
 	run := fs.String("run", "", "fencing token")

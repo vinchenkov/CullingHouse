@@ -178,7 +178,7 @@ func TestAdvanceStage(t *testing.T) {
 
 		// Drain the child (cancel-archive) → the declaration goes through.
 		mustTx(t, db, func(ctx context.Context, q domain.Q) error {
-			return domain.Cancel(ctx, q, child, "descoped")
+			return domain.Cancel(ctx, q, child, "descoped", "operator")
 		})
 		mustTx(t, db, func(ctx context.Context, q domain.Q) error {
 			return domain.AdvanceStage(ctx, q, init, "worked")
@@ -828,7 +828,7 @@ func TestCancel(t *testing.T) {
 		id := mkTask(t, db, "task", "packaged")
 		mkPacket(t, db, id)
 		mustTx(t, db, func(ctx context.Context, q domain.Q) error {
-			return domain.Cancel(ctx, q, id, "direction changed")
+			return domain.Cancel(ctx, q, id, "direction changed", "operator")
 		})
 		if got := taskStr(t, db, id, "decision"); got != "cancelled" {
 			t.Fatalf("decision = %q", got)
@@ -848,7 +848,7 @@ func TestCancel(t *testing.T) {
 		db := openSpine(t)
 		id := mkTask(t, db, "task", "packaged")
 		wantCode(t, db, domain.CodeReasonRequired, func(ctx context.Context, q domain.Q) error {
-			return domain.Cancel(ctx, q, id, "")
+			return domain.Cancel(ctx, q, id, "", "operator")
 		})
 	})
 
@@ -869,7 +869,7 @@ func TestCancel(t *testing.T) {
 		mkPacket(t, db, c2)
 
 		mustTx(t, db, func(ctx context.Context, q domain.Q) error {
-			return domain.Cancel(ctx, q, init, "descoped")
+			return domain.Cancel(ctx, q, init, "descoped", "operator")
 		})
 		for _, c := range []int64{c1, c2} {
 			if got := taskStr(t, db, c, "decision"); got != "cancelled" {
@@ -902,7 +902,7 @@ func TestCancel(t *testing.T) {
 		}
 
 		mustTx(t, db, func(ctx context.Context, q domain.Q) error {
-			return domain.Cancel(ctx, q, init, "initiative descoped")
+			return domain.Cancel(ctx, q, init, "initiative descoped", "operator")
 		})
 		if got := taskStr(t, db, child, "decision"); got != "cancelled" {
 			t.Fatalf("open child decision = %q, want parent cancellation to win", got)

@@ -36,7 +36,7 @@ func TestOccupancy(t *testing.T) {
 			t.Fatalf("occupancy = %d, want 2", got)
 		}
 		mustTx(t, db, func(ctx context.Context, q domain.Q) error {
-			return domain.Cancel(ctx, q, a, "drop") // cascade archives the packet
+			return domain.Cancel(ctx, q, a, "drop", "operator") // cascade archives the packet
 		})
 		if got := occupancy(t, db); got != 1 {
 			t.Fatalf("occupancy = %d, want 1 after archive", got)
@@ -216,7 +216,7 @@ func TestAtCapSelectionOrder(t *testing.T) {
 			return err
 		})
 		mustTx(t, db, func(ctx context.Context, q domain.Q) error {
-			return domain.Cancel(ctx, q, children[0], "drained for the arc")
+			return domain.Cancel(ctx, q, children[0], "drained for the arc", "operator")
 		})
 		// Walk the drained initiative to packaged and give it the arc packet.
 		mustTx(t, db, func(ctx context.Context, q domain.Q) error {

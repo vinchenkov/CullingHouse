@@ -196,7 +196,7 @@ func TestApplyDeepening(t *testing.T) {
 	t.Run("archived_packet_rejected", func(t *testing.T) {
 		db, id := newPacket(t)
 		mustTx(t, db, func(ctx context.Context, q domain.Q) error {
-			return domain.Cancel(ctx, q, id, "drop")
+			return domain.Cancel(ctx, q, id, "drop", "operator")
 		})
 		wantCode(t, db, domain.CodeArchived, func(ctx context.Context, q domain.Q) error {
 			return domain.ApplyDeepening(ctx, q, id, false)

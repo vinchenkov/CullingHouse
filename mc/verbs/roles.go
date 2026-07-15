@@ -44,7 +44,10 @@ func decodeStrictJSON(r io.Reader, dst any) error {
 // empty — no unarchived, unblocked, dispatchable row exists outside the
 // proposed pool (spec §3's guard, mechanical).
 func EditorDecide(db *sql.DB, id *RunIdentity, run string, batch io.Reader) (any, error) {
-	if err := requireRole(id, "editor"); err != nil {
+	// Exact, not base: lock.owner is flat, so run.json is the only place that
+	// can stop the two Editor modes from crossing (ADR-020 D5). The pool run's
+	// role string stays the plain "editor", so this costs the arm nothing.
+	if err := requireExactRole(id, "editor"); err != nil {
 		return nil, err
 	}
 	if err := requireOwnRun(id, run); err != nil {
@@ -376,4 +379,96 @@ func VerifierVerdict(db *sql.DB, id *RunIdentity, a VerdictArgs) (any, error) {
 		out["exception_labeled"] = true
 	}
 	return out, nil
+}
+
+// PlanReviewArgs carries mc editor plan-review's flags (ADR-020 D5).
+type PlanReviewArgs struct {
+	Run        string
+	Initiative int64
+	Verdict    string // pass | send-back
+	Reason     string // required for send-back, forbidden for pass
+}
+
+// EditorPlanReview applies the Editor's holistic wave verdict (ADR-020 D5) —
+// a new verb rather than an arm of `mc editor decide`, which would otherwise
+// have to carry a second meaning for its exact-pool coverage rule, a
+// promote|reject vocabulary that fits nothing here, a conditional
+// zero-promotion guard, and a second transition table, for no gain.
+//
+// Flags, not a stdin batch: the verdict is one wave-level scalar, not a batch
+// of per-element decisions, so ADR-001 D1's `--batch -` grammar has nothing to
+// carry (mc verifier verdict is the flags-only precedent).
+//
+// D3-standard terminal semantics: one transaction writes the verdict, ends the
+// run, and releases the lease; it never dispatches (Inv. 2, Inv. 3), and a
+// second call is rejected by the released lease.
+func EditorPlanReview(db *sql.DB, id *RunIdentity, a PlanReviewArgs) (any, error) {
+	// Role AND mode, from run.json — an editor pool run cannot invoke this.
+	if err := requireExactRole(id, "editor(plan-review)"); err != nil {
+		return nil, err
+	}
+	if err := requireOwnRun(id, a.Run); err != nil {
+		return nil, err
+	}
+	switch a.Verdict {
+	case "pass":
+		if a.Reason != "" {
+			return nil, Usagef("--reason is forbidden for pass (ADR-020 D5: asymmetric by design)")
+		}
+	case "send-back":
+		if a.Reason == "" {
+			return nil, &DomainError{Code: domain.CodeReasonRequired,
+				Msg: "--reason is required for send-back (ADR-020 D5: asymmetric by design)"}
+		}
+	default:
+		return nil, Usagef("unknown verdict %q (ADR-020 D5: pass|send-back)", a.Verdict)
+	}
+
+	err := inTx(db, func(ctx context.Context, q Q) error {
+		subject, err := fenceRun(ctx, q, a.Run)
+		if err != nil {
+			return err
+		}
+		if subject == nil || *subject != a.Initiative {
+			return Domainf("initiative %d is not the live lease's subject (§10 fencing)", a.Initiative)
+		}
+		snapshot, err := runPoolSnapshot(ctx, q, a.Run)
+		if err != nil {
+			return err
+		}
+		if a.Verdict == "pass" {
+			err = domain.PassWaveReview(ctx, q, a.Initiative, snapshot)
+		} else {
+			err = domain.SendBackWave(ctx, q, a.Initiative, snapshot, a.Reason)
+		}
+		if err != nil {
+			return err
+		}
+		if err := endRun(ctx, q, a.Run, "completed"); err != nil {
+			return err
+		}
+		return releaseLease(ctx, q, a.Run)
+	})
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{"initiative": a.Initiative, "verdict": a.Verdict}, nil
+}
+
+// runPoolSnapshot reads the id set this Editor run was shown and must act on
+// exactly (ADR-020 D4: runs.pool_snapshot carries the proposal pool for the
+// pool pass and the wave for the plan review).
+func runPoolSnapshot(ctx context.Context, q Q, run string) ([]int64, error) {
+	var poolJSON sql.NullString
+	if err := q.QueryRowContext(ctx,
+		`SELECT pool_snapshot FROM runs WHERE id = ?`, run).Scan(&poolJSON); err != nil {
+		return nil, err
+	}
+	var pool []int64
+	if poolJSON.Valid {
+		if err := json.Unmarshal([]byte(poolJSON.String), &pool); err != nil {
+			return nil, fmt.Errorf("parse pool_snapshot for run %s: %w", run, err)
+		}
+	}
+	return pool, nil
 }

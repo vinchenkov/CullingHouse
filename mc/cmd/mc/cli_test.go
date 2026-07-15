@@ -4877,3 +4877,288 @@ func TestOnboard(t *testing.T) {
 		}
 	})
 }
+
+// ---------------------------------------------------------------------------
+// ADR-020 D5: mc editor plan-review — the Editor's holistic wave terminal.
+// ---------------------------------------------------------------------------
+
+// seedUnreviewedWave files an initiative and births an unreviewed wave under
+// it via raw SQL, returning the initiative and child ids.
+func seedUnreviewedWave(t *testing.T, db *sql.DB) (int64, []int64) {
+	t.Helper()
+	res, err := db.Exec(`INSERT INTO tasks (title, description, scope, worksource, target_ref)
+		VALUES ('arc', 'charter', 'initiative', 'ws-test', 'main')`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ini, _ := res.LastInsertId()
+	if _, err := db.Exec(`UPDATE tasks SET status='seeded' WHERE id=?`, ini); err != nil {
+		t.Fatal(err)
+	}
+	var kids []int64
+	for _, title := range []string{"child-a", "child-b"} {
+		r, err := db.Exec(`INSERT INTO tasks (title, description, scope, status,
+			initiative_id, worksource, target_ref)
+			VALUES (?, 'criterion', 'task', 'seeded', ?, 'ws-test', 'main')`, title, ini)
+		if err != nil {
+			t.Fatal(err)
+		}
+		id, _ := r.LastInsertId()
+		kids = append(kids, id)
+	}
+	return ini, kids
+}
+
+// claimPlanReview fakes the claim transaction: a live editor lease on the
+// initiative whose run snapshot is the wave.
+func claimPlanReview(t *testing.T, db *sql.DB, ini int64, snapshot []int64) string {
+	t.Helper()
+	run := fmt.Sprintf("plan-review-%d", ini)
+	pool, _ := json.Marshal(snapshot)
+	if _, err := db.Exec(`INSERT INTO runs (id, tier, role, worksource, subject, pool_snapshot)
+		VALUES (?, 'pipeline', 'editor', 'ws-test', ?, ?)`, run, ini, string(pool)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`UPDATE lock SET run_id=?, worksource='ws-test', subject=?,
+		owner='editor', acquired_at=datetime('now'),
+		hard_deadline_at=datetime('now', '+4 hours') WHERE id=1`, run, ini); err != nil {
+		t.Fatal(err)
+	}
+	return run
+}
+
+func TestEditorPlanReview(t *testing.T) {
+	t.Run("pass_marks_every_snapshotted_child_and_leaves_the_initiative", func(t *testing.T) {
+		spine := initSpine(t)
+		db := openDB(t, spine)
+		ini, kids := seedUnreviewedWave(t, db)
+		run := claimPlanReview(t, db, ini, kids)
+		env := runJSONEnv(t, spine, run, "pipeline", "editor(plan-review)")
+
+		res := runMC(t, env, "", "editor", "plan-review", "--run", run,
+			"--initiative", fmt.Sprint(ini), "--verdict", "pass")
+		if res.code != 0 {
+			t.Fatalf("pass failed (%d): %s", res.code, res.stderr)
+		}
+		for _, k := range kids {
+			if got := queryInt(t, db, `SELECT plan_reviewed FROM tasks WHERE id=?`, k); got != 1 {
+				t.Fatalf("child %d plan_reviewed = %d, want 1", k, got)
+			}
+		}
+		// Inv. 10: the plan review completes no stage of the initiative.
+		if got := queryStr(t, db, `SELECT status || '/' || COALESCE(decision,'null') || '/' || blocked
+			FROM tasks WHERE id=?`, ini); got != "seeded/null/0" {
+			t.Fatalf("initiative moved: %q", got)
+		}
+		if got := queryStr(t, db, `SELECT COALESCE(run_id,'free') FROM lock WHERE id=1`); got != "free" {
+			t.Fatalf("lease not released: %q", got)
+		}
+		if got := queryInt(t, db, `SELECT COUNT(*) FROM activity WHERE kind='wave.passed' AND subject=?`, ini); got != 1 {
+			t.Fatalf("wave.passed rows = %d, want 1", got)
+		}
+		// The released lease rejects a second call (D3-standard terminal).
+		again := runMC(t, env, "", "editor", "plan-review", "--run", run,
+			"--initiative", fmt.Sprint(ini), "--verdict", "pass")
+		if again.code == 0 {
+			t.Fatalf("second terminal accepted")
+		}
+	})
+
+	// The exact-set rule: a holistic verdict asserts a property OF A SET, so a
+	// verdict rendered over a set that no longer exists is stale and refused
+	// outright — never partially applied.
+	t.Run("pass_refuses_a_stale_snapshot", func(t *testing.T) {
+		spine := initSpine(t)
+		db := openDB(t, spine)
+		ini, kids := seedUnreviewedWave(t, db)
+		run := claimPlanReview(t, db, ini, kids)
+		env := runJSONEnv(t, spine, run, "pipeline", "editor(plan-review)")
+		// The operator cancels one child mid-review.
+		if _, err := db.Exec(`UPDATE tasks SET decision='cancelled',
+			decided_at=datetime('now'), archived=1 WHERE id=?`, kids[0]); err != nil {
+			t.Fatal(err)
+		}
+		res := runMC(t, env, "", "editor", "plan-review", "--run", run,
+			"--initiative", fmt.Sprint(ini), "--verdict", "pass")
+		if res.code == 0 {
+			t.Fatalf("stale pass accepted")
+		}
+		if !strings.Contains(res.stdout, "pool-mismatch") {
+			t.Fatalf("want pool-mismatch code, got stdout=%q stderr=%q", res.stdout, res.stderr)
+		}
+		if got := queryInt(t, db, `SELECT plan_reviewed FROM tasks WHERE id=?`, kids[1]); got != 0 {
+			t.Fatalf("stale pass partially applied: survivor marked")
+		}
+	})
+
+	t.Run("send_back_cancels_the_wave_and_drains_the_initiative", func(t *testing.T) {
+		spine := initSpine(t)
+		db := openDB(t, spine)
+		ini, kids := seedUnreviewedWave(t, db)
+		run := claimPlanReview(t, db, ini, kids)
+		env := runJSONEnv(t, spine, run, "pipeline", "editor(plan-review)")
+
+		res := runMC(t, env, "", "editor", "plan-review", "--run", run,
+			"--initiative", fmt.Sprint(ini), "--verdict", "send-back",
+			"--reason", "child-a's criterion cannot fail")
+		if res.code != 0 {
+			t.Fatalf("send-back failed (%d): %s", res.code, res.stderr)
+		}
+		for _, k := range kids {
+			if got := queryStr(t, db, `SELECT decision || '/' || archived FROM tasks WHERE id=?`, k); got != "cancelled/1" {
+				t.Fatalf("child %d = %q, want cancelled/1", k, got)
+			}
+		}
+		// Inv. 7: the actor is the logical originator, not the operator.
+		if got := queryStr(t, db, `SELECT actor FROM activity WHERE kind='task.cancelled'
+			AND subject=? LIMIT 1`, kids[0]); got != "editor" {
+			t.Fatalf("cancel actor = %q, want editor", got)
+		}
+		if got := queryStr(t, db, `SELECT detail FROM activity WHERE kind='wave.sent_back'
+			AND subject=?`, ini); got != "child-a's criterion cannot fail" {
+			t.Fatalf("send-back reason = %q", got)
+		}
+		// Drained ⇒ the next tick owes Strategist(initiative) a replan.
+		if got := queryInt(t, db, `SELECT COUNT(*) FROM tasks WHERE initiative_id=? AND archived=0`, ini); got != 0 {
+			t.Fatalf("initiative not drained: %d open children", got)
+		}
+		if got := queryStr(t, db, `SELECT status FROM tasks WHERE id=?`, ini); got != "seeded" {
+			t.Fatalf("initiative status = %q, want seeded", got)
+		}
+	})
+
+	// Asymmetric by design (§7's precedent): a pass needs no prose because the
+	// work itself is what happens next; a send-back is worthless without it.
+	t.Run("reason_asymmetry", func(t *testing.T) {
+		spine := initSpine(t)
+		db := openDB(t, spine)
+		ini, kids := seedUnreviewedWave(t, db)
+		run := claimPlanReview(t, db, ini, kids)
+		env := runJSONEnv(t, spine, run, "pipeline", "editor(plan-review)")
+
+		bare := runMC(t, env, "", "editor", "plan-review", "--run", run,
+			"--initiative", fmt.Sprint(ini), "--verdict", "send-back")
+		if bare.code == 0 {
+			t.Fatalf("send-back without a reason accepted")
+		}
+		withReason := runMC(t, env, "", "editor", "plan-review", "--run", run,
+			"--initiative", fmt.Sprint(ini), "--verdict", "pass", "--reason", "why?")
+		if withReason.code == 0 {
+			t.Fatalf("pass with a reason accepted")
+		}
+		if got := queryInt(t, db, `SELECT plan_reviewed FROM tasks WHERE id=?`, kids[0]); got != 1-1 {
+			t.Fatalf("a rejected terminal still marked the wave")
+		}
+	})
+
+	t.Run("fences", func(t *testing.T) {
+		spine := initSpine(t)
+		db := openDB(t, spine)
+		ini, kids := seedUnreviewedWave(t, db)
+		run := claimPlanReview(t, db, ini, kids)
+
+		// Wrong mode: an Editor pool run cannot invoke the plan review.
+		pool := runMC(t, runJSONEnv(t, spine, run, "pipeline", "editor"), "",
+			"editor", "plan-review", "--run", run, "--initiative", fmt.Sprint(ini), "--verdict", "pass")
+		if pool.code == 0 {
+			t.Fatalf("an editor pool identity reached plan-review")
+		}
+		// Host scope: no run.json at all.
+		host := runMC(t, spineEnv(spine), "", "editor", "plan-review", "--run", run,
+			"--initiative", fmt.Sprint(ini), "--verdict", "pass")
+		if host.code == 0 {
+			t.Fatalf("host reached the pipeline terminal")
+		}
+		// Wrong run: the --run token must equal run.json's own run_id.
+		other := runJSONEnv(t, spine, "someone-elses-run", "pipeline", "editor(plan-review)")
+		crossed := runMC(t, other, "", "editor", "plan-review", "--run", run,
+			"--initiative", fmt.Sprint(ini), "--verdict", "pass")
+		if crossed.code == 0 {
+			t.Fatalf("a foreign run token was accepted")
+		}
+		// Wrong subject: --initiative must equal the fenced lease's subject.
+		env := runJSONEnv(t, spine, run, "pipeline", "editor(plan-review)")
+		wrong := runMC(t, env, "", "editor", "plan-review", "--run", run,
+			"--initiative", fmt.Sprint(kids[0]), "--verdict", "pass")
+		if wrong.code == 0 {
+			t.Fatalf("a non-subject initiative was accepted")
+		}
+		for _, k := range kids {
+			if got := queryInt(t, db, `SELECT plan_reviewed FROM tasks WHERE id=?`, k); got != 0 {
+				t.Fatalf("a fenced-out call still marked child %d", k)
+			}
+		}
+	})
+
+	// The reciprocal tightening: without requireExactRole on decide, an
+	// editor(plan-review) identity passes base-role matching and reaches it.
+	t.Run("plan_review_identity_cannot_reach_editor_decide", func(t *testing.T) {
+		spine := initSpine(t)
+		db := openDB(t, spine)
+		ini, kids := seedUnreviewedWave(t, db)
+		run := claimPlanReview(t, db, ini, kids)
+		env := runJSONEnv(t, spine, run, "pipeline", "editor(plan-review)")
+		res := runMC(t, env, `{"verdicts":[]}`, "editor", "decide", "--run", run, "--batch", "-")
+		if res.code == 0 {
+			t.Fatalf("a plan-review identity reached editor decide")
+		}
+		_ = db
+	})
+}
+
+// ADR-020 D5's row in the ADR-001 D6 verb-by-scope table: mc editor
+// plan-review is pipeline-role only (editor/plan-review). Host is proven in
+// TestEditorPlanReview/fences; this covers the remaining scopes.
+//
+// Note on what is NOT asserted: role terminals load identity and open the
+// spine before the role check, so a refusal here still creates an empty spine
+// file at MC_SPINE. That is the established shape for every role terminal
+// (mc editor decide behaves identically) and no rows are written; the
+// wave-2 contract's refusal-precedes-spine-bytes rule is asserted in
+// TestScopeRefusalPrecedesSpineOpen for the host/operator verbs it governs.
+func TestEditorPlanReviewScopeMatrix(t *testing.T) {
+	args := []string{"editor", "plan-review", "--run", "r-probe",
+		"--initiative", "1", "--verdict", "pass"}
+
+	for _, tc := range []struct {
+		name string
+		env  func(spine string) []string
+	}{
+		{
+			// The runner tier owns lifecycle verbs, never terminals — even
+			// carrying the exact role string.
+			"pipeline_runner",
+			func(spine string) []string {
+				return runJSONEnv(t, spine, "r-probe", "pipeline-runner", "editor(plan-review)")
+			},
+		},
+		{
+			// Even with the verb forged into its allowlist: the Homie tier is
+			// not a pipeline role and holds no lease.
+			"homie_agent",
+			func(spine string) []string {
+				return homieJSONEnv(t, spine, "h-1", []string{"editor.plan-review"})
+			},
+		},
+		{
+			// No other pipeline role can borrow the Editor's terminal.
+			"other_pipeline_role",
+			func(spine string) []string {
+				return runJSONEnv(t, spine, "r-probe", "pipeline", "worker")
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			spine := initSpine(t)
+			db := openDB(t, spine)
+			before := queryInt(t, db, `SELECT COUNT(*) FROM activity`)
+			res := runMC(t, tc.env(spine), "", args...)
+			if res.code == 0 {
+				t.Fatalf("%s reached the Editor plan-review terminal", tc.name)
+			}
+			if got := queryInt(t, db, `SELECT COUNT(*) FROM activity`); got != before {
+				t.Fatalf("%s wrote %d activity rows on a refused terminal", tc.name, got-before)
+			}
+		})
+	}
+}

@@ -11,8 +11,14 @@ and wave decomposition to read-only, depth-1 subagents. This top-level run
 alone chooses the wave or done declaration. Execute inline only when trivially
 single-context and state why.
 
-Submit exactly one terminal action: the reviewed wave batch through
-`mc strategist wave`, or `mc complete <initiative> --run <run_id> --status
-worked --outputs <completion_report>`. Do not dispatch children. (The wave
-terminal remains disabled until the durable holistic Editor-review state is
-defined.)
+Submit exactly one terminal action: the wave batch through `mc strategist
+wave`, or `mc complete <initiative> --run <run_id> --status worked --outputs
+<completion_report>`. Do not dispatch children.
+
+A wave you birth is not yet work: the Editor holds it to a holistic plan
+review before any child can be dispatched, and passes or refuses it whole. If
+`plan_review_sendback` is present in your brief, the Editor refused your last
+wave and that prose is the objection you must answer — replan against it
+rather than re-pitching the same wave. Write every child's description so its
+success criteria are checkable from the text alone; that is the bar the review
+applies.

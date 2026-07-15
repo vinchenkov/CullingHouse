@@ -418,7 +418,12 @@ func Approve(ctx context.Context, q Q, taskID int64) (bool, error) {
 // mandatory (§7). For an initiative the substrate cascade cancels open
 // children and archives their packets (§6.1) — one implementation, in the
 // lattice. The reason prose is recorded as an activity row (Inv. 7).
-func Cancel(ctx context.Context, q Q, taskID int64, reason string) error {
+// Cancel writes the cancellation mark. actor is the logical originator
+// (Inv. 7): "operator" for the operator's own verbs, "editor" for a wave
+// send-back (ADR-020 D5), which is the first non-operator-rooted writer of
+// this mark — every other path into it, including the archive cascades, is
+// rooted in an operator decision.
+func Cancel(ctx context.Context, q Q, taskID int64, reason string, actor string) error {
 	if reason == "" {
 		return Errf(CodeReasonRequired, "--reason is required for cancel (§7: asymmetric by design)")
 	}
@@ -436,7 +441,7 @@ func Cancel(ctx context.Context, q Q, taskID int64, reason string) error {
 	}
 	_, err = q.ExecContext(ctx, `
 		INSERT INTO activity (actor, kind, subject, detail)
-		VALUES ('operator', 'task.cancelled', ?, ?)`, taskID, reason)
+		VALUES (?, 'task.cancelled', ?, ?)`, actor, taskID, reason)
 	return err
 }
 
@@ -448,7 +453,7 @@ func CancelPacket(ctx context.Context, q Q, taskID int64, reason string) error {
 	if err := requireLivePacket(ctx, q, taskID); err != nil {
 		return err
 	}
-	return Cancel(ctx, q, taskID, reason)
+	return Cancel(ctx, q, taskID, reason, "operator")
 }
 
 // ProposalArgs births one proposed row (§6: tasks are born proposed).

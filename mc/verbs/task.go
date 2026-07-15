@@ -143,7 +143,7 @@ func TaskInterrupt(db *sql.DB, id *RunIdentity, task int64) (any, error) {
 			return Domainf("task %d is not the live lease subject; nothing to interrupt", task)
 		}
 		runID = lockRun.String
-		if err := domain.Cancel(ctx, q, task, "operator_interrupt"); err != nil {
+		if err := domain.Cancel(ctx, q, task, "operator_interrupt", "operator"); err != nil {
 			return err
 		}
 		ended, err := q.ExecContext(ctx, `
