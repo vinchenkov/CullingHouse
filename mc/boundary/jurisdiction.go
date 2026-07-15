@@ -22,6 +22,13 @@ type TypedClaim struct {
 	Kind TypedKind // see D10a's derivation rule; ADR-017:634-702's host-bind rows
 }
 
+// errNoMountPoint reports that this platform exposes no per-path mount point.
+// It is part of mountPoint's contract, so it lives with the caller rather than
+// in one platform arm: ancestorRoutes must distinguish "this platform has no
+// firmlink plane, so the Dir chain is the whole answer" from "statfs failed, so
+// HOME's alias routes are unknown and ambiguity denies".
+var errNoMountPoint = errors.New("mount point lookup is not supported on this platform")
+
 // maxDeniedPaths is ADR-017:167-169's bound. It "rejects before identity walking
 // or allocation; none of these collections is truncated."
 const maxDeniedPaths = 512
@@ -134,6 +141,7 @@ type Jurisdiction struct {
 	resolved bool
 
 	home       ProtectedID
+	broadRoots []ProtectedID // D4: HOME's chain UNION its alias routes
 	roots      []protectedRoot
 	typedRoots map[TypedKind][]ProtectedID
 }
@@ -161,6 +169,12 @@ func ResolveJurisdiction(in JurisdictionInput, ownerUID int) (Jurisdiction, erro
 		return Jurisdiction{}, err
 	}
 	j.home = home
+
+	broad, err := resolveBroadRoots(home)
+	if err != nil {
+		return Jurisdiction{}, err
+	}
+	j.broadRoots = broad
 
 	// D3: the whole MC_HOME tree is one protected root. It subsumes the fifteen
 	// enumerated classes and MC_HOME/sessions, so none of them is registered
@@ -375,6 +389,85 @@ func isFilesystemRoot(clean string, info fs.FileInfo) (bool, string) {
 	return false, ""
 }
 
+// ancestorRoutes returns every path that is an ancestor of p BY REACHABILITY:
+// p's own filepath.Dir chain, union the chain of each member's volume mount
+// point.
+//
+// The second half is not decoration. /Users is an APFS FIRMLINK — lstat reports
+// a plain directory, ModeSymlink is clear, and filepath.EvalSymlinks neither
+// sees through it nor normalizes it — so a HOME under /Users has a second, fully
+// live ancestor chain that no Dir walk produces. os.SameFile catches aliases of
+// the chain's own members (same inode), but the volume mount point
+// /System/Volumes/Data is an alias of NOTHING in the chain, and the entire HOME
+// tree is readable through it. Measured: it was AUTHORIZED rw and yielded the
+// operator's OpenSSH private key.
+//
+// Both D4 consumers share this helper: broad_root, and the union's "S is an
+// ancestor of P" mirror walk. A skeptic proved the blind spot was not
+// broad_root-specific — one /System/Volumes/Data source slipped past MC_HOME,
+// ~/.ssh, and another Worksource's root simultaneously.
+//
+// Ambiguity denies (D8): a REAL statfs failure on any member returns an error
+// rather than silently yielding a short set. A platform that exposes no mount
+// point at all is a different thing — there the rule correctly degrades to the
+// Dir chain, because without firmlinks the mount point is already on it.
+func ancestorRoutes(p string) ([]string, error) {
+	seen := map[string]bool{}
+	var out []string
+
+	addChain := func(start string) {
+		for cur := start; ; {
+			if !seen[cur] {
+				seen[cur] = true
+				out = append(out, cur)
+			}
+			parent := filepath.Dir(cur)
+			if parent == cur {
+				return
+			}
+			cur = parent
+		}
+	}
+	addChain(p)
+
+	// Snapshot before iterating: addChain appends to out.
+	chain := append([]string(nil), out...)
+	for _, member := range chain {
+		mnt, err := mountPoint(member)
+		if err != nil {
+			if errors.Is(err, errNoMountPoint) {
+				continue // no firmlink plane here; the Dir chain is the whole answer
+			}
+			return nil, mountErrf(CodeDeniedRoot,
+				"cannot determine the volume hosting %q, so HOME's alias routes are unknown "+
+					"and ambiguity denies: %v", member, err)
+		}
+		if !seen[mnt] {
+			addChain(mnt)
+		}
+	}
+	return out, nil
+}
+
+// resolveBroadRoots computes D4's broad_root set: HOME, its ancestors, and its
+// alias routes. Members that cannot be stat'd are skipped rather than fatal —
+// they cannot be os.SameFile with any source, so they cannot decide anything.
+func resolveBroadRoots(home ProtectedID) ([]ProtectedID, error) {
+	routes, err := ancestorRoutes(home.Canonical)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]ProtectedID, 0, len(routes))
+	for _, r := range routes {
+		info, err := os.Lstat(r)
+		if err != nil {
+			continue
+		}
+		out = append(out, ProtectedID{Canonical: r, Info: info, IsDir: info.IsDir()})
+	}
+	return out, nil
+}
+
 // sameFile compares two stat objects by filesystem identity, tolerating the nil
 // Info of an absent member. os.SameFile itself returns false rather than
 // panicking on nil, but going through one helper keeps that fact in one place.
@@ -404,6 +497,23 @@ func (j Jurisdiction) Rejects(id SourceIdentity, claim TypedClaim) error {
 	if !j.resolved {
 		return mountErrf(CodeDeniedRoot,
 			"unresolved jurisdiction rejects every source: %q", id.Canonical)
+	}
+
+	// D4's broad_root: HOME's DIRECTIONAL weakening. S == HOME or S a strict
+	// ancestor of HOME rejects; descendants stay eligible "unless they hit another
+	// protected root" (ADR-017:390-393), because §5's Worksource model puts every
+	// workspace under HOME. Every other member is bidirectional.
+	//
+	// It reports mount.denied_root: :390 names the rule but ADR-017's closed code
+	// list (:1146-1163) has no mount.broad_root, and :1173 files the case beside
+	// the other jurisdiction cases. The MESSAGE says broad_root so the operator
+	// sees which rule fired; only the slug is shared.
+	for _, r := range j.broadRoots {
+		if sameFile(id.Info, r.Info) {
+			return mountErrf(CodeDeniedRoot,
+				"source %q equals or is an ancestor of the operator's HOME %q (broad_root: %q)",
+				id.Canonical, j.home.Canonical, r.Canonical)
+		}
 	}
 	return nil
 }

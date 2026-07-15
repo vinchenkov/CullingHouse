@@ -2,12 +2,6 @@
 
 package boundary
 
-import "errors"
-
-// errNoMountPoint reports that this platform exposes no per-path mount point to
-// this package.
-var errNoMountPoint = errors.New("mount point lookup is not supported on this platform")
-
 // mountPoint is D4's alias-route mechanism, and it is macOS-specific by nature:
 // the thing it exists to defeat is the APFS firmlink at /Users, which presents a
 // second live ancestor chain that filepath.Dir never walks.
