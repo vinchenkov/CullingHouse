@@ -2,11 +2,43 @@
 
 ## Status
 
-Proposed (adversarial review next, then TDD, then `strategist wave` is CLI-wired).
+**Accepted after adversarial review** (2026-07-14). TDD next, then
+`mc strategist wave` is CLI-wired.
 
 Resolves ADR-001 Open Question 1, `docs/phase2-contract.md` A-P2-7, and the
 `## Parked` entry "Initiative wave holistic Editor review" — parked 2026-07-12,
 **decided by the operator 2026-07-14** in favour of reading (i).
+
+The review — four decorrelated lenses (code-cite fidelity, dispatch/deadlock,
+substrate/state-law, spec/invariants), each finding then judged by an independent
+skeptic with no default verdict — raised 12 findings and confirmed 11. All 11 are
+folded into the text above; the record, with full evidence and per-finding
+reasoning, is `docs/reviews/2026-07-14-adr-020-review.json`, and the draft it
+judged is commit `d19c7e9`. The material corrections:
+
+- **the one major** — D4 asserted the Editor's blindness to the producer
+  (Inv. 9) came "for free" from the brief being records-only. It does not:
+  `brief.go:74-84` loads `LatestOutputPath` outside every role gate, and on an
+  initiative subject that pointer resolves to Strategist(initiative)'s own
+  mandatory completion report. D4 now *specifies* the suppression, and the
+  Consequences' Inv. 9 argument no longer claims it is free.
+- **fail-open SQL** — D2(b)'s rendering dropped `planReviewPending`'s own
+  `status = 'seeded'` conjunct (latent, but the two forms disagreed).
+- **two overstatements retracted** — the storage trigger cannot prevent a git
+  *commit*, only the record of one (D1 now names the residual failure mode); and
+  `initiatives_archive_cascade` is not a precedent for a non-operator
+  `decision = 'cancelled'`, so D5 now logs this ADR as the first such widening.
+- **an unimplementable instruction** — D1's §4 row named a "rule list in the
+  schema header" that exists nowhere; the row is now recorded in
+  IMPLEMENTATION-NOTES rather than written into the spec.
+- **an unbounded brief field** — `plan_review_sendback` now has a recency rule.
+- plus two wrong code cites (sharp edge 1's `dispatch.go:362`; D5's
+  `domain.Cancel` call sites) and sharp edge 1's escapability claim.
+
+One finding was **refuted** and is recorded so it is not re-litigated: that
+keeping `mc.spawn-brief.v1` violates ADR-008, whose stated remedy for a brief
+change is "add a new version". The additions here are additive and role-gated, so
+no existing role's v1 brief changes meaning; the version stays.
 
 ## Context
 
@@ -119,14 +151,41 @@ enforcement table:
 - **The gate, in storage.** A new `children_work_requires_plan_review`:
   `BEFORE UPDATE OF status WHEN OLD.initiative_id IS NOT NULL AND
   OLD.plan_reviewed = 0 AND OLD.status = 'seeded' AND NEW.status = 'worked'` →
-  ABORT. This is the redundant backstop doing exactly the job §4 assigns it: a
-  bug in `mc dispatch` cannot produce *committed child work* (Inv. 25 — a
-  child's changes commit in the same breath as its `seeded → worked`) that the
-  Editor never approved. The dispatch-side filter (D2) is the policy; this is
-  the fence.
-- **§4 table row** (add to the spec-mirroring rule list in the schema header):
-  "Wave children work only after the Editor's plan review |
-  `children_work_requires_plan_review` trigger".
+  ABORT. This is the redundant backstop doing exactly the job §4 assigns it —
+  **and no more than that job**. Stated precisely: a bug in `mc dispatch` cannot
+  make the spine *record* a `seeded → worked` advance on a child the Editor never
+  passed. It cannot prevent the *commit*, and this ADR does not claim it does.
+  §4's own scope is storage ("a bug in `mc` cannot write an illegal state,
+  because the storage rejects it" — states, not filesystem effects), and §6.2 is
+  explicit that the git plane is "contract enforced by `mc`'s runtime and the
+  role briefs, not by SQLite": every mutating git operation runs inside the
+  container, and `mc/verbs/complete.go` performs no git operation at all. The
+  ordering is commit-then-record (`worker.md` directs "finish with one committed
+  branch state", *then* the terminal `mc complete`), so under the hypothesized
+  dispatch bug the trigger fires strictly after the commit exists.
+
+  **The residual failure mode, named rather than papered over**: a wrongly
+  dispatched Worker commits unreviewed changes to the initiative's shared branch,
+  its `mc complete` aborts, and the run exits without an accepted terminal — so
+  the lease rules recover it and charge `dispatch_retries` on the child (§10).
+  The blast radius is bounded by Inv. 25's topology: the changes sit on the
+  initiative's own branch and worktree, and merging into main always requires an
+  explicit operator approval, which a never-packaged child cannot reach. The
+  spine stays legal; the branch carries dead bytes. Accepted — the dispatch-side
+  filter (D2) is the policy, this is the fence, and a fence that keeps illegal
+  state out of storage is worth having even though it cannot reach into git.
+- **§4 enforcement row — recorded, not written into the spec.** The rule "wave
+  children work only after the Editor's plan review", enforced by
+  `children_work_requires_plan_review`, is a new row of §4's *kind*. The §4 table
+  lives in `specs/mission-control-spec.md:79-89` — the behavioral contract, which
+  AGENTS.md says wins on conflict — not in `mc/substrate/schema.sql`, whose header
+  (lines 1-18) is continuous prose and contains no rule list. (An earlier draft of
+  this bullet directed the row into a "spec-mirroring rule list in the schema
+  header" that does not exist anywhere in the repo.) This ADR therefore does not
+  edit the spec: the row is recorded in `IMPLEMENTATION-NOTES.md` as an additive
+  §4-class rule per AGENTS.md §6, and the trigger carries a comment naming the
+  rule it enforces, matching how every other trigger in the file cites its spec
+  clause.
 
 `plan_reviewed` is deliberately **not** added to `tasks_identity_immutable`
 (schema.sql:260) — it must move, exactly once, 0 → 1.
@@ -169,10 +228,26 @@ is visible. In SQL terms the §10 (3) `NOT EXISTS` arm becomes:
 AND (scope = 'task'
      OR NOT EXISTS (SELECT 1 FROM tasks c
                     WHERE c.initiative_id = tasks.id AND c.archived = 0)
-     OR EXISTS     (SELECT 1 FROM tasks c
-                    WHERE c.initiative_id = tasks.id AND c.archived = 0
-                      AND c.plan_reviewed = 0))
+     OR (tasks.status = 'seeded'
+         AND EXISTS (SELECT 1 FROM tasks c
+                     WHERE c.initiative_id = tasks.id AND c.archived = 0
+                       AND c.plan_reviewed = 0)))
 ```
+
+The `tasks.status = 'seeded'` conjunct is not decoration — it is
+`planReviewPending`'s own conjunct, and the SQL is a rendering of that predicate,
+so dropping it makes the two forms genuinely disagree on the fail-open side.
+(`I.scope = 'initiative'` *is* legitimately absorbed by the leading
+`scope = 'task'` disjunct; status is absorbed by nothing. §10 query (3)'s
+`stage_rank > 0` excludes only `packaged`, not `worked`/`verified`.) Without it,
+an initiative at `worked`/`verified` with open unreviewed children would be
+visible to (3), where the unchanged (status, scope) table maps it to
+Verifier/Packager rather than to the plan review, while the Go form would park it.
+The divergence is currently latent — `initiatives_declare_requires_drained`
+(schema.sql:250-256) and `tasks_birth_rules` (schema.sql:155) make an initiative
+past `seeded` with an open child unreachable — but a latent divergence between the
+two forms of one predicate is exactly what a differential suite exists to catch,
+so both forms carry the conjunct.
 
 **(c) The role map.** The `(status, scope)` table's `seeded, initiative` row
 splits on the same predicate, in `dispatch.spawnFor` (dispatch.go:653), which
@@ -256,10 +331,34 @@ transaction's snapshot (ADR-008):
   checkable criteria, priority), loaded by the existing `loadBriefTask`. Rendered
   only for `RoleEditorPlanReview`, exactly as `proposed_pool` is rendered only
   for `RoleEditor` (brief.go:87).
-- **nothing else.** The Strategist's reasoning is not in the brief and must not
-  be: §3's "blind to Strategist(propose)'s reasoning" is the same blindness the
-  Leverage Gate depends on (Inv. 9), and it holds here for free because the brief
-  is built from records only.
+- **nothing else — and this costs one gate, it is not free.** The Strategist's
+  reasoning must not reach the judge: §3's "blind to Strategist(propose)'s
+  reasoning" is the same blindness the Leverage Gate depends on (Inv. 9). Being
+  built from records only does **not** buy that blindness, because one record is
+  a pointer to producer-authored prose. `buildSpawnBrief` loads
+  `LatestOutputPath` for *every* spawn with a non-nil `SubjectID`
+  (`mc/verbs/brief.go:74-84`) — the block sits outside the `RoleEditor` gate at
+  brief.go:87 and is the sole un-role-gated enrichment. Its query is
+  `SELECT output_path FROM runs WHERE subject = ? AND output_path IS NOT NULL
+  ORDER BY created_at DESC, id DESC LIMIT 1`, and for an initiative subject the
+  row it finds is **Strategist(initiative)'s own completion report**: `mc
+  complete` *requires* `--outputs` on the initiative done-declaration
+  (`mc/verbs/complete.go:110-115`) and writes it to `runs.output_path`
+  (complete.go:203-206) on a run whose `subject` is the initiative
+  (`mc/domain/lease.go:89-93`).
+
+  So: **`LatestOutputPath` must be suppressed for `RoleEditorPlanReview`** — the
+  conservative shape is to keep the load where it is and clear/skip it for that
+  one role, since every other subject role's brief is unchanged by construction.
+  Without this line the judge reads the producer's own report and the
+  decorrelation this gate exists to provide is defeated.
+
+  The leak is invisible on a virgin initiative's *first* plan review (no prior
+  initiative-subject run carries `output_path`, so the field is empty) and opens
+  on every plan review after an arc round-trip (§6.1's `packaged → seeded`, or
+  the correction rally). A property that holds only until the first round-trip
+  is not a property, so the suppression is specified here rather than left to
+  the test to discover.
 
 **The child-id snapshot reuses `runs.pool_snapshot`** (schema.sql:644) with no
 schema change. The column's meaning generalizes from "the proposed pool this
@@ -272,8 +371,26 @@ populated into `ClaimArgs.PoolSnapshot`. Ascending id order, deterministic, same
 as `proposedPool` (dispatch.go:708).
 
 The Strategist(initiative) brief gains one field, `plan_review_sendback`: the
-**latest** `wave.sent_back` activity row for this initiative (prose + timestamp),
-rendered only for `RoleStrategistInitiative`. Without it the send-back is a
+latest **unanswered** `wave.sent_back` activity row for this initiative (prose +
+timestamp), rendered only for `RoleStrategistInitiative`. Unanswered is the
+load-bearing word and needs a rule, because `activity` is append-only
+(schema.sql:693, schema.sql:699) and an initiative has *many* wave boundaries
+(§6.1's lazy decomposition "at each boundary" under strict drain). "The latest
+`wave.sent_back` for this initiative", unqualified, would re-serve a long-answered
+objection at every future boundary forever.
+
+**The recency rule, with no new machinery**: render the latest `wave.sent_back`
+only if it is **newer than the latest `wave.passed`** for the same initiative
+(both rows are D5's own writes, `subject = <initiative id>`; absent a
+`wave.passed`, any `wave.sent_back` is unanswered). A send-back is answered
+exactly when a replanned wave passes, so this is the precise semantics D3's
+directive language already assumes ("the objection Strategist(initiative) must
+answer"). It is deliberately not scoped by wave birth: `BirthWave`
+(`mc/domain/initiative.go:64-83`) writes no activity row, and adding one purely
+to date a brief field would deviate further than reading the two rows this ADR
+already creates.
+
+Without the field the send-back is a
 silent loop — the Strategist replans blind and re-pitches the wave the Editor
 just refused. This deliberately does **not** reuse `tasks.refine_notes`: that
 column is single-slot and already owned by the §7 operator-revise / §8 Refiner
@@ -386,21 +503,48 @@ Strategist(initiative), whose brief carries the objection. `BirthWave`'s
 overlapping-wave refusal (`initiative.go:53`) passes cleanly because the drain is
 real.
 
-`decision = 'cancelled'` written by something other than the operator is not a
-novelty this ADR introduces: `initiatives_archive_cascade` (schema.sql:365)
-already writes exactly that mark, mechanically, with no operator in the loop.
-§6's gloss ("`cancelled` by the operator at any stage") describes the operator's
-verb, not an exclusive writer, and the substrate's own cascade is the standing
-proof. The alternative — `decision = 'rejected'` — was considered and dropped:
-`RejectProposal` is `proposed`-only, and §6.1's own word for what happens to
-open children is "cancelled".
+**This ADR does introduce the first non-operator-rooted `decision = 'cancelled'`,
+and says so plainly.** An earlier draft claimed the precedent already existed —
+that `initiatives_archive_cascade` (schema.sql:361) "already writes exactly that
+mark, mechanically, with no operator in the loop". The second half is false, and
+the review that caught it enumerated every writer of `archived = 1` on `tasks` to
+prove it: `Approve` (task.go:409) and `land.go:52` require `packaged`, reachable
+only through a strict-drain-guarded `worked` (task.go:361-367), so at archive time
+there are zero open children and the cascade body updates zero rows;
+`RejectProposal` (task.go:59) is `proposed`-only, and `tasks_birth_rules`
+(schema.sql:161-166) admits children only into a `seeded` initiative, so it too
+fires the cascade as a no-op; and `Cancel` is operator-gated at both call sites
+(`RequireOperatorVerb`, verbs/task.go:127; `requireOperatorVerbTx`,
+verbs/packet.go:42). Every firing that actually writes the mark onto a child is
+rooted in an operator decision. The cascade is mechanical *propagation* of an
+operator's cancel, not an independent writer.
+
+What survives is the weaker, true argument, and it is sufficient: §6's gloss
+("`cancelled` by the operator at any stage") describes the operator's verb, not
+an exclusive writer; §6.1's own word for what happens to open children is
+"cancelled"; and the alternative `decision = 'rejected'` is unavailable
+(`RejectProposal` is `proposed`-only, and these children are `seeded`). So the
+Editor's send-back is a genuine widening of who may root that mark, chosen because
+the vocabulary has no better cell — logged here as the deviation it is rather than
+dressed as precedent.
 
 **`domain.Cancel` gains an `actor string` parameter** (`mc/domain/task.go:421`,
-which today hard-codes `actor='operator'` in its activity insert). Two existing
-call sites pass `"operator"` (`mc/verbs/task.go:146`,
-`mc/verbs/packet.go:60` via `CancelPacket`); the send-back passes `"editor"`.
-Inv. 7 requires it — actor is the logical originator — and a parameter beats a
-parallel implementation that would drift from `Cancel`'s body.
+which today hard-codes `actor='operator'` in its activity insert). Inv. 7 requires
+it — actor is the logical originator — and a parameter beats a parallel
+implementation that would drift from `Cancel`'s body. The production call sites are
+two, but not the two an earlier draft named: `mc/verbs/task.go:146`, and
+`mc/domain/task.go:451` — inside `CancelPacket`'s own body. (`mc/verbs/packet.go:60`
+calls `CancelPacket`, not `Cancel`, so the parameter does not reach it.) That
+exposes a design point the draft hid: **`CancelPacket` hard-codes `"operator"`**
+when it calls `Cancel`, rather than growing the parameter itself — it is the
+operator packet-cancel arm by construction (its own doc comment and its
+`requireOperatorVerbTx` gate), so it has no other actor to pass. The send-back
+calls `Cancel` directly with `"editor"`.
+
+Roughly eleven test call sites also pass through `Cancel` (`initiative_test.go`,
+`packet_test.go`, `queue_test.go`, `task_test.go`, `lifecycle_nightly_test.go`);
+they are compile-time discoveries at zero risk, but they are mechanical work this
+ADR owes an implementer, so they are named here and in "What gets harder".
 
 ### D6. The wave is uniform in `plan_reviewed`, by construction
 
@@ -435,13 +579,20 @@ blocks it with the reason rather than looping — §10's existing rule, unchange
 ### What this buys
 
 - **Inv. 12 becomes true for waves.** Today a wave child can be Worked and
-  committed before any judge reads its criteria; after this, it cannot — twice
-  over (the dispatch filter, and `children_work_requires_plan_review` in
-  storage).
-- **Inv. 9 extends to wave planning** with no new mechanism: the producer is
-  Strategist(initiative) on `claude-sdk`/`claude`, the judge a fresh Editor
-  session on `codex`/`chatgpt`, decorrelated by the routing default and blind to
-  the producer's reasoning because the brief is records-only.
+  committed before any judge reads its criteria; after this, it is never
+  *dispatched* before one does (the D2 filter), and the spine can never *record*
+  the advance even if that filter breaks (`children_work_requires_plan_review`).
+  The two layers are policy and fence, not two guarantees of the same strength:
+  as D1 states, the trigger cannot reach a git commit, so the storage layer
+  bounds the damage of a dispatch bug rather than eliminating it.
+- **Inv. 9 extends to wave planning** with no new *routing* mechanism: the
+  producer is Strategist(initiative) on `claude-sdk`/`claude`, the judge a fresh
+  Editor session on `codex`/`chatgpt`, decorrelated by the routing default
+  (`resolveSpawnRoute` resolves by base role, D3). Blindness to the producer's
+  reasoning, however, is **not** inherited from the brief being records-only —
+  it costs the one explicit suppression D4 specifies (`LatestOutputPath`, which
+  otherwise carries Strategist(initiative)'s own completion report to its own
+  judge). With that gate the invariant holds; without it, it does not.
 - **Inv. 8 (feed-forward) is preserved, not bent.** §3's topology is
   `Strategist(propose) → Editor → Worker/Strategist(initiative) → …`, and this
   gate puts the Editor exactly where the topology already has it: judging
@@ -475,13 +626,30 @@ blocks it with the reason rather than looping — §10's existing rule, unchange
    unreviewed. If the gate lives only in query (3): (2a) filters the children out
    by `childGate`, and (2b) skips the initiative because `refinementStart`
    requires `status = 'packaged'` (dispatch.go:586) while it now sits at
-   `seeded`. The tick idles `queue-saturated` — **forever**, with a live packet
-   that can never be re-packaged and a slot that can never free. That is exactly
-   the deadlock §8 rule 1 exists to prevent. D2 therefore lands both the gate and
-   the exception in (2a) as well as (3); the (2a) arm maps by the same
-   (status, scope) table it already uses (dispatch.go:362), so the Editor
-   plan-review arm is reachable at cap. The plan review births no packet, so
-   Inv. 18 is not at risk from letting it run at cap.
+   `seeded`. The initiative then makes **no autonomous progress ever again**: it
+   is invisible to (3) with an unreviewed wave nothing can review, its packet
+   holds its slot, and no tick can re-package it. That is exactly the deadlock §8
+   rule 1 exists to prevent. D2 therefore lands both the gate and the exception in
+   (2a) as well as (3); the (2a) arm maps by the same (status, scope) table it
+   already uses (`spawnFor`, called at dispatch.go:359-360 inside the at-cap
+   block — *not* dispatch.go:362, which opens the (2b) arm, the one arm that
+   returns `KindReenter` without consulting that table), so the Editor plan-review
+   arm is reachable at cap. The plan review births no packet, so Inv. 18 is not at
+   risk from letting it run at cap.
+
+   Two precision notes, since this edge's argument is the reason (2a) is not
+   optional and it should not rest on overstatement. (i) The stall is not
+   literally unbreakable, and it is not literally a whole-tick `queue-saturated`
+   idle: `refinementStart` scans *all* packets (dispatch.go:363), so any other
+   non-saturated packaged packet still yields a Refiner spawn — it is this
+   initiative that is stuck, not the queue. (ii) The operator *does* hold a key,
+   as they do in sharp edge 5 — but the honest distinction is that this one is
+   **destructive** (`mc packet cancel` reaches `domain.Cancel`, archives the
+   initiative, and the `initiatives_archive_cascade` / `tasks_archive_cascades_packet`
+   triggers annihilate the wave and free the slot), whereas edge 5's is
+   **restorative** (unblock resumes the work untouched). A stall whose only exit
+   is destroying the initiative is still the deadlock §8 rule 1 forbids, and that
+   narrower claim justifies (2a) just as fully.
 
 2. **An unbounded send-back ↔ replan loop is possible, and this ADR does not
    bound it.** Each round is two leased runs and no budget: a send-back is not a
@@ -578,8 +746,13 @@ Phase-2 fast lane (no Docker), red-first, per AGENTS.md §3:
   for pass; all four fences (wrong mode, wrong run, stale lease, decided
   initiative); `mc editor decide` refused from an `editor(plan-review)` identity
   and still accepted from `editor`; the plan-review brief carries the charter and
-  the full wave and nothing else; the Strategist(initiative) brief carries the
-  latest send-back and does not clobber `refine_notes`.
+  the full wave and nothing else — specifically, **`latest_output_path` is empty
+  on a plan review whose initiative already carries a completion report from a
+  prior arc round-trip** (D4's suppression; the test must construct the
+  round-trip, because a virgin initiative passes it vacuously); the
+  Strategist(initiative) brief carries an unanswered send-back, carries **no**
+  send-back once a later `wave.passed` answers it, and does not clobber
+  `refine_notes`.
 - **Scope table** (ADR-001 D6 matrix): `mc editor plan-review` denied at host,
   homie-agent, and runner scopes.
 - **Directives** (`mc/verbs/directives_test.go`): every `dispatch.Role`,
@@ -593,10 +766,16 @@ Phase-2 fast lane (no Docker), red-first, per AGENTS.md §3:
 - **`mc.spawn-brief.v1` gains fields.** ADR-008 says brief changes are schema
   changes; `wave` and `plan_review_sendback` are additive and role-gated, so v1's
   meaning for every existing role is unchanged — but the ADR-008 field list must
-  be updated in the same change, and the golden-brief tests re-pinned.
+  be updated in the same change, and the golden-brief tests re-pinned. The
+  `LatestOutputPath` suppression (D4) is the one *subtractive* brief change, and
+  it is role-scoped to `RoleEditorPlanReview`, which no brief carries today;
+  ADR-008's "every subject role" field list must gain that exception.
 - **`runs.pool_snapshot` now carries two id vocabularies.** Documented in D4 and
   in sharp edge 7; a reader must know the mode.
-- **`domain.Cancel`'s signature changes**, touching two existing call sites.
+- **`domain.Cancel`'s signature changes**, touching two production call sites
+  (`verbs/task.go:146` and `domain/task.go:451` inside `CancelPacket`, which
+  hard-codes `"operator"`) and roughly eleven test call sites across five files.
+  All are compile-time discoveries.
 - **Reversal cost is low, by construction**: dropping the arm means deleting one
   predicate from two queries, one role constant, one verb, one directive, and
   three triggers; the column can stay at its default and mean nothing. Nothing
