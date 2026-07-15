@@ -907,3 +907,204 @@ Entry template:
   cannot be quietly left open.
 - Spec impact: none
 - Needs your decision: no
+
+## 2026-07-14 — Standalone-task `/workspace` is an RO 0555 task root, not RW scratch
+- Where: Phase-3 decorrelated cross-harness review of ADR-016..019; spec §11.3;
+  ADR-017 Decisions 5–6. Found independently by two lenses, which is why it is
+  recorded once here rather than twice.
+- Gap: §11.3's mount table fixes `/workspace` as host-source "container-local
+  scratch", access "RW", purpose "staged outputs, evidence captures". ADR-017
+  Decision 6's destination table binds the same container path for
+  standalone-task roles as an "exact operator-owned mode-0555 task-local
+  skeleton root, always RO", and Decision 5 makes that non-recoverable ("uid
+  10002 cannot chmod the parent or create a sibling"). Both columns diverge:
+  container-local scratch becomes a host bind, and RW becomes RO. The flip is
+  undeclared. ADR-017's own deviation note scopes itself to §§6.2, 7, and 11.1;
+  the "Standalone tasks use a sanitized task-local Git repository" entry above
+  scopes to §§5, 6.2, 7, 11.1 and changes only where the branch lives. Neither
+  names §11.3. A grep of this file for `/workspace` or `0555` returned nothing
+  before this entry — an absence of text, not a failure to find it. The ADR
+  header's delegation claim does not cover the flip either: it is scoped to
+  allowlist grammar and collision-free destinations, and §11.3 does not leave
+  the access mode unfixed.
+- Choice: keep the design and fix the record. The 0555 RO root is the mechanism
+  that makes §5's committed-state isolation literal; a root that uid 10002 could
+  chmod would not isolate anything, so it cannot also be an agent-writable
+  scratch root. The change tightens confinement, strengthens Inv. 22's scoped
+  jurisdiction rather than weakening it, and breaks no invariant (§11.3's table
+  is not one). The capability §11.3 wanted is relocated, not destroyed: roles
+  keep writable ground at `/workspace/artifacts/<target>/<suffix>` (bilateral,
+  normally RW), `/home/agent`, and `/mc/records/output`, and the Verifier keeps
+  its sealed-tree materialization overlaid RW. Non-standalone roles still get
+  the spec's RW container-local scratch directory from the image rootfs, so the
+  deviation is scoped to exactly the standalone-task roles. Per §6 this logs and
+  goes; only the ledger was incomplete.
+- Spec impact: §11.3's `/workspace` row should distinguish the standalone-task
+  RO task-root bind from the ordinary RW scratch directory, and say where
+  standalone roles' container-local scratch lands.
+- Needs your decision: no
+
+## 2026-07-14 — ADR-017 mandates an initiative/child refusal ADR-016 cannot classify
+- Where: Phase-3 decorrelated cross-harness review of ADR-016..019; ADR-017
+  Decision 4 and its acceptance section; ADR-016 Decision 4
+- Gap: ADR-017 requires a plan-tier outcome it gives no way to express. It says
+  an "initiative/child candidate needing that path is not eligible for the
+  accepted Phase-3 spawn path", and its acceptance section makes the refusal a
+  tested obligation: such a candidate "is refused as unsupported rather than
+  receiving a standalone worktree, committed projection, or live primary
+  fallback". But ADR-016 states "The v1 consequence classes are closed" and its
+  three rows (stale/protocol, deployment health, candidate policy) enumerate
+  every stable code; none names an unsupported or parked candidate shape.
+  ADR-016 never mentions "initiative" or "wave" at all — grep returns zero — so
+  nothing elsewhere in it carves the case out, and Decision 3 forbids the escape
+  hatch ("It never falls through to another candidate"). ADR-017's own fifteen
+  `mount.*` codes have no unsupported-shape member either, and its Decision 4
+  grant list is closed and simply lacks a shared initiative worktree, so the
+  planner would not naturally emit a rejected mount to carry the refusal. The
+  refusal would have to come from somewhere neither document defines.
+- Choice: record rather than invent a code. Reachability is real but narrow, and
+  the two halves differ: nothing gates Editor promotion of an `initiative`-scope
+  proposal, so Strategist(initiative) can be selected today; the wave-child arm
+  stays unreachable while `strategist wave` is not CLI-wired. The existing "A
+  promoted operator initiative dead-ends while the wave verb is parked" entry
+  covers Editor promotion and the zero-wave arc packet, not this boundary-tier
+  code, so it does not already declare the gap. No shipped Go code implements an
+  initiative-unsupported refusal — no code implements this plane at all — so
+  this is a sibling-ADR coherence defect in the design documents, with no red
+  test and nothing to revert.
+- Spec impact: none — the resolution belongs in the ADRs. The follow-on ADR that
+  extends ADR-017's closed table (or the next slice that wires the boundary
+  tier, whichever lands first) must either give the refusal a stable code, name
+  the existing `mount.*` code it reuses, or state that §10 selection filters the
+  shape out before prepare. Recorded so the choice cannot be made by accident in
+  code.
+- Needs your decision: no
+
+## 2026-07-14 — The ledger's "two explicit spec deviations" undercounts 20a1a50 (informational)
+- Where: Phase-3 decorrelated cross-harness review; PROGRESS.md at 20a1a50
+  ("phase3: accept boundary architecture ADRs")
+- Gap: the ledger entry written in that commit says "The two explicit spec
+  deviations—pre-landing task-local Git and one stale-writer cleanup before
+  Console/landing—are appended to `IMPLEMENTATION-NOTES.md`". The same commit
+  appended eight `##` entries (+155 lines). Two named, eight written. Every one
+  of the eight carries a non-"none" Spec impact line proposing concrete spec
+  text changes (§11.4, §15.3, §11.5, §15.4/§15.5, §15.4, §15.3, §§6.2/7/11.1,
+  §10). The most charitable reading — "deviations from explicit spec text", as
+  against gap-filling where the spec is silent — still undercounts: the
+  `open+audit` control-address floor narrows §11.4's literal "everything passes"
+  row, and "Helper uses a component label, not an agent tier" directly overrides
+  §11.5's "It carries the mc-tier labeling like every other container".
+- Choice: record the miscount here rather than rewrite the ledger entry, which
+  is append-only and correct as a historical record of what that session
+  believed. This entry is the correction. No ADR content is at fault and no
+  invariant is touched; it is an AGENTS.md §5 ledger-accuracy defect, and it
+  matters only because the ledger is the sole cross-session, cross-harness
+  memory — six load-bearing Phase-3 deviations were invisible from it. Worth
+  noting that the marker one might reach for, a "Spec impact:" line, does not
+  distinguish a deviation from an informational entry: it is a mandatory
+  template field with "none" as a permitted value.
+- Spec impact: none
+- Needs your decision: no
+
+## 2026-07-14 — ADR-018 describes separate user namespaces the target does not have
+- Where: Phase-3 decorrelated cross-harness review; ADR-018 Decision 1 and
+  Decision 8; handoff §4.3 canaries; spike S1 (`spikes/01-setuid-gate`)
+- Gap: ADR-018 twice lists "user" among the namespaces that "remain separate"
+  between guard and agent — once for the production pair, once for the preclaim
+  probe clients. On the pinned target that is false. The handoff makes "no
+  user-namespace remap" a permanent canary, and S1's trusted evidence records an
+  identity `/proc/self/uid_map` of `0 0 4294967295` — the init user namespace,
+  shared by every container. The ADR's own mechanism depends on that sharing:
+  `meta skuid` matches the socket's kernel credential through the user namespace
+  owning the network namespace, so an agent in a genuinely separate userns with
+  a different map would munge uid 10002 to overflowuid and no owner predicate
+  could ever match. Read literally, the two sentences are jointly unrealizable.
+- Choice: log it as the prose defect it is. The design is right and only its
+  description is wrong: the sentence's job is to enumerate what
+  `NetworkMode=container:` does *not* share, and the same list includes
+  "capability namespaces", which is not a Linux namespace type — it is loose
+  isolation-posture prose, not a topology specification. Nothing in ADR-018
+  *requires* creating separate user namespaces, and Docker offers no
+  per-container userns absent daemon-wide remap, which the handoff forbids
+  outright; no implementer would enable remap on the strength of this sentence.
+  Nor is it a security defect: a userns-remapped daemon wedges the guard, which
+  lands in Decision 8's already-enumerated "actual guard cannot reach ready"
+  class with the correct fail-closed consequence (deployment health, no claim,
+  no task charge). The cost is an unhelpful error message, not a fail-open. No
+  Go code under `mc/` mentions user namespaces, so nothing shipped is
+  implicated.
+- Spec impact: none — the correction is ADR-side. A future slice must strike
+  "user" from both lists and state affirmatively that the shared init user
+  namespace is what makes `meta skuid` meaningful, so the enforcement mechanism
+  is not left resting on a stated precondition that contradicts it. Adding
+  uid-remap/ECI to Decision 8's deployment-health causes would give diagnostic
+  parity with §11.7, which already assigns that message to `mc doctor` and
+  onboarding; that part is optional, and §11.7's assignment means Decision 8's
+  silence is a diagnostics gap, not a spec contradiction.
+- Needs your decision: no
+
+## 2026-07-14 — ADR-018's preclaim probe budget permits a tick to outlast the reap bound
+- Where: Phase-3 decorrelated cross-harness review; ADR-018 Decisions 6 and 8;
+  spec §16.2 `tick_interval_s`, §10, §7, Inv. 3
+- Gap: Decision 8 mandates five containers plus a bridge per spawn/wake
+  candidate, with create/inspect/start/stop/remove-and-confirm-absent
+  sequencing, and makes the fixture unskippable ("A production candidate cannot
+  skip this fixture merely because a read-only policy calculation succeeded").
+  Decision 6 puts that Docker probe inside a one-use control channel created
+  "For each resident tick", whose non-inventory wall allowance is 120 seconds —
+  explicitly twice `tick_interval_s`. The spec states the reap-latency bound as
+  "threshold + one tick" at 60s, and §10 says a firing that lands while a tick
+  is in flight "is skipped, never queued or run concurrently". Those hold
+  together only if a tick fits inside 60s. ADR-018's own budget permits a
+  compliant, successful spawn tick to consume 120s, at which point a firing is
+  skipped and the stated bound no longer holds — likewise §7's "landing latency
+  is at most one tick" and Inv. 3's accepted "up-to-one-tick latency". Neither
+  ADR-016 nor ADR-018 restates or relaxes the bound anywhere.
+- Choice: log and go. The defect is narrower than "the probe blows the bound":
+  120s is a timeout ceiling, not an asserted expected duration — the ADR never
+  claims the probe takes that long — and the spec never independently guarantees
+  any tick completes within `tick_interval_s`, since base-spec ticks already
+  start containers and wire proxies. What is confirmed is that ADR-018's text
+  sanctions a worst case exceeding the spec's stated bound on a mandatory path
+  without saying so. Inv. 3's normative core (one dispatcher, one action per
+  tick) is preserved; only its descriptive latency clause is strained, and
+  nothing fails open. This is design-document text — no Go code implements the
+  preclaim probe.
+- Spec impact: §16.2's "reap-latency bounds are threshold + one tick" should say
+  "threshold + one tick, where a tick that performs a preclaim proof may itself
+  exceed `tick_interval_s`", or ADR-018 should bound the probe under the tick
+  interval. The slice that implements the preclaim proof must resolve which:
+  measure the real probe cost and either fit it under `tick_interval_s` or amend
+  the bound with evidence. Recorded so the latency claim is not silently
+  inherited as true.
+- Needs your decision: no
+
+## 2026-07-14 — ADR-019 sources its machine budget to the spec, not the handoff (informational)
+- Where: Phase-3 decorrelated cross-harness review; ADR-019 header; spec §16.3;
+  handoff §4.3 operator-input row 4
+- Gap: ADR-019's header reads "the Phase-3 handoff requires resource bounds; the
+  spec fixes Docker Desktop ≥4 CPU/≥8 GiB". The spec fixes no such thing: it
+  contains zero occurrences of "GiB", "GB", or "CPU", and §16.3's `[container]`
+  knob table lists five knobs (runtime, base image tag, package-cache root,
+  mount allowlist path, additional blocked patterns) with no resource values.
+  The sentence names the handoff separately in the same clause, so "the spec"
+  cannot be read as loose shorthand for the `specs/` suite. The real source is
+  the handoff's operator-input row, which reads "≥4 CPU / ≥8 GB" — so the header
+  also carries a unit slip. The premise is load-bearing, not decorative: the
+  range table's ceilings (pipeline max 4000m / 6144 MiB) are sized against that
+  budget, so the table's justifying authority is the misattributed one. The
+  sibling ADRs all cite the spec by section number; ADR-019 cites "the spec" for
+  a figure with no section to cite.
+- Choice: record it. The numbers are correct against the handoff, no invariant
+  is breached, and no code depends on the header prose — this is a citation and
+  traceability defect in one header line, not a design error. Two of the
+  header's three attributions are defensible on the merits (the spec does fix
+  the setuid preconditions and the browser image, even if labeling them "S1's"
+  and "S8's" borrows spike names from the handoff); only the ≥4 CPU/≥8 GiB
+  clause is sourced to a document that does not contain it. It matters because
+  an auditor tracing the ceilings to their authority would look in the spec and
+  find nothing, and because "≥8 GB" is a floor the operator must meet, not a
+  capacity the ceilings must sum under.
+- Spec impact: none — ADR-019's header should cite the handoff's operator-input
+  row and say GB, matching the source.
+- Needs your decision: no
