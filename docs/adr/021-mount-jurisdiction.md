@@ -26,6 +26,15 @@ identity from the ancestor arm for an explicitly own control. Equality,
 descendants, intermediate own roots, other controls, and every other protected
 member remain denied.
 
+D8's original case rule was also wrong in both directions. Case handling is
+irrelevant to the ancestor half, which is already `os.SameFile`; and treating a
+known case-sensitive volume as "ambiguous" needlessly denies distinct paths.
+The amended rule applies normalization/case only to absent suffix components,
+using the nearest existing ancestor's volume capabilities: NFC plus exact
+comparison on a case-sensitive volume, NFC plus full Unicode case folding on a
+case-insensitive volume, and fail closed only when the capability is genuinely
+unknown.
+
 **The second review (`docs/reviews/2026-07-14-adr-021-implementation-probe.json`)
 raised 6, confirmed 5 (all major) and 1 partial.** Unlike the first, it found
 the ADR *salvageable* — every defect is local to one decision and the predicate
@@ -680,6 +689,25 @@ algorithm requirement, not a footnote.
   **Ambiguity denies** — if it cannot be decided whether `S` intersects the
   would-be path, reject.
 
+  Resolve this pair from the **cleaned original spelling**, so canonicalization
+  cannot erase the suffix boundary. Starting at the full path, `os.Lstat` it;
+  only `ENOENT` permits peeling one original basename into the front of the
+  suffix and trying the parent. At the first existing original prefix, call
+  `filepath.EvalSymlinks` exactly once and stat the canonical result. That
+  produces the canonical ancestor while retaining every suffix component from
+  the original request, even when a symlink target has a different component
+  count or repeats a component name. A bare `ENOTDIR`, dangling symlink,
+  permission/I/O error, non-directory ancestor with a suffix, unexpected error
+  shape, or race supplies no trustworthy pair and is ambiguity, so
+  construction/recheck denies.
+
+  Do **not** derive the suffix boundary from `*fs.PathError.Path`. The pinned Go
+  implementation currently returns a partially resolved target-side spelling,
+  but following a symlink rewrites that internal path and the error exposes no
+  original-component index. The earlier handoff called that undocumented shape
+  a one-call "gift"; it cannot recover the exact original suffix in the cases
+  above and is therefore evidence only, not the algorithm.
+
   **How the pair is compared, since "compare on that pair" is not an
   algorithm.** The two halves are compared differently, and conflating them
   would smuggle back the lexical comparison ADR-017:1348-1349 rejects:
@@ -689,13 +717,25 @@ algorithm requirement, not a footnote.
     corresponding components of `S`'s own unresolved remainder — never as a
     string prefix. `a/b` matches components `["a","b"]`, so `ab` and `a/bc` do
     not match, which a `strings.HasPrefix` would get wrong.
-  - **Case**: APFS is case-insensitive-preserving by default, so a
-    component-wise match that is case-sensitive would let `~/.SSH` slip a
-    case-only variant past a `~/.ssh` deny. Suffix components are therefore
-    matched case-insensitively, and — because the volume's behaviour is not
-    guaranteed — a case-insensitive match on a case-sensitive volume is
-    **ambiguity, and denies**. This is the one place the design cannot be exact,
-    and it fails closed.
+  - **Case and normalization apply only to the suffix half.** The ancestor half
+    is inode identity and must never case-fold a canonical path. Query the
+    nearest existing ancestor's volume with `getattrlist(2)`
+    (`ATTR_VOL_CAPABILITIES`, `VOL_CAP_FMT_CASE_SENSITIVE`) and trust the answer
+    only when the matching `valid` bit is set. NFC-normalize each component on
+    both volume types. On a case-sensitive volume compare the normalized
+    components exactly. On a case-insensitive volume compare their **full
+    Unicode case folds**. `strings.EqualFold` is not sufficient: it does not
+    implement the multi-rune fold APFS needs (for example `ß` / `ss`), and raw
+    bytes do not equate NFC/NFD spellings. A case-sensitive volume is a known,
+    exact answer — not ambiguity. Only a `getattrlist` error or a clear `valid`
+    bit is genuinely unknown, and a candidate intersection that needs the
+    suffix comparison then denies. If the NFC strings are already equal, or
+    their full folds are different, the answer is independent of case mode and
+    remains decidable even when the capability is unknown; only a fold-equal
+    case variant needs the volume bit.
+  - The Darwin capability query is a pure-Go `SYS_GETATTRLIST` wrapper. It must
+    compile with `CGO_ENABLED=0`; the shipped `mc` binary is static, so copying
+    the evidence probe's cgo wrapper is not an implementation option.
   - If the nearest existing ancestor is itself ambiguous (it does not exist
     either, or resolution races), **deny**.
 - **The HOME-class roots** carry an explicit *"when present"* (:383), so an
