@@ -1230,3 +1230,66 @@ Entry template:
 - Spec impact: none. If the operator wants the contract rule to cover role
   terminals, that is a small, separable slice.
 - Needs your decision: no
+
+## 2026-07-15 — Cross-harness takeover found ADR-021 steps 1–6 green over six missing witnesses
+- Where: Phase 3 takeover review of ADR-021 TDD steps 1–6; spec §11.3;
+  ADR-017 Decisions 3 and 5; ADR-021 D2, D4, D5, D10, D10a, D11
+- Gap: the fast suite was green while the implemented jurisdiction slice still
+  had six independently reproduced defects or acceptance holes. (1) Supplying
+  an own Worksource's real `.mission-control` root made its ordinary workspace
+  reject as that root's ancestor; the test called "own" supplied no control
+  root. (2) `TypedRoots` was retained by map/slice alias, so caller mutation
+  changed a supposedly constructed, immutable jurisdiction. (3) an arbitrary
+  exported `TypedKind(255)` authorized when the caller supplied the same map
+  key, despite the domain being closed. (4) kinds crossed destination rows —
+  most starkly one `KindInertCover` across seventeen agent/setup/landing rows —
+  so the predicate could not distinguish roots for different destinations;
+  only `.codex`/`.claude` has an explicit merge license. (5) ancestry walks
+  skipped every `Lstat` error, not only expected absence, so an unknown route
+  could become a shortened permitting route. (6) the mandatory member sweep
+  omitted gateway secrets, runtime controls, Git controls, standalone
+  `denied_paths`, the whole-tree `MC_HOME/quarantine` witness, most other-
+  Worksource root classes, and the own-workspace/own-control pair. A combined
+  mutant deleting several of those members still passed every boundary test.
+- Choice: revoke the steps 1–6 acceptance claim until each witness is red-first
+  and green. Deep-copy and validate the typed registry; split every kind that
+  crosses a destination row (retaining only the ADR's explicit runtime-control
+  merge); mark the exact own Worksource roots as exempt only from the ancestor
+  direction of Git/`.mission-control` controls; fail closed on every ambiguity;
+  and add the complete member sweep. This preserves the closed domain and
+  fail-closed posture, follows ADR-021's own normative text, and is cheap to
+  reverse because no production planner calls the seam yet.
+- Spec impact: none; these are implementation/ADR-self-conformance defects.
+- Needs your decision: no
+
+## 2026-07-15 — HOME volume-root detection keeps both device and Darwin mount-point evidence
+- Where: Phase 3 takeover review; ADR-021 D5 leg 4 and its required non-`/`
+  filesystem-root witness
+- Gap: D5 requires `parentStat.Dev != stat.Dev`, but the implementation used
+  only Dir-self, parent identity, and Darwin `statfs` mount-point equality. The
+  Darwin check is necessary for APFS volume/firmlink shapes, but the missing
+  device comparison meant the non-Darwin arm could accept an operator-owned
+  mounted filesystem root; the suite tested only `/`.
+- Choice: retain the Darwin kernel mount-point check and add the portable
+  parent/device boundary check plus a non-`/` volume-root witness. The checks
+  are complementary and conservative: either piece of kernel evidence that the
+  candidate is a filesystem root refuses it.
+- Spec impact: none
+- Needs your decision: no
+
+## 2026-07-15 — D8 generalizes absent-path protection beyond profile `denied_paths`
+- Where: Phase 3 ADR-021 D8; ADR-017:275-276
+- Gap: ADR-017 explicitly gives the nearest-existing-ancestor rule only to a
+  declared `denied_paths` entry. Other protected members are routinely absent
+  too (fresh `MC_HOME` classes and another Worksource's artifact root), and
+  silently skipping them makes jurisdiction depend on directory creation order.
+  ADR-021 says this conservative generalization is logged, but no deviation-log
+  entry existed.
+- Choice: apply the same canonical-ancestor plus component-suffix comparison to
+  every absent protected member except HOME-class roots, whose governing text
+  explicitly says "when present". This preserves more of the protected set,
+  fails closed, and is one reversible predicate rule rather than member-specific
+  exceptions.
+- Spec impact: ADR-017 Decision 5 may generalize :275-276 from declared deny
+  paths to all protected members except its explicit "when present" HOME class.
+- Needs your decision: no
