@@ -1,7 +1,7 @@
 # PROGRESS — Mission Control implementation ledger
 
 <!-- Header block: kept current by every session. -->
-LAST GREEN SHA: 942985e (local; the operator pushes manually — decided 2026-07-14, see Parked. Agents: do not push.)
+LAST GREEN SHA: 1a5fb63 (local; the operator pushes manually — decided 2026-07-14, see Parked. Agents: do not push.)
 PHASES PASSING: Phase 0 COMPLETE (S1–S8 all green, no fallback ADRs; only operator-leg deferrals remain); Phase 1 COMPLETE (1a substrate 172; 1b walking skeleton reviewed-and-fixed — fake-harness 43, agent-runner 13, runner/image 40, resident 42, dispatch + cmd/mc suites; Docker e2e PASS ×4 total); Phase 2 COMPLETE for every unparked acceptance line (domain/§18 surface, deterministic split-brain convergence, bounded honesty + five mutants, tagged dispatch/metamorphic/twin-spine lifecycle properties; the initiative-wave CLI is no longer isolated — ADR-020 landed 2026-07-14 and closed the last Phase 2 acceptance line)
 KNOWN-FAILING: (none)
 FAST SUITE: mc/check.sh (gofmt + vet on the untagged build AND on the nightly/docker_e2e/test_fake_routing tagged builds — they must compile every commit, added 2026-07-14 after a tagged suite rotted invisibly — + go test ./...; includes substrate + promoted dispatch) + runner/fake-harness/check.sh + runner/agent-runner/check.sh + runner/image/check.sh + resident/check.sh. Docker e2e (phase-completion lane): cd mc && mise exec -- go test -tags docker_e2e -timeout 15m ./e2e/...
@@ -2169,3 +2169,34 @@ uncoded `ParseMountAllowlist`/entry/access errors and the named missing
 one of ADR-017's closed codes without string matching, and that every code
 aborts the whole plan. Then implement the invalid-plan/no-claim dispatch
 transaction. Do not wire production planning and do not load launchd.
+
+- 2026-07-15 — **ADR-017 stable mount rejection namespace green**
+  (`1a5fb63`). All malformed `mount-allowlist` content — TOML/schema/version,
+  bounds, entry path/target/access, and allowlist-internal target overlap — now
+  returns a typed `MountError` with `mount.allowlist_invalid`; standalone target
+  validation remains `mount.target_invalid`, and every `ResolveAccess` refusal
+  is `mount.rw_not_permitted`. `mount.gate_unhealthy` closes the previously
+  missing sixteenth constant. Exact-source AST guards pin both the closed
+  `mount.*` string namespace and the complete exported error-returning API
+  census, with runtime `errors.As` witnesses for every public mount rejector.
+  `NewBlockPolicy` is deliberately the one non-mount exception: it validates
+  `config.toml`, whose ADR-016 consequence is `health.config_invalid`; coercing
+  it to `mount.allowlist_invalid` would misclassify deployment health. Isolated
+  mutation sweeps kill raw parser/target/access errors, nested target-code
+  leakage, target-collision misclassification, missing/wrong constants, a
+  disguised extra `mount.*` constant, and an unclassified new exported
+  rejector. Boundary race and the full fast lane (Go all/tagged; Bun
+  43/13/40/42) are green. The "every code aborts the whole plan" acceptance is
+  intentionally **not** claimed: no aggregate mount-plan API or production
+  boundary caller exists yet, so a per-source `Authorize` loop would test the
+  test rather than no-drop behavior. That evidence must pair a later aggregate
+  planner test with the classified-refusal transaction below.
+
+NEXT: Implement ADR-016's invalid-plan/no-claim dispatch transaction red-first,
+without wiring production planning. Re-read Decisions 1–4 and derive the exact
+typed classified-refusal input at the commit seam; prove allowlist
+trust/invalid refusals record deployment health, candidate-owned mount refusals
+apply their subject/task, subjectless, or Homie consequence, and every arm
+leaves zero new Run rows, a free lock, no spawn effect, and no fall-through to
+another candidate. Keep aggregate mount no-drop acceptance open until the
+planner exists. Do not load launchd.
