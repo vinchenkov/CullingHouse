@@ -5,6 +5,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"syscall"
 )
 
 // TypedClaim names WHICH KIND a typed system source claims to be.
@@ -268,15 +269,21 @@ func resolveDeclared(path string) (ProtectedID, error) {
 	return ProtectedID{Canonical: id.Canonical, Info: id.Info, IsDir: id.IsDir}, nil
 }
 
-// resolveHome turns the injected raw HOME into a validated member.
+// resolveHome implements ADR-021 D5: the injected HOME is validated, not trusted.
 //
-// STEP 2 SCOPE: this is deliberately minimal — non-empty, absolute, and
-// existing. ADR-021 D5's five legs (never Stat, refuse a symlink rather than
-// resolving through it, refuse a non-directory, refuse a filesystem root, refuse
-// a foreign owner) arrive in step 3, driven by their own red tests. It must NOT
-// grow a mode leg or an ACL leg, and it must NOT route through TrustHomeDir:
-// that is MC_HOME's seam and its perm&0o077 check rejects the real 0750 macOS
-// HOME, which would make every plan fail.
+// It takes the RAW spelling, because the raw spelling IS the evidence — leg 2
+// cannot exist against a pre-resolved path, since a canonical path's final
+// component is by construction never a symlink.
+//
+// !! It is NOT TrustHomeDir, and it must never route through trustedOwnerMode
+// (identity.go:92-104). That is MC_HOME's seam: MC creates MC_HOME itself at
+// 0700, so it enforces perm&0o077 == 0. The operator's real HOME is 0750 on
+// stock macOS (drwxr-x---) and 0755 elsewhere; 0750 & 0o077 = 0o050, so routing
+// HOME through that seam rejects every real HOME and no plan can ever be made.
+// HOME's mode is not MC's business, which is why D5 has five legs and NO MODE
+// LEG. For the same reason D5 refuses the pending macOS ACL obligation
+// (identity.go:52-54): the real HOME carries an ACL today, and a managed or
+// network HOME may carry allow ACEs. Reuse the lstat seam only. !!
 func resolveHome(home string, ownerUID int) (ProtectedID, error) {
 	if home == "" {
 		return ProtectedID{}, mountErrf(CodeDeniedRoot,
@@ -285,11 +292,87 @@ func resolveHome(home string, ownerUID int) (ProtectedID, error) {
 	if !filepath.IsAbs(home) {
 		return ProtectedID{}, mountErrf(CodeDeniedRoot, "HOME %q is not absolute", home)
 	}
-	id, err := ResolveSource(filepath.Clean(home))
+	clean := filepath.Clean(home)
+
+	// Leg 1: Lstat, NEVER Stat. Stat follows the link and destroys leg 2's only
+	// evidence.
+	info, err := os.Lstat(clean)
 	if err != nil {
-		return ProtectedID{}, mountErrf(CodeDeniedRoot, "HOME %q: %v", home, err)
+		return ProtectedID{}, mountErrf(CodeDeniedRoot, "HOME %q cannot be stat'd: %v", home, err)
 	}
-	return ProtectedID{Canonical: id.Canonical, Info: id.Info, IsDir: id.IsDir}, nil
+
+	// Leg 2: refuse a symlink; do not resolve through it. Matching trustedLstat's
+	// seam (identity.go:81-90): "a symlink to an otherwise-trusted object is not
+	// itself trusted." A $HOME pointed at an attacker-controlled directory would
+	// otherwise silently relocate broad_root's anchor and the whole ~/.ssh-class
+	// member set — the real ~/.ssh left unprotected, the attacker's protected.
+	if info.Mode()&os.ModeSymlink != 0 {
+		return ProtectedID{}, mountErrf(CodeDeniedRoot,
+			"HOME %q is a symlink; the operator's real HOME is refused rather than resolved through", home)
+	}
+
+	// Leg 3: a directory.
+	if !info.IsDir() {
+		return ProtectedID{}, mountErrf(CodeDeniedRoot, "HOME %q is not a directory", home)
+	}
+
+	// Leg 4: not a filesystem root. Before ownership, so "/" refuses for the right
+	// reason. A HOME of "/" would make broad_root reject every source on the
+	// machine: fail-closed, but useless.
+	if root, why := isFilesystemRoot(clean, info); root {
+		return ProtectedID{}, mountErrf(CodeDeniedRoot,
+			"HOME %q is a filesystem root (%s); broad_root would then reject every source", home, why)
+	}
+
+	// Leg 5: owned by the operator. Injection relocates trust; it does not remove
+	// it.
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if !ok {
+		return ProtectedID{}, mountErrf(CodeDeniedRoot, "cannot read ownership of HOME %q", home)
+	}
+	if int(stat.Uid) != ownerUID {
+		return ProtectedID{}, mountErrf(CodeDeniedRoot,
+			"HOME %q is owned by uid %d, not the operator uid %d", home, stat.Uid, ownerUID)
+	}
+
+	// Validated. Now canonicalize for the identity comparisons broad_root walks.
+	canonical, err := filepath.EvalSymlinks(clean)
+	if err != nil {
+		return ProtectedID{}, mountErrf(CodeDeniedRoot, "HOME %q cannot be resolved: %v", home, err)
+	}
+	cinfo, err := os.Stat(canonical)
+	if err != nil {
+		return ProtectedID{}, mountErrf(CodeDeniedRoot, "HOME %q cannot be stat'd: %v", canonical, err)
+	}
+	return ProtectedID{Canonical: canonical, Info: cinfo, IsDir: true}, nil
+}
+
+// isFilesystemRoot implements D5's leg 4. The three tests are complementary: the
+// Dir-self test alone misses a real volume root such as /System/Volumes/Data,
+// whose parent is an ordinary directory.
+//
+// Ambiguity denies (D8): if the parent cannot be examined, treat the path as a
+// root rather than assume it is not.
+func isFilesystemRoot(clean string, info fs.FileInfo) (bool, string) {
+	parent := filepath.Dir(clean)
+	if parent == clean {
+		return true, "it is its own parent"
+	}
+	pinfo, err := os.Lstat(parent)
+	if err != nil {
+		return true, "its parent cannot be examined, and ambiguity denies"
+	}
+	if sameFile(info, pinfo) {
+		return true, "it is the same object as its parent"
+	}
+	// The kernel's own answer, where available: a path whose volume mount point is
+	// itself IS a filesystem root, however ordinary its parent looks.
+	if mnt, err := mountPoint(clean); err == nil {
+		if minfo, err := os.Lstat(mnt); err == nil && sameFile(info, minfo) {
+			return true, "it is a volume mount point"
+		}
+	}
+	return false, ""
 }
 
 // sameFile compares two stat objects by filesystem identity, tolerating the nil
