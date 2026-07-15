@@ -1655,22 +1655,84 @@ not detected — `chmod +a` is invisible to both mode bits and `xattr`), and
   `denied_root`; D7 pins the `denied_root`/`cross_worksource` split ADR-017 never
   states, and its precedence when a path is both.
 
-NEXT: Adversarially review ADR-021 before TDD — same shape as ADR-020's review
-(decorrelated lenses + an independent skeptic per finding, no default verdict),
-and this time **the lenses must be told to drive real paths where they can**,
-since that is what caught the ADR-020 seam that four static reviews of the ADR
-text had missed. Then TDD the slice red-first per ADR-021's "Tests that pin it",
-including the planted mutants (identity→prefix, ancestor direction removed,
-`broad_root` as a literal `/Users` list, jurisdiction after `ResolveAccess`,
-`denied_paths` made subtractable). `Authorize` must not be wired into production
-planning until it lands.
+- 2026-07-14 — **ADR-021 adversarially reviewed and substantially reworked:
+  16 raised, 13 CONFIRMED (7 major), 3 refuted (`6983d6d` record, `82f608f`
+  rework).** Four decorrelated lenses, each in **its own git worktree** and told
+  to **drive real paths rather than reason from quotes** — the two process
+  changes this ledger asked for after the ADR-020 seam. Both earned their keep
+  immediately.
+
+  **The draft was not salvageable by patching.** A skeptic implemented the
+  draft's D1+D3+D4 verbatim against the real `mc/boundary` code and ran it: all
+  seven of ADR-017's typed grants rejected — `/mc/session`, `/home/agent`,
+  `/mc/records/output`, `/mc/workflow`, the completion seal,
+  `/mc/attachments/in`, `/workspace/operator/traces`. **No container could ever
+  have launched**, and the draft's own test list would have stayed green because
+  it pinned only the deny side. That is the second time in one day that a suite
+  proved nothing by testing one face of a mechanism (cf. the ADR-020 seam) —
+  the pattern is now named in both ADRs.
+
+  **The root error was conceptual, not clerical.** The draft read ADR-017:396-401
+  as a *hole in the protected union* and tried to carve typed grants out of it.
+  It is a **second predicate**: *"That union governs ordinary/profile-requested
+  mounts. A typed system mount is **instead** confined to its one kind-specific
+  authorized root."* Confinement to one identity is **stricter** than avoiding a
+  set. The draft's `Rejects(id SourceIdentity)` carried no kind and could not
+  express it — and it twice deferred to "D5's per-class check", a mechanism that
+  existed nowhere in the document (D5 is about HOME). A cross-reference to my own
+  ADR, invented and unnoticed. **D10 now writes that decision.**
+
+  Also reworked: **D11** (new — D9 was a half-measure: re-running `Rejects`
+  against a stale `Jurisdiction` reproduces the stale answer, so
+  `ResolveJurisdiction` itself re-runs at every call site, since ADR-017:1339-1341
+  makes the protected set itself drift); **D1** (`JurisdictionInput` pinned as a
+  real struct — its input is *mixed*, raw `denied_paths` vs pre-resolved
+  everything else, which the draft got self-contradictory; `ProtectedID` carries
+  an `fs.FileInfo` because `os.SameFile` consumes stat objects, not a
+  `(device,inode,type)` triple; the zero-value law now names its mechanism
+  instead of asserting the property); **D4** (the ancestor direction is
+  **qualified** — unqualified it rejects the own Worksource's own
+  `workspace_root`, necessarily an ancestor of its own `.mission-control`);
+  **D5** (the injected HOME is validated, not trusted); **D8** (says *how* the
+  ancestor/suffix pair is compared — component-wise, never lexical — and how APFS
+  case is handled). Tests now pin the **permit** side first. Five cite fixes, and
+  the "zero risk" migration claim retracted.
+
+  Three refuted and recorded: a hardlink rule (breaches the ADR's charter and
+  reverses an ADR-017 alternative rejected on the merits), an alleged D3 cite
+  truncation, and the severity of the dangling D5 pointers.
+
+NEXT: TDD the jurisdiction slice red-first against ADR-021 **as reworked**, in
+this order — (1) `ResolveJurisdiction` + the zero-value law (an unexported
+`resolved` flag; a bare `Jurisdiction{}` rejects everything) + D2's
+non-subtractability + the 512-`denied_paths` bound before any stat; (2) D10's
+typed confinement **permit side first** — every one of ADR-017's typed grants
+must plan successfully before any deny test is written, because pinning only the
+deny side is exactly how the draft's fatal defect stayed invisible; (3) D4's
+bidirectional identity rule including the own-vs-other ancestry pair
+(own `workspace_root` authorized, another Worksource's parent rejected);
+(4) `broad_root` with a non-`/Users` HOME proving the parenthetical is not a
+literal set; (5) D6's ordering, D7's split and precedence, D8's
+nearest-existing-ancestor and case handling, D11's re-resolution. Then the
+planted mutants ADR-021 names (identity→prefix, ancestor direction removed,
+`broad_root` as a literal list, jurisdiction after `ResolveAccess`,
+`denied_paths` made subtractable) — each must die with an exercised witness.
+
+`Authorize` must not be wired into production planning until this lands. Do not
+load launchd.
 
 Then: the macOS **ACL leg** of the trust seam (owner/mode/non-symlink are
 enforced; a granting ACE is not detected — `chmod +a` is invisible to both mode
 bits and `xattr`, so it needs the native ACL API behind a darwin build tag),
 then the stable-code mapping for the parser's uncoded rejections, then the
-invalid-plan/no-claim dispatch transaction. Do not load launchd.
+invalid-plan/no-claim dispatch transaction.
 
 Adjacent gap, deliberately NOT swept into the jurisdiction slice:
 `mount.gate_unhealthy` exists in ADR-017 (:1162, added by `c6ca202`) but is
 missing from `mc/boundary/identity.go`'s code block.
+
+**Process note for the next session, earned twice today:** review lenses must
+run in their own worktrees and be told to *drive real paths*. Static review of
+ADR text missed a defect that made every container unlaunchable; one agent that
+compiled and ran the design found it in minutes. Apply the same to the slice's
+own tests — pin the permit side, not just the deny side.
