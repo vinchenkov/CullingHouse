@@ -1,7 +1,7 @@
 # PROGRESS — Mission Control implementation ledger
 
 <!-- Header block: kept current by every session. -->
-LAST GREEN SHA: f9cfd1e (local; the operator pushes manually — decided 2026-07-14, see Parked. Agents: do not push.)
+LAST GREEN SHA: ea57c82 (local; the operator pushes manually — decided 2026-07-14, see Parked. Agents: do not push.)
 PHASES PASSING: Phase 0 COMPLETE (S1–S8 all green, no fallback ADRs; only operator-leg deferrals remain); Phase 1 COMPLETE (1a substrate 172; 1b walking skeleton reviewed-and-fixed — fake-harness 43, agent-runner 13, runner/image 40, resident 42, dispatch + cmd/mc suites; Docker e2e PASS ×4 total); Phase 2 COMPLETE for every unparked acceptance line (domain/§18 surface, deterministic split-brain convergence, bounded honesty + five mutants, tagged dispatch/metamorphic/twin-spine lifecycle properties; the initiative-wave CLI is no longer isolated — ADR-020 landed 2026-07-14 and closed the last Phase 2 acceptance line)
 KNOWN-FAILING: (none)
 FAST SUITE: mc/check.sh (gofmt + vet on the untagged build AND on the nightly/docker_e2e/test_fake_routing tagged builds — they must compile every commit, added 2026-07-14 after a tagged suite rotted invisibly — + go test ./...; includes substrate + promoted dispatch) + runner/fake-harness/check.sh + runner/agent-runner/check.sh + runner/image/check.sh + resident/check.sh. Docker e2e (phase-completion lane): cd mc && mise exec -- go test -tags docker_e2e -timeout 15m ./e2e/...
@@ -79,7 +79,9 @@ FAST SUITE: mc/check.sh (gofmt + vet on the untagged build AND on the nightly/do
         deviations logged (69c19be), evidence in docs/reviews/ (6636e1e)
   - [~] Protected set + cross-Worksource jurisdiction (Dec. 3 step 5, Dec. 5):
         ADR-021 reworked twice; cross-harness takeover revoked steps 1-6
-        acceptance after six reproduced gaps (e78a81c). Repairing those red-first
+        acceptance after six reproduced gaps (e78a81c). Registry immutability,
+        destination-confined kinds, and own-control ancestry are repaired
+        (3ad3411, f9cfd1e, ea57c82); mandatory member/device witnesses remain
         before step 7 (D8 absence/suffix/case, D9/D11 drift), then step 8
   - [ ] macOS ACL leg of the trust seam (needs the native ACL API)
 - [ ] Phase 4 — E2E control loops (six scenario families)
@@ -1967,3 +1969,25 @@ controls explicitly. Permit only the exact own workspace (by `os.SameFile`) as
 an ancestor of its own `.mission-control` and explicitly owned Git controls;
 keep equality, descendants, intermediate ancestors, other/external controls,
 own artifacts, and absent own roots denied. Then add the full member sweep.
+
+- 2026-07-15 — **Takeover repair 3 green: own-control ancestry is exact and
+  ownership-associated** (`ea57c82`). The original public-API witness went red
+  because supplying an own workspace's real `.mission-control` rejected the
+  workspace mount ADR-017 requires. D1's flat control lists could not implement
+  D4 safely, so Git and `.mission-control` controls are now explicitly split
+  into own/other collections. Only the exact own workspace identity bypasses
+  the ancestor arm for an explicitly own control. Present and absent controls,
+  APFS same-inode/different-spelling identity, exact/descendant controls,
+  intermediate own artifacts, missing ownership, another Worksource's nested
+  control, and additive `denied_paths` are pinned. An independent read-only
+  adversarial re-review found no remaining defect. Full fast lane green twice:
+  Go all/tagged builds and Bun 43/13/40/42.
+
+NEXT: Add the mandatory protected-member sweep red-first: whole-tree
+`MC_HOME/quarantine`, present/omitted HOME classes, both gateway secrets, both
+selected/non-selected runtime controls, all four control collections,
+`denied_paths` in three directions, every other-Worksource root slot including
+two artifacts, and the own-Worksource identity permit counterparts. Each deny
+row must also prove an unrelated permit. Then add D5's portable
+`parentStat.Dev != stat.Dev` leg with a mutation-killing non-`/` filesystem-root
+witness while retaining the Darwin mount-point evidence.
