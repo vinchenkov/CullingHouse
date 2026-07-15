@@ -1,7 +1,7 @@
 # PROGRESS — Mission Control implementation ledger
 
 <!-- Header block: kept current by every session. -->
-LAST GREEN SHA: 468251b (local; the operator pushes manually — decided 2026-07-14, see Parked. Agents: do not push.)
+LAST GREEN SHA: ebb7613 (local; the operator pushes manually — decided 2026-07-14, see Parked. Agents: do not push.)
 PHASES PASSING: Phase 0 COMPLETE (S1–S8 all green, no fallback ADRs; only operator-leg deferrals remain); Phase 1 COMPLETE (1a substrate 172; 1b walking skeleton reviewed-and-fixed — fake-harness 43, agent-runner 13, runner/image 40, resident 42, dispatch + cmd/mc suites; Docker e2e PASS ×4 total); Phase 2 COMPLETE for every unparked acceptance line (domain/§18 surface, deterministic split-brain convergence, bounded honesty + five mutants, tagged dispatch/metamorphic/twin-spine lifecycle properties; the initiative-wave CLI is no longer isolated — ADR-020 landed 2026-07-14 and closed the last Phase 2 acceptance line)
 KNOWN-FAILING: (none)
 FAST SUITE: mc/check.sh (gofmt + vet on the untagged build AND on the nightly/docker_e2e/test_fake_routing tagged builds — they must compile every commit, added 2026-07-14 after a tagged suite rotted invisibly — + go test ./...; includes substrate + promoted dispatch) + runner/fake-harness/check.sh + runner/agent-runner/check.sh + runner/image/check.sh + resident/check.sh. Docker e2e (phase-completion lane): cd mc && mise exec -- go test -tags docker_e2e -timeout 15m ./e2e/...
@@ -2116,3 +2116,24 @@ controls for identity→prefix, removed ancestor direction, literal/Dir-only
 kind-inert/self-certified typed claims, and HOME mode/`TrustHomeDir` traps. Once
 all named mutants are demonstrably dead, close the jurisdiction slice and move
 to the macOS ACL trust-seam leg recorded in the Phase-3 order.
+
+- 2026-07-15 — **ADR-021 step 8 green: all ten named jurisdiction mutants die
+  under exercised witnesses** (`ebb7613`). Each mutation was applied alone in
+  an isolated `/private/tmp` copy and run uncached. Two initially survived: the
+  symlink identity fixture canonicalized to the protected spelling and could
+  not distinguish identity from a separator-aware lexical gate, and D8's new
+  absent-root above-anchor arm lacked a direct witness. A same-inode hardlink
+  with unrelated canonical spelling and an above-canonical-anchor source now
+  close those gaps. The final sweep kills identity→prefix, removed present and
+  absent ancestor arms, both hardcoded `broad_root` variants, reordered
+  jurisdiction, subtractable `denied_paths`, kind-inert typed claims, and both
+  HOME trust traps. The method, observed failures, and D8/D9/D11 supplementary
+  mapping are recorded in
+  `docs/reviews/2026-07-15-adr-021-mutant-audit.md`. Uncached boundary tests and
+  the full fast lane (Go all/tagged; Bun 43/13/40/42) are green.
+
+NEXT: Implement the macOS ACL leg of the filesystem trust seam red-first. Read
+the ADR-017 trust contract and existing spike/prior evidence first; add a real
+granting-ACE witness, detect any ACL that broadens write authority beyond the
+trusted owner, and fail closed on unsupported or ambiguous ACL inspection while
+preserving the current owner/mode/non-symlink checks and portable builds.
