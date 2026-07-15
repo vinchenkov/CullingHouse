@@ -1,9 +1,9 @@
 # PROGRESS — Mission Control implementation ledger
 
 <!-- Header block: kept current by every session. -->
-LAST GREEN SHA: 1a5fb63 (local; the operator pushes manually — decided 2026-07-14, see Parked. Agents: do not push.)
+LAST GREEN SHA: 48eaf63 (local; the operator pushes manually — decided 2026-07-14, see Parked. Agents: do not push.)
 PHASES PASSING: Phase 0 COMPLETE (S1–S8 all green, no fallback ADRs; only operator-leg deferrals remain); Phase 1 COMPLETE (1a substrate 172; 1b walking skeleton reviewed-and-fixed — fake-harness 43, agent-runner 13, runner/image 40, resident 42, dispatch + cmd/mc suites; Docker e2e PASS ×4 total); Phase 2 COMPLETE for every unparked acceptance line (domain/§18 surface, deterministic split-brain convergence, bounded honesty + five mutants, tagged dispatch/metamorphic/twin-spine lifecycle properties; the initiative-wave CLI is no longer isolated — ADR-020 landed 2026-07-14 and closed the last Phase 2 acceptance line)
-KNOWN-FAILING: (none)
+KNOWN-FAILING: (none). Note the spine is now schema v2 (substrate.CurrentSchemaVersion): a spine created by an mc build older than 48eaf63 is migrated in place by `mc onboard home`; scratch MC_HOME spines need no action.
 FAST SUITE: mc/check.sh (gofmt + vet on the untagged build AND on the nightly/docker_e2e/test_fake_routing tagged builds — they must compile every commit, added 2026-07-14 after a tagged suite rotted invisibly — + go test ./...; includes substrate + promoted dispatch) + runner/fake-harness/check.sh + runner/agent-runner/check.sh + runner/image/check.sh + resident/check.sh. Docker e2e (phase-completion lane): cd mc && mise exec -- go test -tags docker_e2e -timeout 15m ./e2e/...
 
 ## Phases
@@ -2200,3 +2200,64 @@ apply their subject/task, subjectless, or Homie consequence, and every arm
 leaves zero new Run rows, a free lock, no spawn effect, and no fall-through to
 another candidate. Keep aggregate mount no-drop acceptance open until the
 planner exists. Do not load launchd.
+
+- 2026-07-15 — **Takeover from Codex; ADR-016 D2 replay fences and the v1→v2
+  migration green** (`48eaf63`). The resume ritual found the tree mid-red and
+  unledgered: Codex had authored the D2 schema columns, their substrate
+  backstops, and a `migration_test.go` calling `substrate.Migrate` /
+  `CurrentSchemaVersion`, neither of which existed. Nothing was discarded; the
+  slice is completed here. The AGENTS.md §2 cross-harness review ran first
+  (5 lenses × 2 refuting verifiers, 31 agents): 13 findings raised, **4
+  confirmed, 9 refuted** — including two plausible-but-wrong attacks on the
+  migration design that were killed by construction, and one ("doctor hard-fails
+  a migrated spine") correctly refuted as unreachable *at review time* which the
+  v2 bump then made reachable, so it was fixed anyway.
+
+  The load-bearing find: all three hex key CHECKs failed open on an embedded
+  NUL. `length()` and `GLOB` both stop at the first NUL, so 64 hex + NUL + junk
+  stored 69 bytes and read back as a UNIQUE value its own receipt lookup could
+  not find — a replayed commit would duplicate the activity, its consequence,
+  and its outbox fan-out, which is precisely what D2 exists to prevent. The
+  reviewer's proposed `CAST(... AS BLOB)` fix proved **insufficient** on its own
+  (63 hex + NUL is exactly 64 bytes and GLOB never sees it); both lengths must
+  agree. Codex had already used the byte-safe form on `dispatch_result`, so the
+  three key columns were an asymmetry, not a misunderstanding.
+
+  Second: SQLite cannot ALTER a UNIQUE column onto an existing table, so the
+  only ALTER-shaped migration that compiles yields a spine with D2's columns and
+  none of its fences — and the incoming test, asserting only that inserts
+  succeed, graded exactly that spine green. Uniqueness is now declared as named
+  indexes (identical semantics, reachable from a migration), and the storage
+  contract is stated once and run against a fresh **and** a migrated spine.
+  `Migrate` is additive (§16.4 forbids dropping a spine holding data),
+  transactional, idempotent by version, and fail-closed on an unknown version;
+  its fixture is the real v1 schema frozen from HEAD into
+  `mc/substrate/testdata/schema-v1.sql`, not an approximation.
+
+  Third: `init` and `onboard` stamped a literal `1` while applying the current
+  Schema, so onboard read its own fresh spine back as migratable and hit
+  `duplicate column name: dispatch_key`. Both now stamp `CurrentSchemaVersion`,
+  `doctor` compares against it (older → onboard repairs; newer → upgrade or
+  restore), and `onboard home` implements §16.4's previously missing "older
+  schema → migrate" arm. Fourth: the ledger's own `KNOWN-FAILING: (none)`
+  overclaimed while the substrate package did not compile — recorded here as the
+  process finding it is.
+
+  Ten planted mutants, isolated and uncached, **all dead, zero survivors**: NUL
+  tail/pad per key column, dropped unique index in schema and in the migration,
+  dropped pairing CHECK, dropped trigger recreation, fail-open version, and
+  non-transactional DDL. Three deviations logged. Full fast lane green (Go
+  all/tagged; Bun 43/13/40/42). No Docker, launchd, or secret state touched.
+
+NEXT: Implement ADR-016's invalid-plan/no-claim dispatch transaction red-first,
+without wiring production planning — unchanged from the previous NEXT, which the
+D2 storage slice was the prerequisite for. Re-read Decisions 1–4 and derive the
+exact typed classified-refusal input at the commit seam; prove allowlist
+trust/invalid refusals record deployment health, candidate-owned mount refusals
+apply their subject/task, subjectless, or Homie consequence, and every arm
+leaves zero new Run rows, a free lock, no spawn effect, and no fall-through to
+another candidate. D2's fences are now storable: the commit-side `dispatch_key`
+and the prepare-side `dispatch_request_id`/`dispatch_result` receipt exist and
+are enforced, so the transaction can use them rather than re-deriving idempotency.
+Keep aggregate mount no-drop acceptance open until the planner exists. Do not
+load launchd.

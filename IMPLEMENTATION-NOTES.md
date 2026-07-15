@@ -1328,3 +1328,68 @@ Entry template:
   their intermediate ancestors still deny.
 - Spec impact: none; this makes ADR-021's existing qualification executable.
 - Needs your decision: no
+
+## 2026-07-15 — D2's hex key fences are pinned by two lengths, not one
+- Where: Phase 3 ADR-016 D2 (`docs/adr/016-boundary-plan-handshake.md:238-264`);
+  found by the cross-harness takeover review of the outgoing Codex slice
+- Gap: the ADR says the request id is "exactly 16 lowercase hex" and the
+  dispatch key is a SHA-256, but not how storage proves it. Both of SQLite's
+  obvious tools stop at the first NUL byte: `length()` counts characters up to
+  it and `GLOB` matches up to it. A character-only test therefore accepts 64 hex
+  + NUL + arbitrary trailing bytes (69 bytes stored), and a byte-only test
+  (`length(CAST(x AS BLOB))`) accepts 63 hex + NUL at exactly 64 bytes because
+  GLOB never sees the NUL. Either shape defeats D2's replay fence rather than
+  merely storing something ugly: UNIQUE compares whole byte strings, so two rows
+  with the same visible key coexist, while `WHERE dispatch_key = <clean key>`
+  matches neither. The replayed commit then duplicates the activity, its state
+  consequence, and its outbox fan-out — exactly what D2 exists to prevent.
+- Choice: require the character length and the byte length to both equal the
+  declared size, then let GLOB verify the alphabet. Agreement between the two
+  lengths admits only NUL-free ASCII, which GLOB reads whole; the three key
+  columns are treated identically. Conservative: it is a CHECK-only change that
+  strictly narrows what stores, preserves the fail-closed posture, and is
+  reversible in one edit. Planted mutants for each half of the rule (`nul_tail`,
+  `nul_pad`) die on every key column.
+- Spec impact: none; this makes D2's existing shape rule enforceable.
+- Needs your decision: no
+
+## 2026-07-15 — Spine uniqueness is declared as named indexes so it can migrate
+- Where: Phase 3 ADR-016 D2 storage step; spec §16.4; `mc/substrate/schema.sql`,
+  `substrate.Migrate`
+- Gap: D2 says Phase 3 "adds a nullable unique dispatch key to the append-only
+  activity record" and a nullable unique `event_destination_key`. SQLite cannot
+  add a UNIQUE column to an existing table (`Cannot add a UNIQUE column`) and has
+  no `ADD CONSTRAINT`, so an inline `UNIQUE` is unreachable from any migration.
+  The only ALTER-shaped step that compiles silently produces a spine with the
+  columns but none of the fences; the incoming test asserted that inserts
+  succeed, which grades precisely that spine green. §16.4 forbids the usual
+  escape (a rebuild copies rows and drops the table, and no path may drop or
+  re-initialize a spine containing data).
+- Choice: declare the three fences as named `CREATE UNIQUE INDEX` statements in
+  `schema.sql` — semantically identical to inline UNIQUE, including NULL-distinct
+  behavior — so the migration creates the same objects verbatim and no table is
+  rebuilt. The pairing CHECKs ride on the second column of each pair, since a
+  SQLite column CHECK may reference its siblings and is identical in force. The
+  migration text is frozen history: a later v2 -> v3 step is a new constant, not
+  an edit. Conservative: additive, transactional (SQLite rolls DDL back), keeps
+  every invariant, and never touches a row.
+- Spec impact: none.
+- Needs your decision: no
+
+## 2026-07-15 — `meta.schema_version` must be stamped from the constant
+- Where: spec §16.4 (`specs/mission-control-spec.md:775-776`); `mc init`,
+  `mc onboard home`, `mc doctor`
+- Gap: both provisioning writers applied the embedded `substrate.Schema` and
+  then stamped the literal `1`. The moment the schema moved to v2 this made meta
+  describe a spine that no longer exists: onboard read its own freshly created
+  spine back as migratable and failed with `duplicate column name: dispatch_key`,
+  and `doctor` hard-failed every healthy deployment with "expected 1". §16.4's
+  "present with an older schema → migrate" arm was also never implemented — the
+  older spine was accepted and then driven by newer code.
+- Choice: both writers stamp `substrate.CurrentSchemaVersion`; `doctor` compares
+  against it and distinguishes older (repairable by onboard) from newer (upgrade
+  mc or restore); `onboard home` runs the idempotent `substrate.Migrate` after
+  validation. Conservative: it makes existing text executable rather than adding
+  surface, and each arm fails closed on a version this build does not define.
+- Spec impact: none.
+- Needs your decision: no
