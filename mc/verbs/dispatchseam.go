@@ -25,10 +25,17 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"encoding/json"
+	"io"
+	"os"
+	"path/filepath"
 	"sort"
+	"strings"
+	"syscall"
 	"time"
 
 	"mc/dispatch"
+	"mc/refusal"
+	"mc/routing"
 )
 
 // Domain separators, exactly ADR-016:130-131 and :238-240. The preparation
@@ -365,4 +372,364 @@ func nullInt64Ptr(v sql.NullInt64) *int64 {
 		return nil
 	}
 	return &v.Int64
+}
+
+// ---------------------------------------------------------------------------
+// ADR-016 D1 — the command frame: prepare → attest → commit.
+//
+// One external `mc dispatch` composes three steps. Prepare runs under the
+// process flock and one BEGIN IMMEDIATE transaction against spine state only;
+// a branch whose entire consequence is lock-domain-owned commits there, with
+// its D2 request receipt, and the command is done. A spawn instead returns a
+// bounded candidate and preparation token. Attest runs with both released —
+// it alone reads host files (routing.md today; the mount plan next). Commit
+// reacquires, re-reads, requires the recomputed token to equal the prepared
+// one byte-for-byte, re-decides, and applies exactly the reselected
+// candidate's consequence — a spawn, or a classified refusal routed through
+// the D4 consequence router with a dispatch_key that is finally DERIVED
+// (token + canonical action) rather than taken on faith. It never falls
+// through to another candidate.
+//
+// This is the native single-process form D1 pins for Linux ("the resident
+// calls the same prepare/attest/commit functions locally in one process,
+// deliberately releasing the transaction/flock across attest I/O"). The
+// Darwin broker/helper self-delegation split — private __dispatch-prepare/
+// __dispatch-commit CLI frames over the one-shot control descriptor — is a
+// later slice over these same functions (deviation logged 2026-07-16).
+// ---------------------------------------------------------------------------
+
+// preparedDispatch is what one prepare invocation produced: either a final
+// result (lock-domain consequence or receipt replay) or a candidate that owes
+// attest and commit.
+type preparedDispatch struct {
+	requestID string
+	final     map[string]any
+	candidate *preparedCandidate
+}
+
+type preparedCandidate struct {
+	spawn *dispatch.Spawn
+	runID string
+	tun   tunables
+	token string
+}
+
+// attestedDispatch is the attest step's host projection: the resolved route
+// and the digest binding it, or a classified refusal — never both.
+type attestedDispatch struct {
+	route         routing.Route
+	routingDigest string
+	refusal       *refusal.Refusal
+}
+
+// dispatchPrepare is the helper's first invocation (ADR-016 D1 step 1). Order
+// is load-bearing: the deployment precondition before anything on every
+// branch, then the receipt fence BEFORE reading selection state — a lost
+// response looked up after selection could reap-then-claim in one command,
+// exactly what D2 forbids (ADR-016:255-261).
+func dispatchPrepare(ctx context.Context, q Q, uuid, requestID string) (preparedDispatch, error) {
+	if err := requireDeploymentUUID(ctx, q, uuid); err != nil {
+		return preparedDispatch{}, err
+	}
+	if !validLowercaseHex(requestID, 16) {
+		return preparedDispatch{}, Domainf("dispatch request id must be exactly 16 lowercase hex characters (ADR-016 D2)")
+	}
+	if replay, found, err := lookupDispatchReceipt(ctx, q, requestID); err != nil {
+		return preparedDispatch{}, err
+	} else if found {
+		return preparedDispatch{requestID: requestID, final: replay}, nil
+	}
+
+	sel, err := selectFromSpine(ctx, q)
+	if err != nil {
+		return preparedDispatch{}, err
+	}
+
+	if sel.action.Kind == dispatch.KindSpawn {
+		// Spawn needs native authority; allocate the candidate identity now
+		// (ADR-016:114-124 — it becomes canonical only at commit) and freeze
+		// the projection under the token.
+		runID, err := newRunID()
+		if err != nil {
+			return preparedDispatch{}, err
+		}
+		canonical, err := buildCanonicalPrepare(uuid, requestID, sel.rec, sel.lk, sel.tun, sel.homies,
+			spawnCandidateProjection(runID, sel.action.Spawn)).bytes()
+		if err != nil {
+			return preparedDispatch{}, err
+		}
+		return preparedDispatch{requestID: requestID, candidate: &preparedCandidate{
+			spawn: sel.action.Spawn,
+			runID: runID,
+			tun:   sel.tun,
+			token: preparationToken(canonical),
+		}}, nil
+	}
+
+	effect, err := applyAction(ctx, q, sel.now, sel.action, sel.tun)
+	if err != nil {
+		return preparedDispatch{}, err
+	}
+	switch sel.action.Kind {
+	case dispatch.KindReap, dispatch.KindReenter:
+		// Mutating lock-domain branches insert their receipt atomically with
+		// the consequence. Idle and the Phase-2 land effect mutate nothing —
+		// a non-mutating result needs no receipt and a lost-response retry
+		// may re-evaluate once (ADR-016:261-263).
+		if err := writeDispatchReceipt(ctx, q, requestID, effect); err != nil {
+			return preparedDispatch{}, err
+		}
+	}
+	return preparedDispatch{requestID: requestID, final: effect}, nil
+}
+
+// dispatchAttest is the host-authority step, run with the flock and
+// transaction released. Today it attests routing.md — reading, digesting,
+// parsing, and resolving the candidate's role — and classifies any failure as
+// the D4 deployment-health refusal instead of erroring the command: routing
+// brokenness is the deployment's fault, never the candidate task's, and the
+// consequence (one dispatch.health action, no charge, no block, no claim)
+// belongs to the commit transaction (phase3-contract row 174). The mount-plan
+// attestation joins here once a candidate carries mount requests.
+func dispatchAttest(home string, prepared preparedDispatch) (attestedDispatch, error) {
+	cand := prepared.candidate
+	if cand == nil {
+		return attestedDispatch{}, Domainf("dispatch: attest requires a prepared candidate")
+	}
+	path := filepath.Join(home, "routing.md")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return routingRefusal(refusal.SummaryMissing, err), nil
+	}
+	sum := sha256.Sum256(data)
+	registry, allowFakeDecorrelation := routing.ActiveRegistry()
+	table, err := routing.Parse(data, registry, allowFakeDecorrelation)
+	if err != nil {
+		return routingRefusal(refusal.SummaryUnparsable, err), nil
+	}
+	route, err := table.Resolve(baseRole(string(cand.spawn.Role)))
+	if err != nil {
+		return routingRefusal(refusal.SummaryUnresolved, err), nil
+	}
+	return attestedDispatch{route: route, routingDigest: hex.EncodeToString(sum[:])}, nil
+}
+
+// routingRefusal classifies one routing failure. The raw error text rides
+// only in Message, which DetailFor drops — routing.md bytes are operator
+// material and never reach a stored detail (ADR-016 D1).
+func routingRefusal(summary refusal.Summary, err error) attestedDispatch {
+	return attestedDispatch{refusal: &refusal.Refusal{
+		Code:    refusal.CodeRoutingInvalid,
+		Field:   refusal.FieldRouting,
+		Summary: summary,
+		Message: err.Error(),
+	}}
+}
+
+// dispatchCommit is the helper's second invocation (ADR-016 D1 step 3): under
+// a fresh flock and transaction it reloads and re-decides lock-domain truth,
+// requires the recomputed canonical projection to reproduce the preparation
+// token byte-for-byte, and applies exactly the reselected candidate's
+// consequence. Ordinary drift is preflight.stale; a decision that no longer
+// reselects the prepared candidate is preflight.candidate_mismatch — both
+// stale-class, both inert (ADR-016:266-273).
+func dispatchCommit(ctx context.Context, q Q, uuid string, prepared preparedDispatch, attested attestedDispatch) (map[string]any, error) {
+	cand := prepared.candidate
+	if cand == nil {
+		return nil, Domainf("dispatch: commit requires a prepared candidate")
+	}
+	if err := requireDeploymentUUID(ctx, q, uuid); err != nil {
+		return nil, err
+	}
+	sel, err := selectFromSpine(ctx, q)
+	if err != nil {
+		return nil, err
+	}
+	rcand := refusalCandidateFor(cand.spawn)
+
+	proj := spawnCandidateProjection(cand.runID, cand.spawn)
+	canonical, err := buildCanonicalPrepare(uuid, prepared.requestID, sel.rec, sel.lk, sel.tun, sel.homies, proj).bytes()
+	if err != nil {
+		return nil, err
+	}
+	if preparationToken(canonical) != cand.token {
+		return commitInertRefusal(ctx, q, prepared, rcand, refusal.CodeStale)
+	}
+
+	// Re-decide with commit's own clock. The helper computes its own truth:
+	// byte-identical state must still reselect this candidate, so a doctored
+	// frame or a time-flipped decision refuses here rather than committing a
+	// consequence nothing selected.
+	if sel.action.Kind != dispatch.KindSpawn {
+		return commitInertRefusal(ctx, q, prepared, rcand, refusal.CodeCandidateMismatch)
+	}
+	reselected, err := json.Marshal(spawnCandidateProjection(cand.runID, sel.action.Spawn))
+	if err != nil {
+		return nil, err
+	}
+	preparedProj, err := json.Marshal(proj)
+	if err != nil {
+		return nil, err
+	}
+	if string(reselected) != string(preparedProj) {
+		return commitInertRefusal(ctx, q, prepared, rcand, refusal.CodeCandidateMismatch)
+	}
+
+	if attested.refusal != nil {
+		key, err := refusalDispatchKey(prepared, *attested.refusal)
+		if err != nil {
+			return nil, err
+		}
+		return applyRefusal(ctx, q, rcand, *attested.refusal, key)
+	}
+
+	action := canonicalAction{
+		Version:       1,
+		RequestID:     prepared.requestID,
+		Consequence:   "spawn",
+		RunID:         cand.runID,
+		Role:          string(cand.spawn.Role),
+		SubjectID:     cand.spawn.SubjectID,
+		RoutingDigest: attested.routingDigest,
+		Harness:       attested.route.Harness,
+		Binding:       attested.route.Binding,
+	}
+	key, err := deriveDispatchKey(cand.token, action)
+	if err != nil {
+		return nil, err
+	}
+	effect, err := applySpawn(ctx, q, sel.now, sel.action.Spawn, sel.tun, attested.route, cand.runID)
+	if err != nil {
+		return nil, err
+	}
+	if err := writeSpawnReceipt(ctx, q, cand.runID, key); err != nil {
+		return nil, err
+	}
+	return effect, nil
+}
+
+// commitInertRefusal routes a stale-class preflight refusal through the D4
+// router: no durable mutation, terminal refused effect, next tick re-decides.
+func commitInertRefusal(ctx context.Context, q Q, prepared preparedDispatch, rcand RefusalCandidate, code string) (map[string]any, error) {
+	r := refusal.Refusal{Code: code, Field: refusal.FieldNone, Summary: refusal.SummaryMismatch}
+	key, err := refusalDispatchKey(prepared, r)
+	if err != nil {
+		return nil, err
+	}
+	return applyRefusal(ctx, q, rcand, r, key)
+}
+
+// refusalDispatchKey derives the D2 fence for a refusal consequence from the
+// preparation token and the canonical action naming the refusal — the
+// derivation applyRefusal used to take on faith as an input.
+func refusalDispatchKey(prepared preparedDispatch, r refusal.Refusal) (string, error) {
+	cand := prepared.candidate
+	return deriveDispatchKey(cand.token, canonicalAction{
+		Version:     1,
+		RequestID:   prepared.requestID,
+		Consequence: "refusal",
+		RunID:       cand.runID,
+		Role:        string(cand.spawn.Role),
+		SubjectID:   cand.spawn.SubjectID,
+		Refusal: &canonicalRefusal{
+			Code:      r.Code,
+			Authority: string(r.Authority),
+			Field:     string(r.Field),
+			Summary:   string(r.Summary),
+			ItemIndex: r.ItemIndex,
+		},
+	})
+}
+
+// refusalCandidateFor names who a pipeline candidate's refusal is about: the
+// subject task when there is one to blame, the subjectless shape otherwise.
+// Homie candidates arrive with the future wake selector.
+func refusalCandidateFor(sp *dispatch.Spawn) RefusalCandidate {
+	if sp.SubjectID != nil {
+		return RefusalCandidate{Kind: RefusalSubjectTask, TaskID: sp.SubjectID}
+	}
+	return RefusalCandidate{Kind: RefusalSubjectlessPipeline}
+}
+
+// requireDeploymentUUID is D1's first inert precondition, checked before
+// selection or mutation on every branch of both helper invocations.
+func requireDeploymentUUID(ctx context.Context, q Q, uuid string) error {
+	var stored string
+	if err := q.QueryRowContext(ctx, `SELECT deployment_uuid FROM meta WHERE id = 1`).Scan(&stored); err != nil {
+		return Domainf("read spine deployment identity: %v — restore from backup (§16.4)", err)
+	}
+	if stored != uuid {
+		return Domainf("deployment identity mismatch: MC_HOME mirror %q does not name this spine's deployment %q (run: mc onboard home)", uuid, stored)
+	}
+	return nil
+}
+
+// readDeploymentMirrorStrict reads MC_HOME's identity mirror the way D1 pins
+// for dispatch: a fixed non-symlink regular file, opened no-follow, bounded.
+// onboard's readDeploymentMirror tolerates absence because provisioning is
+// its job; dispatch never provisions, so an unonboarded or foreign MC_HOME
+// refuses before any spine read.
+func readDeploymentMirrorStrict(home string) (string, error) {
+	path := filepath.Join(home, deploymentUUIDFilename)
+	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW, 0)
+	if err != nil {
+		return "", Domainf("read deployment identity mirror %q: %v (run: mc onboard home)", path, err)
+	}
+	defer f.Close()
+	fi, err := f.Stat()
+	if err != nil {
+		return "", Domainf("read deployment identity mirror %q: %v (run: mc onboard home)", path, err)
+	}
+	if !fi.Mode().IsRegular() {
+		return "", Domainf("deployment identity mirror %q must be a regular file (ADR-016 D1)", path)
+	}
+	b, err := io.ReadAll(io.LimitReader(f, 4096))
+	if err != nil {
+		return "", Domainf("read deployment identity mirror %q: %v", path, err)
+	}
+	uuid := strings.TrimSpace(string(b))
+	if uuid == "" {
+		return "", Domainf("deployment identity mirror %q is empty — restore from backup (§16.4)", path)
+	}
+	return uuid, nil
+}
+
+// lookupDispatchReceipt is the D2 replay fence's read half. An unreadable
+// stored result is a protocol error, never a green light to re-execute.
+func lookupDispatchReceipt(ctx context.Context, q Q, requestID string) (map[string]any, bool, error) {
+	var stored string
+	err := q.QueryRowContext(ctx,
+		`SELECT dispatch_result FROM activity WHERE dispatch_request_id = ?`, requestID).Scan(&stored)
+	if err == sql.ErrNoRows {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, err
+	}
+	var result map[string]any
+	if err := json.Unmarshal([]byte(stored), &result); err != nil {
+		return nil, false, Domainf("stored dispatch result for request %s is unreadable: %v — restore from backup (§16.4)", requestID, err)
+	}
+	return result, true, nil
+}
+
+func writeDispatchReceipt(ctx context.Context, q Q, requestID string, effect map[string]any) error {
+	body, err := json.Marshal(effect)
+	if err != nil {
+		return err
+	}
+	_, err = q.ExecContext(ctx, `
+		INSERT INTO activity (actor, kind, subject, detail, dispatch_request_id, dispatch_result)
+		VALUES ('dispatch', 'dispatch.result', NULL, NULL, ?, ?)`, requestID, string(body))
+	return err
+}
+
+// writeSpawnReceipt records the attested commit's separate candidate/action
+// digest fence (ADR-016:240-247): one activity row under the derived
+// dispatch_key, whose UNIQUE index makes a same-action replay unstorable.
+func writeSpawnReceipt(ctx context.Context, q Q, runID, key string) error {
+	_, err := q.ExecContext(ctx, `
+		INSERT INTO activity (actor, kind, subject, dispatch_key)
+		VALUES ('dispatch', 'dispatch.spawn', ?, ?)`, runID, key)
+	return err
 }

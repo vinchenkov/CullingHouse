@@ -204,6 +204,15 @@ func initSpine(t *testing.T, extra ...string) string {
 	if err := os.WriteFile(filepath.Join(filepath.Dir(spine), "routing.md"), []byte(fakeRoutingMarkdown), 0o600); err != nil {
 		t.Fatalf("write test routing.md: %v", err)
 	}
+	// The ADR-016 D1 deployment identity mirror: dispatch refuses to prepare
+	// without it matching meta.deployment_uuid.
+	uuid, _ := res.json["deployment_uuid"].(string)
+	if uuid == "" {
+		t.Fatalf("mc init effect carries no deployment_uuid: %v", res.json)
+	}
+	if err := os.WriteFile(filepath.Join(filepath.Dir(spine), "deployment.uuid"), []byte(uuid+"\n"), 0o600); err != nil {
+		t.Fatalf("write deployment mirror: %v", err)
+	}
 	return spine
 }
 
@@ -1104,50 +1113,55 @@ func TestDispatchRoutingResolution(t *testing.T) {
 		}
 	})
 
-	t.Run("missing_file_fails_before_claim", func(t *testing.T) {
+	// A routing failure at attest is ADR-016 D4's deployment-health refusal
+	// (health.routing_invalid; phase3-contract row 174): one dispatch.health
+	// action under a derived dispatch_key, no Run, no claim, no task blame,
+	// exit 0 with the terminal refused effect. It stopped being a command
+	// error when the D1 seam landed (2026-07-16).
+	assertRoutingHealthRefusal := func(t *testing.T, spine string, res mcResult) {
+		t.Helper()
+		if res.code != 0 {
+			t.Fatalf("a routing health refusal is a terminal effect, not an error: exit=%d stderr=%q", res.code, res.stderr)
+		}
+		if res.json["action"] != "refused" || res.json["class"] != "health" ||
+			res.json["code"] != "health.routing_invalid" || res.json["consequence"] != "health" {
+			t.Fatalf("effect = %v, want refused/health/health.routing_invalid", res.json)
+		}
+		db := openDB(t, spine)
+		if n := queryInt(t, db, `SELECT COUNT(*) FROM runs`); n != 0 {
+			t.Fatalf("a routing refusal opened %d runs", n)
+		}
+		if n := queryInt(t, db, `SELECT COUNT(*) FROM tasks WHERE blocked = 1`); n != 0 {
+			t.Fatalf("a deployment health refusal blocked %d tasks", n)
+		}
+		if n := queryInt(t, db, `SELECT COUNT(*) FROM activity WHERE kind='dispatch.health' AND dispatch_key IS NOT NULL`); n != 1 {
+			t.Fatalf("want exactly one keyed dispatch.health action, got %d", n)
+		}
+	}
+
+	t.Run("missing_file_is_health_refusal_before_claim", func(t *testing.T) {
 		spine := initSpine(t)
 		if err := os.Remove(filepath.Join(filepath.Dir(spine), "routing.md")); err != nil {
 			t.Fatal(err)
 		}
 		taskAdd(t, spine, "must not dispatch")
-		res := runMC(t, spineEnv(spine), "", "dispatch")
-		if res.code != 2 || !strings.Contains(res.stderr, "routing.md") {
-			t.Fatalf("exit=%d stderr=%q", res.code, res.stderr)
-		}
-		db := openDB(t, spine)
-		if n := queryInt(t, db, `SELECT COUNT(*) FROM runs`); n != 0 {
-			t.Fatalf("missing routing opened %d runs", n)
-		}
+		assertRoutingHealthRefusal(t, spine, runMC(t, spineEnv(spine), "", "dispatch"))
 	})
 
-	t.Run("unresolved_binding_fails_before_claim", func(t *testing.T) {
+	t.Run("unresolved_binding_is_health_refusal_before_claim", func(t *testing.T) {
 		spine := initSpine(t)
 		writeRouting(t, spine, strings.Replace(defaultRoutingMarkdown,
 			"| worker | claude-sdk | minimax |", "| worker | claude-sdk | missing |", 1))
 		taskAdd(t, spine, "must not dispatch")
-		res := runMC(t, spineEnv(spine), "", "dispatch")
-		if res.code != 1 || !strings.Contains(res.stderr, "unresolved binding") {
-			t.Fatalf("exit=%d stderr=%q", res.code, res.stderr)
-		}
-		db := openDB(t, spine)
-		if n := queryInt(t, db, `SELECT COUNT(*) FROM runs`); n != 0 {
-			t.Fatalf("unresolved routing opened %d runs", n)
-		}
+		assertRoutingHealthRefusal(t, spine, runMC(t, spineEnv(spine), "", "dispatch"))
 	})
 
-	t.Run("producer_judge_same_family_fails_before_claim", func(t *testing.T) {
+	t.Run("producer_judge_same_family_is_health_refusal_before_claim", func(t *testing.T) {
 		spine := initSpine(t)
 		writeRouting(t, spine, strings.Replace(defaultRoutingMarkdown,
 			"| worker | claude-sdk | minimax |", "| worker | codex | chatgpt |", 1))
 		taskAdd(t, spine, "must not dispatch")
-		res := runMC(t, spineEnv(spine), "", "dispatch")
-		if res.code != 1 || !strings.Contains(res.stderr, "decorrelated") {
-			t.Fatalf("exit=%d stderr=%q", res.code, res.stderr)
-		}
-		db := openDB(t, spine)
-		if n := queryInt(t, db, `SELECT COUNT(*) FROM runs`); n != 0 {
-			t.Fatalf("invalid decorrelation opened %d runs", n)
-		}
+		assertRoutingHealthRefusal(t, spine, runMC(t, spineEnv(spine), "", "dispatch"))
 	})
 
 	t.Run("explicit_test_fake_route_propagates_without_fallback", func(t *testing.T) {
@@ -1194,6 +1208,12 @@ func TestDispatchRoutingResolution(t *testing.T) {
 		if err := os.WriteFile(filepath.Join(root, "routing.md"), []byte(defaultRoutingMarkdown), 0o600); err != nil {
 			t.Fatal(err)
 		}
+		// The deployment mirror lives in whichever MC_HOME dispatch resolves.
+		db := openDB(t, spine)
+		uuid := queryStr(t, db, `SELECT deployment_uuid FROM meta WHERE id = 1`)
+		if err := os.WriteFile(filepath.Join(root, "deployment.uuid"), []byte(uuid+"\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
 		res := runMC(t, []string{"MC_SPINE=" + spine, "HOME=" + home}, "", "dispatch")
 		if res.code != 0 || res.json["harness"] != "codex" || res.json["model_binding"] != "chatgpt" {
 			t.Fatalf("default-home route code=%d json=%v stderr=%q", res.code, res.json, res.stderr)
@@ -1231,7 +1251,7 @@ func TestDispatchCASSingleWinner(t *testing.T) {
 	}
 	wg.Wait()
 
-	spawns, idles := 0, 0
+	spawns, losers := 0, 0
 	for i, res := range results {
 		if res.code != 0 {
 			t.Fatalf("claimant %d exit = %d: %s", i, res.code, res.stderr)
@@ -1244,16 +1264,25 @@ func TestDispatchCASSingleWinner(t *testing.T) {
 		case "spawn":
 			spawns++
 		case "idle":
+			// Prepared after the winner committed: §10's held-lease return.
 			if eff["reason"] != "lease-held" {
 				t.Fatalf("claimant %d idle reason = %v", i, eff["reason"])
 			}
-			idles++
+			losers++
+		case "refused":
+			// Prepared before the winner committed: the ADR-016 D1 commit
+			// fence — only one commit can match current state; the loser
+			// stales inertly and the next tick re-decides.
+			if eff["code"] != "preflight.stale" || eff["consequence"] != "none" {
+				t.Fatalf("claimant %d refused with %v/%v, want preflight.stale/none", i, eff["code"], eff["consequence"])
+			}
+			losers++
 		default:
 			t.Fatalf("claimant %d action = %v", i, eff["action"])
 		}
 	}
-	if spawns != 1 || idles != claimants-1 {
-		t.Fatalf("spawns = %d, idles = %d; want exactly one winner among %d", spawns, idles, claimants)
+	if spawns != 1 || losers != claimants-1 {
+		t.Fatalf("spawns = %d, losers = %d; want exactly one winner among %d", spawns, losers, claimants)
 	}
 
 	db := openDB(t, spine)

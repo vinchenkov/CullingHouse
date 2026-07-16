@@ -51,6 +51,15 @@ func dvSpine(t *testing.T, initArgs ...func(*InitArgs)) *sql.DB {
 		t.Fatalf("open spine: %v", err)
 	}
 	t.Cleanup(func() { db.Close() })
+	// The ADR-016 D1 deployment identity mirror: dispatch refuses to prepare
+	// without it matching meta.deployment_uuid.
+	var uuid string
+	if err := db.QueryRow(`SELECT deployment_uuid FROM meta WHERE id = 1`).Scan(&uuid); err != nil {
+		t.Fatalf("read deployment uuid: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(filepath.Dir(a.Spine), "deployment.uuid"), []byte(uuid+"\n"), 0o600); err != nil {
+		t.Fatalf("write deployment mirror: %v", err)
+	}
 	return db
 }
 

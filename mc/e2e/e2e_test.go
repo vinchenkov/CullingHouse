@@ -351,11 +351,22 @@ func setup(t *testing.T) *fixture {
 	f.env = append(f.env, "MC_HELPER="+f.helper)
 
 	// Provision: shrunk tunables (contract §7 fixture list).
-	f.mcOK("", "init", "--spine", spineDBPath,
+	initEffect := f.mcOK("", "init", "--spine", spineDBPath,
 		"--worksource", worksource, "--workspace-root", "/workspace/source",
 		"--timeout-minutes", "10", "--grace-minutes", "5",
 		"--heartbeat-interval-s", "1", "--spawn-grace-s", "5",
 		"--hard-deadline-minutes", "30")
+
+	// The ADR-016 D1 deployment identity mirror: dispatch refuses to prepare
+	// without it matching meta.deployment_uuid. f.home is the host side of
+	// the container's MC_HOME bind.
+	uuid, _ := initEffect["deployment_uuid"].(string)
+	if uuid == "" {
+		t.Fatalf("mc init effect carries no deployment_uuid: %v", initEffect)
+	}
+	if err := os.WriteFile(filepath.Join(f.home, "deployment.uuid"), []byte(uuid+"\n"), 0o600); err != nil {
+		t.Fatalf("write deployment mirror: %v", err)
+	}
 
 	// The Worksource: host git repo, one commit on main, relative worktree
 	// links (§6.2), .mc-worktrees/ ignored.

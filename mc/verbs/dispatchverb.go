@@ -14,69 +14,131 @@ import (
 	"mc/routing"
 )
 
-// Dispatch is the one caller of dispatch.Decide (contract §3; §10; Inv. 2/3).
-// One BEGIN IMMEDIATE transaction: load Records/Lock from the spine and
-// Config from the lock row's tunable columns, read Clock.Now from
-// datetime('now'), call Decide, apply the action's writes, commit, and
-// return the effect JSON. A losing racer aborts before effect data (§10
-// fencing): claim is CAS on the free lock row.
+// Dispatch is the one caller of dispatch.Decide (contract §3; §10; Inv. 2/3)
+// and, since ADR-016 D1, the composition of the seam's three steps: prepare
+// under the flock and one BEGIN IMMEDIATE transaction (lock-domain branches
+// finish there, with their D2 request receipt); attest with both released
+// (host file reads never happen under the spine locks); commit under a fresh
+// flock and transaction (token verification, re-decide, exactly one
+// consequence — a claim-and-spawn or a D4 refusal). A losing racer stales at
+// commit before any effect data: claim stays CAS on the free lock row, and
+// only one commit can match current state (ADR-016:73-76).
 func Dispatch(db *sql.DB) (any, error) {
-	processLock, err := acquireDispatchProcessLock(db)
+	home, err := resolveMCHome()
 	if err != nil {
 		return nil, err
+	}
+	uuid, err := readDeploymentMirrorStrict(home)
+	if err != nil {
+		return nil, err
+	}
+	requestID, err := newDispatchRequestID()
+	if err != nil {
+		return nil, err
+	}
+
+	var prepared preparedDispatch
+	if err := underDispatchLock(db, func(ctx context.Context, q Q) error {
+		var e error
+		prepared, e = dispatchPrepare(ctx, q, uuid, requestID)
+		return e
+	}); err != nil {
+		return nil, err
+	}
+	if prepared.final != nil {
+		return prepared.final, nil
+	}
+
+	attested, err := dispatchAttest(home, prepared)
+	if err != nil {
+		return nil, err
+	}
+
+	var effect map[string]any
+	if err := underDispatchLock(db, func(ctx context.Context, q Q) error {
+		var e error
+		effect, e = dispatchCommit(ctx, q, uuid, prepared, attested)
+		return e
+	}); err != nil {
+		return nil, err
+	}
+	return effect, nil
+}
+
+// underDispatchLock runs fn inside the §10 process flock and one BEGIN
+// IMMEDIATE transaction. Prepare and commit each take their own acquisition:
+// D1 pins that prepare releases both before any host or runtime I/O and that
+// commit reacquires and redecides — no claim relies on one lock surviving
+// attest (ADR-016:73-76).
+func underDispatchLock(db *sql.DB, fn func(context.Context, Q) error) error {
+	processLock, err := acquireDispatchProcessLock(db)
+	if err != nil {
+		return err
 	}
 	defer func() {
 		_ = syscall.Flock(int(processLock.Fd()), syscall.LOCK_UN)
 		_ = processLock.Close()
 	}()
+	return inTx(db, fn)
+}
 
-	var effect map[string]any
-	err = inTx(db, func(ctx context.Context, q Q) error {
-		now, err := spineNow(ctx, q)
-		if err != nil {
-			return err
-		}
-		lk, tun, err := loadLock(ctx, q)
-		if err != nil {
-			return err
-		}
-		rec, err := loadRecords(ctx, q)
-		if err != nil {
-			return err
-		}
-		// Step (0) lease reconciliation outranks every free-lock concern
-		// (§10). A held lease never consults the Console clock: Decide either
-		// keeps it or reaps it. This prevents corrupt schedule configuration
-		// from wedging the global liveness fence.
-		loc := time.UTC
-		if !lk.Held {
-			loc, err = time.LoadLocation(tun.consoleTZ)
-			if err != nil {
-				// Fail-closed (contract §4.3): once the lock is free, a broken
-				// stored zone aborts rather than delivering on a guessed clock.
-				return Domainf("lock.console_tz %q is not a loadable IANA zone (§16.3): %v", tun.consoleTZ, err)
-			}
-		}
-		cfg := dispatch.Config{
-			ReviewWIPCap:   3, // Inv. 18; the substrate trigger is the backstop
-			TimeoutMinutes: tun.timeoutMinutes,
-			GraceMinutes:   tun.graceMinutes,
-			SpawnGraceS:    tun.spawnGraceS,
-			// The stored §16.3 schedule (NOTE(P2.1)); the default hour 24
-			// normalizes past end-of-day, so consoleDue never fires until an
-			// operator configures a real time (D-mc-4, resolved).
-			ConsoleHour:   tun.consoleHour,
-			ConsoleMinute: tun.consoleMinute,
-			ConsoleLoc:    loc,
-		}
-		action := dispatch.Decide(rec, lk, cfg, dispatch.Clock{Now: now})
-		effect, err = applyAction(ctx, q, now, action, tun)
-		return err
-	})
-	if err != nil {
-		return nil, err
+// spineSelection is everything one selection pass read and decided. Prepare
+// and commit each run their own — the helper computes its own truth twice
+// rather than trusting a frame's claim about either.
+type spineSelection struct {
+	now    time.Time
+	lk     dispatch.Lock
+	tun    tunables
+	rec    dispatch.Records
+	homies []homieCandidateState
+	action dispatch.Action
+}
+
+func selectFromSpine(ctx context.Context, q Q) (spineSelection, error) {
+	sel := spineSelection{}
+	var err error
+	if sel.now, err = spineNow(ctx, q); err != nil {
+		return sel, err
 	}
-	return effect, nil
+	if sel.lk, sel.tun, err = loadLock(ctx, q); err != nil {
+		return sel, err
+	}
+	if sel.rec, err = loadRecords(ctx, q); err != nil {
+		return sel, err
+	}
+	// The launch-generation observation (ADR-016 D3): active Homie state is
+	// part of the canonical projection, so a launch bound or superseded
+	// between prepare and commit stales the candidate.
+	if sel.homies, err = loadHomieProjection(ctx, q); err != nil {
+		return sel, err
+	}
+	// Step (0) lease reconciliation outranks every free-lock concern
+	// (§10). A held lease never consults the Console clock: Decide either
+	// keeps it or reaps it. This prevents corrupt schedule configuration
+	// from wedging the global liveness fence.
+	loc := time.UTC
+	if !sel.lk.Held {
+		loc, err = time.LoadLocation(sel.tun.consoleTZ)
+		if err != nil {
+			// Fail-closed (contract §4.3): once the lock is free, a broken
+			// stored zone aborts rather than delivering on a guessed clock.
+			return sel, Domainf("lock.console_tz %q is not a loadable IANA zone (§16.3): %v", sel.tun.consoleTZ, err)
+		}
+	}
+	cfg := dispatch.Config{
+		ReviewWIPCap:   3, // Inv. 18; the substrate trigger is the backstop
+		TimeoutMinutes: sel.tun.timeoutMinutes,
+		GraceMinutes:   sel.tun.graceMinutes,
+		SpawnGraceS:    sel.tun.spawnGraceS,
+		// The stored §16.3 schedule (NOTE(P2.1)); the default hour 24
+		// normalizes past end-of-day, so consoleDue never fires until an
+		// operator configures a real time (D-mc-4, resolved).
+		ConsoleHour:   sel.tun.consoleHour,
+		ConsoleMinute: sel.tun.consoleMinute,
+		ConsoleLoc:    loc,
+	}
+	sel.action = dispatch.Decide(sel.rec, sel.lk, cfg, dispatch.Clock{Now: sel.now})
+	return sel, nil
 }
 
 // acquireDispatchProcessLock takes the §10 `mc.dispatch` flock before any
@@ -297,11 +359,10 @@ func applyAction(ctx context.Context, q Q, now time.Time, a dispatch.Action, tun
 		return map[string]any{"action": "idle", "reason": string(a.Idle)}, nil
 
 	case dispatch.KindSpawn:
-		route, err := resolveSpawnRoute(a.Spawn.Role)
-		if err != nil {
-			return nil, err
-		}
-		return applySpawn(ctx, q, now, a.Spawn, tun, route)
+		// Spawn needs native authority (routing.md today, the mount plan
+		// next), so it never applies from prepare's transaction: the seam
+		// returns a candidate and dispatchCommit applies it (ADR-016 D1).
+		return nil, Domainf("dispatch: a spawn consequence applies only through the prepare/attest/commit seam")
 
 	case dispatch.KindReap:
 		// The reap decision's charge/block computation is Decide's; the write
@@ -343,12 +404,9 @@ func applyAction(ctx context.Context, q Q, now time.Time, a dispatch.Action, tun
 }
 
 // applySpawn is the claim-and-spawn behind lease.Claim: CAS the free lock +
-// INSERT the runs row (Inv. 4), one transaction.
-func applySpawn(ctx context.Context, q Q, now time.Time, sp *dispatch.Spawn, tun tunables, route routing.Route) (map[string]any, error) {
-	runID, err := newRunID()
-	if err != nil {
-		return nil, err
-	}
+// INSERT the runs row (Inv. 4), one transaction. The run id arrives from the
+// prepared candidate — allocated at prepare, canonical only now (ADR-016 D2).
+func applySpawn(ctx context.Context, q Q, now time.Time, sp *dispatch.Spawn, tun tunables, route routing.Route, runID string) (map[string]any, error) {
 	owner := baseRole(string(sp.Role))
 	sessionPath := "sessions/" + runID // MC_HOME-relative (§16.1)
 	brief, err := buildSpawnBrief(ctx, q, sp)
@@ -416,30 +474,35 @@ func applySpawn(ctx context.Context, q Q, now time.Time, sp *dispatch.Spawn, tun
 	}, nil
 }
 
-// resolveSpawnRoute reads the one authoritative role map. It is deliberately
-// called only for Spawn: reap/land/reenter reconciliation must remain usable
-// while routing is being repaired. Parse/validation completes before
-// lease.Claim, so an invalid route opens no Run and returns no spawn effect.
-func resolveSpawnRoute(role dispatch.Role) (routing.Route, error) {
-	return resolveRoleRoute(baseRole(string(role)))
-}
-
-// resolveRoleRoute reads the authoritative route for both leased pipeline
-// spawns and the lease-free Homie registry. Capturing Homie's exact historical
-// binding at start makes later resume independent of routing.md drift (§15.4).
-func resolveRoleRoute(role string) (routing.Route, error) {
+// resolveMCHome names the one authoritative MC_HOME for host file reads —
+// the env override or the fixed default, always absolute. Routing.md, the
+// deployment identity mirror, and the future mount allowlist all resolve
+// against it; failure here is an environment usage error, not a refusal.
+func resolveMCHome() (string, error) {
 	home := os.Getenv("MC_HOME")
 	if home == "" {
 		userHome, err := os.UserHomeDir()
 		if err != nil {
-			return routing.Route{}, Usagef("resolve default MC_HOME for routing.md: %v (run: mc onboard routing)", err)
+			return "", Usagef("resolve default MC_HOME for routing.md: %v (run: mc onboard routing)", err)
 		}
 		home = filepath.Join(userHome, ".mission-control")
 	}
 	if !filepath.IsAbs(home) {
-		return routing.Route{}, Usagef("MC_HOME must be absolute to resolve routing.md, got %q (run: mc onboard routing)", home)
+		return "", Usagef("MC_HOME must be absolute to resolve routing.md, got %q (run: mc onboard routing)", home)
 	}
-	path := filepath.Join(filepath.Clean(home), "routing.md")
+	return filepath.Clean(home), nil
+}
+
+// resolveRoleRoute reads the authoritative route for the lease-free Homie
+// registry (pipeline spawns attest routing through the dispatch seam
+// instead). Capturing Homie's exact historical binding at start makes later
+// resume independent of routing.md drift (§15.4).
+func resolveRoleRoute(role string) (routing.Route, error) {
+	home, err := resolveMCHome()
+	if err != nil {
+		return routing.Route{}, err
+	}
+	path := filepath.Join(home, "routing.md")
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return routing.Route{}, Usagef("read routing.md at %q: %v (run: mc onboard routing)", path, err)
