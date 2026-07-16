@@ -1927,3 +1927,17 @@ Entry template:
   timeout fail closed; all values are isolated constants and easy to revise.
 - Spec impact: none
 - Needs your decision: no
+
+## 2026-07-16 — private Worksource projection reserves a fixed frame partition
+- Where: Phase 3 ADR-016 D1/D2 mount-attest input crossing
+- Gap: the private frame is capped at 1 MiB, and profile arrays have individual
+  count/scalar limits, but the ADRs assign no aggregate byte partition to the
+  all-Worksource jurisdiction projection.
+- Choice: cap the exact canonical Worksource/profile array at 256 KiB and run
+  the same validator at migration, every current writer, and private decode.
+  This leaves at least three quarters of the outer frame for the existing
+  candidate state. Conservative: it adds a fail-closed admission fence without
+  enlarging the signed frame, preserves every scalar/count bound, and isolates
+  the reversible policy choice in one exported constant.
+- Spec impact: none
+- Needs your decision: no

@@ -582,3 +582,36 @@ crossing, red-first. Derive candidate mount requests and complete
 protected host roots; carry only the closed authorization/refusal result back
 to commit, and prove invalid plans claim no Run and emit no spawn. Do not load
 launchd.
+
+## 2026-07-16 (Codex) — mount authority inputs are frozen before host attest
+
+Outgoing NEXT: wire the tested mount planner into the corrected host attest
+crossing, beginning with candidate mount derivation and the complete
+`boundary.JurisdictionInput`.
+
+The first green prerequisite is `36fc91f`. Prepare now selects the subject's
+Worksource from its already-read task projection, loads every Worksource and
+sandbox profile in canonical order, normalizes the three path arrays, and binds
+that closed state into both the preparation token and private candidate.
+Commit reloads the projection against the prepared spawn and returns stale on
+any drift. Migration, init, onboarding, Worksource add, Worksource status
+changes, and private decode share the exact canonical projection validator, so
+the added frame input cannot become a latent oversized-dispatch wedge.
+
+A read-only reviewer first rejected the slice because individually bounded
+profile arrays could exceed the private frame and Worksource cardinality was
+unbounded. After the shared 256 KiB aggregate fence it found one remaining
+transactional hole: `active` to `archived` adds two canonical bytes. The final
+version validates that writer in-transaction; an exact-limit test proves the
+archive is rejected and rolled back. The reviewer then returned READY. The
+full five-leg fast lane passed: mc, resident 45, fake harness 43, agent runner
+13, runner image 40.
+
+The static resident effect still asks for a direct Git workspace bind, which
+ADR-017 forbids. That argv is not evidence of mount authority and must be
+refused or replaced, never authorized by adapting the planner input to it.
+
+NEXT: derive ordinary selected-profile mount requests and the full host
+jurisdiction input red-first, then invoke `planMounts` only during host attest.
+Carry its closed authorization/refusal result through private commit and prove
+invalid plans claim no Run and emit no spawn. Do not load launchd.
