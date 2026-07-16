@@ -128,9 +128,15 @@ were actively lying: a live entry asked the operator to create a private remote
 Worksource directive was unwritten and blocked e2e (it is in OPERATOR-INPUTS.md).
 In both, the struck-through entry was the true one.
 
-- **Docker Desktop settings snapshot** (handoff §4.1 row 4): partially recorded.
-  `UseResourceSaver: False` and `AutoStart: True` are verified. Still unrecorded:
-  ECI state, VM sizing, version pin. Operator confirms and freezes.
+- **Docker Desktop settings snapshot** (handoff §4.1 row 4): measured 2026-07-15 —
+  nothing left to look up, only the freeze decision is the operator's. Server
+  **29.4.0**; `EnhancedContainerIsolation: false` (S1's setuid gate depends on this
+  staying off — if a Docker auto-update ever flips it, the Phase 3/4 Docker suites
+  break in a way that reads like a code bug), `UseResourceSaver: false`,
+  `AutoStart: true`; VM **14 CPU / 8092 MiB RAM / 1024 MiB swap / 122880 MiB disk**.
+  Operator: confirm these are the frozen values and pin the version. Worth a glance
+  while there: 8 GiB against 14 CPUs is thin for Phase 4's six scenario families
+  (the arm64 + Playwright image is ~1–2 GB before anything runs).
 - **S7 sleep drill**: the 30-min Mac sleep mid-lease test needs the operator (an
   agent cannot sleep the machine it runs on). Instructions in
   `spikes/07-launchd-clock/RESULT.md`. All other S7 sub-tests passed.
