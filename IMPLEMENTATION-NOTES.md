@@ -1912,3 +1912,18 @@ Entry template:
   fence, and keeps each protocol change independently reviewable.
 - Spec impact: none
 - Needs your decision: no
+
+## 2026-07-16 — fixed helper coordinates and timeout values for the private dispatch crossing
+- Where: Phase 3 ADR-016 D1 / ADR-018 D6 host-helper dispatch broker
+- Gap: the ADRs require a fixed helper name/spine path and mandatory private
+  frame deadlines, but do not assign the identifiers or durations.
+- Choice: production uses helper `mc-helper` and spine
+  `/mc/spine/spine.db`. The broker fixes an absolute container-helper deadline
+  four seconds before invoking Docker, refuses after five seconds without I/O,
+  and keeps a 120-second outer wall allowance. The helper receives that
+  absolute instant as a required private argument and exits 124 before reading
+  or committing if Docker startup consumed it. Conservative: fixed coordinates
+  remove ambient-environment authority; the helper-before-broker ordering makes
+  timeout fail closed; all values are isolated constants and easy to revise.
+- Spec impact: none
+- Needs your decision: no

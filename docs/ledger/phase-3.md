@@ -546,3 +546,39 @@ read reply through fd 3), so the signed design needs no native launcher. The
 next slice starts with that control handshake/direct-shell refusal and preserves
 ordinary verbs' existing whole-command passthrough before adding the private
 helper frames.
+
+## 2026-07-16 (Codex takeover closure) — the host/helper crossing is real
+
+Outgoing NEXT: close takeover major 1 with ADR-018 D6's resident-only fd 3
+control handshake, direct-shell dispatch refusal, and ADR-016 D1's private
+prepare/commit helper frames around host-side attest; only then return to mount
+wiring.
+
+Two green commits closed it. `f4341dd` gives only resident-owned `mc dispatch`
+an inherited AF_UNIX fd 3, validates closed bounded hello/hello_ack identity
+(release, control, spine schema, config schema, deployment), marks the child
+descriptor close-on-exec, and leaves every ordinary verb on its byte/exit-exact
+whole-command path. `06406df` adds the separate private prepare and commit
+invocations, each under its own helper flock transaction with host attest in
+between; canonical 1 MiB frames, 64 KiB final results, token/release/request
+identity, final routing/mirror recheck, and fixed production helper/spine scope
+all fail closed. The container-side helper receives an absolute deadline fixed
+before Docker startup, so a timed-out broker cannot leave a later helper able
+to commit. D2's 4 KiB scalar bounds now have canonical task/wave title
+admission and migration-time legacy validation rather than a dispatch-only
+wedge.
+
+The read-only adversarial reviewer rejected two intermediate versions: first
+for a Docker-CLI-only kill plus unbacked collection caps, then for a relative
+helper timer and missing scalar admission. Both rounds were fixed and retested;
+the third verdict was ready with no blockers. The five-leg fast lane passed
+after the final edits: mc, resident 45, fake harness 43, agent runner 13, and
+runner image 40. The fixed helper coordinates/deadline values are recorded in
+IMPLEMENTATION-NOTES; no operator decision is required.
+
+NEXT: wire the already-tested mount planner into the corrected host attest
+crossing, red-first. Derive candidate mount requests and complete
+`boundary.JurisdictionInput` from the selected Worksource/sandbox profile and
+protected host roots; carry only the closed authorization/refusal result back
+to commit, and prove invalid plans claim no Run and emit no spawn. Do not load
+launchd.
