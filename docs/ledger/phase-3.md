@@ -116,3 +116,108 @@ another candidate. Note the three measured corrections in PROGRESS.md's NEXT:
 there is no commit seam yet, D2's fences have no Go writer (take `dispatch_key`
 as an input), and D3's launch columns do not exist so the Homie arm cannot be
 launch-fenced yet. Do not load launchd.
+
+## 2026-07-15 — ADR-016 D4's consequence router: the invalid-plan/no-claim transaction closes
+
+The outgoing `NEXT:` was right about the shape and right about all three of its
+measured corrections. It was wrong about one thing, and finding that out cost
+nothing because the recon was fanned out and discarded.
+
+**What landed** (8aa679e). `verbs.applyRefusal` — the impure half. `mc/refusal`
+(315e932) already decided *which* class a `(code, authority)` pair carries; this
+applies the class. Stale → nothing at all. Health → one `dispatch.health`
+activity carrying the closed canonical detail. Candidate → subject task blocked
+with `confinement:<code>`, subjectless pipeline → health, Homie → ended in the
+same transaction with `confinement:<code>`. 20 tests, 109 subtests, and D4's
+four-part invariant asserted on every arm.
+
+The fall-through half of that invariant had no obvious fixture, so the fixture
+*is* the proof: every case seeds a second, perfectly dispatchable task as bait.
+If an arm ever fell through to ordinary selection, that task gets claimed and
+`rrAssertInert` catches it as a Run row and a held lease. Cheap, and it fails
+loudly for the right reason.
+
+**The one thing the outgoing NEXT had wrong.** It listed
+`homie.preflight_health` as needed for this slice. Read at ADR-016 line 433, it
+is D3's, not D4's: a starvation-avoidance marker whose `candidate_key` hashes
+the *current launch/resume debt* — the very columns the same NEXT correctly
+noted do not exist. It is unbuildable here and, more to the point, pointless
+here: its whole job is ordering a Homie candidate against a pipeline candidate,
+and `mc/dispatch` selects no Homie candidates at all (`grep -rn homie
+mc/dispatch` → zero). Corrected in place rather than parked; the ledger was the
+thing that was wrong.
+
+**Where the ADR and the contract disagreed, and who won.** D4's table says the
+task arm blocks "with code"; phase3-contract §58 calls it a "stable sanitized
+confinement reason". The code settled it: `blocked_reason` is free text with no
+grammar CHECK, and the substrate's auto-unblock trigger fires only on the
+`blocked child #%` prefix — so a `confinement:`-prefixed reason carries the
+code, is sanitized by construction, and cannot silently auto-clear. One grammar
+serves both arms.
+
+Scope ran the other way once. Spec §15.5 lists `health` among the outbox kinds
+"written by `mc` inside the same transaction that produced the event", which
+reads like this slice owes an outbox row. It does not: D4's own mechanism text
+appends an *activity*, and no health or `blocked_alert` outbox writer exists
+anywhere in the tree — every existing block path records state without pushing
+an alert. Making D4 alone fan out would have been the deviation. Logged for
+whoever builds the alert-class resolver, which `console.go` already flags as a
+Phase-5 placeholder.
+
+**The mutant sweep earned its keep.** Ten planted, nine dead — and the two
+survivors were the interesting part.
+
+M10 (delete the router's own `dispatch_key` validation) survived, and the reason
+was a hole in the *test*, not the code: the test only exercised a health code,
+and the health arm writes an activity row, so the substrate's own CHECK was
+failing the insert. The test was asserting someone else's guarantee. Only the
+health arm writes a row — on the stale and block arms nothing but this router
+would ever catch a malformed key. Widened to every class; M10 died. This is the
+second time in this phase that a guard looked proven while something underneath
+it was doing the work.
+
+M6 (ignore `Classify`'s error) survives and always will: `DetailFor` calls
+`Classify` and returns its error *verbatim* (`refusal.go:370-372`), so the
+mutant is indistinguishable by construction — an equivalent mutant, not a hole.
+The guard stays as deliberate fail-closed redundancy, in the same spirit as the
+schema's dual-length NUL fence. Recorded here so the next sweep does not
+re-litigate it.
+
+**A real bug found, not fixed, on purpose.** The fast suite went red once on
+`TestOnboardConcurrentFreshHomeNeverDeletesTheWinner` — nowhere near this slice.
+It is a genuine latent race at `onboard.go:446`: a spine that `exists && bytes >
+0` with no meta identity is treated as corruption, but that is also exactly the
+transient state of a spine another caller is provisioning (SQLite writes its
+first 4096-byte page before the schema transaction commits). Seven of eight
+callers came back ok/done; one hard-failed with `restore from backup (§16.4)` —
+a terrifying and wrong message for an operator who merely ran two onboards.
+
+The first instinct — "my tests add CPU load and widen the window" — was wrong,
+and measuring said so: 1 failure in 21 working-tree runs, 0 in 21 at HEAD, but a
+clean worktree at HEAD ran the full suite 15/15 and the test alone 60/60 green.
+Go runs a package's tests sequentially in file order and `onboard_test.go` sorts
+*before* `refusalroute_test.go`, so the new tests cannot influence it at all.
+The rate gap is chance; the race is real by inspection either way. Logged, not
+fixed: it is fail-closed, breaks no invariant, and belongs to onboarding, not to
+D4 (§6 log-and-go, §3 do not invent scope). The diagnosis and the fix direction
+are in IMPLEMENTATION-NOTES.md so it is a short job for whoever takes it.
+
+Deviations: five entries in IMPLEMENTATION-NOTES.md (556968c) — the vacuous
+launch fence, `dispatch_key` as an input rather than a forged one, the health
+action's shape, `homie.preflight_health`'s true owner, and the onboard race.
+
+`PROGRESS.md` was 228 lines by the end of this entry's work and is back to 205:
+Phases 0–2 are complete, and their per-item detail had long stopped being state.
+It is compacted to what is still live (S3's consumable refresh token and its
+recovery copy, the deferred spike legs, S6's NOTE(S6.n) citations); the rest is
+here, in `spikes/*/RESULT.md`, and in the phase contracts.
+
+NEXT: Land ADR-016 D3's launch-fencing columns as the v2→v3 migration,
+red-first — eleven columns on `homie_sessions` with the pairing rules as CHECKs,
+not as Go politeness. It is the smallest slice that unblocks the most: the D4
+Homie arm's vacuous fence, and `homie.preflight_health`. Copy the dual-length
+NUL-fenced hex CHECK shape from the D2 fences at `schema.sql:742-757` and follow
+`migrationV1ToV2` (`substrate.go:111-120`). Still true, do not re-derive: there
+is no prepare/attest/commit seam, nothing produces a `refusal.Refusal`, and so
+`applyRefusal` has no caller but its tests — making it reachable is D1/D5's
+slice, not this one. Do not load launchd. Full text in PROGRESS.md.

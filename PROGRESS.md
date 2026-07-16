@@ -10,63 +10,56 @@ Access does NOT fix it — the failure precedes any policy lookup. Symptom:
 `stat` works, reads return `Operation not permitted`, git says
 `Unable to read current working directory`.
 
-LAST GREEN SHA: 315e932 (local; the operator pushes manually — decided 2026-07-14, see Parked. Agents: do not push.)
+LAST GREEN SHA: 556968c (local; the operator pushes manually — decided 2026-07-14, see Parked. Agents: do not push.)
 PHASES PASSING: Phase 0 COMPLETE (S1–S8 all green, no fallback ADRs; only operator-leg deferrals remain); Phase 1 COMPLETE (1a substrate 172; 1b walking skeleton reviewed-and-fixed — fake-harness 43, agent-runner 13, runner/image 40, resident 42, dispatch + cmd/mc suites; Docker e2e PASS ×4 total); Phase 2 COMPLETE for every unparked acceptance line (domain/§18 surface, deterministic split-brain convergence, bounded honesty + five mutants, tagged dispatch/metamorphic/twin-spine lifecycle properties; the initiative-wave CLI is no longer isolated — ADR-020 landed 2026-07-14 and closed the last Phase 2 acceptance line)
-KNOWN-FAILING: (none). Note the spine is now schema v2 (substrate.CurrentSchemaVersion): a spine created by an mc build older than 48eaf63 is migrated in place by `mc onboard home`; scratch MC_HOME spines need no action.
+KNOWN-FAILING: `TestOnboardConcurrentFreshHomeNeverDeletesTheWinner` (mc/verbs),
+INTERMITTENT — ~1 in 21 full-suite runs; 0/21 at HEAD, 15/15 and 60/60 green in a
+clean worktree, so the rate is chance and the race is pre-existing, NOT caused by
+the D4 slice (Go runs a package's tests in file order and onboard_test.go sorts
+first, so the new tests cannot influence it). Real bug, fail-closed, breaks no
+invariant. Repro: `cd mc && for i in $(seq 1 25); do mise exec -- go test ./verbs/
+-count=1 || break; done`. Cause: `onboard.go:446` refuses a spine that
+`exists && bytes > 0` with no meta identity as corruption — but that is also the
+transient state of a *concurrent provisioner* (SQLite writes its first 4096-byte
+page before the schema transaction commits), so a loser hard-fails with
+`restore from backup (§16.4)`. Fix direction: that ambiguous state should
+await/retry like the existing `awaitConcurrentProvision`/`recoverConcurrentProvision`
+paths (which already handle the *later* stages of this same race) and refuse only
+if it stays table-less. Owner: whoever next touches onboarding — not a Phase 3
+blocker. Full diagnosis in IMPLEMENTATION-NOTES.md (2026-07-15).
+
+Note the spine is now schema v2 (substrate.CurrentSchemaVersion): a spine created by an mc build older than 48eaf63 is migrated in place by `mc onboard home`; scratch MC_HOME spines need no action.
 FAST SUITE: mc/check.sh (gofmt + vet on the untagged build AND on the nightly/docker_e2e/test_fake_routing tagged builds — they must compile every commit, added 2026-07-14 after a tagged suite rotted invisibly — + go test ./...; includes substrate + promoted dispatch) + runner/fake-harness/check.sh + runner/agent-runner/check.sh + runner/image/check.sh + resident/check.sh. Docker e2e (phase-completion lane): cd mc && mise exec -- go test -tags docker_e2e -timeout 15m ./e2e/...
 
 ## Phases
 
-- [~] Phase 0 — Architecture-kill spikes (S1–S8, handoff Part 2)
-  - [x] S1 setuid gate — GREEN incl. DD-restart + volume reattach; no fallback
-  - [x] S2 exec fidelity — GREEN (30-min hold deferred to Phase 3 suite);
-        signal-cancellation protocol finding in RESULT.md
-  - [x] S3 OAuth lifecycle — GREEN (materialized posture works both bindings;
-        DD-restart-mid-refresh deferred to serialized leg; see RESULT.md
-        finding 5: canonical codex refresh token may be consumed — recovery
-        copy at ~/.mc-dev-home/spike03/race-codex/auth.json)
-  - [x] S4 egress gateway + CA — GREEN (fail-closed net shape proven live;
-        codex streams over WebSocket; ADR-005 base_url routing confirmed;
-        DD-restart leg deferred to serialized leg)
-  - [x] S5 SQLite WAL crash discipline — GREEN incl. DD restart mid-write
-  - [x] S6 dispatch decision table — GREEN; 8 interpretation notes (NOTE(S6.n))
-  - [x] S7 launchd + clock — GREEN unattended; sleep drill + Resource Saver
-        are operator legs (see Parked)
-  - [x] S8 arm64 image + Playwright — GREEN, digest-pinned
-- [x] Phase 1 — Substrate + walking skeleton (fake harness built here)
-  - [x] 1a substrate: schema + trigger lattice + 155-case backstop (771480e)
-  - [x] 1b walking skeleton: contract (docs/phase1b-contract.md), fake
-        harness (runner/fake-harness), agent runner (runner/agent-runner),
-        mc binary (init/task add/dispatch/complete/editor decide/strategist
-        propose/verifier verdict/packet decide/land report/heartbeat/
-        register-session/lock get/run list; S6 Decide() promoted to
-        mc/dispatch byte-identical), resident tick loop (resident/),
-        mc-fake-e2e image (runner/image), Docker e2e green ×2 behind
-        `docker_e2e` build tag
-  - [x] 1b adversarial review closure: correctness lens re-run, 12 findings
-        adversarially verified → 9 confirmed and FIXED (4 major: run.json
-        RW-alias/Inv. 26, mc-land silent checkout, mc-land missing
-        merge --abort, register-session lease-fence race), 4 refuted with
-        documented reasons; fast lane + Docker e2e re-green
-- [x] Phase 2 — Dispatch + domain correctness (all unparked acceptance)
-  - [x] Wave 1 unparked acceptance: dispatch table + SQL differential;
-        domain aggregates; completion/fencing/two budgets; process flock +
-        independent CAS; strict role/runner identity; immutable routing,
-        directives, and claimed-state briefs; adversarial review closed
-  - [x] Strategist wave CLI: UNPARKED and landed 2026-07-14 via ADR-020 (the
-        Editor's holistic plan review now has a durable state, a dispatch arm,
-        and a terminal)
-  - [x] Wave 2 full unparked §18 verb/error/scope surface
-  - [x] Split-brain kill-point convergence suite
-    - [x] action selected / before effect; session folder / before run.json
-    - [x] run.json / before container; container start / before heartbeat
-    - [x] workspace bytes / before commit; git commit / before complete
-    - [x] operator approve / before land; merge success / cleanup or report gap
-    - [x] message/outbox insert / delivery
-  - [x] Nightly randomized/metamorphic/lifecycle properties + planted mutants
-    - [x] bounded generator honesty + exact five-mutant fast gate
-    - [x] tagged dispatch state fuzzer + ineligible-row metamorphism
-    - [x] tagged twin-spine lifecycle random walk
+Phases 0–2 are COMPLETE; their detail lived here long after it stopped being
+state. It is in `docs/ledger/` (narrative), `spikes/*/RESULT.md` (spike
+evidence), and the phase contracts (acceptance). Only what is still live is
+kept below. Operator legs that remain open are under `## Parked`, not here.
+
+- [x] Phase 0 — Architecture-kill spikes S1–S8, all GREEN, no fallback ADR
+      signed (so ADRs 002–006 stay empty stubs — see docs/adr/INDEX.md).
+      Still live from the spike findings:
+      - S3: the canonical codex refresh token may be consumed on a race;
+        recovery copy at `~/.mc-dev-home/spike03/race-codex/auth.json`
+      - S2/S3/S4 deferred legs (30-min hold, DD-restart-mid-refresh, DD-restart)
+        belong to the Phase 3/4 suites; S7's sleep drill + Resource Saver are
+        operator legs (Parked)
+      - S6's 8 interpretation notes are cited in-code as NOTE(S6.n)
+- [x] Phase 1 — Substrate + walking skeleton. 1a schema/trigger lattice +
+      155-case backstop (771480e); 1b contract, fake harness, agent runner, mc
+      binary, resident tick loop, mc-fake-e2e image, Docker e2e behind the
+      `docker_e2e` tag; adversarial review closed (12 findings → 9 fixed incl. 4
+      majors, 4 refuted with reasons).
+- [x] Phase 2 — Dispatch + domain correctness, every unparked acceptance line:
+      dispatch table + SQL differential, domain aggregates, completion/fencing/
+      two budgets, process flock + independent CAS, strict role/runner identity,
+      immutable routing/directives/briefs, the full §18 verb/error/scope
+      surface, the nine-kill-point split-brain convergence suite, and the
+      nightly randomized/metamorphic/lifecycle properties with planted mutants.
+      ADR-020 landed 2026-07-14 and closed the last line (the Editor's holistic
+      wave review has a durable state, a dispatch arm, and a terminal).
 - [ ] Phase 3 — Boundary conformance (Docker)
   - [x] Contract + adversarial mechanism/ownership review
         (`docs/phase3-contract.md`)
@@ -100,6 +93,20 @@ FAST SUITE: mc/check.sh (gofmt + vet on the untagged build AND on the nightly/do
         detail is enumerated-only so hostile text is leak-proof by
         construction. Anti-drift guard in boundary/codes_test.go. 4 mutants
         dead
+  - [x] ADR-016 D4 consequence router at the dispatch seam (`verbs.applyRefusal`,
+        8aa679e): the impure half. Stale → no mutation; Health → one
+        `dispatch.health` activity; Candidate → subject task blocked with
+        `confinement:<code>` / subjectless → health / Homie → ended in the same
+        transaction. D4's four-part invariant (zero Runs, free lock, no spawn, no
+        fall-through) asserted on every arm via a seeded fall-through bait task.
+        20 tests / 109 subtests. `homieEndTx` factored so the seam can end inside
+        its own transaction. 9 of 10 mutants dead (M6 equivalent by construction).
+        Three deviations logged: the Homie end is unfenced-but-vacuous (D3's
+        launch columns absent), `dispatch_key` is an input (no prepare step to
+        derive it), the health action is one activity row (no §15.6 outbox
+        fan-out — no block path has one yet). NOT YET REACHABLE from `mc
+        dispatch`: nothing produces a Refusal, so the router has no caller but
+        its tests
 - [ ] Phase 4 — E2E control loops (six scenario families)
 - [ ] Phase 5 — Real-subscription acceptance (operator-scheduled)
 - [ ] Release prep (after Phase 5): swap the repo's construction face for
@@ -155,32 +162,44 @@ In both, the struck-through entry was the true one.
   were not seeded. The three §4.3 priors are reconstructed one-line notes marked
   RECONSTRUCTED. Drop original POC material into `docs/priors/` if it exists.
 
-NEXT: Apply the ADR-016 D4 consequence router at the dispatch seam, red-first —
-the impure half of the invalid-plan/no-claim transaction, whose input
-(`refusal.Refusal`/`Classify`, 315e932) now exists and is proven. Route
-ClassHealth to one health action, ClassCandidate by subject (block the subject
-task with the code / subjectless pipeline → health / Homie → end with
-`confinement:<code>`), and ClassStale to no mutation at all. Prove every arm
-leaves zero new Run rows, a free lock, no spawn effect, and no fall-through to
-another candidate — the four-part invariant has no fixture yet.
+NEXT: Land ADR-016 D3's launch-fencing columns as the v2→v3 migration, red-first
+(`docs/adr/INDEX.md` → 016 D3, line 275; the column list is lines 280–302). This
+is the smallest slice that unblocks the most: it is named as the blocker by two
+separate deviations logged 2026-07-15, and by the Homie arm of the D4 router
+that just landed.
 
-Three corrections to the prior NEXT, measured not assumed (see the ledger entry
-for 2026-07-15):
-  1. There is NO commit seam to attach to. `verbs.Dispatch` is still the Phase-2
-     single-transaction `Decide()` → `applyAction` (five kinds); prepare/attest/
-     commit does not exist. This slice creates the seam.
-  2. D2's fences are storage-only. `grep -rn "MC-DISPATCH"` and `sha256` over
-     mc/ both return **zero hits**; no Go code writes dispatch_key,
-     dispatch_request_id, dispatch_result, source_activity_id, or
-     event_destination_key. The real derivation needs a preparation token from a
-     prepare step that does not exist. Take `dispatch_key` as an INPUT to the
-     transaction alongside the refusal; leave derivation to the prepare slice.
-  3. The Homie arm cannot be launch-fenced yet: none of D3's eleven
-     `homie_sessions` launch/resume columns exist (48eaf63 landed D2 only). Land
-     the end arm unfenced with the fence seam explicit, or do D3's v2→v3
-     migration first — an operator-free call, but log it either way.
+Eleven columns on `homie_sessions`, with the pairing rules as CHECKs, not as Go
+politeness: `current_launch_id` (exactly 16 lowercase hex when present) and
+`current_launch_mode` (`fresh|native|rows`) are both-null-or-both-present;
+`current_container_id` (exactly 64 lowercase hex) and `launch_bound_at` are
+paired and require a current launch; `launch_started_at` requires the bound
+pair; `resume_owed` (`0|1`) plus `resume_mode` (`native|rows`) carry the debt and
+are **mutually exclusive with a current launch**; only `rows` mode carries the
+paired `*_prime_through_seq` / `*_prime_row_count` cutoff/count (non-negative),
+on both the launch and resume sides. `homie start` initializes every
+launch/debt field empty/zero.
 
-Also unbuilt and needed: a health-event writer, `homie.preflight_health`, and
-`verbs.HomieEnd`'s body factored out of its own `inTx` so the seam can call it.
-Keep aggregate mount no-drop acceptance open until the planner exists. Do not
-load launchd.
+Copy the hex CHECK shape from the D2 fences already in `schema.sql:742-757` —
+`length() = N AND length(CAST(x AS BLOB)) = N AND x NOT GLOB '*[^0-9a-f]*'`. The
+dual-length test is not decoration: it is what stops a NUL-truncated forgery
+storing as a distinct UNIQUE value its own lookup cannot find. The v1→v2
+migration at `substrate.go:111-120` (`migrationV1ToV2`) is the pattern to follow,
+and `substrate/migration_test.go` is where its test lives.
+
+Then close the two things this unblocks, in order:
+  1. The D4 Homie arm's launch fence. `verbs/refusalroute.go`'s RefusalHomie arm
+     names the seam in a comment; it gains a `current_launch_id` predicate and
+     nothing else changes.
+  2. `homie.preflight_health` (ADR-016 line 433) — D3's starvation marker, NOT a
+     D4 consequence. Its `candidate_key = SHA256` covers the pre-prepare
+     canonical session id, current launch/resume debt, frozen binding, and
+     conversation sequence, plus `defer_pipeline=true`. It is only meaningful
+     once something selects Homie candidates, which nothing does yet
+     (`grep -rn homie mc/dispatch` → zero hits).
+
+Measured, still true, do not re-derive: there is NO prepare/attest/commit seam —
+`verbs.Dispatch` is still Phase 2's single-transaction `Decide()` → `applyAction`
+(five kinds). Nothing produces a `refusal.Refusal`, so `applyRefusal` has no
+caller but its tests. Making it reachable is D1/D5's slice (the host plan
+validator over `mc/boundary`), not this one. Keep aggregate mount no-drop
+acceptance open until the planner exists. Do not load launchd.
