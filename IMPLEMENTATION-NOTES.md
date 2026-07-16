@@ -1698,3 +1698,53 @@ Entry template:
 - Spec impact: none.
 - Needs your decision: no (informational; delete the stale paragraph in
   OPERATOR-INPUTS.md at your convenience)
+
+## 2026-07-15 — the Docker VM is 100 MiB under the spec's floor and ~600 MiB under ADR-019's peak
+- Where: handoff §4.1 row 4 (≥4 CPU / ≥8 GB to the VM); ADR-019 D1's shipped
+  class envelopes; surfaced when the operator asked why 8 GiB was "needed"
+- Gap: the parked entry called 8 GiB "thin for Phase 4" and justified it with
+  "the arm64 + Playwright image is ~1–2 GB". That reasoning was **wrong** — image
+  size is disk, not RAM, and the 122 GiB disk was never in question. The operator
+  was right to push on it. The correct derivation is ADR-019's, and it says
+  something worse than "thin".
+- Choice: measured the envelope instead of arguing it. ADR-019 D1 fixes six
+  classes; the ones that can be live at once are pipeline (4096 MiB), its
+  network-guard (512), a Homie (2048) — **lease-free, so it legitimately overlaps
+  a pipeline run** — its guard (512), and the warm helper (512). That is 7680 MiB
+  of the VM's 8092, leaving 412 MiB for dockerd, containerd, and the VM kernel.
+  Add one transient `setup` or `landing` container (1024 MiB each) and the peak is
+  8704 — 612 MiB over the allocation, i.e. an OOM kill mid-run rather than a
+  slowdown. Independently, ADR-019 line 6 records that the spec *fixes* Docker
+  Desktop at ≥4 CPU / ≥8 GiB, and 8092 MiB is 7.9 GiB — 100 MiB under the floor
+  the spec itself sets. The host has 36 GiB physical, so the fix is free.
+  Recorded as an operator decision (raise the VM; 12 GiB recommended, 16 if two
+  Homies should ever coexist) rather than fixed by an agent: VM sizing is Docker
+  Desktop config, which is the operator's per handoff §4.1, and no code change can
+  compensate for it.
+  Why it has not bitten yet: Phases 1–3 run at most one container at a time, and
+  the Docker e2e lane is a single fake-harness agent. Phase 4's six scenario
+  families are the first thing that puts a pipeline agent, a Homie, and a
+  setup/landing container in the air together.
+- Spec impact: none — the spec's floor is right and this deployment is under it.
+- Needs your decision: yes → parked in PROGRESS.md
+
+## 2026-07-15 — correction: the Docker update pin was already satisfied
+- Where: handoff §4.1 row 4 ("version pinned against auto-update surprises")
+- Gap: an agent note claimed the freeze had "exactly one gap —
+  `DisableUpdate: false`" and asked the operator to turn Software Updates off.
+  The operator's settings pane showed otherwise and the claim was wrong.
+- Choice: corrected in `PROGRESS.md` and in the `OPERATOR-INPUTS.md` snapshot.
+  `DisableUpdate` is an **admin-policy key** (Docker's Settings Management /
+  admin-settings.json), not the user-facing auto-update preference; reading it as
+  "the version is not pinned" was a category error. The keys that actually govern
+  installation are `AutoDownloadUpdates: false` and `SilentModulesUpdate: false`,
+  both off, matching the pane's unchecked "Always download updates" and
+  "Automatically update components". Only "Automatically check for updates" is on,
+  and it paints a banner. Nothing installs itself, so row 4's "against auto-update
+  *surprises*" is met: the version can move only by a deliberate click, and the
+  recorded snapshot is what catches it when it does.
+  Lesson worth keeping: a settings-store key is not self-documenting. This one was
+  read straight out of JSON and mapped to a requirement without checking it
+  against the UI that owns it. The operator's screenshot was the disproof.
+- Spec impact: none.
+- Needs your decision: no (nothing to do; the pin stands)
