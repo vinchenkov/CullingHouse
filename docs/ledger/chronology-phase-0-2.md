@@ -1,0 +1,2190 @@
+# Ledger — chronology, Phase 0 through Phase 2
+
+Append-only history. **Never a startup read** (AGENTS.md §1, §5). Grep this
+for a rationale; do not load it to get oriented.
+
+Moved verbatim out of `PROGRESS.md` on 2026-07-15 — 88 dated entries, Phase 0
+seed through the Phase 3 boundary. Nothing was edited, summarized, or dropped.
+The `NEXT:` markers below are **historical**; each was superseded by the next
+entry. The one live `NEXT:` lives at the bottom of `PROGRESS.md`, and there is
+exactly one. Phase 3 onward opens `docs/ledger/phase-3.md`.
+
+---
+
+
+- 2026-07-10 — Session 1 (Claude Code). Found seed folder bare (specs at
+  root, no scaffold) and OPERATOR-INPUTS.md tracked in git with live
+  secrets. Untracked + gitignored it; parked the history question. Seeded
+  the §1.1 scaffold: specs/, AGENTS.md, CLAUDE.md, PROGRESS.md,
+  IMPLEMENTATION-NOTES.md, docs/adr/ slots, docs/priors/ (reconstructed),
+  spikes/ stubs.
+
+- 2026-07-10 — Toolchain pinned via tracked .mise.toml (Go 1.24.5, Bun
+  1.3.9); mise installed. Phase 0 spike workflow launched: S1/S2/S5/S6/S8
+  in parallel, then a serialized Docker-restart drill + S7 (launchd) —
+  restart-dependent assertions serialized because they share the daemon.
+- 2026-07-10 — ADR-001 (role-side verbs + verb-by-scope table, spec §18)
+  authored and Accepted. One genuine spec ambiguity found and tracked:
+  the Editor's wave plan-review has no defined dispatch stage (children
+  are born seeded → Workers would dispatch immediately); routed to S6's
+  ambiguity list, see ADR-001 Open Questions.
+
+- 2026-07-10 — Operator created private remote (github.com:vinchenkov/
+  CullingHouse); GitHub push protection caught the Discord token in the two
+  seed commits. History rewritten with `git filter-repo --invert-paths
+  --path OPERATOR-INPUTS.md` — **all SHAs changed** (tip now `887e30e`);
+  backup bundle in session scratchpad. Any kickoff sentence must use the
+  new SHAs. Push pending (operator runs it).
+
+- 2026-07-10 — Phase 0 workflow completed: 6 agents, 0 errors. Every
+  runnable assertion across S1/S2/S5/S6/S7/S8 PASSED through two hard
+  Docker Desktop restarts; **no fallback ADRs needed**. Drill findings for
+  the resident's watchdog: (1) macOS TCC blocks launchd payloads under
+  ~/Documents — runtime bits must live in ~/Library; (2) `docker info
+  --format` exits 0 while printing 500s during daemon transitions —
+  liveness must validate output shape, not exit code; (3) Docker Desktop
+  4.70.0 quit can wedge 10+ min — watchdog must confirm com.docker.backend
+  exit before relaunch. All spikes committed. S3/S4 remain: credential
+  files not yet materialized by operator; CA pair ready.
+
+- 2026-07-10 ~22:10 — **Phase 1a substrate GREEN and committed (771480e)**:
+  schema.sql + trigger lattice + 155-case backstop suite. Adversarial
+  review (3 lenses) found 13 real defects, all fixed — see the workflow
+  summary; NOTES.md carries 20 NOTE(P1.n) decisions. Independent verify:
+  gofmt/vet clean, suite green in 0.9s.
+- 2026-07-10 ~21:35 — **Harness login expiry mid-run** killed both S3/S4
+  spike agents ("Login expired"); timing coincides with S3 forcing a claude
+  token refresh against the credential copy — plausibly the accepted
+  rotation-invalidates-host-login caveat firing (not confirmed; could be
+  ordinary expiry). Operator re-ran /login; S3/S4 workflow relaunched.
+  Note for the future: expect host /login re-auth after S3-style refresh
+  probes; Phase 5's refresh canary should schedule around it.
+- 2026-07-10 ~19:20 — **QUOTA: Claude Code session limit hit** (resets
+  20:50 America/Los_Angeles). The Phase 1a substrate-author subagent died
+  mid-spec-reading; no files written, tree clean — this IS the green
+  boundary. Handing off per handoff §1.4/§1.5. Phase 1a workflow can be
+  re-launched fresh (nothing to resume; the failed run wrote nothing).
+
+- 2026-07-11 — Session start (Claude Code): found S3/S4 results landed
+  untracked from the relaunched workflow — **both GREEN, Phase 0 complete,
+  zero fallback ADRs across all eight spikes**. Also found the first two
+  fake-harness files (runner/fake-harness/{cli,behavior}.ts) written but
+  uncommitted (no README/tests yet — Phase 1b work-in-progress, kept).
+  Committed S3/S4 (out/ evidence dirs stay untracked per spike convention,
+  now gitignored). Operator notes ledgered: S3 finding 5 (canonical codex
+  refresh token may be consumed; recovery copy at
+  ~/.mc-dev-home/spike03/race-codex/auth.json); DD-restart-mid-refresh legs
+  deferred to the serialized drill in Phase 3.
+
+- 2026-07-11/12 — **Phase 1b walking skeleton GREEN end-to-end** (workflow:
+  contract + 3 parallel builders + integrator, 19 agents). The 11-step
+  ladder passes through the real mc binary (self-delegating into a warm
+  helper container per §11.5), real resident (Bun, 500ms timer), real
+  container topology (spine on a named volume, mc-fake-e2e image,
+  --network none), and the fake harness: proposed → Editor → seeded →
+  Worker (heartbeat advances, branch+commit) → worked → Verifier →
+  verified → Packager → packaged+packet → approve (pure write, main
+  unmoved) → tick → mc-land → landed (--no-ff merge of verified_sha,
+  worktree/branch gone, cascade archive, lock free). PASS ×2, no leaks.
+  22 deviation entries appended to IMPLEMENTATION-NOTES.md (notable: two
+  additive schema columns lock.hard_deadline_minutes + runs.pool_snapshot;
+  skeleton-only `mc init`; MC_RUN_JSON test override — flagged by review).
+- 2026-07-12 — **QUOTA: session limit hit mid-review** (reset 20:40 PT
+  07-11): the correctness lens, 8 of 10 verifiers, and the fixer died.
+  Two lenses survived with 10 findings (2 major: run.json materialized
+  inside the RW-mounted session dir → forgeable identity + Inv. 26
+  violation; mc-land `git checkout` switches the operator's checked-out
+  branch, §6.2 violation). 1 finding confirmed (contract §8 still claims
+  "no schema changes" — false). Findings saved to session scratchpad;
+  committed the green boundary per AGENTS.md §8, review closure relaunched.
+
+- 2026-07-12 — **Phase 1 COMPLETE.** Review-closure workflow (14 agents,
+  0 errors): fresh correctness lens found 4 new findings (2 major);
+  12 total adversarially verified → 9 confirmed, all FIXED, 4 refuted
+  (MC_RUN_JSON override = already-logged P3 deferral; same-tx overclaim =
+  Phase 2 split-brain territory, code satisfies invariants now; resident
+  exec timeouts and land-report idempotency = deferred with reasons in the
+  workflow record). Fixes: run.json now at MC_HOME/runs/<run_id>.json
+  mounted RO (no RW alias, reap removes it; session folders assert
+  trace-only), mc-land gained a HEAD fence (no checkout) + merge --abort
+  on conflict, register-session fences on own-row identity instead of the
+  live lease (race with the terminal verb eliminated, regression test
+  added), contract §8 schema pin corrected, role outputs moved out of
+  session folders, ladder-9 approve assertions de-flaked, runner process
+  behaviors now tested as a real subprocess (exit-code passthrough,
+  register-once, heartbeat-nonfatal). Suites after fixes: fast lane green
+  (43/11/29 bun + full go), Docker e2e PASS ×2 with rebuilt image. Two
+  deviation entries appended (run.json relocation; container-naming
+  log-and-go).
+
+NEXT: Phase 2 — dispatch + domain correctness (handoff Part 3, largest
+investment). Order: (1) Phase 2 contract (like docs/phase1b-contract.md —
+pin the domain-aggregate layer's shape, where it sits between verbs and
+substrate, the §18 full verb/error surface, split-brain kill-point
+harness design, property-suite scope); (2) build in waves: domain
+aggregates + completion/fencing first, then decision-table + CLI error
+paths, then split-brain suite, then nightly property suites; adversarial
+review per wave. Reuse the Phase 1b workflow shape (contract → parallel
+builders → integrate → review → verify → fix).
+
+Kickoff (next session, either harness): "Continue the Mission Control
+implementation from commit `<current main tip>`, phase `P-2`. Follow the
+session protocol in AGENTS.md; read PROGRESS.md; do not invent scope; stop
+rather than guess missing operator inputs."
+
+- 2026-07-12 — Codex takeover from quota-interrupted Claude Code session.
+  Resume ritual found commit 2be0e47 clean and pushed but **mid-red and
+  unledgered**: it contains the Phase 2 wave-1 contract, domain aggregates,
+  dispatch gap tests, schema additions, and verb rewiring (+4358/-304), while
+  `cmd/mc` and its CLI tests remain on the Phase 1 signatures/deferred arms.
+  Fast-lane truth at takeover: domain/dispatch/substrate focused Go suites
+  green; fake-harness 43, agent-runner 11, resident 29 green; full Go lane
+  compile-fails at the stale VerifierVerdict call above. Cross-harness
+  adversarial takeover review launched before any code edit, per AGENTS.md
+  §2; uncommitted work was absent and nothing was discarded.
+
+NEXT: Complete the cross-harness audit of 2be0e47, record confirmed findings
+in IMPLEMENTATION-NOTES.md, then restore the CLI boundary with the smallest
+TDD integration slice (VerifierVerdict args first) and re-run the full fast
+lane before advancing any Phase 2 wave marker.
+
+- 2026-07-12 — **Cross-harness takeover review closure, four Phase 1 defects
+  fixed red-first.** (1) Every role terminal now binds `--run` to the caller's
+  immutable run.json identity before checking the live lease; the old
+  same-role/new-holder attack leaves task and lease untouched. (2) the agent
+  runner awaits native-session locator registration even when the harness
+  exits immediately (12 runner tests green). (3) packet archive is now a
+  one-way consequence of owning-task archive; direct slot freeing/resurrection
+  aborts at the substrate, including initiative cascades. (4) mc-land
+  preflights dirty/locked worktrees before main moves and treats unexpected
+  post-merge cleanup residue as logged debt, never a false landing failure (2
+  new Docker-free mc-land tests; resident 30 green). Focused Go suites green.
+  The full Go lane now reaches only the expected stale Phase 2 CLI assertions
+  listed in KNOWN-FAILING.
+
+NEXT: Resume Phase 2 wave-1 integration red-first: replace the stale packet,
+Editor, and Verifier deferred-arm CLI tests with real happy/error-path tests,
+wire the already-built verb APIs through cmd/mc, and restore the full fast
+suite before taking the next Phase 2 seam.
+
+- 2026-07-12 — **Green recovery boundary after Codex takeover.** Phase 2 CLI
+  now drives packet revise/cancel, mixed Editor promote/reject, and Verifier
+  PASS/CORRECT/BUDGET-SPENT plus refinement-deepening validation through the
+  real binary; old deferred tests replaced with isolated happy/error paths.
+  The Verifier API compile break is closed. Complete expanded fast lane green:
+  Go all packages; fake-harness 43; agent-runner 12; mc-land 2; resident 30.
+  Phase 2 storage/verb interpretations missing from 2be0e47 are now logged;
+  the initiative-wave plan-review hole is parked and only that line is held.
+
+NEXT: Continue Phase 2 wave 1 at the next independent red-green slice:
+`mc complete` seeded/needs-operator/infra + task block/unblock (keep
+`--correction-count` rejected), then console init tunables and the promised
+verbs/dispatch loader differential suite. Before wave-1 closure, add the
+spec-required process flock and replace hardcoded fake binding with validated
+routing.md resolution. Do not wire `strategist wave` until its Parked decision.
+
+- 2026-07-12 — **Phase 2 CLI terminals green.** Red-first real-binary tests
+  now cover host block/unblock, pipeline own-subject-only block and denied
+  unblock; `mc complete --needs-operator` (status preserved, blocked reason,
+  run outcome, lease release, no dispatch); `--infra` (dispatch budget only);
+  and Refiner `--status seeded` at queue cap (same task re-enters, packet slot
+  stays live). `--correction-count` remains an explicit rejection owned by
+  Verifier verdict. Complete expanded fast lane green (Go + 43/12/2/30 Bun).
+
+NEXT: Phase 2 wave-1 adapter correctness: add `mc init` console schedule
+tunables and the contract-promised `mc/verbs/dispatchverb_test.go`
+differential suite (real SQL projection/action application versus pure
+dispatch). Then implement the §10 process-level dispatch flock and validated
+routing.md binding resolution. Initiative wave remains isolated under Parked.
+
+- 2026-07-12 — **Stored Daily Console schedule is CLI-configurable.** `mc
+  init` now accepts the all-or-none `--console-hour/--console-minute/
+  --console-tz` triple, validates ranges and embedded IANA zones before
+  creating the spine, persists the three lock-row tunables, and distinguishes
+  explicit midnight from the hour-24 unset sentinel. Go fast lane green.
+
+NEXT: Add the contract-promised `mc/verbs/dispatchverb_test.go` differential
+suite: every dispatch Action kind through real SQL load/apply, nullable lock/
+task fields, Daily Console activity loading, and re-enter mutation. Then the
+process flock and routing.md resolution remain before wave-1 review closure.
+
+- 2026-07-12 — **Phase 2 SQL↔dispatch adapter differential green.** New
+  `mc/verbs/dispatchverb_test.go` mirrors hand-built projections into real
+  spine rows and proves all five actions (idle/spawn/reap/land/reenter) agree
+  with frozen `dispatch.Decide`; verifies claim/reap/reenter writes, effect-only
+  landing, NULL last-heartbeat/task/subject/worksource handling, Editor pool
+  snapshot, same-day Daily Console suppression, and invalid-zone rollback.
+
+NEXT: Close the two omitted Phase 2 wave-1 obligations identified at takeover:
+(1) process-level `mc.dispatch` flock on the spine volume with concurrent
+loser/no-effect coverage (§10), then (2) parse authoritative routing.md,
+validate role bindings/decorrelation, stamp the resolved binding, and refuse
+unresolved routing before lease claim. Initiative wave remains Parked.
+
+- 2026-07-12 — **Process-level dispatch flock green.** `verbs.Dispatch`
+  resolves the file-backed main spine, takes `mc.dispatch.lock` beside it
+  before reading any records, and holds it through the transaction/effect
+  decision; BEGIN IMMEDIATE + lease CAS remain the durable correctness fence.
+  Black-box subprocess test proves a dispatch cannot evaluate/open a Run while
+  another process holds the flock, then resumes with one spawn on release;
+  the existing four-claimant test remains exactly one spawn/three lease-held
+  idles. Go fast lane green.
+
+NEXT: Finish Phase 2 wave-1 routing: replace `binding='fake'` in applySpawn
+with authoritative routing.md parsing/validation; unresolved roles or invalid
+producer/judge decorrelation must fail before lease claim/effect, while the
+test-only fake binding remains expressible through test config. Initiative
+wave remains Parked. Then adversarially review wave 1 against its contract.
+
+- 2026-07-12 — **Phase 2 wave-1 routing green.** ADR-007 pins one strict
+  `$MC_HOME/routing.md` table and an injected canonical binding registry.
+  Spawn validates every role/reference plus Strategist↔Editor and
+  Worker↔Verifier decorrelation before claim; missing/invalid config opens no
+  Run, while pending land/reap-class reconciliation remains usable. Resolved
+  harness/model binding propagates through effect → run.json and the Run keeps
+  `harness/binding`. Production excludes fake; only build-tagged CLI/fake-E2E
+  binaries accept explicitly named fake routes. Canonical, failure, MC_HOME,
+  build-tag fake, and resident propagation tests green; Docker-tag suite
+  compiles without running Docker.
+
+NEXT: Adversarially review Phase 2 wave 1 (contract + domain/verbs/dispatch
+adapter/routing) before declaring the wave complete. Prioritize transaction
+atomicity, initiative drain/plan-review boundaries, carried correction/refine
+briefs and exception labels, all terminal caller/role/subject fences, and
+route snapshot truth. Fix confirmed findings red-first. Initiative wave CLI
+remains Parked pending the operator's durable plan-review representation.
+
+- 2026-07-12 — **Phase 2 adversarial review: overlapping waves closed.** A
+  new domain regression first proved that `BirthWave` could append another
+  wave while the initiative still had open children. The aggregate now names
+  the §6.1 strict-drain refusal before inserting anything; the full Go fast
+  lane is green. (The substrate cannot distinguish successive inserts in one
+  legitimate multi-child wave because a wave deliberately has no record;
+  the sole-writer `mc` aggregate is the atomic boundary.)
+
+NEXT: Continue confirmed Phase 2 wave-1 findings red-first: make reap derive
+its subject from the fenced lease, then require a live packet and complete
+landing fence for packet decisions/re-entry. Initiative wave CLI remains
+Parked pending the operator's durable plan-review representation.
+
+- 2026-07-12 — **Phase 2 adversarial review: reap authority closed.** A red
+  regression proved a subject-carrying lease could be reaped without charging
+  its subject because the write aggregate trusted an optional action payload.
+  `ApplyReap` now fences and reads the authoritative subject from the live
+  lock before touching the Run, making omitted/injected subject accounting
+  impossible; subjectless runs still charge nothing. Full Go fast lane green.
+
+NEXT: Require the task's live Review Packet at approve/revise/re-entry and
+require complete SHA/target landing inputs before branch approval; prevent
+packet birth/rerender after a decision. Then continue the remaining
+adversarial findings. Initiative wave CLI remains Parked.
+
+- 2026-07-12 — **Phase 2 adversarial review: review-surface fences closed.**
+  Red domain regressions proved packaged rows could approve/re-enter without
+  ever becoming reviewable, branch work could be irreversibly approved with
+  missing SHA/target inputs, and decided packet renders could be rewritten.
+  Domain plus substrate now require the live lifetime packet for approval and
+  re-entry, require the complete landing fence before branch approval, reject
+  packet birth/rerender after a decision, and keep decided renders immutable.
+  The SQL↔dispatch landing fixture now constructs the legal packet-first
+  order. Full Go fast lane green.
+
+NEXT: Close the remaining initiative lattice findings: cancellation must
+overwrite every open child's decision to cancelled, and a propagated parent
+block cannot be manually cleared while a live child remains blocked. Then
+pin verdict outcome/deepening/correction carriers red-first. Initiative wave
+CLI remains Parked.
+
+- 2026-07-12 — **Phase 2 adversarial review: initiative cancellation fixed.**
+  A red landing-pending-child regression proved the parent archive cascade
+  preserved an open child's earlier `approved` decision. The substrate now
+  makes parent cancellation authoritative for every still-open child:
+  decision/timestamp become `cancelled`, the child archives, then its packet
+  archives. Domain and raw-SQL backstops agree; full Go fast lane green.
+
+NEXT: Prevent manual unblocking of a parent initiative while any live child
+remains blocked, with matching aggregate and substrate regressions. Then pin
+verdict outcome/deepening/correction carriers red-first. Initiative wave CLI
+remains Parked.
+
+- 2026-07-12 — **Phase 2 adversarial review: maximally strict block restored.**
+  A red regression proved `task unblock` could clear the propagated parent
+  flag while its child stayed blocked. Domain and substrate now refuse a
+  parent unblock while any live blocked child exists; resolving the last
+  child still drives the existing auto-clear path. Full Go fast lane green.
+
+NEXT: Pin Verifier outcome carriers: PASS refinement is genuine,
+BUDGET-SPENT refinement is churn, correction belongs only to CORRECT, and
+required evidence/SHA must be enforced in the domain transaction. Then close
+strict batch parsing and Strategist mode fences. Initiative wave CLI remains
+Parked.
+
+- 2026-07-12 — **Phase 2 adversarial review: Verifier carrier matrix fixed.**
+  Red domain/CLI regressions proved a PASS refinement could increment churn,
+  PASS/BUDGET-SPENT could persist correction files, CORRECT could carry a
+  meaningless landing SHA, and direct aggregate callers could omit evidence,
+  SHA, or the matching Verifier Run. Outcome-specific validation now exists
+  in the real state-law layer and the CLI rejects impossible flag shapes:
+  PASS→genuine, BUDGET-SPENT→churn, correction only on CORRECT, SHA only on
+  the two verified outcomes. The verdict carrier must update exactly the
+  matching Verifier Run/subject. Complete fast lane green: Go plus fake 43,
+  agent-runner 12, runner/image 2, resident 30.
+
+NEXT: Close strict single-document batch parsing and exact Strategist mode /
+subject-shape fencing red-first, then fix invalid-console-TZ reap precedence
+and blocked-proposal Editor visibility. Initiative wave CLI remains Parked.
+
+- 2026-07-12 — **Phase 2 adversarial review: batch parsing is truly full.**
+  Red Editor and Strategist process tests proved a valid first JSON document
+  could commit while trailing JSON or unknown fields were ignored. All three
+  batch terminals now share one strict single-document decoder: unknown keys
+  and any second value/garbage fail before the transaction. Regressions assert
+  pool/tasks and lease remain untouched. Full Go fast lane green.
+
+NEXT: Add exact Strategist mode plus subject-shape fences for propose and the
+implemented-but-parked initiative terminal. Then fix invalid-console-TZ reap
+precedence and blocked-proposal Editor visibility. Initiative wave CLI remains
+Parked pending durable plan-review representation.
+
+- 2026-07-12 — **Phase 2 adversarial review: Strategist capabilities split.**
+  Red process tests proved initiative/console envelopes could terminate a
+  propose run and that propose accepted a subject-carrying lease. Exact
+  run.json role modes now fence propose vs initiative; propose additionally
+  requires the fenced lease to be subjectless, wave requires an initiative
+  mode, and initiative done-declaration accepts only that same exact mode.
+  Complete fast lane green (Go + all four Bun suites).
+
+NEXT: Restore step-(0) precedence so a corrupt Console timezone cannot wedge
+a stale lease, then exclude/refuse blocked proposals at the Editor snapshot
+and decision boundaries. Initiative wave CLI remains Parked pending durable
+plan-review representation.
+
+- 2026-07-12 — **Phase 2 adversarial review: stale leases outrank Console.**
+  A red SQL-adapter regression proved an invalid stored IANA zone aborted
+  before step (0), indefinitely wedging a stale global lease. A held lease
+  now executes only keep/reap logic with a non-semantic clock placeholder;
+  Console timezone validation remains fail-closed once the lease is free.
+  The stale subject is charged and the lease releases despite corrupt Console
+  config. Complete fast lane green.
+
+NEXT: Exclude blocked proposals from Editor pool snapshots and refuse stale
+Editor verdicts against a concurrently blocked proposal at the aggregate
+boundary. Then address saturated operator-directed recovery and runtime route
+truth. Initiative wave CLI remains Parked.
+
+- 2026-07-12 — **Phase 2 adversarial review: blocked proposals made invisible.**
+  Red pure-dispatch and aggregate/backstop tests proved a blocked proposal
+  entered the Editor's exact-coverage snapshot and could still be promoted or
+  rejected. Pool construction now excludes it, while domain and substrate
+  reject stale Editor writes until operator unblock. Complete fast lane green.
+
+NEXT: Restore the valid saturated → operator-revise → genuine-deepening
+recovery while keeping saturated packets out of automatic refinement. Then
+make the fake-only resident fail closed for canonical runtime routes and begin
+the missing immutable spawn-brief carriers. Initiative wave CLI remains Parked.
+
+- 2026-07-12 — **Phase 2 adversarial review: operator saturation recovery fixed.**
+  A red end-to-end aggregate regression proved saturation was permanent even
+  after operator revise. The packet lattice now allows a streak decrease only
+  while its live owning task is at `worked` in the operator-requested recovery
+  round; the substrate recomputes `saturated=0` below threshold. Packaged
+  saturated packets still reject direct resets and remain excluded from
+  automatic step-(2b) selection. Complete fast lane green.
+
+NEXT: Make the current fake-only resident/runner fail closed on canonical
+runtime routes so recorded binding can never lie about executed adapter. Then
+assemble immutable spawn briefs carrying Editor records, Strategist dedupe,
+refine/correction notes, and Packager exception evidence. Initiative wave CLI
+remains Parked.
+
+- 2026-07-12 — **Phase 2 adversarial review: runtime route truth restored.**
+  Red resident and real-runner process tests proved a canonical
+  `codex/chatgpt` envelope still invoked the fake harness. Until the later
+  real-adapter phase lands, both layers now refuse non-`fake/fake` routes
+  before creating launch bytes or invoking the fake CLI. No canonical Run can
+  claim one adapter and execute another. Complete fast lane green; counts are
+  now fake 43, agent-runner 13, runner/image 2, resident 31.
+
+NEXT: Assemble immutable spawn briefs in `mc` from the claimed state snapshot
+and copy them unchanged into run.json: Editor proposal records, Strategist
+dedupe titles, Worker refine/correction input, and Packager budget-spent
+exception/evidence. Initiative wave CLI remains Parked.
+
+- 2026-07-12 — **Phase 2 wave-1 immutable brief carriers green.** ADR-008
+  pins `mc.spawn-brief.v1`: `mc dispatch` now renders role input inside the
+  same transaction that claims the lease, and the resident copies it
+  byte-for-byte into run.json. Regressions cover full Editor proposal records,
+  Strategist rejected-title dedupe, Worker refinement notes/latest correction,
+  Packager BUDGET-SPENT exception/evidence, and Console queue/blocked state.
+  The generic skeleton prompt is gone. Complete fast lane green.
+
+NEXT: Continue wave-1 adversarial closure with strict `mc complete` arm/field
+validation and real CLI zombie/new-holder coverage, then authenticate and make
+immutable the runner lifecycle verbs. Keep initiative wave CLI Parked pending
+durable plan-review representation; frozen prose role directives remain a
+required authored artifact after the carrier schema.
+
+- 2026-07-12 — **Phase 2 adversarial review: `mc complete` payload truth fixed.**
+  Process regressions now reject every cross-arm field instead of silently
+  dropping it (`branch`, `reason`, `outputs`), require Packager render paths,
+  and require Strategist(initiative)'s completion report. `--outputs` is no
+  longer inert: the terminal transaction stores `runs.output_path`, and the
+  next role's ADR-008 brief carries the latest report/artifact reference.
+  Complete fast lane green.
+
+NEXT: Bind heartbeat and session registration to the runner's own run.json,
+make locator registration idempotent-but-immutable, and add old CLI complete /
+heartbeat versus new-holder snapshots. Then close atomic rollback/CAS coverage
+gaps. Initiative wave CLI remains Parked; frozen prose directives remain due.
+
+- 2026-07-12 — **Phase 2 adversarial review: runner lifecycle authority fixed.**
+  Heartbeat and register-session now require the caller's own pipeline
+  run.json before touching state; heartbeat remains live-lease fenced while
+  locator registration remains legal after own-run lease release. Same-value
+  registration retries are idempotent, conflicting replacements fail in both
+  verb and substrate, and locator nullability travels as a pair. A real CLI
+  reap/reclaim test proves old complete, old heartbeat, and an old container
+  supplying the new token leave the new lease bit-for-bit unchanged. Complete
+  fast lane green.
+
+NEXT: Add true aggregate-level concurrent CAS coverage (separate from the
+process flock), plus Editor/Strategist/Packager transactional rollback cases.
+Then reconcile remaining wave-1 items and author the frozen prose directives.
+Initiative wave CLI remains Parked pending durable plan-review representation.
+
+- 2026-07-12 — **Phase 2 adversarial acceptance gaps closed.** Four concurrent
+  BEGIN-IMMEDIATE claimants now prove the domain CAS independently of the
+  process flock (one Run winner, three coded losers). Real CLI regressions
+  prove Strategist valid-first/DB-invalid-second, Editor reject-first/
+  blocked-second, and Packager stage-before-WIP-cap all roll back task,
+  activity, Run, packet, and lease writes. Packet cancel now uses a distinct
+  aggregate requiring the live Review Packet, while generic initiative/child
+  cancellation remains available to the state machine. Complete fast lane
+  green.
+
+NEXT: Author and embed the frozen role directives so ADR-008 briefs carry
+both immutable state and product-owned instructions (including orchestration-
+by-default). Then perform a final wave-1 contract diff and advance only the
+unparked Phase 2 lines. Initiative wave CLI remains Parked.
+
+- 2026-07-12 — **Required authored artifact: frozen directives/briefs green.**
+  Eight tracked role directives are embedded in the `mc` binary and carried
+  inside every `mc.spawn-brief.v1` document. Each pins role jurisdiction,
+  orchestration-by-default with read-only depth-1 subagents, the inline-work
+  exception, and the single terminal action; role-specific rubrics cover
+  contrastive Editor judgment, Verifier gates, correction/refinement,
+  exception-labeled packaging, initiative boundaries, and Console ranking.
+  Tests prove every dispatch role has a distinct directive and unknown roles
+  fail closed. This satisfies the spec §16.1/Inv.20 authored role-directive
+  and brief-template deliverable. Complete fast lane green.
+
+NEXT: Perform the final Phase 2 wave-1 contract/spec diff, record the parked
+and wave-2 deferrals precisely, and advance the ledger only for acceptance
+sets that are actually green. Initiative wave CLI remains Parked pending the
+durable holistic plan-review representation.
+
+- 2026-07-12 — **Phase 2 wave-1 final contract/spec diff complete.** Every
+  unparked wave-1 acceptance set is green: dispatch's taken/not-taken and
+  invisibility table, SQL adapter differential, all six domain aggregate
+  suites, completion/fencing/two-budget ownership, strict batch/role/lifecycle
+  boundaries, atomic rollbacks, CAS+flock, route truth, and immutable
+  directives/briefs. Docker-tag and `test_fake_routing` builds also compile.
+  The spec-over-contract fixes that crossed wave-1 directory/schema fences
+  are recorded in IMPLEMENTATION-NOTES/ADRs. The only omitted wave-1 terminal
+  is `mc strategist wave`, explicitly Parked because implementing the ADR as
+  written would violate the spec's mandatory holistic Editor review.
+
+  Phase 2 is not complete: handoff Part 3 still requires (1) the full §18
+  happy/error/scope surface (`console`, worksource/initiative/operator,
+  doctor/backup/reset/onboard, Homie/outbox, structured error JSON), (2) the
+  split-brain kill-point convergence suite, and (3) nightly dispatch/
+  metamorphic/lifecycle properties with generator-honesty/planted-mutant
+  gates. These are Wave 2, not silently counted green.
+
+NEXT: Author the Phase 2 wave-2 acceptance contract from handoff Part 3 and
+spec §18, preserving the parked initiative-wave line. Then TDD the full CLI
+verb/error/scope matrix before split-brain and nightly suites.
+
+- 2026-07-12 — **Phase 2 wave-2 contract authored.** The contract orders
+  provenance before new surface area, pins structured error JSON, enumerates
+  core/operator, Console/Homie/outbox, and operational verb acceptance,
+  defines the deterministic split-brain boundary table, and names the nightly
+  generator-honesty/planted-mutant gates. It explicitly excludes rather than
+  bypasses the parked initiative-wave terminal.
+
+NEXT: TDD wave 2 slice 1: enforce ADR-001 D6 provenance on every existing
+verb before it opens/mutates the spine, with pipeline attempts at init,
+dispatch, task add, packet decide, task unblock, and land report proven
+bit-for-bit inert. Then add structured error JSON.
+
+- 2026-07-12 — **Phase 2 wave 2 provenance slice 1 green.** Existing
+  host/operator writes now load identity and reject pipeline callers before
+  opening or mutating state: init, dispatch, task add, packet decide, task
+  unblock, and land report. Homie admission is explicit and requires the
+  verb in the immutable run.json allowlist; host remains the no-run.json
+  scope. The process matrix proves no forged task/decision/landing/init bytes
+  and an unchanged lease. Complete fast lane green.
+
+NEXT: Add the wave-2 structured error envelope while preserving exit codes,
+stderr diagnostics, and self-delegation byte fidelity. Then extend the scope
+matrix as new operator/Homie/transport verbs land. Runner-private vs model
+capability enforcement remains a Phase 3 structural-boundary mechanism.
+
+- 2026-07-12 — **Phase 2 wave 2 structured errors green.** Every local
+  rejection now emits one stdout JSON object with stable `error.code` and
+  `error.message` while retaining the stderr diagnostic and exit 1/2 split.
+  Coded domain errors preserve their slug, usage/environment errors use
+  `usage`, and uncoded CLI-domain refusals use stable `domain-rejection`.
+  Success JSON and delegated byte/exit passthrough remain unchanged. Complete
+  fast lane green.
+
+NEXT: TDD `mc initiative add`, `mc worksource add|list|pause|archive`, and
+`mc task interrupt` with the new error/scope matrix. Preserve the parked
+initiative-wave terminal; these operator record verbs do not depend on it.
+
+- 2026-07-12 — **Phase 2 wave 2 `initiative add` green.** Host or allowlisted
+  Homie intent now files an `origin:user`, `scope=initiative` proposal into
+  the ordinary contrastive pool; title, Worksource, and a checkable `--charter`
+  are mandatory and expedited priority -1 is preserved. Pipeline provenance
+  is denied before insertion. This adds no wave state and does not touch the
+  parked holistic plan-review question. Complete fast lane green.
+
+NEXT: TDD `mc worksource add|list|pause|archive`, including active-only
+dispatch visibility and immutable historical rows. Then implement operator
+interrupt as cancel+lease-clear+exact stop effect.
+
+- 2026-07-12 — **Phase 2 wave 2 Worksource lifecycle green.** Add validates
+  kind/seeding mode and any sandbox-profile reference; list remains open to
+  pipeline reads; pause/archive are operator or allowlisted-Homie writes and
+  pipeline attempts are inert. SQL dispatch now carries authoritative
+  Worksource status and excludes paused/archived tasks from landing,
+  refinement, with-room selection, and Editor pool snapshots. Archive is
+  terminal and Worksource rows cannot be deleted. Complete fast lane green.
+
+NEXT: Implement `mc task interrupt` as one operator transaction: cancel the
+live task with reason `operator_interrupt`, end the matching Run, clear only
+its lease, and return the exact container-stop effect. Add stale/non-live and
+pipeline-provenance negatives, then resident effect coverage.
+
+- 2026-07-12 — **Phase 2 wave 2 operator interrupt green.** `task interrupt`
+  now requires host or allowlisted-Homie provenance and an exact live lease
+  subject. One transaction cancels/archives the task with
+  `operator_interrupt`, ends the matching Run as `interrupted`, and clears
+  only that lease; wrong-subject, replay, and pipeline attempts are inert.
+  The returned stop effect names the exact container, and the resident stops
+  it and removes the ephemeral launch envelope. Complete fast lane green;
+  resident suite now 32.
+
+NEXT: TDD Console publication over existing activity/outbox tables: exact
+Strategist(console), subjectless own-run fence, content path required,
+same-day event + destination rows + Run end/lease release atomically. Keep
+the broader Homie/outbox transport surface as the following slice.
+
+- 2026-07-12 — **Phase 2 wave 2 Console publication green.** The exact
+  Strategist(console) terminal now requires its own subjectless run and a
+  normalized `outputs/` content path. One transaction writes the
+  `daily.briefing` suppression event, fans a small path payload to the trusted
+  Console destinations, ends the Run, and releases the lease. The always-on
+  dashboard is the Phase-2 destination; Phase 5's deferred `config.toml`
+  layer expands that private resolver to every configured surface. Wrong
+  mode, host scope, caller-run mismatch, subject-carrying lease, traversal,
+  and missing content are inert; an injected outbox abort proves the event,
+  terminal, and lease roll back together. Complete fast lane green.
+
+NEXT: TDD the first Homie registry slice: `mc homie start|bind|list` with
+host/allowlisted-Homie provenance, immutable session identity/locators,
+active-binding uniqueness, and no pipeline lease. Return only durable
+state/effect data; conversation send/history and runner transport follow.
+
+- 2026-07-12 — **Phase 2 Homie registry substrate backstops green.** The
+  takeover's three independent read-only audits found that Phase 1 allowed
+  two active sessions to own one surface place. Active ownership is now
+  globally unique by `(surface, channel_ref)`; bind-event identity is frozen,
+  inactive history cannot reactivate, and end/reap deactivates bindings.
+  Homie start provenance is non-null and immutable, while native session
+  handle + trace filename register as a paired set-once locator. Raw-SQL
+  negatives cover every guard; complete fast lane green. Substrate suite now
+  171.
+
+NEXT: TDD `mc homie start|bind|list`. Per ADR-001 D6, start/bind are strictly
+host scope; an allowlisted Homie may list only its own active session, while
+host list includes active/ended/reaped rows. Start atomically writes registry
+and its initial binding after trusted Homie route resolution and never touches the
+pipeline lease, Runs, outbox, file plane, or resident effects.
+
+- 2026-07-12 — **Phase 2 Homie start/bind/list green.** ADR-009 pins the
+  previously unspecified CLI and record contract. Host-only start resolves
+  the trusted Homie route, mints a disjoint `h-` identity, freezes the
+  canonical agent-verb allowlist/path/container/runtime binding, and writes
+  the registry row plus initial surface binding atomically. It returns no
+  launch effect and leaves a simultaneously live pipeline lease, Runs,
+  outbox, and file plane untouched. Bind retries are idempotent for the same
+  session/place and never transfer an occupied place. Host list includes all
+  resumable statuses; an allowlisted Homie sees only its own active row.
+  Every Homie-authorized operator mutation now rechecks the canonical active
+  registry row and exact frozen allowlist inside its write transaction, so an
+  ended zombie or forged envelope is inert; this also enables the missing
+  Homie `task block` arm from ADR-001 D6. Invalid route/input/scope, binding
+  collision, duplicate-origin start, and injected initial-binding failure all
+  leave no partial registry state. Complete fast lane green.
+
+NEXT: TDD `mc homie send|history|end`: host-origin inbound append with stable
+per-session sequence, origin binding and cross-surface echo outbox in one
+transaction; deterministic durable history; host or allowlisted-own end that
+deactivates bindings without deleting rows or touching the pipeline lease.
+Keep implicit resume and runner claim/reply behind their following slices.
+
+- 2026-07-12 — **Phase 2 Homie send/history/end green.** ADR-010 pins the
+  inbound and lifecycle grammar. Host-only send accepts text and normalized
+  attachment references, creates the first-traffic origin binding, allocates
+  the next durable per-session sequence, advances activity time, and writes
+  one `homie_echo` row for every other active binding in a single transaction.
+  Injected outbox failure rolls back the message, implicit binding, and time.
+  History renders the permanent transcript and structured attachments in
+  stable order; host retains ended-session access while an allowlisted Homie
+  is active-own only. End atomically flips status, appends the reason event,
+  and lets the substrate deactivate bindings; injected event failure rolls
+  all of that back, and host replay is idempotent. Pipeline/Homie transport
+  forgeries, cross-session reads/ends, invalid attachment carriers, occupied
+  origins, and ended sends are inert. Attachment and outbox JSON shapes now
+  also have raw-schema CHECKs. Complete fast lane green; substrate suite 172.
+
+NEXT: TDD `mc outbox poll|ack` as a host/native-surface-only delivery cursor:
+poll one surface's undelivered rows in stable id order without mutation; ack
+only a row owned by that same surface, idempotently. Then add explicit Homie
+resume plus a real Homie-runner capability seam before claim/reply/register;
+do not expose outbound transport through the model's Homie-agent identity.
+
+- 2026-07-12 — **Phase 2 outbox delivery cursor green.** ADR-011 pins
+  host/native-surface-only `poll --surface [--limit]` and
+  `ack <id> --surface`. Poll returns only that surface's undelivered rows in
+  stable id order with structured payloads and is byte-for-byte read-only.
+  Ack verifies row ownership, stamps the spine clock once, leaves other
+  surfaces untouched, and preserves the original timestamp on replay.
+  Pipeline and Homie identities, wrong-surface/missing-row acks, invalid
+  surfaces, and invalid limits are inert. The substrate now closes outbox
+  surfaces to `discord|dashboard|cli` in addition to its JSON-object check.
+  Complete fast lane green.
+
+NEXT: Design and TDD the Homie-runner capability seam, then extend
+`mc run register-session` to the exact own Homie session and add host-only
+`mc homie resume <session> --from <surface:channel_ref>` as a record-only
+status/binding transition. Require the immutable locator pair for native
+continue mode; keep any conversation-row fallback explicit and audited.
+
+- 2026-07-13 — Claude Code takeover from quota-interrupted Codex session.
+  Resume ritual found the outbox delivery cursor slice (ADR-011,
+  mc/verbs/outbox.go, schema surface CHECK, CLI tests, ledger entry)
+  complete but UNCOMMITTED — Codex died on quota after going green but
+  before committing. Nothing discarded: full fast lane re-verified green
+  (Go all packages; fake 43, agent-runner 13, runner/image 2, resident 32)
+  and the slice committed as 2f85fbe, pushed. Cross-harness adversarial
+  takeover review launched per AGENTS.md §2 before any code edit: six
+  read-only lens agents over the Codex range (wave-2 provenance/scope +
+  structured errors; operator record verbs; Console publication; Homie
+  registry/messaging; outbox cursor — extra scrutiny, never reviewed even
+  once; plus a decorrelated spot-check of four wave-1 self-review closure
+  claims: CAS, runner lifecycle authority, brief immutability, route truth).
+
+NEXT: Collect and adversarially verify the takeover-review findings,
+record confirmed/refuted in IMPLEMENTATION-NOTES.md, fix confirmed defects
+red-first, re-green the full fast lane, then resume wave 2 at the
+Homie-runner capability seam / register-session / homie resume slice above.
+
+- 2026-07-13 — **Takeover review closed: 2 majors + 5 fix-class minors, all
+  FIXED red-first** (a329c1a..63f7c8e, each committed at green). Majors:
+  (1) Homie `worksource pause|archive` checked the status value against the
+  frozen verb-name allowlist — the spec-§15.3 cell was dead and untested;
+  (2) `nextLanding` gated on Worksource `active` with no spec license —
+  approved work in a paused/archived Worksource stranded forever, its packet
+  burning an Inv. 18 slot (three rows wedged dispatch at queue-saturated).
+  Also fixed: task/initiative add now refuse inactive Worksources (new slug
+  `worksource-inactive`); land report + outbox poll|ack scope-check before
+  spine open; zero-args and delegation-failure now emit the JSON envelope;
+  outbox gained no-delete/immutable/delivered-once substrate triggers and
+  conversation rows an active-session INSERT fence; untagged ActiveRegistry
+  regression test added (whole CLI suite builds tagged — a fake-family
+  regression failed zero tests); weak review-claim assertions strengthened
+  (full-column outbox snapshot, lease-release rollback injection, CAS
+  lock↔run pairing). Wave-1 spot-check: all four Codex self-review claims
+  HOLD on behavior. Nine informational entries appended to
+  IMPLEMENTATION-NOTES (TZ blast radius, cross-midnight Console edge,
+  content-path serving-seam obligation, id-disjointness backstop, initiative
+  dead-end → Parked addendum, Homie-interrupt orphan window, worksource-add
+  advisory deferral, image build-tag obligation); ADR-011's agent-exclusion
+  wording corrected to best-effort-until-P3. Complete fast lane green
+  (Go all packages; fake 43, agent-runner 13, runner/image 2, resident 32).
+
+NEXT: Resume Phase 2 wave 2 at the Homie-runner capability seam: design the
+seam (ADR), extend `mc run register-session` to the exact own Homie session,
+and add host-only `mc homie resume <session> --from <surface:channel_ref>`
+as a record-only status/binding transition requiring the immutable locator
+pair for native continue mode; conversation-row fallback stays explicit and
+audited. Then runner claim/reply transport. Initiative wave CLI remains
+Parked pending the durable plan-review representation.
+
+- 2026-07-13 — **Phase 2 Homie locator seam + record-only resume green**
+  (746bbad). ADR-012 pins both: `run register-session` gains a homie-tier
+  arm writing the set-once native locator pair onto the caller's own
+  canonical registry row (identity not liveness — post-end registration
+  stays legal per Inv. 26; allowlist untouched, runner-private scope;
+  cross-session/pipeline/host attempts inert, conflicting replays refused in
+  verb and trigger). `mc homie resume <session> --from <surface:channel_ref>`
+  is host-only and record-only: ended|reaped → active + `homie.resumed`
+  activity + fresh binding in one transaction; occupied place aborts the
+  whole transition (session stays ended, no activity residue); missing
+  locator pair refuses, naming the §15.4 conversation-rows fallback as a
+  separate explicit arm; already-active resume is idempotent only for the
+  exact crash-after-commit retry, otherwise "use bind"; no launch effect
+  (relaunch is the resident's, Phase 3+, matching start's posture).
+  Complete fast lane green.
+
+NEXT: TDD the Homie runner claim/reply transport (the ADR-010 deferral):
+fenced idempotent claim of pending inbound conversation rows over the
+existing claimed_by/claimed_at/completed_at columns, and a runner-scope
+`homie reply` that appends the reply row + per-binding echo/reply outbox
+rows atomically — never through the model's Homie-agent identity. Then
+sweep the remaining §18 operational verbs (doctor/backup/reset) toward the
+wave-2 contract before the split-brain suite. Initiative wave CLI remains
+Parked.
+
+- 2026-07-13 — **Phase 2 Homie runner claim/reply transport green.** ADR-013
+  pins the ADR-010 deferral. `mc homie claim <session>` is the runner's
+  own-session scope (run.json tier homie, allowlist never consulted, host/
+  pipeline/cross-session refused): lowest-id pending inbound turn, claim
+  stamp set-once, a fresh runner reclaims a dead one's turn with the
+  original stamp, nothing-pending is an empty result, no activity advance.
+  `mc homie reply <session> --to <id>` requires the claimed own-conversation
+  inbound turn and appends the reply row (new additive `reply_to` column —
+  the durable linkage the double-reply law needs), completes the turn,
+  advances activity, and fans one `homie_reply` outbox row to EVERY active
+  binding (origin included, per §15.5) in one transaction; injected outbox
+  failure rolls back everything. Identical-payload replay of a committed
+  turn is idempotent (`replied: false`); any different payload is refused —
+  one logical reply per inbound turn, enforced in storage by a partial
+  unique index on reply_to plus CHECKs (reply⇔reply_to, claim-pair,
+  completion-requires-claim, replies never claimable) and triggers
+  (own-session-inbound reference, claim and completion set-once).
+  Ended/reaped sessions refuse transport (resume stays an explicit host
+  transition). Complete fast lane green (Go all packages incl. docker-tag
+  vet + fake-routing build; fake 43, agent-runner 13, runner/image 2,
+  resident 32); substrate suite +1 (TestConversationClaimReplyLattice).
+
+NEXT: Sweep the remaining §18 operational verbs toward the wave-2 contract:
+`mc doctor` (validate routing, schema, MC_HOME shape — container/gateway
+probes stay Phase 3), `mc backup` (spine snapshot verb), and `mc reset`
+(confirmation-required destructive re-init, snapshot first). Then the
+deterministic split-brain kill-point convergence suite. Initiative wave CLI
+remains Parked pending the durable plan-review representation.
+
+- 2026-07-13 — **Phase 2 operational verbs green.** ADR-014 pins the
+  Phase-2 tier of `doctor|backup|reset`, all strictly host scope refusing
+  before any spine open, none able to create spine bytes at a missing
+  MC_SPINE. `mc backup`: `VACUUM INTO` a temp name under
+  `MC_HOME/backups/`, renamed on completion, same-second collisions
+  suffixed; snapshot proven complete (tasks + meta identity) and the
+  source stays writable; retention stays the resident tick chore's.
+  `mc reset`: unconfirmed is a pure no-op refusal (no snapshot); confirmed
+  snapshots first and aborts untouched if the snapshot fails, then deletes
+  the spine + WAL/SHM siblings (dev-tier stand-in for §16.4 volume
+  teardown); output is paths-only, never secrets. `mc doctor`: total
+  finding surface `{check, status ok|fail|deferred, detail,
+  onboard_section}` — MC_HOME shape, spine meta/UUID/schema (missing spine
+  reported as loss with restore-from-backup language, never repaired),
+  Worksource/sandbox-profile references, routing.md against the active
+  registry; container/gateway/runtime-auth/supervision appear as deferred
+  findings with their §17 repairing sections from day one; doctor always
+  exits 0 with `ok` carrying the verdict and mutates nothing. Complete
+  fast lane green (Go + docker-tag vet + fake-routing build; fake 43,
+  agent-runner 13, runner/image 2, resident 32).
+
+NEXT: TDD the `mc onboard` section dispatcher (§17, wave-2 contract §1.5):
+named sections `preflight|home|runtime-auth|routing|container|worksource|
+tunables|surfaces|supervision|verify`, resumable/idempotent per §16.4
+(meta-first, never re-init a non-empty spine), Phase-2 doubles for host
+effects, no launchd load ever (S7 rule). Then the deterministic split-brain
+kill-point convergence suite (contract §4). Initiative wave CLI remains
+Parked pending the durable plan-review representation.
+
+- 2026-07-13 — **Codex takeover found Claude's quota-boundary onboarding
+  commit red and incomplete.** HEAD 76b3694 is pushed but fails Go compile
+  on an unused `database/sql` import; the new CLI tests and verb were
+  committed without an `onboard` dispatcher/parser or the cited ADR-015.
+  The other four fast lanes are green (fake 43, agent-runner 13,
+  runner/image 2, resident 32). Cross-harness adversarial review also
+  confirmed acceptance defects beyond the interrupted wiring: initial
+  schema + meta were not atomic; the §16.4 UUID mirror/loss fence and
+  meta-first read-only inspection were absent; the git-tree fence rejected
+  allowed ignored roots yet missed symlink targets; the default surface
+  path silently left Daily Console disabled; explicit tunable/surface
+  replays were not skip-idempotent; and a conflicting `default` sandbox
+  profile could misbind the first Worksource. Findings recorded in
+  IMPLEMENTATION-NOTES; no implementation edit preceded the review.
+
+NEXT: Close the confirmed onboarding findings red-first: author ADR-015,
+wire the CLI, make first provisioning atomic and UUID-mirrored/meta-first,
+fix the git fence, require and idempotently persist the Console schedule,
+and harden tunable/Worksource replays. Re-green the complete fast lane and
+commit without amending 76b3694. Then begin the deterministic split-brain
+kill-point convergence suite; initiative wave CLI remains Parked.
+
+- 2026-07-13 — **Phase 2 onboarding dispatcher green; takeover review
+  closed.** ADR-015 pins the Phase-2 `mc onboard` tier and explicitly names
+  every later-phase section obligation. The CLI is host-only, supports the
+  ten ordered/named sections and dual-input flags, distinguishes
+  `done|ok|deferred`, and never loads launchd. Home reuses the read-only
+  preflight even by name; the git fence resolves symlinks and permits only
+  paths proven ignored. Existing spines are inspected read-only/meta-first;
+  schema + meta commit atomically; the UUID mirror is atomically published
+  and compared; non-empty unidentified/lost/mismatched spines refuse; an
+  injected failed fresh provision is retryable. Concurrent fresh callers
+  adopt the one committed winner instead of deleting it (30× stress + race
+  pass). Routing publishes a synced validated file atomically without
+  following symlinks. First-Worksource, tunable, and surface replay decisions
+  serialize under BEGIN IMMEDIATE; conflicting/permissive profiles refuse;
+  the Console schedule is required and doctor/verify check both it and the
+  UUID mirror. The cross-harness residual audit passes all six closure cells.
+  Complete fast lane green (Go all packages; fake 43, agent-runner 13,
+  runner/image 2, resident 32), plus Docker-tag vet and fake-routing-tag
+  compile green.
+
+NEXT: TDD the deterministic split-brain convergence suite (wave-2 contract
+§4), starting with `action selected / before effect` and `session folder /
+before run.json` through the injectable resident seams. Restart the ordinary
+loop and assert the record/lock/effect triple converges with a new run and no
+duplicate durable work; add no fault hook to `mc`. Then walk the remaining
+kill boundaries. Initiative wave CLI remains Parked pending the durable
+plan-review representation.
+
+- 2026-07-13 — **First two deterministic split-brain boundaries green.** A
+  new Docker-free cross-boundary resident suite builds the real test-tagged
+  `mc`, commits each spawn decision against a temp spine, and injects death
+  only through resident dependencies. Both `action selected / before effect`
+  and `session folder / before run.json` restart through the ordinary tick
+  loop: the spawn watchdog reaps the old Run, tolerates the absent container,
+  releases the lease, charges exactly one dispatch retry, and reselects the
+  unchanged subject under a distinct Run. The folder-boundary fixture proves
+  the old trace-only folder remains present and empty while the absent
+  envelope is safely removed; an extra tick proves the new live lease idles
+  without duplicate Run, retry charge, or host effect. No production fault
+  hook or recovery branch was added. Complete fast lane green (Go all
+  packages; fake 43, agent-runner 13, runner/image 2, resident 34).
+
+NEXT: Extend the same parameterized split-brain harness through `run.json /
+before container` and `container start / before first heartbeat` (wave-2
+contract §4). Assert reap removes the materialized envelope in both cases,
+the trace-only folder survives, and the spawn watchdog charges exactly one
+retry before the unchanged subject receives a distinct Run; model the
+post-start death at the injectable Docker seam, never with a fault hook in
+`mc`. Then continue to the workspace/commit boundary rows. Initiative wave
+CLI remains Parked pending the durable plan-review representation.
+
+- 2026-07-13 — **Remaining pre-heartbeat split-brain boundaries green.**
+  The parameter table now covers `run.json / before container` and
+  `container start / before first heartbeat` with one stateful test-local
+  Docker daemon shared across the dead and restarted resident instances.
+  The former proves the old container never became live; the latter proves
+  it did become live even though the Docker result was lost. In both cases
+  the ordinary restarted loop commits one watchdog reap, exact-name stop
+  leaves the old container absent, the materialized envelope is removed,
+  the permanent empty trace folder survives, and retry opens a distinct Run
+  with the only live container. The record/lock/effect triple agrees on
+  run, role, subject, Worksource, binding, and mounts; an extra tick proves
+  no duplicate Run/start/charge. The audit also isolated arbitrary
+  outcome-ambiguous stop failure as a composed-failure gap owned by the
+  already-specified Phase-3 orphan sweep + pre-spawn assertion; logged in
+  IMPLEMENTATION-NOTES rather than hidden by the single-fault fixtures.
+  Complete fast lane green (Go all packages; fake 43, agent-runner 13,
+  runner/image 2, resident 36).
+
+NEXT: TDD the `workspace bytes / before git commit` and `git commit / before
+complete` split-brain rows (wave-2 contract §4) through the injectable fake
+harness/agent-runner process seams and the real `mc` CLI against a temp git
+Worksource. Kill and restart the ordinary lifecycle; assert canonical task
+status stays unchanged, partial bytes are inert, an existing task-branch
+commit is observed rather than duplicated, and watchdog recovery charges
+only its declared retry. Add no fault hook to `mc`. Then cover operator
+approve/landing and outbox delivery boundaries. Initiative wave CLI remains
+Parked pending the durable plan-review representation.
+
+- 2026-07-13 — **Standalone Worker Git split-brain boundaries green.** The
+  deterministic harness now drives the real resident, agent runner, fake
+  harness, `mc` CLI, SQLite spine, and a temporary Git Worksource through
+  both `workspace bytes / before git commit` and `git commit / before
+  complete`. The first attempt reaches a real post-heartbeat lease and dies
+  with either staged bytes or one task-branch commit; fixture-only clock
+  surgery then lets the ordinary restarted loop reap it by `lease-timeout`,
+  charge exactly one Worker retry, and select a distinct Run. The retry
+  reuses the one canonical worktree: staged bytes become exactly one commit,
+  while an existing commit is observed at the same SHA and completed without
+  another commit. Both rows end worked with retry 2, no correction, one task
+  branch/worktree/commit, a clean primary checkout, and unchanged `main`.
+  Detached container-return semantics remain separate from runner completion,
+  and a fivefold focused stress run is green. The missing generic worktree
+  assignment and retry-unsafe Phase-1 e2e behavior are explicitly scoped and
+  recorded in IMPLEMENTATION-NOTES rather than hidden in the fixture.
+  Complete fast lane green (Go all packages; fake 43, agent-runner 13,
+  runner/image 2, resident 38).
+
+NEXT: TDD `operator approve / before land` and `merge success / cleanup or
+report gap` through the real CLI, ordinary resident loop, `mc-land`, and a
+temporary Git Worksource. Prove approval without effect deterministically
+re-emits landing-pending; after a real successful merge, prove restart never
+creates a second merge, preserves success truth, and exposes cleanup/report
+debt. Inject death only at host-side effect seams, never in `mc`. Then cover
+the outbox delivery boundary. Initiative wave CLI remains Parked pending the
+durable plan-review representation.
+
+- 2026-07-13 — **Approval/landing split-brain boundaries green.** The real
+  CLI now binds Worker-reported standalone branches to `mc/task-<id>` (and an
+  initiative child to its assigned parent branch), refuses branchless land
+  reports, and makes a committed landing success terminal and replay-safe.
+  The ordinary resident loop proves approval-without-effect re-emits the same
+  land tuple, while cleanup-loss and report-loss restart from one exact merge
+  receipt without a second merge, Run, lease, retry charge, or status lie.
+  `mc-land` now fences the numeric task namespace and exact SHA, verifies real
+  primary/task bytes with zero-stat indexes, preserves unrelated operator
+  edits, pins merge behavior and receipt identity, compare-deletes the task
+  ref, and surfaces ambiguous residue as success-with-cleanup-debt. An
+  adversarial pass found primary/task config redirects, executable content
+  transforms, replacement refs, stat-cache/index-visibility hiding, and late
+  cleanup config races; content-sensitive merge/preflight/removal now use a
+  minimal isolated Git common/config/attributes view sharing only the intended
+  real objects, refs, linked-worktree metadata, index, and working tree. The
+  40-case direct landing matrix includes all of those regressions plus hooks,
+  rename inference, conflict abort, moved/symbolic refs, path spaces, and
+  report replay. Complete fast lane green (Go gofmt/vet/all packages; fake
+  43, agent-runner 13, runner/image 40, resident 41).
+
+NEXT: TDD the final deterministic split-brain row, `message/outbox insert /
+delivery` (wave-2 contract §4), through the real `mc` CLI and the host/native
+surface delivery seam. Prove message+outbox insertion is one transaction;
+death after physical delivery but before ack re-polls the same durable outbox
+id for at-least-once delivery; external de-duplication keys that id; ack and
+ack-response-loss replay are idempotent; and the record/lock/effect triple
+converges without deleting the source message. Then implement the nightly
+property package and bounded fast honesty/mutant gates (§5). Initiative wave
+CLI remains Parked pending the durable plan-review representation.
+
+- 2026-07-13 — **Final message/outbox split-brain boundary green.** One real
+  `homie send` transaction durably appends the inbound conversation row and
+  its destination outbox row. A fixture-local native-surface client then
+  drives the real `outbox poll → external delivery → outbox ack` protocol:
+  death after the external post but before ack re-polls the byte-identical
+  durable id, and an explicitly external id-keyed fake collapses the retry to
+  one logical post while preserving Mission Control's at-least-once contract.
+  A second death after the ack commit proves response-loss replay is inert,
+  retains the first delivery timestamp and source history, and leaves the
+  record/lock/effect triple unchanged. No production Discord/dashboard loop
+  or exactly-once claim was introduced; independent adversarial review
+  confirmed that boundary. Complete fast lane green (Go gofmt/vet/all
+  packages; fake 43, agent-runner 13, runner/image 40, resident 42).
+
+NEXT: Implement the Phase 2 nightly property package from wave-2 contract §5
+under `mc/property` with the `nightly` build tag: dispatch purity/cardinality,
+ineligible-row metamorphism, and lifecycle random walks checked against the
+substrate after every step. Keep runtime randomized suites non-gating, but
+TDD bounded fast generator-honesty floors and the complete named planted-
+mutant gate (blocked filter, packet archive, budgets, lease token, WIP cap).
+Initiative wave CLI remains Parked pending the durable plan-review
+representation.
+
+- 2026-07-13 — **Property generator, dispatch, and fast mutation gates
+  green.** The new test-only `mc/property` package shares one reproducible
+  corpus between the untagged fast gates and `nightly`-tagged runtime tests.
+  The bounded observer derives, rather than trusts, floors for every declared
+  legal status/scope/decision, packet/scope, decision/packet/scope, blocked,
+  and six-shape lease bucket. Its exact registry kills all five contract
+  mutants with exercised witnesses: dropped blocked filtering, ignored packet
+  archive, blurred budgets, weakened lease fencing, and a missing WIP cap in
+  both enforcement layers. The tagged dispatch run proves action-union
+  cardinality, determinism, deep purity (including pointer fields and nil
+  slice identity), and 4,096 query-scoped ineligible-row insertions across
+  blocked, archived, paused-Worksource, and archived-packet history. Tagged
+  dispatch totals: 16,384 generated states + 4,096 metamorphic cases green.
+  Complete fast lane green (Go gofmt/vet/all packages including the bounded
+  property gates; fake 43, agent-runner 13, runner/image 40, resident 42).
+
+NEXT: TDD the remaining `nightly` twin-spine lifecycle random walk. Drive
+every exported stateful `mc/domain` operation against one domain spine and
+the corresponding canonical raw SQL against a second spine under matched
+`BEGIN IMMEDIATE` transactions; normalize timestamps, compare acceptance and
+state, and audit the trigger invariants after every step. Include valid and
+classified invalid intents, rejection rollback, all task/verdict/packet/wave/
+budget/lease arms, and fixed seed+step replay. Initiative wave CLI remains
+Parked pending the durable plan-review representation.
+
+- 2026-07-13 — **Quota-interrupted twin-spine lifecycle property recovered,
+  adversarially hardened, and green.** The prior Codex session exhausted its
+  quota with one preserved test artifact; the operator checkpointed those
+  bytes as 0a66894 while this session was grounding. Four fixed-seed walks now
+  drive every exported stateful `mc/domain` operation against independent
+  domain/raw spines under matched `BEGIN IMMEDIATE`, with a complete curated
+  arm walk, randomly interleaved task/initiative strata, and 160 reproducible
+  perturbation steps per seed. Every accepted step compares result and full
+  relevant durable state; every classified rejection proves the exact domain
+  code and rollback; both spines audit trigger invariants, foreign keys, lease
+  arithmetic, timestamp validity/bounds, and periodic integrity checks.
+  Adversarial review caught and closed four oracle weaknesses before
+  acceptance: refinement BUDGET-SPENT had no post-write rejection witness;
+  domain-only raw paths were permissively labeled `may accept` despite this
+  schema deterministically accepting them; snapshots collapsed or omitted
+  timestamp/carrier/tunable state; and forced lifecycle strata were credited
+  together with the narrower random tail. The closure adds the composite
+  rollback witness, requires raw acceptance, derives subjectless Fence truth
+  from the raw lock, validates the actual heartbeat stamp, snapshots every
+  relevant column, poisons every status edge to prove stage restamping, and
+  carries a non-null packet thesis through rerender. Complete nightly suite +
+  nightly vet green; focused lifecycle ×10 green; Docker-tag compile/vet and
+  fake-routing-tag compile/vet green; complete fast lane green (Go all
+  packages; fake-harness 43, agent-runner 13, runner/image 40, resident 42).
+  Phase 2 is complete for every unparked acceptance line; the initiative-wave
+  CLI remains isolated under Parked and is not implied accepted.
+
+NEXT: Begin Phase 3 boundary conformance by authoring
+`docs/phase3-contract.md` from handoff Part 3 before production changes. Pin
+one Docker-backed test per enforcement mechanism, the mechanism ownership and
+failure semantics, and the exact non-Docker compile/fast lanes. Then TDD the
+first independent mount-validation/fail-closed slice (accept + reject for
+symlink, blocked pattern, `..`/`:`, cross-Worksource, and RW-only-when-both-
+agree; an unappliable rule blocks without spawning). Promote S1/S2 as frozen
+canaries, do not load launchd, and do not route around the parked initiative-
+wave representation.
+
+- 2026-07-13 — **Phase 3 grounded and boundary contract adversarially
+  closed.** Before production changes, the full Phase-3 handoff paragraph was
+  reconciled against spec §§5/9/11/16/17, every Phase-0 boundary result,
+  ADR-014/015, the current image/resident/runner/onboarding seams, and all
+  open implementation notes. `docs/phase3-contract.md` now assigns a named
+  real-mechanism test to every handoff group; freezes configuration trust
+  roots, immutable mount/network effects, production-vs-fake identity,
+  S1/S2 promotion, Homie/pipeline scope, orphan/resource semantics, exact
+  no-Docker/Docker lanes, and later-phase exclusions. Three independent
+  read-only audits found that nearly every boundary remains spike- or
+  skeleton-only and caught an unimplementable first draft: it skipped reap
+  reconciliation when readiness was red, promised a spine health write while
+  the macOS runtime crossing was unavailable, assigned native-path
+  resolution to a helper without the host file plane, blurred the same-uid
+  runner grain into kernel authorization, omitted the lease-free Homie wake
+  path, and left gateway/raw-TCP ownership unnamed. The closure requires a
+  single external `mc dispatch` with an ADR-pinned host↔lock-domain handshake
+  before claim, keeps all state consequences inside `mc`, carries separate
+  registry-driven Homie planning, and adds exact secret non-forwarding,
+  identity-matched orphan, plural-mount, and defaulted-resource evidence.
+  The handoff's wildcard-env shorthand and the Homie historical-file/Inv. 26
+  tension are resolved conservatively and logged in
+  `IMPLEMENTATION-NOTES.md`. Complete fast lane green (Go all packages;
+  fake-harness 43, agent-runner 13, runner/image 40, resident 42); diff check
+  green. No Docker, production behavior, secret, or launchd state changed.
+
+NEXT: Author the four Phase-3 pre-code decisions in the next available ADRs:
+ADR-016 pins the one-command host↔lock-domain pipeline/Homie plan handshake,
+candidate/TOCTOU fence, immutable effect/reason schema, and exact
+pipeline/Homie/helper liveness labels; ADR-017 pins the extend-only mount
+allowlist grammar, blocked-pattern floor, and collision-free plural mount
+destinations; ADR-018 pins the Docker Desktop gateway/raw-TCP topology,
+DNS/rebinding posture, injection scope, and audit ownership; ADR-019 pins
+finite CPU/memory/PID defaults and override bounds. Adversarially review and
+commit those plans before production code. Then TDD the first pure
+`mc/boundary` accept/reject table and its invalid-plan/no-claim transaction
+slice. Do not load launchd or route around the parked initiative-wave model.
+
+- 2026-07-13 — **Quota handoff recovered; Phase-3 boundary ADRs accepted.**
+  Grounding resumed from green `72a39db`: ledger, recent commits, dirty tree,
+  spec/handoff, current seams, and the complete fast lane were re-read/run
+  before new implementation. The preserved work was documentation only and
+  was treated as data. A direct Docker Desktop canary also proved a cached
+  `alpine:3.22` container reaches a server bound only to host `127.0.0.1` via
+  `host.docker.internal`, supporting the loopback-only native gateway; no
+  production container, secret, or launchd state changed.
+
+  ADR-016 now pins the resident-only prepare/attest/commit composition,
+  pre-prepare deployment identity, digest-only raw host files, exact request
+  and action receipts, bounded-memory paged inventories with count-derived
+  progress, one-action lifecycle order, attested landing, launch/container/
+  runner fencing, Homie effect debt, and explicit bounded O(tail) row resume.
+  ADR-017 pins the strict extend-only allowlist and identity walk, complete
+  destination tables, closure-only isolated standalone Git store, privileged
+  completion seal, disposable Verifier source, topology-fenced landing,
+  same-inode pipeline-trace projection, and a crash-safe attachment queue,
+  publication, deduplication, and GC protocol. ADR-018 pins the loopback native
+  gateway, per-launch uid-filtered guard namespace, fixed DNS/raw rules,
+  one-use resident control, registration-generation fencing, an exact
+  five-container preclaim proof, and failure classes. ADR-019 pins six finite
+  deployment-only CPU/memory/PID classes and exact capability/security
+  envelopes.
+
+  Repeated independent audits found and closed response-loss double actions,
+  large-inventory/cardinality wedges, stale Docker states, resident-restart
+  adoption, pipeline/Homie starvation, empty and aggregate-overflow row
+  priming, unsafe real Git object sharing, producer/seal races, bare/external
+  Git-control leakage, setup-parent write authority, attachment intake and
+  dedup-GC crash races, unbounded probe clients, and stale contract prose.
+  The two explicit spec deviations—pre-landing task-local Git and one
+  stale-writer cleanup before Console/landing—are appended to
+  `IMPLEMENTATION-NOTES.md`; initiative shared-worktree/holistic review remains
+  Parked. Complete fast lane green (Go all packages; fake-harness 43,
+  agent-runner 13, runner/image 40, resident 42); diff check green.
+
+NEXT: TDD the first pure `mc/boundary` slice. Start with red table tests for
+strict `mount-allowlist` parsing (deny-all and ordinary accept; unknown/
+duplicate/malformed input), target grammar/collisions, the shipped blocked
+floor plus additive patterns, and bilateral RO/RW results. Implement only the
+pure parser/policy needed to turn those tests green, run the complete fast
+lane, and commit. Then add canonical filesystem identity/symlink and
+cross-Worksource/protected-root checks before integrating invalid-plan/no-claim
+dispatch. Do not load launchd or route around the parked initiative-wave
+model.
+
+- 2026-07-13 — **Phase-3 pure mount policy GREEN.** TDD began with a
+  build-red `mc/boundary` table suite, then added a filesystem-free policy
+  package shared by later profile admission and dispatch planning. The
+  allowlist parser now accepts only TOML v1 `version = 1` plus literal
+  `[[allow]]` tables, including valid deny-all, and rejects unknown,
+  duplicate, missing, mistyped, malformed, case-variant, inline/dotted, and
+  over-limit input before allocation or filesystem work. BurntSushi TOML
+  v1.6.0 is pinned as a direct dependency so comments/escapes and duplicate
+  semantics come from a real TOML parser while metadata checks keep the
+  schema syntactically closed.
+
+  Relative targets enforce exact UTF-8/POSIX byte and component limits with
+  no cleaning or renaming; pairwise collision checks reject equality and
+  ancestor overlap without case-folding. A local adversarial pass caught and
+  regression-tested the non-adjacent lexical trap `docs`, `docs-api`,
+  `docs/api` before commit. The private exact 18-component + 22-glob shipped
+  floor is always evaluated—even by a zero-value policy—while validated
+  operator patterns are additive only, bounded, ASCII-case-insensitive, and
+  matched by a closed literal-plus-`*` implementation. The bilateral access
+  table returns the requested mode or rejects RW-over-RO; it never silently
+  downgrades or drops a mount. Two independent read-only reviews accepted the
+  implementation after exact-floor, near-miss, wrong-type, zero-value, and
+  maximum-bound tests were added. Complete serial fast lane green (Go all
+  packages; fake-harness 43, agent-runner 13, runner/image 40, resident 42);
+  diff check green. No Docker, secret, production runtime, or launchd state
+  changed.
+
+NEXT: TDD the filesystem identity half of `mc/boundary`: strict
+`MC_HOME`/`mount-allowlist` owner-mode/non-symlink regular-file trust seams,
+canonical `Abs → Clean → EvalSymlinks` source resolution, raw+resolved blocked
+address checks, filesystem-identity allow-root ancestry with exact-one-root
+authorization and suffix validation, and symlink-stays/escapes fixtures. Keep
+protected-root and cross-Worksource bilateral exclusions as the immediately
+following pure-policy slice, then integrate invalid-plan/no-claim dispatch.
+Do not load launchd or route around the parked initiative-wave model.
+
+- 2026-07-14 — **Claude Code takeover from quota-interrupted Codex session;
+  mount-target control grammar closed.** Resume ritual found `4380e0d` clean,
+  pushed, and green — the complete fast lane reproduced exactly the ledger's
+  header counts (Go all packages; fake-harness 43, agent-runner 13,
+  runner/image 40, resident 42). Nothing was uncommitted; nothing discarded.
+  The cross-harness adversarial takeover review of `72a39db..4380e0d` (the
+  Codex range: four accepted Phase-3 ADRs + the pure mount policy) launched
+  before any code edit per AGENTS.md §2, as five read-only lenses with
+  independent skeptical verification of every finding.
+
+  **Credit exhaustion killed three of the five lenses mid-run** (allowlist
+  grammar, blocked floor, ADR-vs-spec conformance); the two that completed
+  were recovered from the workflow journal rather than lost. Neither found a
+  major defect: the shipped 18-component + 22-glob floor is pinned exactly by
+  `reflect.DeepEqual`, the closed star-glob matcher survived ~3M fuzzed cases
+  against `path.Match`, and there is no blocked-floor bypass, RW-over-RO
+  escalation, or target-collision bypass. The surviving lenses substantially
+  cover the grammar/floor lenses' territory; the ADR-vs-spec lens is the real
+  gap and was relaunched separately.
+
+  One confirmed deviation, FIXED red-first: ADR-017 Decision 1 forbids a
+  `control` target component without qualification, but `ValidateTarget` only
+  rejected ASCII controls, so C1 NEL (U+0085), U+2028/U+2029, ZWSP, and the
+  RTL override all passed. Targets now reject `unicode.IsControl` plus
+  `Cf`/`Zl`/`Zp`; NBSP and fullwidth solidus stay legal with recorded reasons.
+  Also filled the test gaps the claims-vs-tests audit named: the exact
+  1025-byte target boundary, ASCII-case-insensitive matching of operator
+  additions in both directions, and the mislabeled test that claimed to prove
+  the (unreachable) per-entry UTF-8 check. Two entries appended to
+  IMPLEMENTATION-NOTES (the control-grammar deviation; the informational
+  residue, incl. the allow-root overlap/identity seam left to the next slice).
+
+- 2026-07-14 — **Phase-3 filesystem identity and containment GREEN**
+  (`e01a2af`). TDD from a build-red suite; 55 cases. Trust seams: allowlist =
+  non-symlink regular file, MC_HOME = non-symlink directory, both
+  operator-owned with no group/other bits, `Lstat` so a symlink to a trusted
+  object is not itself trusted, stricter owner mode not a grant. Resolution
+  retains raw-clean AND canonical (`Abs → Clean → EvalSymlinks` + stat)
+  because the floor matches both — a symlink named `innocent` pointing at
+  `.ssh` rejects. Containment is filesystem identity, never string
+  arithmetic: `ResolveAllowlist` enforces Decision 1's uniqueness law with
+  `os.SameFile` (byte-identical, symlink-aliased, and ancestor-overlapping
+  roots all reject `mount.source_alias`), closing both seams the takeover
+  audit named as deferred. `Authorize` walks the resolved source's ancestors
+  by identity, accepts at exactly one root, derives the suffix from that walk
+  and validates it: in-root symlink accepted, escaping one `symlink_escape`
+  (distinguished from `not_allowlisted` by where the raw address lived),
+  `safe-root-evil` never satisfies `safe-root`, colon legal in the matched
+  root's own spelling but not in a descendant suffix. Coded rejections use
+  ADR-017's stable `mount.*` slugs via the domain's `errors.As` convention.
+  Four planted mutants (identity→prefix, blocked-on-raw-only, unvalidated
+  suffix, overlap check removed) each die with exercised witnesses. Complete
+  fast lane green; gofmt/vet and both tagged builds clean.
+
+  **Two obligations deliberately NOT in this slice** (named so they cannot be
+  quietly lost): (1) the macOS **ACL leg** of the trust seam — ADR-017
+  Decision 1 requires "any allow ACE granting a non-owner access rejects",
+  which needs the native ACL API (no stdlib path; cgo would need a
+  darwin-only build tag since `mc` also builds for the Linux container). Owner/
+  mode/non-symlink are enforced; a granting ACL is currently NOT detected.
+  (2) **Protected-root and cross-Worksource jurisdiction** (Decision 3 step 5,
+  Decision 5) — `Authorize` applies no `denied_root`/`cross_worksource` check
+  yet, so it must not be wired into production planning before that slice
+  lands.
+
+NEXT: TDD the protected-set/jurisdiction slice of `mc/boundary` (ADR-017
+Decision 5 + Decision 3 step 5): the non-subtractable protected union
+(profile `denied_paths`, other Worksources' roots, real Git control dirs,
+`MC_HOME/sessions` and the attachment/output/config/control/backup/runtime-auth
+roots, gateway/CA key roots, and the `~/.ssh`-class home roots), bidirectional
+intersection so a source that is an ancestor of a protected root also rejects,
+and the directional `broad_root` rule (a source may not equal or be an ancestor
+of `$HOME`, `/Users`, `/`, while `~/src/project` stays eligible). Codes
+`mount.denied_root`/`mount.cross_worksource` already exist unused. Then the
+macOS ACL leg (a darwin-tagged native read, else an explicit ADR-recorded
+fallback), then the stable-code mapping for the parser's uncoded rejections,
+then integrate the invalid-plan/no-claim dispatch transaction. Do not load
+launchd or route around the parked initiative-wave model.
+
+- 2026-07-14 — **Session end: environment-blocked, three operator decisions
+  recorded.** Landed this session: `67c4b61` (takeover review of the Codex
+  range; mount-target control grammar deviation fixed red-first), `e01a2af`
+  (Phase-3 filesystem identity + containment, 55 cases, four planted mutants
+  killed), `df17dfe` (ledger). All green at commit; all local-only.
+
+  **BLOCKER — macOS TCC on `~/Documents` (read this before diagnosing
+  anything).** Symptom: `getcwd()` inside the repo returns EPERM while
+  path-based reads still work *intermittently*. Because `git` and the Go
+  toolchain call `getcwd()` before anything else, **both die outright** —
+  including `git -C <abspath>` run from a safe cwd, which fails before `-C`
+  applies. `/bin/pwd` appears to work only because it falls back to `$PWD`;
+  `/bin/pwd -P` shows the truth. This is NOT a harness sandbox issue — it
+  persists with `dangerouslyDisableSandbox`. The operator's fix is a fresh
+  terminal (has worked before) or Full Disk Access for the terminal app.
+  If reads flap, STOP: do not run read-dependent review agents (see below).
+
+  **Operator decisions (2026-07-14):**
+  1. **Push**: the operator pushes manually. The `git push origin main` deny
+     lives in `~/.claude/settings.json` and CANNOT be overridden per-repo —
+     verified against the docs: a user-level deny beats a project-level allow,
+     hooks cannot clear it, and `bypassPermissions` does not either. **Agents
+     must not attempt to push and must not route around the rule** (a bare
+     `git push` is evasion, not a fix). Keep committing at every green
+     micro-step exactly as AGENTS.md §4 says — only the push leg is the
+     operator's. This supersedes the "Push to origin is blocked" Parked item.
+  2. **ADR-016..019 findings**: verify before further Phase-3 code (below).
+  3. **Initiative wave**: reading (i) is ACCEPTED — see the Parked entry.
+
+NEXT (in order, once `getcwd` works — prove it with `cd <repo> && /bin/pwd -P`
+and `git status` BEFORE trusting anything else):
+
+1. `git add docs/reviews/2026-07-14-adr-016-019-review.json` and commit it —
+   it is currently **untracked**, written during a readable window. It holds
+   all 17 findings with full evidence from the decorrelated cross-harness
+   review of ADR-016..019 (which Codex had only self-reviewed). Losing it
+   loses the only record.
+2. **Verify the 17 findings, 6 of them major, before any further Phase-3
+   code** (operator decision 2). They are UNVERIFIED — two verification passes
+   were destroyed by the TCC failure, not by refutation. **Do not read the
+   saved verdicts as refutations**: every agent explicitly wrote
+   "confirmed:false means UNVERIFIABLE, NOT refuted". A verifier prompt that
+   says "default to REFUTED" is DANGEROUS under flapping TCC — it silently
+   converts real findings into false all-clears. Gate any such run on a real
+   read probe first. The six majors: ADR-016 gating the lease-free Homie tier
+   behind the pipeline lease (would break Inv. 1/§11.6/§15.5); ADR-017 turning
+   spec §11.3's RW `/workspace` into an RO 0555 bind; ADR-016 packing Git
+   closure extraction into the 60s `spawn_grace_s` budget (would burn the
+   3-retry infra budget and block tasks); ADR-017's uid-10001 0700 roots having
+   no creation mechanism for an unprivileged LaunchAgent; ADR-017 Decision 8
+   requiring the host surface to read a tree it makes unreadable to the host
+   uid; ADR-018 asserting separate user namespaces, which would break its own
+   uid-filtering mechanism. Fix or log what survives, red-first.
+3. **Author the initiative-wave ADR** (ADR-020) — the operator ACCEPTED
+   reading (i) on 2026-07-14, unparking a decision open since 07-12. Shape:
+   a `plan_reviewed` flag on wave children born 0; dispatch query (3) will not
+   dispatch a child at 0; a NEW arm makes an initiative with any unreviewed
+   open child visible to the **Editor** — the one exception to §10's "an
+   initiative with open children is parked" rule, which otherwise wedges the
+   initiative; the Editor terminal either passes the wave (children → 1) or
+   sends it back in prose (children cancelled via the existing cascade,
+   initiative returns to drained and Strategist(initiative) replans). Treat
+   "holistic" as wave-level pass/fail, not per-child rejection, unless the
+   operator says otherwise. Readings (ii) and (iii) are dead: (iii) breaks
+   producer≠judge; (ii) collapses into (i) because seeded children still
+   dispatch before the batch pass runs. Adversarially review the ADR, then TDD
+   it, then wire `strategist wave`.
+4. Then resume the Phase-3 protected-set/jurisdiction slice per the earlier
+   NEXT — but only after (2), since two of the majors target ADR-017
+   Decision 5, which that slice implements.
+
+Two Phase-3 obligations remain deliberately open and must not be lost: the
+macOS **ACL leg** of the trust seam (ADR-017 Dec. 1 requires rejecting any ACE
+granting a non-owner; owner/mode/non-symlink are enforced but a granting ACL
+is currently NOT detected — empirically confirmed 2026-07-14: `chmod +a "staff
+allow read"` is invisible to both mode bits and `xattr`, so `TrustPolicyFile`
+accepts it; needs the native ACL API behind a darwin build tag), and
+**protected-root/cross-Worksource jurisdiction** (`mount.denied_root` /
+`mount.cross_worksource` exist as codes but are unused — `Authorize` must not
+be wired into production planning until that slice lands).
+
+- 2026-07-14 — **ADR-020 authored, adversarially reviewed, and IMPLEMENTED —
+  the initiative-wave hole is closed and Phase 2 has no parked acceptance
+  lines left.** The decision had been open since 07-12; the operator accepted
+  reading (i) on 07-14.
+
+  **The ADR** (`docs/adr/020-initiative-wave-plan-review.md`) pins: a
+  `plan_reviewed` flag on wave children born 0 and one-way; dispatch's child
+  gate; a new Editor arm making an initiative with an unreviewed wave the one
+  exception to §10's parked rule (which would otherwise wedge it forever); and
+  a wave-level pass/send-back terminal. Readings (ii) and (iii) are recorded as
+  dead so they are not re-litigated.
+
+  **The review** (4 decorrelated lenses + an independent skeptic per finding,
+  no default verdict, `docs/reviews/2026-07-14-adr-020-review.json`, committed
+  at `d19c7e9` before any fix): 12 raised, **11 confirmed**, 1 refuted. All 11
+  folded in at `7416a1a`. The major: D4 claimed the Editor's Inv. 9 blindness
+  came "for free" from the brief being records-only — but `brief.go:74-84`
+  loads `LatestOutputPath` outside every role gate, and on an initiative
+  subject that resolves to Strategist(initiative)'s own *mandatory* completion
+  report. The judge would have read its own producer's prose. Records-only
+  never bought that blindness: the record is a pointer to an artifact. Also
+  fixed: D2(b)'s SQL had dropped its own `status='seeded'` conjunct (fail-open
+  side); D1 over-claimed a git guarantee a SQLite trigger cannot make; D5 cited
+  `initiatives_archive_cascade` as precedent for a non-operator `cancelled`
+  when every firing is rooted in an operator Cancel; D1's §4 row named a schema
+  structure that does not exist; `plan_review_sendback` had no recency bound;
+  plus two wrong cites.
+
+  **The build** (red-first throughout, 5 commits): `4618a23` D1 substrate
+  (column + 3 rules, 4 subtests, 3 pre-existing fixtures taught the legal
+  order); `02b4340` D2 dispatch (gate + arm in *both* selecting queries — (2a)
+  is not optional, or an initiative bounced back from operator review makes no
+  autonomous progress ever again); `5a0809c` D3/D4 (frozen
+  `editor-plan-review.md` directive, `wave` brief field, the Inv. 9
+  suppression, the send-back recency rule); `bc02c42` D5 (the terminal,
+  `domain.Cancel`'s actor param, the reciprocal `requireExactRole` tightening
+  on `editor decide`, the D6 scope row, and **`mc strategist wave` finally
+  CLI-wired**).
+
+  **What the build found that no review lens did**: `loadRecords` never
+  selected `plan_reviewed`, so every real spine child would have projected as
+  unreviewed — children never dispatching, the Editor re-reviewing forever.
+  Caught by a red SQL↔dispatch differential, not by inspection. The pure layer
+  is only as true as its projection.
+
+  Three deviations logged (IMPLEMENTATION-NOTES): the additive §4-class rule
+  (recorded, not written into the spec, which wins on conflict); the Editor as
+  the first non-operator-rooted writer of `decision='cancelled'` (with the
+  suggested §6 gloss fix); and the pre-existing, non-ADR-020 fact that role
+  terminals open the spine before their role check (logged, not fixed — it is
+  cross-cutting, owns no invariant, and this slice does not own that code).
+  ADR-008's field list updated for the two new brief fields and the one
+  suppression. Complete fast lane green at every commit: Go all packages, plus
+  fake-harness 43, agent-runner 13, resident 42.
+
+NEXT: Resume the Phase-3 protected-set/jurisdiction slice, the item ADR-020
+displaced — TDD `mc/boundary`'s ADR-017 Decision 5 + Decision 3 step 5: the
+non-subtractable protected union (profile `denied_paths`, other Worksources'
+roots, real Git control dirs, `MC_HOME/sessions` and the
+attachment/output/config/control/backup/runtime-auth roots, gateway/CA key
+roots, and the `~/.ssh`-class home roots), bidirectional intersection so a
+source that is an *ancestor* of a protected root also rejects, and the
+directional `broad_root` rule (a source may not equal or be an ancestor of
+`$HOME`, `/Users`, `/`, while `~/src/project` stays eligible). Codes
+`mount.denied_root`/`mount.cross_worksource` already exist unused. Then the
+macOS ACL leg (a darwin-tagged native read, else an explicit ADR-recorded
+fallback), then the stable-code mapping for the parser's uncoded rejections,
+then integrate the invalid-plan/no-claim dispatch transaction. `Authorize`
+must not be wired into production planning until the jurisdiction slice lands.
+Do not load launchd.
+
+Two Phase-3 obligations remain deliberately open (unchanged): the macOS **ACL
+leg** of the trust seam (owner/mode/non-symlink are enforced; a granting ACE is
+not detected — `chmod +a` is invisible to both mode bits and `xattr`), and
+**protected-root/cross-Worksource jurisdiction** per the NEXT above.
+
+- 2026-07-14 — **ADR-020's implementation adversarially reviewed: 6 raised, 6
+  CONFIRMED, 0 refuted, 5 major. All closed (`9fc02fd`).** I built ADR-020, so
+  a fresh judge audited it — the system's own decorrelated producer/judge
+  principle applied to its own construction (AGENTS.md §2's spirit; 4 lenses +
+  an independent skeptic per finding, no default verdict, read probe first).
+  The skeptics did not reason from quotes: they drove the real production path
+  against a real spine, reproduced every failure, and verified each fix flips
+  it. Record: `docs/reviews/2026-07-14-adr-020-implementation-review.json`.
+
+  **The headline, found independently by 4 of 4 lenses.** `applySpawn` gated
+  the snapshot write on `RoleEditor` alone, so every plan-review claim wrote
+  `runs.pool_snapshot` NULL: the pure layer computed `Spawn.Wave` and the seam
+  discarded it. The **pass arm was unreachable for every wave** (pool-mismatch
+  always) — `plan_reviewed` never reached 1, `childGate` never opened, no child
+  ever dispatched — so the lane ADR-020 exists to unblock was still dead **while
+  my previous ledger entry and the ADR's own Status called it green**. The
+  **send-back arm was a silent live-lock**: accepted terminal (no
+  `dispatch_retries` charged, so it never self-blocks), lease released,
+  `wave.sent_back` written, nothing cancelled, next tick re-dispatching the same
+  review forever.
+
+  **Why my tests missed it, which is the transferable part.** Both *sides* of
+  the seam were tested and the seam was not: the dispatch test stopped at
+  `Decide` asserting `Spawn.Wave`, and the CLI test's helper hand-wrote
+  `pool_snapshot` — its own comment says it "fakes the claim transaction". This
+  is the **exact mirror** of the read-side bug (`loadRecords` never read
+  `plan_reviewed`) that the build had caught one commit earlier and that the ADR
+  Status held up as a lesson. Same seam, other direction, one commit later. The
+  new tests drive `verbs.Dispatch` into the real terminal.
+
+  **The tagged suite.** `domain.Cancel`'s actor parameter missed
+  `property/lifecycle_nightly_test.go:1159`, so the nightly lattice walk had not
+  compiled since `bc02c42` while the fast lane stayed green. Fixed (passes
+  `"operator"`, matching the model arm it is differentially compared against;
+  nightly suite verified passing). **Systemic fix: `mc/check.sh` now vets the
+  nightly / docker_e2e / test_fake_routing builds on every commit** — they still
+  do not run here, but they must compile. That hole is why the break hid.
+
+  **Defense in depth.** `SendBackWave` trusted its snapshot; it now asserts D5's
+  own postcondition (drained) and refuses whole, while still tolerating a member
+  the operator cancelled mid-review. D5's "asserts nothing about the set"
+  licenses skipping an individual already-archived member — not accepting a
+  degenerate snapshot and reporting success.
+
+  Complete fast lane green including tagged compiles; nightly green.
+
+- 2026-07-14 — **Phase 3 resumed: the jurisdiction slice's real requirements
+  extracted (`d089858`), and ADR-021 authored (`c120c5c`).** A read-only pass
+  over ADR-017 (current post-`c6ca202` text), the spec, the contract, and
+  `mc/boundary` found that this ledger's own NEXT line — written from memory —
+  **understates the slice**: the `MC_HOME` protected list is **fifteen** root
+  classes, not the six named (workflow, correction, revision, context,
+  projection, seal, landing, state, cache were all missing) and includes the
+  allowlist itself; `<workspace_root>/.mission-control` roots are a member in
+  their own right; "every runtime control dir" means every, not just
+  non-selected; the predicate must be callable **without** an allow-root match
+  (typed system sources bypass the allowlist yet still owe the cross-Worksource
+  check), so it cannot be buried in `Authorize`'s tail; a protected-set change
+  alone with the source inode unchanged must reject (forbidding the obvious
+  cache); and absent deny paths need the nearest-existing-ancestor rule. Extract
+  committed at `docs/reviews/2026-07-14-adr-017-jurisdiction-extract.md`.
+
+  **ADR-021** (`docs/adr/021-mount-jurisdiction.md`, Proposed) resolves the nine
+  ambiguities ADR-017 leaves in its own Decision 5 and adds no policy of its
+  own. Load-bearing: D1 injects `Jurisdiction` as a fourth `Authorize` parameter
+  mirroring `BlockPolicy`, with `Rejects` exported so typed sources can reach it;
+  D3 protects `MC_HOME` **whole** (only a whole-tree rule reconciles the
+  enumeration with ADR-017:345's "complete MC_HOME" and contract:178's "broad
+  MC_HOME"; an enumeration drifts the day someone adds a directory); D4 is
+  bidirectional by `os.SameFile` and treats `broad_root`'s `($HOME, /Users, /)`
+  as the **illustrative** ancestor chain, not a literal set (hardcoding it would
+  under-protect any non-`/Users` HOME); D5 injects HOME rather than reading
+  `$HOME` (a boundary an env var can relocate is not a boundary); D6 puts
+  jurisdiction before `ResolveAccess` so `rw_not_permitted` cannot mask
+  `denied_root`; D7 pins the `denied_root`/`cross_worksource` split ADR-017 never
+  states, and its precedence when a path is both.
+
+- 2026-07-14 — **ADR-021 adversarially reviewed and substantially reworked:
+  16 raised, 13 CONFIRMED (7 major), 3 refuted (`6983d6d` record, `82f608f`
+  rework).** Four decorrelated lenses, each in **its own git worktree** and told
+  to **drive real paths rather than reason from quotes** — the two process
+  changes this ledger asked for after the ADR-020 seam. Both earned their keep
+  immediately.
+
+  **The draft was not salvageable by patching.** A skeptic implemented the
+  draft's D1+D3+D4 verbatim against the real `mc/boundary` code and ran it: all
+  seven of ADR-017's typed grants rejected — `/mc/session`, `/home/agent`,
+  `/mc/records/output`, `/mc/workflow`, the completion seal,
+  `/mc/attachments/in`, `/workspace/operator/traces`. **No container could ever
+  have launched**, and the draft's own test list would have stayed green because
+  it pinned only the deny side. That is the second time in one day that a suite
+  proved nothing by testing one face of a mechanism (cf. the ADR-020 seam) —
+  the pattern is now named in both ADRs.
+
+  **The root error was conceptual, not clerical.** The draft read ADR-017:396-401
+  as a *hole in the protected union* and tried to carve typed grants out of it.
+  It is a **second predicate**: *"That union governs ordinary/profile-requested
+  mounts. A typed system mount is **instead** confined to its one kind-specific
+  authorized root."* Confinement to one identity is **stricter** than avoiding a
+  set. The draft's `Rejects(id SourceIdentity)` carried no kind and could not
+  express it — and it twice deferred to "D5's per-class check", a mechanism that
+  existed nowhere in the document (D5 is about HOME). A cross-reference to my own
+  ADR, invented and unnoticed. **D10 now writes that decision.**
+
+  Also reworked: **D11** (new — D9 was a half-measure: re-running `Rejects`
+  against a stale `Jurisdiction` reproduces the stale answer, so
+  `ResolveJurisdiction` itself re-runs at every call site, since ADR-017:1339-1341
+  makes the protected set itself drift); **D1** (`JurisdictionInput` pinned as a
+  real struct — its input is *mixed*, raw `denied_paths` vs pre-resolved
+  everything else, which the draft got self-contradictory; `ProtectedID` carries
+  an `fs.FileInfo` because `os.SameFile` consumes stat objects, not a
+  `(device,inode,type)` triple; the zero-value law now names its mechanism
+  instead of asserting the property); **D4** (the ancestor direction is
+  **qualified** — unqualified it rejects the own Worksource's own
+  `workspace_root`, necessarily an ancestor of its own `.mission-control`);
+  **D5** (the injected HOME is validated, not trusted); **D8** (says *how* the
+  ancestor/suffix pair is compared — component-wise, never lexical — and how APFS
+  case is handled). Tests now pin the **permit** side first. Five cite fixes, and
+  the "zero risk" migration claim retracted.
+
+  Three refuted and recorded: a hardlink rule (breaches the ADR's charter and
+  reverses an ADR-017 alternative rejected on the merits), an alleged D3 cite
+  truncation, and the severity of the dangling D5 pointers.
+
+NEXT: TDD the jurisdiction slice red-first against ADR-021 **as reworked**, in
+this order — (1) `ResolveJurisdiction` + the zero-value law (an unexported
+`resolved` flag; a bare `Jurisdiction{}` rejects everything) + D2's
+non-subtractability + the 512-`denied_paths` bound before any stat; (2) D10's
+typed confinement **permit side first** — every one of ADR-017's typed grants
+must plan successfully before any deny test is written, because pinning only the
+deny side is exactly how the draft's fatal defect stayed invisible; (3) D4's
+bidirectional identity rule including the own-vs-other ancestry pair
+(own `workspace_root` authorized, another Worksource's parent rejected);
+(4) `broad_root` with a non-`/Users` HOME proving the parenthetical is not a
+literal set; (5) D6's ordering, D7's split and precedence, D8's
+nearest-existing-ancestor and case handling, D11's re-resolution. Then the
+planted mutants ADR-021 names (identity→prefix, ancestor direction removed,
+`broad_root` as a literal list, jurisdiction after `ResolveAccess`,
+`denied_paths` made subtractable) — each must die with an exercised witness.
+
+`Authorize` must not be wired into production planning until this lands. Do not
+load launchd.
+
+Then: the macOS **ACL leg** of the trust seam (owner/mode/non-symlink are
+enforced; a granting ACE is not detected — `chmod +a` is invisible to both mode
+bits and `xattr`, so it needs the native ACL API behind a darwin build tag),
+then the stable-code mapping for the parser's uncoded rejections, then the
+invalid-plan/no-claim dispatch transaction.
+
+Adjacent gap, deliberately NOT swept into the jurisdiction slice:
+`mount.gate_unhealthy` exists in ADR-017 (:1162, added by `c6ca202`) but is
+missing from `mc/boundary/identity.go`'s code block.
+
+**Process note for the next session, earned twice today:** review lenses must
+run in their own worktrees and be told to *drive real paths*. Static review of
+ADR text missed a defect that made every container unlaunchable; one agent that
+compiled and ran the design found it in minutes. Apply the same to the slice's
+own tests — pin the permit side, not just the deny side.
+
+- 2026-07-14 — **ADR-021 probed before TDD: 6 raised, 5 CONFIRMED (all major), 1
+  partial. Reworked a second time; TDD steps 1-6 of 8 now green** (`e415c10`,
+  `f2b06b4`, `0db9b51`, `1b7d529`, `98c8089`, `2a40f44`, `fbc4ec6`).
+
+  The previous NEXT line said "TDD the jurisdiction slice red-first against
+  ADR-021 **as reworked**". Following it literally would have shipped four majors.
+  A 4-agent read-only probe drove real paths and a real filesystem to extract the
+  slice's facts; each defect then went to an independent skeptic **in its own
+  worktree**, told to refute by implementing the design verbatim and running it.
+  Record: `docs/reviews/2026-07-14-adr-021-implementation-probe.json`.
+
+  **The headline is a measured key leak.** D4's `broad_root` was computed from
+  HOME's `filepath.Dir` chain. `/Users` is an APFS **firmlink**: `lstat` shows a
+  plain directory, `EvalSymlinks` does not see through it, and HOME's real volume
+  root `/System/Volumes/Data` is in **no** `Dir` chain and `os.SameFile` with
+  nothing in one. The blocked floor is blind to it (0 of 3). The skeptic's
+  witness: `/System/Volumes/Data` **AUTHORIZED rw**, reading 419 bytes of the
+  operator's real OpenSSH private key. Independently reproduced before acting —
+  `ReadDir` through the alias returns 7 real `~/.ssh` entries. Fix:
+  `statfs(A).f_mntonname` adds the alias route (kernel's own mount table, no macOS
+  literal, correct for a relocated HOME, a no-op on Linux). Not `broad_root`-only:
+  every ancestor-direction member had the same blind spot.
+
+  **The other four.** (1) D10's `TypedClaim{Kind, Root}` was **self-certifying** —
+  the caller supplied both the source and the root it was checked against, so
+  `Rejects` computed `SameFile(x, x)` and `claim.Kind` was provably inert (all ten
+  kinds permitted one fixed pair). D10's own *"the claim is not trusted, it is
+  checked"* was false, and D9/D11 were vacuous on the typed path. The binding moved
+  into `Jurisdiction.TypedRoots`. (2) D10's nine-item permit list was **not the
+  closed set**: ADR-017:380-381 governs, :396-401 is illustrative — the *same
+  misreading that killed the draft*, surviving one rework because the fix was
+  applied to the mechanism and not to the list. ~13 grants had no kind. (3)+(4) D5
+  was unimplementable against D1's own types (no `ownerUID` parameter; a
+  pre-resolved `ProtectedID` destroys the symlink leg's only evidence), and its
+  lone code cite aimed the implementer at `TrustHomeDir`, whose `0o077` check
+  **rejects the real 0750 macOS HOME**. D5's legs were otherwise right.
+
+  **Park list: EMPTY.** The insight that collapses every alleged blocker:
+  `mc/boundary` is **pure and receives every root pre-resolved**, so a missing
+  host-path *formula* is the host planner's later slice and fixture realism — not
+  a TDD blocker.
+
+  **One skeptic refuted its own finding with running code** (predicted a fail-open
+  in the absent-member handling, wrote the test, the test failed). That is the
+  decorrelated producer/judge principle working in the direction that is easy to
+  fake.
+
+  **The TDD, in ADR-021's own reworked order.** `Authorize` now runs Decision 3
+  steps **2-5**, and the two codes unused since `4380e0d` are reachable.
+  **1** `TypedKind` + the D10a derivation guard — the enum is *derived*: the guard
+  **parses ADR-017's real destination table** (61 rows) and runs both directions.
+  **2** `ResolveJurisdiction`, the zero-value law *with its mechanism*, D2 (every
+  field unexported), the 512 bound tested as the **ordering** claim it is.
+  **3** D5 `validateHome`: five legs, **no mode leg, no ACL leg**; the pivotal test
+  is that the **real** `os.UserHomeDir()` is ACCEPTED, and it logs `trap armed:
+  TrustHomeDir rejects the real HOME (mode drwxr-x---)`.
+  **4** D4 `broad_root` closes the firmlink leak; `~/src/project` stays eligible; a
+  non-`/Users` temp HOME rejects `/private/var` and does **not** reject `/Users`.
+  **5** D10 typed confinement — the permit sweep proves **every kind** plans
+  against its own authorized root, the test the draft could not have passed.
+  **6** the union predicate, D7's split/precedence, D6's ordering, and the
+  13-call-site `Authorize` migration.
+
+  **Two process findings worth more than the code.**
+
+  First: **step 1's guard was green and proving nothing.** It reads a file
+  *outside this module*, which Go's test cache does not track — measured,
+  `go test ./...` reported `ok (cached)` against a mutated ADR-017 while
+  `-count=1` caught it. A drift guard that is itself silently skipped is worth
+  *less* than no guard, because it also buys false confidence. `mc/check.sh` now
+  forces it (verified: exit 1 on drift, exit 0 clean) — same shape as the
+  tagged-compile loop `9fc02fd` added for the same reason.
+
+  Second: **every step was mutation-tested rather than trusted, and four mutants
+  exposed my own tests as vacuous** — each fixed before moving on:
+  absent members silently skipped (the external test only proved construction did
+  not error, which a skip also satisfies); own/other by name instead of identity
+  (the symlink-alias fixture was inert — `ResolveSource` canonicalizes the alias
+  away, so it needed a same-file/different-spelling pair, which only case-variance
+  provides); typed confinement relaxed from identity to **containment** (the
+  sibling test could not see it, and the surrounding union code is all containment
+  walks, so it is the natural mistake); and jurisdiction moved **after**
+  `ResolveAccess` (the fixture used an RW-max allow root, so `ResolveAccess` never
+  failed and both orderings reported the same code — only an **RO-max root + RW
+  request** makes them disagree). Resurrecting the self-certifying claim now fires
+  **42 witnesses** across three tests.
+
+  A real bug also surfaced and was fixed: `ancestorRoutes` statfs'd an absent
+  member's declared path, got ENOENT, called it ambiguity, and denied the world —
+  ENOENT there is the expected D8 case, and the nearest existing ancestor on the
+  same chain yields the identical mount point.
+
+  **Ledger accident, recorded because the ledger is the memory.** Commit `2e9fc4f`
+  blew this file from 1738 lines to 5,469,165 (366 MB): a script computed
+  `old = s[i1:i2]` with `i2 < i1`, yielding the **empty string**, and
+  `str.replace("", x)` inserts `x` between every character. Restored from
+  `f2b06b4` and re-appended (`.git` was unaffected in practice — 14 MB, since 1.7M
+  repeats of one block compress to nothing, so no history rewrite was warranted).
+  Blast radius was this file alone; no code commit touched it. Lesson for both
+  harnesses: **assert the anchor count before any scripted edit to this file** —
+  a Python `replace` on a computed slice is a foot-gun, and the ledger is the one
+  artifact whose loss is unrecoverable.
+
+NEXT: Finish the jurisdiction slice in **ADR-021's own TDD order** (at the end of
+`docs/adr/021-mount-jurisdiction.md`; it replaces the five-step order this ledger
+carried before the probe). Steps 1-6 are DONE (`fbc4ec6`).
+
+**Step 7 — D8 + D9/D11.** D8 is the LIVE path, not the edge case: 0 of ADR-017's
+fifteen `MC_HOME` classes exist after the real `scaffoldOnboardHome` runs, so
+absent members are routine. Build the nearest-existing-ancestor rule on the
+measured `EvalSymlinks` behaviour recorded in the probe record — re-read it before
+writing a line:
+- **the gift** — on failure `*fs.PathError.Path` is the PARTIALLY-RESOLVED path of
+  the first missing component, so `filepath.Dir(pe.Path)` IS the nearest existing
+  canonical ancestor in one call, symlinks already resolved. It is
+  **undocumented**: pin it with a test asserting the resolved (not the link)
+  spelling, so a Go upgrade cannot silently regress it to a lexical ancestor.
+- **the trap** — when a middle component is a regular FILE, `EvalSymlinks` returns
+  a bare `syscall.Errno` ("not a directory"), NOT a `*fs.PathError`:
+  `errors.Is(err, fs.ErrNotExist)` is **false** and there is no path information at
+  all. Keying on `fs.ErrNotExist` misses it silently. The path can never exist as
+  spelled, so it denies.
+- the suffix half is compared **component-wise**, never `strings.HasPrefix` (`a/b`
+  must not match `ab` or `a/bc`); split it from the ORIGINAL requested path, never
+  from `pe.Path`, which stops at the first missing component.
+- **case — this needs an ADR-021 D8 EDIT FIRST, not just an implementation
+  choice.** D8's case rule is **redundant** for the identity half and should be
+  scoped to the suffix half only: `os.SameFile` is already exactly as case-correct
+  as the volume is, for free, on both volume types (measured — `/Users/vinchenkov`
+  and `/USERS/VINCHENKOV` are both ino 266855). For the suffix half,
+  `strings.EqualFold` is wrong in BOTH directions and APFS is
+  normalization-insensitive, so NFC-normalize both sides and pick case-sensitivity
+  from the ANCESTOR's volume via `getattrlist(2)` `ATTR_VOL_CAPABILITIES` →
+  `VOL_CAP_FMT_CASE_SENSITIVE` (gated on the matching `valid` bit; working cgo is
+  in the probe record). It is read-only and therefore works on paths you cannot
+  write to — decisive, since D8 must probe an ancestor you may not own, where the
+  create-then-stat probe returns EACCES. Keep "ambiguity denies" ONLY for the
+  genuine unknown (valid bit clear, or getattrlist errors); D8 as written
+  spuriously denies on every case-sensitive volume for no gain.
+- D9/D11 drift: a protected-set change alone with the source inode UNCHANGED must
+  flip the verdict, including a changed `TypedRoots`.
+
+**Step 8** — the planted-mutant sweep ADR-021 names. Most are already dead (17
+planted across steps 1-6, each with an exercised witness); confirm the named list
+and add any missing.
+
+`Authorize` is wired inside `mc/boundary` but must NOT be wired into production
+planning until the slice lands. Do not load launchd.
+
+Then: the macOS **ACL leg** of the trust seam (owner/mode/non-symlink are
+enforced; a granting ACE is not detected), then the stable-code mapping for the
+parser's uncoded rejections, then the invalid-plan/no-claim dispatch transaction.
+
+Adjacent gaps, deliberately NOT swept in: `mount.gate_unhealthy` missing from
+`mc/boundary/identity.go`'s code block (ADR-017:1162); and **new** — an ADR-017
+amendment item, since ADR-021 Sharp Edge 6 now defines `KindInertCover` and
+`KindSealedPack`, which are absent from ADR-017:354-362's **closed** source-kind
+list. Defining them is stricter than omitting them (log-and-go, AGENTS.md §6) and
+the predicate is parametric in the enum, so it blocks nothing — but ADR-017 should
+say whether that list means to exclude generated inert covers or is incomplete.
+
+**Process note, now earned three times:** review lenses must run in their own
+worktrees and be told to *drive real paths*. F5 was invisible to any amount of
+text review — it required statting `/System/Volumes/Data`. **Corollary earned this
+session: apply the same skepticism to your own tests.** Four of seventeen mutants
+died only after the test that should have caught them was rewritten; the fast lane
+had cached the derivation guard away entirely.
+
+- 2026-07-15 — **Codex takeover review complete; outgoing ADR-021 steps 1–6 are
+  NOT accepted** (`e78a81c`). Session ritual complete: clean worktree on entry,
+  `git log/status` inspected, and the full fast lane green (Go boundary/all
+  packages; fake-harness 43, agent-runner 13, runner/image 40, resident 42).
+  Three decorrelated read-only lenses plus local review drove public-API probes
+  rather than trusting the green suite. Confirmed: own workspace rejects once
+  its real `.mission-control` root is present; caller mutation of the aliased
+  `TypedRoots` map/slice changes a constructed jurisdiction; arbitrary numeric
+  kinds authorize; kinds cross destination rows (one inert-cover kind spans 17
+  rows); ambiguity errors are skipped; and the required union-member sweep is
+  absent. D5 also lacks its portable device-boundary leg. The exact findings,
+  conservative repairs, and the previously missing D8 generalization log are in
+  `IMPLEMENTATION-NOTES.md`. Refuted: whole-tree MC_HOME, the alternate typed
+  predicate, raw HOME/deny paths, and the absence of production wiring are all
+  deliberate. No operator input, Docker, secret, or launchd state is involved.
+
+NEXT: Repair the takeover findings red-first, in smallest-green order: (1) typed
+registry immutability + closed numeric domain; (2) D10a destination-slot
+uniqueness and `KindNotABind` outside the authorized domain; (3) own-workspace /
+own-control ancestry permit pair; (4) mandatory member sweep + D5 device leg.
+Then amend D8's incorrect case paragraph and implement step 7 using a pure-Go
+Darwin `getattrlist` wrapper (the shipped static `mc` forbids copying the probe's
+cgo). Do not wire production planning and do not load launchd.
+
+- 2026-07-15 — **Takeover repair 1 green: typed registry is a closed immutable
+  snapshot** (`3ad3411`). Red witnesses reproduced both alias forms: replacing
+  the caller's map entry and mutating a retained slice element each removed root
+  A and authorized root B in the same already-constructed `Jurisdiction`.
+  `ResolveJurisdiction` now validates every key and deep-copies both layers;
+  `Rejects` independently range-checks claims before lookup. `KindNone`, the
+  non-bind sentinel, `kindMax`, and numeric 255 all reject as registry keys, and
+  every non-zero out-of-domain claim denies. Full fast lane green: Go all/tagged
+  builds, fake-harness 43, agent-runner 13, runner/image 40, resident 42.
+
+NEXT: Repair D10a's cross-destination aliases red-first: strengthen the real-ADR
+guard so every authorized kind occurs in exactly one destination row (only the
+explicit `.codex`/`.claude` runtime-control merge may span two), split the 17
+inert-cover rows and workspace-vs-seeding projection/registered-root kinds, and
+move `KindNotABind` outside `[KindNone+1, kindMax)` as a deny-only sentinel.
+
+- 2026-07-15 — **Takeover repair 2 green: a typed kind cannot cross destination
+  rows** (`f9cfd1e`). The new third derivation-guard direction went red on the
+  exact hidden aliases: `KindInertCover` crossed 17 agent/setup/landing rows;
+  committed-projection and registered-root each crossed ordinary/seeding rows;
+  and the non-bind marker occupied four rows inside the real domain. Cover kinds
+  and the two projection classes are now destination-specific; only the ADR's
+  explicit `.codex`/`.claude` selected-runtime-control merge may span two rows.
+  `KindNotABind` is numeric 255, outside `[KindNone+1, kindMax)`, accepted by no
+  registry or ADR row, and handled only as a loud deny sentinel. The ADR now
+  states the previously missing inverse law, and the ADR-017 closed-source-kind
+  deviation is finally logged. Full boundary permit sweep covers all 59 real
+  kinds; full fast lane green (Go all/tagged, 43/13/40/42 Bun suites).
+
+NEXT: Repair D4's own-control ancestry pair red-first. The flat Git-control list
+cannot safely infer ownership, so amend the pure input seam to associate own Git
+controls explicitly. Permit only the exact own workspace (by `os.SameFile`) as
+an ancestor of its own `.mission-control` and explicitly owned Git controls;
+keep equality, descendants, intermediate ancestors, other/external controls,
+own artifacts, and absent own roots denied. Then add the full member sweep.
+
+- 2026-07-15 — **Takeover repair 3 green: own-control ancestry is exact and
+  ownership-associated** (`ea57c82`). The original public-API witness went red
+  because supplying an own workspace's real `.mission-control` rejected the
+  workspace mount ADR-017 requires. D1's flat control lists could not implement
+  D4 safely, so Git and `.mission-control` controls are now explicitly split
+  into own/other collections. Only the exact own workspace identity bypasses
+  the ancestor arm for an explicitly own control. Present and absent controls,
+  APFS same-inode/different-spelling identity, exact/descendant controls,
+  intermediate own artifacts, missing ownership, another Worksource's nested
+  control, and additive `denied_paths` are pinned. An independent read-only
+  adversarial re-review found no remaining defect. Full fast lane green twice:
+  Go all/tagged builds and Bun 43/13/40/42.
+
+NEXT: Add the mandatory protected-member sweep red-first: whole-tree
+`MC_HOME/quarantine`, present/omitted HOME classes, both gateway secrets, both
+selected/non-selected runtime controls, all four control collections,
+`denied_paths` in three directions, every other-Worksource root slot including
+two artifacts, and the own-Worksource identity permit counterparts. Each deny
+row must also prove an unrelated permit. Then add D5's portable
+`parentStat.Dev != stat.Dev` leg with a mutation-killing non-`/` filesystem-root
+witness while retaining the Darwin mount-point evidence.
+
+- 2026-07-15 — **Takeover repair 4 green: the protected union is exhaustively
+  witnessed and D5 has both portable and Darwin volume-root evidence**
+  (`a097916`). The public sweep now covers whole-tree `MC_HOME/quarantine`, two
+  present and one omitted HOME classes, both gateway/CA secrets, selected and
+  non-selected runtime controls, two entries in each own/other Git and
+  `.mission-control` collection, two `denied_paths` entries in all three
+  directions, two other Worksources, every root slot and two artifacts, plus
+  mutation-sensitive own-root permits. Every deny row pins its code and proves
+  an unrelated permit. Deliberately dropping gateway roots and truncating
+  `OtherWorksources` after element zero both went red. D5's missing
+  `parentStat.Dev != stat.Dev` leg went red with mount-point lookup disabled;
+  same-device permit and ambiguity-deny controls are green, as is the real
+  non-`/` `/System/Volumes/VM` witness. An independent review found the D5 seam
+  clean and verified a CGO-disabled Linux/arm64 compile. Full fast lane green:
+  Go all/tagged builds and Bun 43/13/40/42.
+
+NEXT: Begin ADR-021 step 7 by editing D8's incorrect case paragraph before
+implementation. Scope case/normalization to the absent suffix only; the ancestor
+half remains `os.SameFile`. Pin nearest-existing canonical ancestor plus the
+original component suffix, fail closed on ENOTDIR/dangling/permission ambiguity,
+and use NFC plus volume-reported case sensitivity from a pure-Go Darwin
+`getattrlist(2)` wrapper (full Unicode fold on insensitive volumes). Then add
+D9/D11 fresh-reconstruction drift witnesses for denied paths and `TypedRoots`.
+
+- 2026-07-15 — **D8 case and absent-pair mechanism corrected before step-7
+  code** (`b31eba6`). Case/normalization now applies only to suffix components:
+  NFC + exact on case-sensitive volumes, NFC + full Unicode fold on insensitive
+  volumes, with the pure-Go Darwin capability bit deciding only fold-equal case
+  variants. The earlier handoff's `PathError.Path` "gift" was rejected after an
+  independent code lens proved it cannot recover the original suffix when a
+  symlink target changes component depth or repeats names. The normative
+  algorithm instead peels only ENOENT components from the cleaned original
+  spelling and resolves the first existing original prefix once. Full fast lane
+  green (Go all/tagged and Bun 43/13/40/42).
+
+NEXT: Implement D8 red-first in four separable pieces: (1) pure suffix overlap
+with NFC/full-fold and sensitive/insensitive/unknown modes; (2) pure-Go Darwin
+`SYS_GETATTRLIST` capability parsing plus static cross-builds; (3) absent-root
+canonical anchor/original suffix enrichment and strict ambiguity handling for
+every union collection; (4) public absent deny/other-artifact and D9/D11 fresh
+reconstruction drift witnesses, including same-path/new-identity `TypedRoots`.
+
+- 2026-07-15 — **Step 7.1 green: absent suffix overlap is component- and
+  volume-aware** (`1abf7c2`). Whole-component prefixes are symmetric; `a/b`
+  does not match `ab` or `a/bc`. Both sides normalize to NFC. Sensitive mode is
+  exact; insensitive mode uses full Unicode folding (`Straße`/`STRASSE`), not
+  `strings.EqualFold`. Unknown mode still decides exact NFC and different folds,
+  failing closed only for a fold-equivalent variant. Added direct pinned
+  `golang.org/x/text v0.37.0` with no collateral graph upgrade. Full fast lane
+  green (Go all/tagged and Bun 43/13/40/42).
+
+NEXT: Step 7.2 red-first: add platform-independent capability-word parsing and
+a Darwin smoke witness, then implement the CGO-free `SYS_GETATTRLIST` wrapper
+with a `!darwin` unknown arm. Make `x/sys` direct and prove both Darwin/arm64 and
+Linux/arm64 compile with `CGO_ENABLED=0` before committing.
+
+- 2026-07-15 — **Step 7.2 green: Darwin volume case capability is queried
+  without cgo** (`53afcc5`). A platform-independent parser requires both the
+  case-sensitive capability and its validity bit. The Darwin arm calls
+  `SYS_GETATTRLIST` with `ATTR_VOL_INFO | ATTR_VOL_CAPABILITIES`; the non-Darwin
+  arm reports unknown. Parser short/valid/invalid cases and a real temporary-
+  volume smoke witness are green. CGO-disabled Darwin/arm64 and Linux/arm64
+  boundary builds plus the Linux tagged `cmd/mc` build pass. An independent ABI
+  review found the 36-byte capability layout, syscall arguments, validity test,
+  and pointer lifetimes clean. Full fast lane green: Go all/tagged builds and
+  Bun 43/13/40/42.
+
+NEXT: Step 7.3 red-first: enrich every absent protected union member with its
+nearest existing canonical anchor and original-spelling suffix. Peel only
+ENOENT, resolve the anchor exactly once, deny ENOTDIR/dangling/permission/I/O
+and race ambiguity, compare ancestry by identity and suffixes by D8 volume
+semantics, and keep unrelated paths decidable. Cover denied paths and other-
+Worksource artifacts through the public API before advancing to drift tests.
+
+- 2026-07-15 — **Step 7.3 green: every absent union member now carries D8's
+  canonical-anchor/original-suffix pair** (`d0f6a3a`). Registration promotes a
+  nil-Info path that appeared, otherwise peels only ENOENT from the cleaned
+  original spelling, calls `EvalSymlinks` exactly once on the nearest existing
+  prefix, and stores its identity, original components, and volume mode.
+  ENOTDIR, dangling links, EACCES/EIO, non-directory anchors, and Eval/stat
+  ambiguity deny. Present and absent ancestry walks are strict; absent suffixes
+  compare symmetrically by whole component, retain the exact-own-workspace
+  control exemption only in the ancestor direction, and rewrap ambiguity with
+  the member's denied/cross code. Every union collection is swept; absent HOME
+  classes remain the explicit omission. Public witnesses pin an absent denied
+  path's parent/identity/descendant and near-prefix sibling plus an absent other-
+  Worksource artifact's cross code. Review also found and fixed a narrow case
+  bug: under unknown volume semantics, a later definite component mismatch now
+  resolves an earlier fold-equivalent component instead of over-denying.
+  Independent implementation and spec audits found no remaining blocker.
+  Uncached and race-enabled boundary suites, CGO-disabled Darwin/arm64 and
+  Linux/arm64 builds, and the full fast lane (Go all/tagged; Bun 43/13/40/42)
+  are green.
+
+NEXT: Step 7.4 red-first: pin D9/D11 reconstruction rather than verdict caching.
+Construct an absent denied path through alias→A, retain the first Jurisdiction's
+A-deny/B-permit snapshot after retargeting alias→B, and prove a freshly rebuilt
+Jurisdiction flips to A-permit/B-deny. Then pin the typed path with a selector
+symlink retargeted from one identity to another: the original typed snapshot
+keeps its verdict while a fresh host-resolved `TypedRoots` registry flips it.
+
+- 2026-07-15 — **Step 7.4 green: D9/D11 old-snapshot versus fresh-input drift
+  is explicit** (`468251b`). Two four-verdict matrices reuse unchanged A/B
+  source identities while atomically retargeting one stable selector address.
+  For a raw absent `denied_paths` member, the old Jurisdiction remains
+  A-deny/B-permit and a fresh construction flips to A-permit/B-deny. For a
+  typed session root, the old pre-resolved registry remains A-permit/B-deny and
+  a freshly host-resolved `TypedRoots` input flips to A-deny/B-permit. Both
+  fixtures prove the selector spelling is unchanged, its identity actually
+  changed, the direct sources did not change, and every denial carries its
+  stable code. A call-site audit found no production `ResolveJurisdiction` or
+  `Authorize` caller yet; per ADR-021, the four host reconstruction gates are
+  later Phase-3 wiring, so this micro-step correctly changes acceptance coverage
+  only. Uncached and race-enabled boundary suites plus the full fast lane (Go
+  all/tagged; Bun 43/13/40/42) are green.
+
+NEXT: Complete ADR-021 step 8 by auditing every named planted mutant against an
+exercised witness, not test names. Re-run or add the missing mutation-sensitive
+controls for identity→prefix, removed ancestor direction, literal/Dir-only
+`broad_root`, jurisdiction after `ResolveAccess`, subtractable denied paths,
+kind-inert/self-certified typed claims, and HOME mode/`TrustHomeDir` traps. Once
+all named mutants are demonstrably dead, close the jurisdiction slice and move
+to the macOS ACL trust-seam leg recorded in the Phase-3 order.
+
+- 2026-07-15 — **ADR-021 step 8 green: all ten named jurisdiction mutants die
+  under exercised witnesses** (`ebb7613`). Each mutation was applied alone in
+  an isolated `/private/tmp` copy and run uncached. Two initially survived: the
+  symlink identity fixture canonicalized to the protected spelling and could
+  not distinguish identity from a separator-aware lexical gate, and D8's new
+  absent-root above-anchor arm lacked a direct witness. A same-inode hardlink
+  with unrelated canonical spelling and an above-canonical-anchor source now
+  close those gaps. The final sweep kills identity→prefix, removed present and
+  absent ancestor arms, both hardcoded `broad_root` variants, reordered
+  jurisdiction, subtractable `denied_paths`, kind-inert typed claims, and both
+  HOME trust traps. The method, observed failures, and D8/D9/D11 supplementary
+  mapping are recorded in
+  `docs/reviews/2026-07-15-adr-021-mutant-audit.md`. Uncached boundary tests and
+  the full fast lane (Go all/tagged; Bun 43/13/40/42) are green.
+
+NEXT: Implement the macOS ACL leg of the filesystem trust seam red-first. Read
+the ADR-017 trust contract and existing spike/prior evidence first; add a real
+granting-ACE witness, detect any ACL that broadens write authority beyond the
+trusted owner, and fail closed on unsupported or ambiguous ACL inspection while
+preserving the current owner/mode/non-symlink checks and portable builds.
+
+- 2026-07-15 — **macOS native ACL trust seam green** (`942985e`). The prior
+  NEXT narrowed the rule to write authority, but ADR-017 requires rejection of
+  **any** non-owner allow grant, including read/list/search; the implementation
+  and tests follow the ADR. A CGO-free `getattrlist(2)` path first binds native
+  extended-security capability to the expected device, then returns device,
+  file id, type, owner, mode, owner UUID, and ACL in one no-follow snapshot.
+  The platform-neutral parser validates every returned byte and every ACE;
+  deny-only, zero-right, and exact-owner allows remain harmless, while a group,
+  another user, an unknown kind, malformed payload, unsupported capability, or
+  ambiguous membership lookup rejects as `mount.allowlist_untrusted`.
+  A full-gate race exposed that macOS may encode the same owner as either the
+  synthesized `FFFF…uid` UUID or a directory-service UUID while
+  `ATTR_CMN_UUID` is zero. The final CGO-disabled libSystem bridge therefore
+  resolves each non-synthesized qualifier with `mbr_uuid_to_id` and requires
+  both user type and exact operator uid; C return width, output sentinels,
+  resolver wiring, and error propagation are pinned. Real Darwin witnesses
+  cover non-owner read, MC_HOME list/search, deny-only, owner-only, ACL removal,
+  and the deliberate absence of this seam from real operator HOME. The first
+  `O_EVTONLY` attempt was discarded because a deny ACE could blind the open;
+  path `getattrlist` needs only parent search and accepts a 0000 policy file.
+  Isolated mutation sweeps, uncached/race boundary repetitions, CGO-disabled
+  Darwin arm64/amd64 and static Linux/arm64 builds, and the full fast lane (Go
+  all/tagged; Bun 43/13/40/42) are green. `Authorize`/trust construction still
+  has no production planning caller, as intentionally deferred for later
+  Phase-3 wiring. No Docker, secret, or launchd state was touched.
+
+NEXT: Close ADR-017's stable rejection-code contract red-first. Begin with the
+uncoded `ParseMountAllowlist`/entry/access errors and the named missing
+`mount.gate_unhealthy` constant; prove every public boundary rejection maps to
+one of ADR-017's closed codes without string matching, and that every code
+aborts the whole plan. Then implement the invalid-plan/no-claim dispatch
+transaction. Do not wire production planning and do not load launchd.
+
+- 2026-07-15 — **ADR-017 stable mount rejection namespace green**
+  (`1a5fb63`). All malformed `mount-allowlist` content — TOML/schema/version,
+  bounds, entry path/target/access, and allowlist-internal target overlap — now
+  returns a typed `MountError` with `mount.allowlist_invalid`; standalone target
+  validation remains `mount.target_invalid`, and every `ResolveAccess` refusal
+  is `mount.rw_not_permitted`. `mount.gate_unhealthy` closes the previously
+  missing sixteenth constant. Exact-source AST guards pin both the closed
+  `mount.*` string namespace and the complete exported error-returning API
+  census, with runtime `errors.As` witnesses for every public mount rejector.
+  `NewBlockPolicy` is deliberately the one non-mount exception: it validates
+  `config.toml`, whose ADR-016 consequence is `health.config_invalid`; coercing
+  it to `mount.allowlist_invalid` would misclassify deployment health. Isolated
+  mutation sweeps kill raw parser/target/access errors, nested target-code
+  leakage, target-collision misclassification, missing/wrong constants, a
+  disguised extra `mount.*` constant, and an unclassified new exported
+  rejector. Boundary race and the full fast lane (Go all/tagged; Bun
+  43/13/40/42) are green. The "every code aborts the whole plan" acceptance is
+  intentionally **not** claimed: no aggregate mount-plan API or production
+  boundary caller exists yet, so a per-source `Authorize` loop would test the
+  test rather than no-drop behavior. That evidence must pair a later aggregate
+  planner test with the classified-refusal transaction below.
+
+NEXT: Implement ADR-016's invalid-plan/no-claim dispatch transaction red-first,
+without wiring production planning. Re-read Decisions 1–4 and derive the exact
+typed classified-refusal input at the commit seam; prove allowlist
+trust/invalid refusals record deployment health, candidate-owned mount refusals
+apply their subject/task, subjectless, or Homie consequence, and every arm
+leaves zero new Run rows, a free lock, no spawn effect, and no fall-through to
+another candidate. Keep aggregate mount no-drop acceptance open until the
+planner exists. Do not load launchd.
+
+- 2026-07-15 — **Takeover from Codex; ADR-016 D2 replay fences and the v1→v2
+  migration green** (`48eaf63`). The resume ritual found the tree mid-red and
+  unledgered: Codex had authored the D2 schema columns, their substrate
+  backstops, and a `migration_test.go` calling `substrate.Migrate` /
+  `CurrentSchemaVersion`, neither of which existed. Nothing was discarded; the
+  slice is completed here. The AGENTS.md §2 cross-harness review ran first
+  (5 lenses × 2 refuting verifiers, 31 agents): 13 findings raised, **4
+  confirmed, 9 refuted** — including two plausible-but-wrong attacks on the
+  migration design that were killed by construction, and one ("doctor hard-fails
+  a migrated spine") correctly refuted as unreachable *at review time* which the
+  v2 bump then made reachable, so it was fixed anyway.
+
+  The load-bearing find: all three hex key CHECKs failed open on an embedded
+  NUL. `length()` and `GLOB` both stop at the first NUL, so 64 hex + NUL + junk
+  stored 69 bytes and read back as a UNIQUE value its own receipt lookup could
+  not find — a replayed commit would duplicate the activity, its consequence,
+  and its outbox fan-out, which is precisely what D2 exists to prevent. The
+  reviewer's proposed `CAST(... AS BLOB)` fix proved **insufficient** on its own
+  (63 hex + NUL is exactly 64 bytes and GLOB never sees it); both lengths must
+  agree. Codex had already used the byte-safe form on `dispatch_result`, so the
+  three key columns were an asymmetry, not a misunderstanding.
+
+  Second: SQLite cannot ALTER a UNIQUE column onto an existing table, so the
+  only ALTER-shaped migration that compiles yields a spine with D2's columns and
+  none of its fences — and the incoming test, asserting only that inserts
+  succeed, graded exactly that spine green. Uniqueness is now declared as named
+  indexes (identical semantics, reachable from a migration), and the storage
+  contract is stated once and run against a fresh **and** a migrated spine.
+  `Migrate` is additive (§16.4 forbids dropping a spine holding data),
+  transactional, idempotent by version, and fail-closed on an unknown version;
+  its fixture is the real v1 schema frozen from HEAD into
+  `mc/substrate/testdata/schema-v1.sql`, not an approximation.
+
+  Third: `init` and `onboard` stamped a literal `1` while applying the current
+  Schema, so onboard read its own fresh spine back as migratable and hit
+  `duplicate column name: dispatch_key`. Both now stamp `CurrentSchemaVersion`,
+  `doctor` compares against it (older → onboard repairs; newer → upgrade or
+  restore), and `onboard home` implements §16.4's previously missing "older
+  schema → migrate" arm. Fourth: the ledger's own `KNOWN-FAILING: (none)`
+  overclaimed while the substrate package did not compile — recorded here as the
+  process finding it is.
+
+  Ten planted mutants, isolated and uncached, **all dead, zero survivors**: NUL
+  tail/pad per key column, dropped unique index in schema and in the migration,
+  dropped pairing CHECK, dropped trigger recreation, fail-open version, and
+  non-transactional DDL. Three deviations logged. Full fast lane green (Go
+  all/tagged; Bun 43/13/40/42). No Docker, launchd, or secret state touched.
+
+NEXT: Implement ADR-016's invalid-plan/no-claim dispatch transaction red-first,
+without wiring production planning — unchanged from the previous NEXT, which the
+D2 storage slice was the prerequisite for. Re-read Decisions 1–4 and derive the
+exact typed classified-refusal input at the commit seam; prove allowlist
+trust/invalid refusals record deployment health, candidate-owned mount refusals
+apply their subject/task, subjectless, or Homie consequence, and every arm
+leaves zero new Run rows, a free lock, no spawn effect, and no fall-through to
+another candidate. D2's fences are now storable: the commit-side `dispatch_key`
+and the prepare-side `dispatch_request_id`/`dispatch_result` receipt exist and
+are enforced, so the transaction can use them rather than re-deriving idempotency.
+Keep aggregate mount no-drop acceptance open until the planner exists. Do not
+load launchd.
+
+
+---
+
+## Appendix — the `## Parked` section as it stood 2026-07-15, verbatim
+
+Preserved because AGENTS.md §5 says git **and** the ledger hold the history.
+Eleven of these were resolved and were removed from `PROGRESS.md`; the live ones
+were carried forward. **Do not read this as current state** — several entries
+contradict each other and two were outright false at the time of removal (see the
+reconciliation note in `PROGRESS.md`).
+
+## Parked
+
+- ~~Push to origin is blocked by an operator deny rule~~ **RESOLVED
+  2026-07-14**: the operator pushes manually; the `~/.claude/settings.json`
+  deny stays. It cannot be overridden per-repo (user-level deny beats
+  project-level allow; hooks and `bypassPermissions` do not clear it).
+  **Agents: keep committing at every green micro-step per AGENTS.md §4, do
+  not attempt the push, and do not route around the rule.** AGENTS.md §4's
+  "push if a remote exists" is superseded for this repo and should be reworded
+  at Release prep.
+
+- ~~**Initiative wave holistic Editor review**~~ **CLOSED 2026-07-14**: the
+  operator accepted reading (i); ADR-020 was authored, adversarially reviewed
+  (11 of 12 findings confirmed and folded in), accepted, and **implemented**
+  (D1–D5 green, `mc strategist wave` CLI-wired). Nothing about waves is parked
+  any more — the older decision request further down is dead text, kept only as
+  chronology.
+
+- ~~Secrets in git history~~ **RESOLVED 2026-07-10**: operator explicitly
+  accepts the values in local history; no scrub, no rotation. Noted in
+  OPERATOR-INPUTS.md.
+- **Private remote** (handoff §1.1): still recommended (disk-failure
+  protection for long autonomous stretches). Operator: create an empty
+  private GitHub repo, then `git remote add origin <url> && git push -u
+  origin main`. Agents push after green commits once it exists.
+- ~~Proxy CA pair~~ **RESOLVED 2026-07-10**: agent generated it —
+  `~/.mc-dev-home/ca/ca.key` (0600, host-side only) + `ca.crt` (valid to
+  2036). S4 unparked.
+- ~~Credential materialization~~ **RESOLVED 2026-07-10 21:15**: operator ran
+  both commands; `~/.mc-dev-home/cred/{claude/.credentials.json,codex/auth.json}`
+  exist, 0600. Rotation-may-invalidate-host-login caveat stands, accepted.
+- ~~Token-spend authorization~~ **RESOLVED 2026-07-10**: all bindings
+  subscription-based; unconstrained, Phase 5 + smoke pre-authorized.
+- **Sacrificial Worksource standing directive** (handoff §4.1 row 7):
+  `llm-council` path recorded, but no standing directive written. Needed
+  before Strategist(propose) e2e tests and the smoke.
+- **Docker Desktop settings snapshot** (handoff §4.1 row 4): not recorded
+  (ECI state, Resource Saver, VM sizing, version pin). Agent will probe what
+  it can in S1/S7 and record findings; operator confirms and freezes.
+- **S7 sleep drill**: the 30-min Mac sleep mid-lease test needs the operator
+  (an agent cannot sleep the machine it runs on). Instructions in
+  spikes/07-launchd-clock/RESULT.md. All other S7 sub-tests passed.
+- ~~Docker Desktop settings~~ **RESOLVED 2026-07-10 21:15**: operator
+  flipped both — verified `UseResourceSaver: False`, `AutoStart: True`.
+- ~~Sacrificial Worksource standing directive~~ **RESOLVED 2026-07-10**:
+  agent-authored at operator request; recorded in OPERATOR-INPUTS.md
+  (hardening/tests directive with command-checkable criteria).
+- ~~Private remote~~ **RESOLVED**: origin pushed and in sync.
+- **Codex autonomy profile** (handoff §1.5): the agent is not permitted to
+  write `approval_policy="never"` / `sandbox_mode="danger-full-access"`
+  into `~/.codex/config.toml` (auto-mode classifier denial — correctly:
+  self-configured unsafe agents need the operator's hand). Operator: append
+  this block to `~/.codex/config.toml`, then the takeover smoke
+  (`codex exec -p mc` + one `/goal` set/clear in the repo) can run:
+
+      [features]
+      goals = true
+
+      [profiles.mc]
+      approval_policy = "never"
+      sandbox_mode = "danger-full-access"
+
+      [projects."/Users/vinchenkov/Documents/dev/ai/homie"]
+      trust_level = "trusted"
+
+- **Claude Code permission posture** (handoff §1.4): the agent may not
+  widen its own allowlist (`.claude/settings.json` write denied by the
+  classifier). Operator: either run sessions in this folder with
+  `claude --dangerously-skip-permissions` (handoff-recommended), or create
+  `.claude/settings.json` yourself allowing `go/bun/docker/git/mise/sqlite3`.
+- **db_schemas.sql missing** (handoff §1.1): not present in the seeded
+  folder. Proceeding by deriving the schema from spec §4/§5 (spec wins
+  anyway). Informational unless the operator has the file — if so, drop it
+  in the repo root.
+- **docs/priors/ POC evidence missing**: the `poc/` copies and original
+  memory notes were not seeded (memory dir empty). The three §4.3 priors are
+  reconstructed as one-line notes in `docs/priors/` marked RECONSTRUCTED.
+  If original POC material exists, drop it into `docs/priors/`.
+- **Initiative wave holistic Editor review** (spec §3/§6.1, ADR-001 open
+  question 1, phase2-contract A-P2-7): children are required to be born
+  `seeded`, but the current dispatch table would send them straight to Worker
+  with no state/slot for the Editor's mandatory holistic plan review. Decision
+  request: choose a durable representation/dispatch step for reviewed-vs-
+  unreviewed wave children. This blocks only the `strategist wave` CLI line;
+  other Phase 2 work continues. **2026-07-13 addendum (takeover review):**
+  until this resolves, a promoted `initiative add` proposal dead-ends —
+  Strategist(initiative) can only declare done with zero children (strict
+  drain passes trivially) or block out. The hole itself stays sealed (`wave`
+  is not CLI-wired), but avoid filing initiatives until decided; see
+  IMPLEMENTATION-NOTES 2026-07-13.

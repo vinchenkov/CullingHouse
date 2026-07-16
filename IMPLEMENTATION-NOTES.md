@@ -4,6 +4,13 @@ Append-only, newest last. Addressed to the operator: every judgment call
 the agents made that the spec didn't cover. *Planned* designs the spec
 delegates live in `docs/adr/`, not here.
 
+**Write-mostly. This file is NOT a startup read** (AGENTS.md §1). It is a
+deliverable for the operator, not agent input — 81 entries and ~23k tokens
+of it. Append your deviations; read it only when a task names an entry or
+you are about to re-litigate a decision you suspect was already made. If you
+are here to "get context", you are in the wrong file: `PROGRESS.md` is the
+state, `docs/ledger/` is the history.
+
 Entry template:
 
 ```
@@ -1393,3 +1400,39 @@ Entry template:
   surface, and each arm fails closed on a version this build does not define.
 - Spec impact: none.
 - Needs your decision: no
+
+
+## 2026-07-15 — PROGRESS.md split into state + ledger; handoff §5 and its artifact table now describe a file that no longer exists
+- Where: startup context cost. `PROGRESS.md` had reached 149 KB / 2,263 lines —
+  91% of it chronology — against a Read default of 2,000 lines, so the "header
+  block + tail" slice AGENTS.md §1 asks for was not reachable by any obvious
+  read. Measured startup read-set was ~38.7k tokens before the first edit.
+- Gap: the handoff pins `PROGRESS.md` as an "append-only human chronology
+  ending in a `NEXT:` line" (§5, and the §1.3 artifact table) and as "the only
+  cross-session, cross-harness memory". Append-only is right for auditability
+  and wrong for a file read at every startup: the cost grows monotonically with
+  session count (73 sessions in 6 days), and there is no compaction ritual
+  anywhere in the handoff or AGENTS.md that ever moves anything out.
+- Choice: split by read-discipline, not by content. `PROGRESS.md` keeps state
+  only — header, phases, live Parked, exactly one `NEXT:` — at 154 lines, and is
+  read whole. The 88-entry chronology moved **verbatim** to
+  `docs/ledger/chronology-phase-0-2.md`, append-only, never a startup read;
+  Phase 3 onward opens `docs/ledger/phase-3.md`. Startup read-set: 38.7k -> 5.3k
+  tokens (86%). Conservative because: nothing was summarized, rewritten, or
+  dropped (every non-empty line was accounted into one file or the other, and
+  the pre-reconciliation Parked block is preserved verbatim in the archive
+  appendix); the two-file shape preserves the handoff's actual intent (one
+  authoritative cross-harness memory) while making its startup instruction
+  physically satisfiable; and it is reversible by concatenation.
+- Spec impact: **handoff §5** ("append-only human chronology ending in an
+  explicit `NEXT:` line ... the only cross-session, cross-harness memory") and
+  the **§1.3 artifact table** row for `PROGRESS.md` ("Append-only human
+  chronology ending in a `NEXT:` line") both now describe a file that does not
+  exist. Both should be reworded to the two-file shape: `PROGRESS.md` = state,
+  read whole, not append-only; `docs/ledger/` = append-only history, never a
+  startup read. Until they are, AGENTS.md §5 supersedes them on ledger
+  mechanics — recorded in AGENTS.md so an agent that consults the handoff on a
+  ledger question does not "repair" `PROGRESS.md` by appending history back into
+  it and silently undo the split.
+- Needs your decision: no (informational — the handoff is frozen operator input;
+  an agent rewording it unilaterally is the larger deviation)
