@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"mc/boundary"
+	"mc/refusal"
 )
 
 // ADR-017's rejection namespace is closed. This test is deliberately an exact
@@ -75,6 +76,29 @@ func TestADR017StableRejectionCodesAreExactAndClosed(t *testing.T) {
 	for name, value := range declared {
 		if !want[value] {
 			t.Errorf("declared constant %s = %q is outside ADR-017's closed set", name, value)
+		}
+	}
+}
+
+// TestEveryDeclaredMountCodeHasAnADR016Class makes good on the promise the test
+// above states in prose: "a newly invented mount.* code has no ADR-016
+// consequence and therefore cannot safely reach dispatch." It is enforced here,
+// against the AST-declared constants, rather than in mc/refusal, because this is
+// the file an author touches when inventing a code — the failure has to land
+// where the mistake is made, not one package downstream at run time.
+//
+// The dependency direction is deliberate: mc/refusal imports mc/boundary, so the
+// production package stays a leaf and only this external test reaches back.
+func TestEveryDeclaredMountCodeHasAnADR016Class(t *testing.T) {
+	for name, code := range declaredMountCodes(t) {
+		// Authority is accepted for all sixteen: it decides the class for the
+		// fourteen candidate-ownable codes and is deliberately irrelevant to
+		// the two allowlist trust codes (ADR-016 D4's carve-out).
+		if _, err := refusal.Classify(refusal.Refusal{
+			Code:      code,
+			Authority: refusal.AuthorityCandidate,
+		}); err != nil {
+			t.Errorf("declared constant %s = %q has no ADR-016 D4 consequence class: %v", name, code, err)
 		}
 	}
 }
