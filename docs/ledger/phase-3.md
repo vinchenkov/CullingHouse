@@ -331,3 +331,90 @@ file's end while the falsehood sat mid-file. Net effect had been the worst
 combination: the false claim alive, the warning gone. Both are now removed; the
 verified truth lives in IMPLEMENTATION-NOTES, which is why deleting the paragraph
 costs nothing.
+
+## 2026-07-16 — ADR-016 D3 lands: the v2→v3 launch-fencing migration, the D4 launch fence, the preflight marker
+
+The outgoing `NEXT:` this session consumed:
+
+> Land ADR-016 D3's launch-fencing columns as the v2→v3 migration, red-first
+> (docs/adr/INDEX.md → 016 D3, line 275; the column list is lines 280–302) …
+> Then close the two things this unblocks, in order: 1. The D4 Homie arm's
+> launch fence … 2. homie.preflight_health (ADR-016 line 433).
+
+All three landed red-first, then an adversarial review pass fixed what it
+confirmed. Four commits: 5fb4221 (migration), 0394169 (launch fence),
+6008b4c (marker), 747f077 (review findings).
+
+**The migration (5fb4221).** Eleven columns on `homie_sessions`, every
+pairing rule a CHECK: launch id/mode both-null-or-both-present, container id
+paired with bound time and requiring a launch, start time requiring the
+bound pair, typed resume debt mutually exclusive with a current launch, the
+rows-only non-negative prime pair on both sides. `CurrentSchemaVersion = 3`;
+the v2 schema is frozen in `substrate/testdata/schema-v2.sql`; migrated v1
+and v2 spines are held to the same fence set and column/index shape as a
+fresh spine by the same assertion helper; a planted duplicate column proves
+mid-step DDL failure rolls back to an untouched v2. Two iff readings logged
+in IMPLEMENTATION-NOTES (prime pair present exactly when mode is `rows`;
+resume_mode present exactly when `resume_owed=1`).
+
+**The D4 launch fence (0394169).** `RefusalCandidate` carries the
+`current_launch_id` observed at selection; the RefusalHomie arm ends the
+session only when the row is still on that generation. A fence miss applies
+NO consequence (`consequence:"none"`, `launch_superseded:true`) — the stale
+class's posture, on the reasoning that a superseded generation is
+`preflight.candidate_mismatch` discovered at commit time; the current
+generation earns its own verdict next tick, so no starvation. Logged in
+IMPLEMENTATION-NOTES (D4 never says what a fence miss does).
+
+**The preflight marker (6008b4c).** `homie.preflight_health` is D3 selection
+bookkeeping, not a D4 consequence: closed detail exactly
+`{candidate_key, defer_pipeline:true}`, key = SHA256 over a frozen canonical
+JSON of the pre-prepare state (session id, whole typed launch/resume debt,
+frozen binding, highest PENDING inbound seq). A golden vector pins the
+serialization as a cross-harness wire contract. No caller but tests — the
+consume half belongs to the future selector. Four interpretations logged.
+
+**The review (747f077).** Three read-only lenses (ADR conformance, SQLite
+semantics, test integrity), each finding adversarially verified by an
+independent agent told to refute it; 6 confirmed, 2 refuted. The confirmed
+set was humbling and specific — every one proven by a scratch-DB probe or a
+mutant run outside the repo:
+
+1. *(major)* A NUL-embedded 16-byte **BLOB** passed the launch-id fence: TEXT
+   affinity never converts BLOBs, `length(blob)` counts bytes, GLOB reads
+   only to the first NUL. The schema comment's "admits only NUL-free ASCII"
+   was simply false for BLOBs. Fixed with a `typeof = 'text'` conjunct; same
+   for the container id.
+2. *(major)* The marker write half was never tied to the read half — a
+   mutant hashing a drifted serialization passed everything. Fixed: the
+   stored key is cross-checked against recomputation AND the golden vector.
+3. *(minor)* `'abc' >= 0` is TRUE in SQLite (TEXT sorts above numbers), so
+   the four INTEGER prime fences admitted junk; `typeof = 'integer'` pins.
+4. *(minor)* The ADR closes the empty prefix to exactly (0,0); the schema
+   stored (0,41) and a test canonized it. Coherence CHECK added, test fixed.
+5. *(minor)* resume_owed's IN (0,1) and NOT NULL were each shadowed by a
+   co-located CHECK in the only aimed test; mutants dropping either passed
+   the full suite. Each now has a case only it can reject.
+6. *(minor)* The claimed-but-incomplete inbound window (ADR names it
+   selection-relevant) was never sampled; a `claimed_at`-for-`completed_at`
+   mutant passed. Now sampled between claim and completion.
+
+The two refutations were also work: the "health arm never appends the
+marker" claim indicted unwritten selector code (the D3-not-D4 split is the
+logged design), and the "empty-to-empty fence ABA" claim dissolved because
+the candidate-key/stale machinery — not the launch fence — owns that seam,
+and the proposed fix wouldn't have closed its own scenario.
+
+The v2→v3 text was corrected in place — it had never run outside throwaway
+test dirs, so freezing starts now, at its first real shape. D2's
+activity/outbox hex fences share the BLOB hole (they were the copied
+template, and they DID ship in frozen v1→v2): closing them needs a fence
+trigger in a later migration; the schema comment now warns against copying
+the shape. Logged in IMPLEMENTATION-NOTES.
+
+Still true at session end: there is NO prepare/attest/commit seam —
+`verbs.Dispatch` is Phase 2's single-transaction `Decide()` → `applyAction`.
+Nothing produces a `refusal.Refusal`; `applyRefusal` and the marker have no
+caller but tests. The launch/debt columns have no production writer either
+(`homie start` relies on their defaults; resume does not yet clear/set
+them). D1/D5 is what makes all of it reachable.

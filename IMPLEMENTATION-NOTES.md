@@ -1748,3 +1748,93 @@ Entry template:
   against the UI that owns it. The operator's screenshot was the disproof.
 - Spec impact: none.
 - Needs your decision: no (nothing to do; the pin stands)
+
+## 2026-07-16 — D3 pairing rules read as iff, not may-carry
+- Where: Phase 3, the v2→v3 migration (ADR-016 D3 lines 280–302)
+- Gap: two D3 sentences are directional on their face: "Only `rows` mode
+  carries the paired prime cutoff/count" and "Resume debt is represented by
+  `resume_owed=1` plus a mode". Neither says explicitly whether a `rows`
+  launch MAY omit its pair or a debt MAY omit its mode.
+- Choice: both read as iff and stored as CHECKs: the prime pair is present
+  exactly when mode is `rows` (both sides), and `resume_mode` is present
+  exactly when `resume_owed=1`. Conservative: a rows launch without a cutoff
+  cannot be primed and a modeless debt cannot be resumed, so admitting them
+  stores state no consumer can act on — fail-closed is the narrower schema,
+  and widening later is one ALTER away while narrowing would need a rebuild
+  §16.4 forbids.
+- Spec impact: none (ADR-016 D3 could say "exactly when" in both sentences)
+- Needs your decision: no
+
+## 2026-07-16 — the launch-fence miss applies NO consequence (stale posture)
+- Where: Phase 3, ADR-016 D4's Homie row ("launch-fenced end") at the D4
+  router's RefusalHomie arm
+- Gap: D4 names the consequence "launch-fenced end" but never says what
+  happens when the fence fails — when the session has moved to a different
+  launch generation between selection and commit.
+- Choice: the miss applies no durable mutation and returns
+  `consequence:"none"` with `launch_superseded:true` — the stale class's
+  posture, on the reasoning that a superseded generation is exactly
+  `preflight.candidate_mismatch` discovered at commit time. No starvation
+  follows: the current generation is re-attested next tick and earns its own
+  verdict. Rejected alternative: ending anyway (punishes a generation the
+  refusal never judged, and is irreversible). Also: the candidate's observed
+  launch id is validated (empty or 16 lowercase hex) before any write, never
+  coerced.
+- Spec impact: ADR-016 D4 could state the miss outcome in its Homie row
+- Needs your decision: no
+
+## 2026-07-16 — homie.preflight_health: four interpretations under one sentence
+- Where: Phase 3, ADR-016 D3's marker sentence (line ~433), landed as
+  `mc/verbs/homiepreflight.go` (write half only; nothing selects Homie
+  candidates yet, so tests are the only caller — same posture as
+  applyRefusal when it landed)
+- Gap: the sentence fixes the key's coverage but not (a) the exact
+  serialization under the SHA256, (b) which conversation sequence is
+  "relevant", (c) the detail's exact fields, (d) whether an inactive session
+  may be marked.
+- Choice: (a) canonical JSON with frozen field order, pinned by a golden
+  vector test declared an ADR-worthy event to change — the key is a
+  cross-harness wire contract; (b) the highest PENDING inbound seq
+  (direction=inbound, completed_at IS NULL): new input changes the key
+  (immediately eligible per D3), replies don't, and consuming the input
+  returns the key to its input-less value; (c) detail is exactly
+  {candidate_key, defer_pipeline:true} — the health code stays on the D4
+  health action, so the marker never repeats WHAT broke and stays leak-proof
+  by construction; (d) fail-closed: unknown or inactive sessions are
+  refused, since a marker for an unattestable row defers the pipeline for
+  nothing.
+- Spec impact: the serialization could be frozen in ADR-016 D3 as an
+  appendix once the selector lands
+- Needs your decision: no
+
+## 2026-07-16 — v2→v3 corrected in place after adversarial review; D2's fences share the BLOB hole
+- Where: Phase 3, adversarial review of the D3 slices (3 lenses + adversarial
+  verify per finding; 6 confirmed, 2 refuted; storage holes proven with
+  scratch-DB probes under the pinned modernc.org/sqlite, evidence in the
+  review transcripts)
+- Gap: three storage holes in the just-landed launch fences — BLOBs bypass
+  the dual-length hex fences (TEXT affinity never converts them, length()
+  counts bytes, GLOB reads to the first NUL), junk TEXT/BLOB/REAL passes
+  the `>= 0` integer fences (cross-type ordering ranks TEXT and BLOB above
+  every number), and the ADR's closed empty-prefix encoding (0,0) was
+  unenforced, with a test canonizing the excluded (0,41) shape. Plus three
+  vacuous-test gaps (write/read marker key never cross-checked; resume_owed
+  range and NOT NULL each shadowed by a co-located CHECK; the
+  claimed-but-incomplete window never sampled).
+- Choice: all six fixed red-first (747f077). The migration constant's own
+  doc declares its text frozen; it was nevertheless corrected IN PLACE
+  because v3 landed this same session and has never run outside throwaway
+  test dirs — no deployed spine carries the weak shape, so a corrective v4
+  would have shipped the hole in v3 forever for nothing. Freezing starts at
+  first deployment, which for v3 is now. NOT corrected: the same BLOB hole
+  in ADR-016 D2's activity/outbox hex fences (dispatch_key,
+  dispatch_request_id, event_destination_key — the template these copied).
+  Those DID ship in the frozen v1→v2, a column CHECK cannot be altered
+  afterwards, and §16.4 forbids the rebuild — closing them needs a fence
+  trigger in a later migration. Flagged in the schema comment at the D2
+  columns ("do not copy this shape without typeof") so the template cannot
+  propagate again; only mc's Go layer (which always binds strings) writes
+  those columns today, so the fence is politeness-backed until then.
+- Spec impact: none (ADR-016 D2 could note the typeof requirement)
+- Needs your decision: no (the D2 fence trigger is ordinary engineering,
+  queued behind the D1/D5 slice)

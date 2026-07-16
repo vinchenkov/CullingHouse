@@ -10,7 +10,7 @@ Access does NOT fix it — the failure precedes any policy lookup. Symptom:
 `stat` works, reads return `Operation not permitted`, git says
 `Unable to read current working directory`.
 
-LAST GREEN SHA: 556968c (local; the operator pushes manually — decided 2026-07-14, see Parked. Agents: do not push.)
+LAST GREEN SHA: 747f077 (local; the operator pushes manually — decided 2026-07-14. Agents: do not push.)
 PHASES PASSING: Phase 0 COMPLETE (S1–S8 all green, no fallback ADRs; only operator-leg deferrals remain); Phase 1 COMPLETE (1a substrate 172; 1b walking skeleton reviewed-and-fixed — fake-harness 43, agent-runner 13, runner/image 40, resident 42, dispatch + cmd/mc suites; Docker e2e PASS ×4 total); Phase 2 COMPLETE for every unparked acceptance line (domain/§18 surface, deterministic split-brain convergence, bounded honesty + five mutants, tagged dispatch/metamorphic/twin-spine lifecycle properties; the initiative-wave CLI is no longer isolated — ADR-020 landed 2026-07-14 and closed the last Phase 2 acceptance line)
 KNOWN-FAILING: `TestOnboardConcurrentFreshHomeNeverDeletesTheWinner` (mc/verbs),
 INTERMITTENT — ~1 in 21 full-suite runs; 0/21 at HEAD, 15/15 and 60/60 green in a
@@ -28,7 +28,7 @@ paths (which already handle the *later* stages of this same race) and refuse onl
 if it stays table-less. Owner: whoever next touches onboarding — not a Phase 3
 blocker. Full diagnosis in IMPLEMENTATION-NOTES.md (2026-07-15).
 
-Note the spine is now schema v2 (substrate.CurrentSchemaVersion): a spine created by an mc build older than 48eaf63 is migrated in place by `mc onboard home`; scratch MC_HOME spines need no action.
+Note the spine is now schema v3 (substrate.CurrentSchemaVersion): `mc onboard home` migrates older spines in place (v1→v2→v3); scratch MC_HOME spines need no action. Known storage gap: ADR-016 D2's activity/outbox hex fences admit BLOB forgeries (no typeof pin — they shipped in frozen v1→v2 and a column CHECK cannot be altered); a fence trigger in a later migration closes it. The D3 launch fences on homie_sessions already carry the typeof pin. Flagged in schema.sql at the D2 columns; log entry 2026-07-16.
 FAST SUITE: mc/check.sh (gofmt + vet on the untagged build AND on the nightly/docker_e2e/test_fake_routing tagged builds — they must compile every commit, added 2026-07-14 after a tagged suite rotted invisibly — + go test ./...; includes substrate + promoted dispatch) + runner/fake-harness/check.sh + runner/agent-runner/check.sh + runner/image/check.sh + resident/check.sh. Docker e2e (phase-completion lane): cd mc && mise exec -- go test -tags docker_e2e -timeout 15m ./e2e/...
 
 ## Phases
@@ -107,6 +107,16 @@ kept below. Operator legs that remain open are under `## Parked`, not here.
         fan-out — no block path has one yet). NOT YET REACHABLE from `mc
         dispatch`: nothing produces a Refusal, so the router has no caller but
         its tests
+  - [x] ADR-016 D3 storage + fences (5fb4221..747f077): the eleven
+        launch-fencing/resume-debt columns as the v2→v3 migration, pairing
+        lattice as CHECKs with typeof pins and the closed (0,0) empty-prefix
+        encoding; the D4 Homie end's `current_launch_id` generation fence
+        (miss = no consequence, stale posture); the `homie.preflight_health`
+        marker write half with its golden-vectored candidate key. Adversarial
+        review (6 confirmed findings, all fixed; 2 refuted) closed the slice.
+        The launch columns have NO production writer yet (`homie start` uses
+        their defaults; resume does not clear/set them) — that is the
+        selector/effector slices' work
 - [ ] Phase 4 — E2E control loops (six scenario families)
 - [ ] Phase 5 — Real-subscription acceptance (operator-scheduled)
 - [ ] Release prep (after Phase 5): swap the repo's construction face for
@@ -126,44 +136,24 @@ deleted, not struck through. History is in `docs/ledger/`.
   agent cannot sleep the machine it runs on). Instructions in
   `spikes/07-launchd-clock/RESULT.md`. All other S7 sub-tests passed.
 
-NEXT: Land ADR-016 D3's launch-fencing columns as the v2→v3 migration, red-first
-(`docs/adr/INDEX.md` → 016 D3, line 275; the column list is lines 280–302). This
-is the smallest slice that unblocks the most: it is named as the blocker by two
-separate deviations logged 2026-07-15, and by the Homie arm of the D4 router
-that just landed.
+NEXT: Begin ADR-016 D1's dispatch seam — the slice that makes a
+`refusal.Refusal` producible and everything parked behind it reachable: the D4
+router, its launch fence, the preflight marker, and D2's stored receipt fences
+all have no production caller until this exists. Read `docs/adr/INDEX.md` →
+016 D1 (line 25: one external command, private same-binary prepare → attest →
+commit composition) and only then D5 (line 593) for the host-evidence half.
 
-Eleven columns on `homie_sessions`, with the pairing rules as CHECKs, not as Go
-politeness: `current_launch_id` (exactly 16 lowercase hex when present) and
-`current_launch_mode` (`fresh|native|rows`) are both-null-or-both-present;
-`current_container_id` (exactly 64 lowercase hex) and `launch_bound_at` are
-paired and require a current launch; `launch_started_at` requires the bound
-pair; `resume_owed` (`0|1`) plus `resume_mode` (`native|rows`) carry the debt and
-are **mutually exclusive with a current launch**; only `rows` mode carries the
-paired `*_prime_through_seq` / `*_prime_row_count` cutoff/count (non-negative),
-on both the launch and resume sides. `homie start` initializes every
-launch/debt field empty/zero.
+Slice it smallest-first: D1's command frame and the private prepare step that
+(a) derives `dispatch_key` (today an INPUT to `applyRefusal` — the logged
+honesty gap), (b) observes the launch generation the D4 fence compares, and
+(c) runs the plan validator over `mc/boundary` so an invalid plan yields a
+typed `refusal.Refusal` instead of nothing. The full D5 path-evidence predicate
+is its own later slice; do not pull it into the frame slice.
 
-Copy the hex CHECK shape from the D2 fences already in `schema.sql:742-757` —
-`length() = N AND length(CAST(x AS BLOB)) = N AND x NOT GLOB '*[^0-9a-f]*'`. The
-dual-length test is not decoration: it is what stops a NUL-truncated forgery
-storing as a distinct UNIQUE value its own lookup cannot find. The v1→v2
-migration at `substrate.go:111-120` (`migrationV1ToV2`) is the pattern to follow,
-and `substrate/migration_test.go` is where its test lives.
-
-Then close the two things this unblocks, in order:
-  1. The D4 Homie arm's launch fence. `verbs/refusalroute.go`'s RefusalHomie arm
-     names the seam in a comment; it gains a `current_launch_id` predicate and
-     nothing else changes.
-  2. `homie.preflight_health` (ADR-016 line 433) — D3's starvation marker, NOT a
-     D4 consequence. Its `candidate_key = SHA256` covers the pre-prepare
-     canonical session id, current launch/resume debt, frozen binding, and
-     conversation sequence, plus `defer_pipeline=true`. It is only meaningful
-     once something selects Homie candidates, which nothing does yet
-     (`grep -rn homie mc/dispatch` → zero hits).
-
-Measured, still true, do not re-derive: there is NO prepare/attest/commit seam —
-`verbs.Dispatch` is still Phase 2's single-transaction `Decide()` → `applyAction`
-(five kinds). Nothing produces a `refusal.Refusal`, so `applyRefusal` has no
-caller but its tests. Making it reachable is D1/D5's slice (the host plan
-validator over `mc/boundary`), not this one. Keep aggregate mount no-drop
-acceptance open until the planner exists. Do not load launchd.
+Measured 2026-07-16, do not re-derive: `verbs.Dispatch` is still Phase 2's
+single-transaction `Decide()` → `applyAction` (five kinds). Nothing produces a
+`refusal.Refusal`. The eleven launch/debt columns exist (schema v3) but have NO
+production writer — `homie start` relies on their defaults; resume does not yet
+clear/set them; `grep -rn homie mc/dispatch` → zero hits. Keep aggregate mount
+no-drop acceptance open until the planner exists. Queued behind this slice:
+the D2 BLOB fence trigger (see header note). Do not load launchd.
