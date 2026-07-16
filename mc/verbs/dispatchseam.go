@@ -562,13 +562,16 @@ func dispatchAttest(home string, prepared preparedDispatch) (attestedDispatch, e
 	if err != nil {
 		return routingRefusal(reattestedUUID, refusal.SummaryUnresolved, err), nil
 	}
-	// Mount attestation: planMounts (mountplan.go) is the one gate a
-	// candidate's bind requests go through — an invalid plan classifies into
-	// a typed refusal exactly like routing above, and commit routes it. No
-	// Phase-2 candidate carries mount requests yet; the slice that derives
-	// them from Worksource/Profile state supplies the requests and the
-	// JurisdictionInput assembly, and until then an empty set validates
-	// nothing (aggregate no-drop acceptance stays open, PROGRESS NEXT).
+	// Test-fake routing is the only place the Phase-1 resident's static
+	// workspace bind survives. It cannot be parsed by an untagged production
+	// binary, so it supplies no production mount authority.
+	mountRefusal, err := attestCandidateMounts(home, cand, route.Harness == "fake")
+	if err != nil {
+		return attestedDispatch{}, err
+	}
+	if mountRefusal != nil {
+		return attestedDispatch{deploymentUUID: reattestedUUID, refusal: mountRefusal}, nil
+	}
 	return attestedDispatch{deploymentUUID: reattestedUUID, route: route, routingDigest: hex.EncodeToString(sum[:])}, nil
 }
 

@@ -2,6 +2,7 @@ package boundary
 
 import (
 	"errors"
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -193,8 +194,9 @@ func ResolveJurisdiction(in JurisdictionInput, ownerUID int) (Jurisdiction, erro
 	// allocation — including before HOME is resolved. A boundary excess rejects;
 	// it is never truncated.
 	if len(in.DeniedPaths) > maxDeniedPaths {
-		return Jurisdiction{}, mountErrf(CodeDeniedRoot,
-			"profile denied_paths: %d entries exceeds the %d limit", len(in.DeniedPaths), maxDeniedPaths)
+		return Jurisdiction{}, &MountError{Code: CodeDeniedRoot,
+			Msg:               fmt.Sprintf("profile denied_paths: %d entries exceeds the %d limit", len(in.DeniedPaths), maxDeniedPaths),
+			CandidateAuthored: true}
 	}
 
 	typedRoots, err := cloneTypedRoots(in.TypedRoots)
@@ -281,15 +283,25 @@ func ResolveJurisdiction(in JurisdictionInput, ownerUID int) (Jurisdiction, erro
 	for _, p := range in.DeniedPaths {
 		id, err := resolveDeclared(p)
 		if err != nil {
-			return Jurisdiction{}, err
+			return Jurisdiction{}, markCandidateAuthored(err)
 		}
 		if err := j.addRoot(id, false, "profile denied_paths entry"); err != nil {
-			return Jurisdiction{}, err
+			return Jurisdiction{}, markCandidateAuthored(err)
 		}
 	}
 
 	j.resolved = true
 	return j, nil
+}
+
+func markCandidateAuthored(err error) error {
+	var me *MountError
+	if !errors.As(err, &me) {
+		return err
+	}
+	marked := *me
+	marked.CandidateAuthored = true
+	return &marked
 }
 
 // cloneTypedRoots validates the closed D10a domain and takes an immutable

@@ -37,6 +37,12 @@ const (
 type MountError struct {
 	Code string
 	Msg  string
+
+	// CandidateAuthored is set only when ResolveJurisdiction can prove the
+	// rejection arose from the selected profile's denied_paths input. Other
+	// mount errors leave authority to the host planner, which knows whether a
+	// request was candidate- or deployment-authored.
+	CandidateAuthored bool
 }
 
 func (e *MountError) Error() string { return e.Msg }

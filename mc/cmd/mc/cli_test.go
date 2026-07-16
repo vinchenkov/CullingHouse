@@ -216,6 +216,20 @@ func initSpine(t *testing.T, extra ...string) string {
 	if err := os.WriteFile(filepath.Join(filepath.Dir(spine), "deployment.uuid"), []byte(uuid+"\n"), 0o600); err != nil {
 		t.Fatalf("write deployment mirror: %v", err)
 	}
+	// The shared Phase-2 CLI fixture exercises generic decision/lease behavior,
+	// not ADR-017's Git task-repository setup plane. Model its workspace as the
+	// registered non-repository arm; production mc init still creates `repo`.
+	db, err := substrate.Open(spine)
+	if err != nil {
+		t.Fatalf("open fixture spine: %v", err)
+	}
+	if _, err := db.Exec(`UPDATE worksources SET kind='personal' WHERE id='ws-test'`); err != nil {
+		db.Close()
+		t.Fatalf("set fixture Worksource kind: %v", err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatalf("close fixture spine: %v", err)
+	}
 	return spine
 }
 

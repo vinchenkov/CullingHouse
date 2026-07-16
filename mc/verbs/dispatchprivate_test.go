@@ -130,7 +130,7 @@ func TestWorksourceArchiveRejectsProjectionBeyondAggregateBudget(t *testing.T) {
 	}
 	roots = append(roots, "/z")
 	row := substrate.DispatchWorksource{
-		WorksourceID: "ws-test", Kind: "repo", Status: "active", ProfilePresent: true,
+		WorksourceID: "ws-test", Kind: "personal", Status: "active", ProfilePresent: true,
 		ProfileID: "default", WorkspaceRoot: "/tmp/ws-test", ArtifactRoots: roots,
 		ReadonlyMounts: []string{}, DeniedPaths: []string{},
 	}

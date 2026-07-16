@@ -51,6 +51,10 @@ func dvSpine(t *testing.T, initArgs ...func(*InitArgs)) *sql.DB {
 		t.Fatalf("open spine: %v", err)
 	}
 	t.Cleanup(func() { db.Close() })
+	// Phase-2 dispatch tests exercise the decision/lease spine, not ADR-017's
+	// Git task-repository setup plane. Use the registered non-repository arm so
+	// production mount attest does not legitimize the old direct Git bind.
+	dvExec(t, db, `UPDATE worksources SET kind='personal' WHERE id='ws-test'`)
 	// The ADR-016 D1 deployment identity mirror: dispatch refuses to prepare
 	// without it matching meta.deployment_uuid.
 	var uuid string
