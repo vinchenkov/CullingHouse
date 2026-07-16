@@ -221,3 +221,58 @@ NUL-fenced hex CHECK shape from the D2 fences at `schema.sql:742-757` and follow
 is no prepare/attest/commit seam, nothing produces a `refusal.Refusal`, and so
 `applyRefusal` has no caller but its tests — making it reachable is D1/D5's
 slice, not this one. Do not load launchd. Full text in PROGRESS.md.
+
+## 2026-07-15 — Parked reconciled a second time: four items left, none blocking
+
+The operator asked what the Parked items were actually *for*, and whether they
+blocked anything. Answering it honestly shrank the list from six to four and
+turned the largest remaining item from a research task into two clicks.
+
+**Nothing parked blocks Phase 3.** The `NEXT:` slice (D3's migration) is Go and
+schema; it touches none of them. Two items blocked nothing at any point and are
+now closed by operator decision; two are structural and can never be agent-done;
+two are operator-hardware legs.
+
+**Docker (handoff §4.1 row 4) is now measured, not researched.** Server 29.4.0,
+ECI `false`, ResourceSaver `false`, AutoStart `true`, VirtioFS backend on, no
+userns remap, VM 14 CPU / 8092 MiB / 1024 MiB swap / 122880 MiB disk. Every row-4
+requirement passes **except the pin**, and the gap is exactly one key:
+`DisableUpdate: false`. Updates do not auto-download, but the version is not
+frozen, which is precisely what row 4 means. Two findings the old entry missed:
+the VirtioFS backend is confirmed on (which is *why* AGENTS.md's environment fact
+says bind-mount watchers must poll — the two now corroborate instead of merely
+coexisting), and the VM's 8092 MiB is 7.9 GiB, at or just under row 4's own
+`≥8 GB` floor and thin for Phase 4's six scenario families.
+
+**The two autonomy items are structural, and the classifier proved it live.**
+Asked to check whether the Codex/Claude autonomy keys were already set, the
+auto-mode classifier denied the read as permission-widening reconnaissance. That
+denial *is* the items' justification: an agent cannot inspect, let alone grant,
+its own approval gates. They are not oversights. Their end (handoff §1.4/§1.5) is
+not the product's autonomy at all but the *build's* throughput: permissions are
+"the #1 autonomy killer", every prompt is a stall until the operator returns, and
+Codex's default sandbox blocks the Docker socket that Phases 3–4 require — so
+without its profile Codex cannot do the container phases at all, and the two-pool
+quota failover AGENTS.md §8 depends on does not exist. The handoff's own warning
+is the argument for doing it early or not at all: "a quota outage is the wrong
+moment to debug config."
+
+**Closed: `db_schemas.sql`.** The spec wins over it by the handoff's own rule, and
+the schema is now v2 with a migration, a 155-case backstop, and the trigger
+lattice. A v0 seed file dropped in at Phase 3 would confuse, not inform.
+
+**Closed: the `docs/priors/` originals — the notes stay.** The distinction matters
+and nearly went the wrong way. The *entry* was a standing request for the lost
+`poc/` material; the three *notes* are trusted and load-bearing, carrying Inv. 14
+(the SDK's depth-1 subagent cap the spec treats as enforced "by construction"),
+Inv. 13 and the never-cut forbidden-env scan, and spec §11.4/S3's credential-home
+rule — plus live Phase 5 regression obligations. Only the request is closed. Cost:
+Phase 5 builds its sharp-edge regressions from the reconstructed one-liners rather
+than original repros, and re-observes the detail empirically.
+
+Discipline note, self-inflicted: closing the two entries was first written *as an
+explanation of why they were closed*, left in `PROGRESS.md`. That is the tombstone
+anti-pattern §5 bans, in spirit if not in strikethrough — dead content that still
+costs tokens and still parses as instruction. Deleted; the rationale is here,
+which is where history goes. The older "reconciled 2026-07-15, eleven entries
+removed, two were lying" paragraph went the same way for the same reason.
