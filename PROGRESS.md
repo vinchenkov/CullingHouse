@@ -122,23 +122,6 @@ kept below. Operator legs that remain open are under `## Parked`, not here.
 Operator-only decisions. **No tombstones** (AGENTS.md §5): a resolved item is
 deleted, not struck through. History is in `docs/ledger/`.
 
-- **Docker VM is undersized for ADR-019's own envelopes** (handoff §4.1 row 4):
-  the snapshot is recorded in `OPERATOR-INPUTS.md` and every other part of row 4
-  passes — ECI `false` (S1's setuid gate depends on this staying off; if an update
-  flips it, the Docker suites fail in a way that reads like a code bug),
-  ResourceSaver `false`, AutoStart `true`, VirtioFS on, no userns remap, server
-  29.4.0, **update pin satisfied** (nothing auto-installs; only a deliberate click
-  moves it — an earlier note calling `DisableUpdate:false` a gap misread an
-  admin-policy key as a user preference).
-  What is left is one operator decision, and it is arithmetic, not taste. VM =
-  **8092 MiB**. ADR-019's shipped defaults, at the concurrent peak (Homie is
-  lease-free, so it overlaps a pipeline run): pipeline 4096 + guard 512 + homie
-  2048 + guard 512 + helper 512 = **7680**, leaving **412 MiB** for
-  dockerd/containerd/VM kernel. One transient `setup` or `landing` (1024) puts it
-  at **8704 — over by 612**, i.e. an OOM mid-run. ADR-019 line 6 also records that
-  the spec *fixes* a `≥8 GiB` floor, and 8092 MiB is 7.9 GiB — 100 MiB under it.
-  Host has **36 GiB** physical, so headroom is free. **Recommend 12 GiB** (16 if
-  two Homies should ever coexist). Phase 4 is where this bites.
 - **S7 sleep drill**: the 30-min Mac sleep mid-lease test needs the operator (an
   agent cannot sleep the machine it runs on). Instructions in
   `spikes/07-launchd-clock/RESULT.md`. All other S7 sub-tests passed.

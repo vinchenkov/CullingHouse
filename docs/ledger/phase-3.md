@@ -276,3 +276,58 @@ anti-pattern §5 bans, in spirit if not in strikethrough — dead content that s
 costs tokens and still parses as instruction. Deleted; the rationale is here,
 which is where history goes. The older "reconciled 2026-07-15, eleven entries
 removed, two were lying" paragraph went the same way for the same reason.
+
+## 2026-07-15 — handoff §4.1 row 4 closed; Parked is down to one item
+
+The operator raised the Docker VM to 12288 MiB (11.7 GiB live — Docker restarted
+into it, verified via `docker info`, not just the settings file), pushed `main`,
+and the row 4 entry leaves Parked entirely. **One parked item remains: the S7
+sleep drill**, which is agent-impossible by nature.
+
+ADR-019's concurrent peak — pipeline 4096 + guard 512 + lease-free homie 2048 +
+guard 512 + helper 512 = 7680, plus a transient setup/landing 1024 = 8704 — now
+fits with ~3 GiB spare. It did not fit before: 8092 MiB left 412 MiB for dockerd,
+containerd, and the VM kernel, and went 612 MiB over the moment a setup or
+landing container appeared. Phase 4's six scenario families would have been the
+first thing to put three containers in the air at once, so this was an OOM
+waiting at exactly the next phase.
+
+**Three claims were overturned by the operator in one exchange, all by looking at
+the thing rather than reasoning about it.** Worth recording as a pattern, not as
+three incidents:
+
+1. *"The freeze gap is `DisableUpdate: false`."* Wrong. That is an admin-policy
+   key (Docker's Settings Management), not the user auto-update preference. The
+   operator's settings pane showed "Always download updates" and "Automatically
+   update components" already unchecked — `AutoDownloadUpdates: false`,
+   `SilentModulesUpdate: false`. Nothing auto-installs; row 4's pin was already
+   satisfied. A key was read straight out of JSON and mapped to a requirement
+   without checking it against the UI that owns it.
+2. *"8 GiB is thin because the Playwright image is 1–2 GB."* Wrong — that is disk,
+   not RAM, and the 122 GiB disk was never in question. The conclusion survived
+   only because the real derivation (ADR-019's envelopes) happens to be worse.
+   Right answer, wrong reason, which is indistinguishable from luck.
+3. *"`git pull`."* Wrong three times running. The operator and the agent share one
+   working copy on one machine; there is nothing to pull, ever. `git push` is the
+   only operation that moves anything, and only the operator may run it.
+
+The common failure is reasoning from names and defaults instead of measuring —
+the exact thing this repo's discipline exists to prevent, and which the same
+session had just applied correctly to the D4 router (where a planted mutant
+exposed a test asserting SQLite's CHECK rather than the router's own guard). The
+lesson does not transfer by itself: it has to be applied to the boring
+config-shaped claims too, not only to the interesting code-shaped ones.
+
+Also closed: the secrets-in-history worry, verified rather than assumed. A
+`filter-repo` scrub ran 2026-07-10 (reflog d14578b) *after* the
+IMPLEMENTATION-NOTES entry that recorded the rewrite as declined, and that entry
+was never corrected — so the file's own paragraph still claimed live secrets sat
+in the seed commits and pre-accepted them travelling to any future remote.
+`git rev-list --objects --all` returns nothing for the path: the 2026-07-15 push
+to `git@github.com:vinchenkov/CullingHouse` carried no secrets. The operator moved
+to delete the stale paragraph and deleted the agent's *note about* it instead —
+an understandable miss, since the flag was the thing labelled STALE and sat at the
+file's end while the falsehood sat mid-file. Net effect had been the worst
+combination: the false claim alive, the warning gone. Both are now removed; the
+verified truth lives in IMPLEMENTATION-NOTES, which is why deleting the paragraph
+costs nothing.
