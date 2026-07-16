@@ -10,7 +10,6 @@ import (
 	"database/sql"
 	"encoding/binary"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -3924,17 +3923,29 @@ func TestHostDispatchRequiresOneUseResidentControl(t *testing.T) {
 	}
 }
 
-func TestHostDispatchHelloThenPreservesDelegatedResult(t *testing.T) {
+func TestPrivateDispatchVerbsRequireHelperSpineScope(t *testing.T) {
+	for _, verb := range []string{"__dispatch-prepare", "__dispatch-commit"} {
+		res := runMC(t, nil, "", verb)
+		if res.code != 1 || !strings.Contains(res.stderr, "helper's fixed spine scope") {
+			t.Fatalf("%s exit=%d stderr=%q, want fixed helper-scope refusal", verb, res.code, res.stderr)
+		}
+		if res.stdout != "" {
+			t.Fatalf("%s leaked a public/private frame on stdout: %q", verb, res.stdout)
+		}
+	}
+}
+
+func TestHostDispatchHelloThenUsesPrivatePrepareCommit(t *testing.T) {
+	spine := initSpine(t)
 	stubDir := t.TempDir()
 	stub := filepath.Join(stubDir, "docker")
-	script := "#!/bin/sh\necho \"{\\\"stub\\\":\\\"$*\\\"}\"\necho delegated-stderr >&2\nexit 7\n"
+	script := "#!/bin/sh\n" +
+		"test \"$1/$2/$3/$4\" = \"exec/-i/mc-helper-1/mc\" || exit 91\n" +
+		"exec env MC_SPINE=\"$MC_TEST_SPINE\" MC_HOME= MC_HELPER= \"$MC_TEST_BIN\" \"$5\" \"$6\" \"$7\"\n"
 	if err := os.WriteFile(stub, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	home := t.TempDir()
-	if err := os.WriteFile(filepath.Join(home, "deployment.uuid"), []byte("deployment-test-1\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	home := filepath.Dir(spine)
 	pair, err := unix.Socketpair(unix.AF_UNIX, unix.SOCK_STREAM, 0)
 	if err != nil {
 		t.Fatal(err)
@@ -3956,6 +3967,8 @@ func TestHostDispatchHelloThenPreservesDelegatedResult(t *testing.T) {
 	cmd.Env = append(base,
 		"MC_HELPER=mc-helper-1",
 		"MC_HOME="+home,
+		"MC_TEST_BIN="+mcBin,
+		"MC_TEST_SPINE="+spine,
 		"PATH="+stubDir+string(os.PathListSeparator)+os.Getenv("PATH"),
 	)
 	cmd.ExtraFiles = []*os.File{child} // child fd 3
@@ -3995,7 +4008,7 @@ func TestHostDispatchHelloThenPreservesDelegatedResult(t *testing.T) {
 		}
 		if hello.Op != "hello" || hello.Seq != 1 || hello.ReleaseBuildID == "" ||
 			hello.ControlVersion != 1 || hello.SpineSchemaVersion != substrate.CurrentSchemaVersion ||
-			hello.ConfigSchemaVersion != 1 || hello.DeploymentUUID != "deployment-test-1" {
+			hello.ConfigSchemaVersion != 1 || hello.DeploymentUUID == "" {
 			serverErr <- fmt.Errorf("unexpected hello: %+v", hello)
 			return
 		}
@@ -4014,18 +4027,21 @@ func TestHostDispatchHelloThenPreservesDelegatedResult(t *testing.T) {
 	}()
 
 	err = cmd.Run()
-	var exit *exec.ExitError
-	if !errors.As(err, &exit) || exit.ExitCode() != 7 {
-		t.Fatalf("dispatch exit err=%v, want delegated exit 7; stdout=%q stderr=%q", err, stdout.String(), stderr.String())
+	if err != nil {
+		t.Fatalf("dispatch exit err=%v, want private prepare/commit success; stdout=%q stderr=%q", err, stdout.String(), stderr.String())
 	}
 	if err := <-serverErr; err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(stdout.String(), "exec -i mc-helper-1 mc dispatch") {
-		t.Fatalf("stdout %q does not preserve delegated dispatch bytes", stdout.String())
+	var effect map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &effect); err != nil {
+		t.Fatalf("dispatch stdout %q is not the final ordinary effect: %v", stdout.String(), err)
 	}
-	if !strings.Contains(stderr.String(), "delegated-stderr") {
-		t.Fatalf("stderr %q does not preserve delegated stderr", stderr.String())
+	if effect["action"] != "spawn" {
+		t.Fatalf("dispatch effect = %v, want spawn through private prepare/commit", effect)
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("private helper frames leaked to stderr: %q", stderr.String())
 	}
 }
 

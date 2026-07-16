@@ -37,6 +37,10 @@ func BirthWave(ctx context.Context, q Q, initiativeID int64, children []WaveChil
 		if c.Title == "" {
 			return nil, Errf(CodeReasonRequired, "wave child %d: title is required (ADR-001 D4)", i)
 		}
+		if !validDispatchScalarAdmission(c.Title) {
+			return nil, Errf(CodeCarrierForbidden,
+				"wave child %d: title must be valid UTF-8 without controls and at most 4096 bytes (ADR-016 D2)", i)
+		}
 	}
 	r, err := getTask(ctx, q, initiativeID)
 	if err != nil {

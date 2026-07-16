@@ -50,7 +50,8 @@ async function main(): Promise<void> {
   const config = (await Bun.file(configPath).json()) as MainConfig;
 
   if (config.configSchemaVersion !== CONFIG_SCHEMA_VERSION ||
-      typeof config.releaseBuildId !== "string" || config.releaseBuildId.length === 0) {
+      typeof config.releaseBuildId !== "string" ||
+      !/^[A-Za-z0-9][A-Za-z0-9._+-]{0,127}$/.test(config.releaseBuildId)) {
     console.error("resident: config release/schema identity is missing or unsupported");
     process.exit(2);
   }

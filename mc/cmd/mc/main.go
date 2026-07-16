@@ -22,6 +22,7 @@ import (
 	"strconv"
 	"strings"
 
+	"mc/substrate"
 	"mc/verbs"
 )
 
@@ -35,10 +36,13 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		writeErrorEnvelope(stdout, stderr, "usage", "usage: mc <verb> …")
 		return 2
 	}
+	if args[0] == "__dispatch-prepare" || args[0] == "__dispatch-commit" {
+		return runPrivateDispatch(args, stdin, stdout, stderr)
+	}
 
 	// Self-delegation: host-side mc with no direct spine path but a named
 	// warm helper delegates the whole invocation into the lock domain.
-	if os.Getenv("MC_HELPER") != "" && os.Getenv("MC_SPINE") == "" {
+	if shouldDelegateToHelper() {
 		if args[0] == "dispatch" {
 			return brokerDispatch(args, stdin, stdout, stderr)
 		}
@@ -71,7 +75,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 }
 
 func delegate(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
-	helper := os.Getenv("MC_HELPER")
+	helper := helperContainerName()
 	argv := append([]string{"exec", "-i", helper, "mc"}, args...)
 	cmd := exec.Command("docker", argv...)
 	cmd.Stdin = stdin
@@ -136,7 +140,10 @@ func dispatchVerb(args []string, stdin io.Reader) (any, error) {
 		if err := verbs.RequireHostScope(id, "mc dispatch"); err != nil {
 			return nil, err
 		}
-		return withSpine(func(db *sql.DB) (any, error) { return verbs.Dispatch(db) })
+		return withSpine(func(db *sql.DB) (any, error) {
+			return verbs.DispatchWithProtocolIdentity(db, releaseBuildID, gatewayControlVersion,
+				substrate.CurrentSchemaVersion, configSchemaVersion)
+		})
 	case "complete":
 		return cmdComplete(rest)
 	case "editor":
@@ -174,7 +181,7 @@ func dispatchVerb(args []string, stdin io.Reader) (any, error) {
 		}
 		// Doctor opens (or reports on) the spine itself: it must diagnose a
 		// missing spine rather than fail on it, and must never create bytes.
-		return verbs.Doctor(id, os.Getenv("MC_SPINE"))
+		return verbs.Doctor(id, helperSpinePath())
 	case "backup":
 		if len(rest) != 0 {
 			return nil, verbs.Usagef("usage: mc backup")
@@ -183,7 +190,7 @@ func dispatchVerb(args []string, stdin io.Reader) (any, error) {
 		if err != nil {
 			return nil, err
 		}
-		return verbs.Backup(id, os.Getenv("MC_SPINE"))
+		return verbs.Backup(id, helperSpinePath())
 	case "reset":
 		fs := newFlags("mc reset")
 		confirm := fs.Bool("confirm", false, "confirm the destructive re-initialization")
@@ -194,7 +201,7 @@ func dispatchVerb(args []string, stdin io.Reader) (any, error) {
 		if err != nil {
 			return nil, err
 		}
-		return verbs.Reset(id, os.Getenv("MC_SPINE"), *confirm)
+		return verbs.Reset(id, helperSpinePath(), *confirm)
 	case "lock":
 		// Pure read (§18 `mc <record> get`): the e2e's lease-state assertion
 		// channel — it cannot open the spine volume (contract §7).
@@ -208,7 +215,7 @@ func dispatchVerb(args []string, stdin io.Reader) (any, error) {
 
 // withSpine opens MC_SPINE and runs fn.
 func withSpine(fn func(db *sql.DB) (any, error)) (any, error) {
-	db, err := verbs.OpenSpine(os.Getenv("MC_SPINE"))
+	db, err := verbs.OpenSpine(helperSpinePath())
 	if err != nil {
 		return nil, err
 	}
@@ -255,7 +262,7 @@ func positionalID(name string, args []string) (int64, []string, error) {
 }
 
 func cmdOnboard(args []string) (any, error) {
-	a := verbs.OnboardArgs{Spine: os.Getenv("MC_SPINE")}
+	a := verbs.OnboardArgs{Spine: helperSpinePath()}
 	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
 		a.Section = args[0]
 		args = args[1:]
@@ -345,7 +352,7 @@ func cmdInit(args []string) (any, error) {
 		a.ConsoleTZ = consoleTZ
 	}
 	if a.Spine == "" {
-		a.Spine = os.Getenv("MC_SPINE")
+		a.Spine = helperSpinePath()
 	}
 	return verbs.Init(a)
 }

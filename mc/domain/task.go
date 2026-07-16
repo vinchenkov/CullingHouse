@@ -3,7 +3,22 @@ package domain
 import (
 	"context"
 	"database/sql"
+	"unicode/utf8"
 )
+
+const maxDispatchScalarBytes = 4 * 1024
+
+func validDispatchScalarAdmission(value string) bool {
+	if value == "" || len(value) > maxDispatchScalarBytes || !utf8.ValidString(value) {
+		return false
+	}
+	for _, r := range value {
+		if r < 0x20 || r == 0x7f {
+			return false
+		}
+	}
+	return true
+}
 
 // ---------------------------------------------------------------------------
 // Task state machine (spec §6, §7) — the Editor arms, the forward stage
@@ -491,6 +506,9 @@ func requireActiveWorksource(ctx context.Context, q Q, id string) error {
 func BirthProposal(ctx context.Context, q Q, a ProposalArgs) (int64, error) {
 	if a.Title == "" || a.Worksource == "" {
 		return 0, Errf(CodeReasonRequired, "a proposal requires title and worksource (ADR-001 D4)")
+	}
+	if !validDispatchScalarAdmission(a.Title) {
+		return 0, Errf(CodeCarrierForbidden, "proposal title must be valid UTF-8 without controls and at most 4096 bytes (ADR-016 D2)")
 	}
 	if err := requireActiveWorksource(ctx, q, a.Worksource); err != nil {
 		return 0, err

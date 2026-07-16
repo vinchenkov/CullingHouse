@@ -134,6 +134,21 @@ func TestMigrateV1ToCurrentMatchesAFreshSpine(t *testing.T) {
 	})
 }
 
+func TestMigrateRejectsPrivateCarrierScalarDebt(t *testing.T) {
+	db := openSpine(t)
+	mustExec(t, db, `INSERT INTO meta (id, deployment_uuid, schema_version) VALUES (1, 'fresh', ?)`,
+		substrate.CurrentSchemaVersion)
+	mustExec(t, db, `INSERT INTO tasks (title, worksource) VALUES (?, 'ws')`, strings.Repeat("x", 4097))
+
+	changed, err := substrate.Migrate(db)
+	if err == nil || changed || !strings.Contains(err.Error(), "tasks.title") {
+		t.Fatalf("Migrate overlong dispatch scalar = changed %v, err %v; want admission refusal", changed, err)
+	}
+	if got := oneInt(t, db, `SELECT schema_version FROM meta WHERE id=1`); got != substrate.CurrentSchemaVersion {
+		t.Fatalf("failed admission changed schema version to %d", got)
+	}
+}
+
 // The v2 -> v3 step adds ADR-016 D3's launch fencing to homie_sessions. The
 // hazard is the same as v1 -> v2: an ALTER-only step that silently fails to
 // carry a pairing CHECK yields a spine that accepts a half-bound launch or a

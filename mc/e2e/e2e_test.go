@@ -302,7 +302,7 @@ func setup(t *testing.T) *fixture {
 
 	// Host (darwin) mc binary for the test and the resident.
 	f.hostMC = filepath.Join(base, "bin", "mc")
-	cmd := exec.Command("go", "build", "-o", f.hostMC, "./cmd/mc")
+	cmd := exec.Command("go", "build", "-tags", "test_fake_routing", "-o", f.hostMC, "./cmd/mc")
 	cmd.Dir = filepath.Join(repoRoot, "mc")
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("build host mc: %v\n%s", err, out)

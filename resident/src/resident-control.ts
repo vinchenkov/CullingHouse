@@ -38,16 +38,17 @@ export function execMcVia(command: string[], identity: ResidentControlIdentity):
     if (argv.length === 1 && argv[0] === "dispatch") {
       return execControlledDispatch([...command, ...argv], identity);
     }
-    return execPlain([...command, ...argv]);
+    return execPlain([...command, ...argv], identity);
   };
 }
 
-async function execPlain(command: string[]): Promise<ExecResult> {
+async function execPlain(command: string[], identity: ResidentControlIdentity): Promise<ExecResult> {
   const child = spawn(command[0]!, command.slice(1), {
     // Explicitly occupy fd 3 with /dev/null: Bun otherwise preserves an
     // unrelated parent descriptor there. Ordinary verbs must never receive
     // a resident control socket.
     stdio: ["ignore", "pipe", "pipe", "ignore"],
+    env: mcEnvironment(identity.mcHome),
   });
   const stdout = collect(child.stdout);
   const stderr = collect(child.stderr);
@@ -59,6 +60,7 @@ async function execControlledDispatch(command: string[], identity: ResidentContr
   const deploymentUUID = await readDeploymentUUID(identity.mcHome);
   const child = Bun.spawn(command, {
     stdio: ["ignore", "pipe", "pipe", "pipe"],
+    env: mcEnvironment(identity.mcHome),
   });
   const controlFD = child.stdio[3];
   if (typeof controlFD !== "number" || controlFD < 0) {
@@ -97,6 +99,16 @@ async function execControlledDispatch(command: string[], identity: ResidentContr
     await Promise.allSettled([stdout, stderr]);
     throw err;
   }
+}
+
+function mcEnvironment(mcHome: string): Record<string, string | undefined> {
+  const env = { ...process.env, MC_HOME: mcHome };
+  // A resident invocation is always the Darwin host scope. Ambient developer
+  // variables must not turn it into a direct-spine or agent-scoped call and
+  // bypass the resident-only dispatch broker.
+  delete env.MC_SPINE;
+  delete env.MC_RUN_JSON;
+  return env;
 }
 
 async function serveHello(control: BunControlChannel, expected: HelloFrame): Promise<void> {

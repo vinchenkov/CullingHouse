@@ -28,6 +28,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"reflect"
 	"sort"
 	"strings"
 	"syscall"
@@ -36,6 +37,7 @@ import (
 	"mc/dispatch"
 	"mc/refusal"
 	"mc/routing"
+	"mc/substrate"
 )
 
 // Domain separators, exactly ADR-016:130-131 and :238-240. The preparation
@@ -112,16 +114,32 @@ type canonicalCandidate struct {
 // generations the D4 fence compares, in the same frozen homieCandidateState
 // shape the preflight marker key uses.
 type canonicalPrepare struct {
-	Version        int                   `json:"version"`
-	DeploymentUUID string                `json:"deployment_uuid"`
-	RequestID      string                `json:"request_id"`
-	Tasks          []canonicalTask       `json:"tasks"`
-	Packets        []canonicalPacket     `json:"packets"`
-	LastBriefingAt *string               `json:"last_briefing_at"`
-	Lock           canonicalLock         `json:"lock"`
-	Tunables       canonicalTunables     `json:"tunables"`
-	Homies         []homieCandidateState `json:"homies"`
-	Candidate      canonicalCandidate    `json:"candidate"`
+	Version             int                   `json:"version"`
+	ReleaseBuildID      string                `json:"release_build_id"`
+	ControlVersion      int                   `json:"gateway_control_version"`
+	SpineSchemaVersion  int                   `json:"spine_schema_version"`
+	ConfigSchemaVersion int                   `json:"config_schema_version"`
+	DeploymentUUID      string                `json:"deployment_uuid"`
+	RequestID           string                `json:"request_id"`
+	Tasks               []canonicalTask       `json:"tasks"`
+	Packets             []canonicalPacket     `json:"packets"`
+	LastBriefingAt      *string               `json:"last_briefing_at"`
+	Lock                canonicalLock         `json:"lock"`
+	Tunables            canonicalTunables     `json:"tunables"`
+	Homies              []homieCandidateState `json:"homies"`
+	Candidate           canonicalCandidate    `json:"candidate"`
+}
+
+type dispatchProtocolIdentity struct {
+	releaseBuildID      string
+	controlVersion      int
+	spineSchemaVersion  int
+	configSchemaVersion int
+}
+
+var defaultDispatchProtocolIdentity = dispatchProtocolIdentity{
+	releaseBuildID: "development", controlVersion: 1,
+	spineSchemaVersion: substrate.CurrentSchemaVersion, configSchemaVersion: 1,
 }
 
 func (p canonicalPrepare) bytes() ([]byte, error) {
@@ -233,6 +251,10 @@ func spawnCandidateProjection(runID string, sp *dispatch.Spawn) canonicalCandida
 // transaction read. Records arrive in SQL order, which is not part of the
 // wire contract, so tasks sort by id and packets by (task_id, created_at).
 func buildCanonicalPrepare(uuid, requestID string, rec dispatch.Records, lk dispatch.Lock, tun tunables, homies []homieCandidateState, cand canonicalCandidate) canonicalPrepare {
+	return buildCanonicalPrepareWithIdentity(defaultDispatchProtocolIdentity, uuid, requestID, rec, lk, tun, homies, cand)
+}
+
+func buildCanonicalPrepareWithIdentity(identity dispatchProtocolIdentity, uuid, requestID string, rec dispatch.Records, lk dispatch.Lock, tun tunables, homies []homieCandidateState, cand canonicalCandidate) canonicalPrepare {
 	tasks := make([]canonicalTask, 0, len(rec.Tasks))
 	for _, t := range rec.Tasks {
 		tasks = append(tasks, canonicalTask{
@@ -291,13 +313,17 @@ func buildCanonicalPrepare(uuid, requestID string, rec dispatch.Records, lk disp
 	}
 
 	return canonicalPrepare{
-		Version:        1,
-		DeploymentUUID: uuid,
-		RequestID:      requestID,
-		Tasks:          tasks,
-		Packets:        packets,
-		LastBriefingAt: spineTimePtr(rec.LastBriefingAt),
-		Lock:           lock,
+		Version:             1,
+		ReleaseBuildID:      identity.releaseBuildID,
+		ControlVersion:      identity.controlVersion,
+		SpineSchemaVersion:  identity.spineSchemaVersion,
+		ConfigSchemaVersion: identity.configSchemaVersion,
+		DeploymentUUID:      uuid,
+		RequestID:           requestID,
+		Tasks:               tasks,
+		Packets:             packets,
+		LastBriefingAt:      spineTimePtr(rec.LastBriefingAt),
+		Lock:                lock,
 		Tunables: canonicalTunables{
 			TimeoutMinutes:      tun.timeoutMinutes,
 			GraceMinutes:        tun.graceMinutes,
@@ -404,6 +430,7 @@ func nullInt64Ptr(v sql.NullInt64) *int64 {
 type preparedDispatch struct {
 	requestID      string
 	deploymentUUID string
+	identity       dispatchProtocolIdentity
 	final          map[string]any
 	candidate      *preparedCandidate
 }
@@ -430,6 +457,10 @@ type attestedDispatch struct {
 // response looked up after selection could reap-then-claim in one command,
 // exactly what D2 forbids (ADR-016:255-261).
 func dispatchPrepare(ctx context.Context, q Q, uuid, requestID string) (preparedDispatch, error) {
+	return dispatchPrepareWithIdentity(ctx, q, defaultDispatchProtocolIdentity, uuid, requestID)
+}
+
+func dispatchPrepareWithIdentity(ctx context.Context, q Q, identity dispatchProtocolIdentity, uuid, requestID string) (preparedDispatch, error) {
 	if err := requireDeploymentUUID(ctx, q, uuid); err != nil {
 		return preparedDispatch{}, err
 	}
@@ -439,7 +470,7 @@ func dispatchPrepare(ctx context.Context, q Q, uuid, requestID string) (prepared
 	if replay, found, err := lookupDispatchReceipt(ctx, q, requestID); err != nil {
 		return preparedDispatch{}, err
 	} else if found {
-		return preparedDispatch{requestID: requestID, deploymentUUID: uuid, final: replay}, nil
+		return preparedDispatch{requestID: requestID, deploymentUUID: uuid, identity: identity, final: replay}, nil
 	}
 
 	sel, err := selectFromSpine(ctx, q)
@@ -455,12 +486,12 @@ func dispatchPrepare(ctx context.Context, q Q, uuid, requestID string) (prepared
 		if err != nil {
 			return preparedDispatch{}, err
 		}
-		canonical, err := buildCanonicalPrepare(uuid, requestID, sel.rec, sel.lk, sel.tun, sel.homies,
+		canonical, err := buildCanonicalPrepareWithIdentity(identity, uuid, requestID, sel.rec, sel.lk, sel.tun, sel.homies,
 			spawnCandidateProjection(runID, sel.action.Spawn)).bytes()
 		if err != nil {
 			return preparedDispatch{}, err
 		}
-		return preparedDispatch{requestID: requestID, deploymentUUID: uuid, candidate: &preparedCandidate{
+		return preparedDispatch{requestID: requestID, deploymentUUID: uuid, identity: identity, candidate: &preparedCandidate{
 			spawn: sel.action.Spawn,
 			runID: runID,
 			tun:   sel.tun,
@@ -482,7 +513,7 @@ func dispatchPrepare(ctx context.Context, q Q, uuid, requestID string) (prepared
 			return preparedDispatch{}, err
 		}
 	}
-	return preparedDispatch{requestID: requestID, deploymentUUID: uuid, final: effect}, nil
+	return preparedDispatch{requestID: requestID, deploymentUUID: uuid, identity: identity, final: effect}, nil
 }
 
 // dispatchAttest is the host-authority step, run with the flock and
@@ -530,6 +561,22 @@ func dispatchAttest(home string, prepared preparedDispatch) (attestedDispatch, e
 	return attestedDispatch{deploymentUUID: reattestedUUID, route: route, routingDigest: hex.EncodeToString(sum[:])}, nil
 }
 
+// dispatchRecheckAttestation is D1's immediate pre-commit host-file fence.
+// Any deployment/routing byte or interpretation drift abandons the prepared
+// candidate as stale; it never claims from old host authority.
+func dispatchRecheckAttestation(home string, prepared preparedDispatch, first attestedDispatch) attestedDispatch {
+	second, err := dispatchAttest(home, prepared)
+	if err == nil && reflect.DeepEqual(canonicalPrivateAttestation(first), canonicalPrivateAttestation(second)) {
+		return first
+	}
+	return attestedDispatch{
+		deploymentUUID: prepared.deploymentUUID,
+		refusal: &refusal.Refusal{
+			Code: refusal.CodeStale, Field: refusal.FieldNone, Summary: refusal.SummaryMismatch,
+		},
+	}
+}
+
 // routingRefusal classifies one routing failure. The raw error text rides
 // only in Message, which DetailFor drops — routing.md bytes are operator
 // material and never reach a stored detail (ADR-016 D1).
@@ -567,7 +614,7 @@ func dispatchCommit(ctx context.Context, q Q, prepared preparedDispatch, atteste
 	rcand := refusalCandidateFor(cand.spawn)
 
 	proj := spawnCandidateProjection(cand.runID, cand.spawn)
-	canonical, err := buildCanonicalPrepare(attested.deploymentUUID, prepared.requestID, sel.rec, sel.lk, sel.tun, sel.homies, proj).bytes()
+	canonical, err := buildCanonicalPrepareWithIdentity(prepared.identity, attested.deploymentUUID, prepared.requestID, sel.rec, sel.lk, sel.tun, sel.homies, proj).bytes()
 	if err != nil {
 		return nil, err
 	}
@@ -749,6 +796,13 @@ func ResolveDispatchDeployment() (string, error) {
 		return "", err
 	}
 	return readDeploymentMirrorStrict(home)
+}
+
+// ResolveDispatchHome exposes only the already-validated absolute host root
+// to the Darwin broker's attest step. Private helpers never call it and never
+// receive raw host paths or file bytes.
+func ResolveDispatchHome() (string, error) {
+	return resolveMCHome()
 }
 
 // lookupDispatchReceipt is the D2 replay fence's read half. An unreadable

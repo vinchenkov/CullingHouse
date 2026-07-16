@@ -57,7 +57,7 @@ func brokerDispatch(args []string, stdin io.Reader, stdout, stderr io.Writer) in
 	if err := exchangeControlHello(conn, deploymentUUID); err != nil {
 		return writeBrokerRefusal(stdout, stderr, "preflight.frame_invalid", err)
 	}
-	return delegate(args, stdin, stdout, stderr)
+	return brokerPrepareCommit(deploymentUUID, stdout, stderr)
 }
 
 func writeBrokerRefusal(stdout, stderr io.Writer, code string, err error) int {
@@ -88,6 +88,9 @@ func inheritedResidentControl() (net.Conn, error) {
 }
 
 func exchangeControlHello(conn net.Conn, deploymentUUID string) error {
+	if !validReleaseBuildID(releaseBuildID) {
+		return fmt.Errorf("release build id is not a bounded structural token")
+	}
 	if err := conn.SetDeadline(time.Now().Add(2 * time.Second)); err != nil {
 		return fmt.Errorf("set resident control hello deadline: %w", err)
 	}
@@ -117,6 +120,20 @@ func exchangeControlHello(conn net.Conn, deploymentUUID string) error {
 	return nil
 }
 
+func validReleaseBuildID(value string) bool {
+	if len(value) < 1 || len(value) > 128 {
+		return false
+	}
+	for i, r := range value {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') ||
+			(i > 0 && (r == '.' || r == '_' || r == '+' || r == '-')) {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
 func writeControlFrame(w io.Writer, v any) error {
 	body, err := json.Marshal(v)
 	if err != nil {
@@ -127,11 +144,7 @@ func writeControlFrame(w io.Writer, v any) error {
 	}
 	var prefix [4]byte
 	binary.BigEndian.PutUint32(prefix[:], uint32(len(body)))
-	if _, err := w.Write(prefix[:]); err != nil {
-		return err
-	}
-	_, err = w.Write(body)
-	return err
+	return writeAll(w, append(prefix[:], body...))
 }
 
 func readCanonicalControlFrame(r io.Reader, dst any) error {

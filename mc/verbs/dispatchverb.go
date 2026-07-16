@@ -24,6 +24,21 @@ import (
 // commit before any effect data: claim stays CAS on the free lock row, and
 // only one commit can match current state (ADR-016:73-76).
 func Dispatch(db *sql.DB) (any, error) {
+	return dispatchWithIdentity(db, defaultDispatchProtocolIdentity)
+}
+
+// DispatchWithProtocolIdentity is the native in-process form used by the
+// release CLI. Tests and package callers may use Dispatch's development
+// identity; a release build must bind its exact build/schema tuple into the
+// preparation token (ADR-016 D2).
+func DispatchWithProtocolIdentity(db *sql.DB, releaseBuildID string, controlVersion, spineSchemaVersion, configSchemaVersion int) (any, error) {
+	return dispatchWithIdentity(db, dispatchProtocolIdentity{
+		releaseBuildID: releaseBuildID, controlVersion: controlVersion,
+		spineSchemaVersion: spineSchemaVersion, configSchemaVersion: configSchemaVersion,
+	})
+}
+
+func dispatchWithIdentity(db *sql.DB, identity dispatchProtocolIdentity) (any, error) {
 	home, err := resolveMCHome()
 	if err != nil {
 		return nil, err
@@ -40,7 +55,7 @@ func Dispatch(db *sql.DB) (any, error) {
 	var prepared preparedDispatch
 	if err := underDispatchLock(db, func(ctx context.Context, q Q) error {
 		var e error
-		prepared, e = dispatchPrepare(ctx, q, uuid, requestID)
+		prepared, e = dispatchPrepareWithIdentity(ctx, q, identity, uuid, requestID)
 		return e
 	}); err != nil {
 		return nil, err
@@ -53,6 +68,7 @@ func Dispatch(db *sql.DB) (any, error) {
 	if err != nil {
 		return nil, err
 	}
+	attested = dispatchRecheckAttestation(home, prepared, attested)
 
 	var effect map[string]any
 	if err := underDispatchLock(db, func(ctx context.Context, q Q) error {

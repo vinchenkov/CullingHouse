@@ -13,6 +13,7 @@ import (
 	_ "embed"
 	"fmt"
 	"strings"
+	"unicode/utf8"
 
 	_ "modernc.org/sqlite"
 )
@@ -278,6 +279,9 @@ func Migrate(db *sql.DB) (bool, error) {
 	if err := tx.QueryRow(`SELECT schema_version FROM meta WHERE id = 1`).Scan(&version); err != nil {
 		return false, fmt.Errorf("read spine schema version: %w", err)
 	}
+	if err := validateDispatchScalarAdmission(tx); err != nil {
+		return false, err
+	}
 
 	steps := map[int]string{1: migrationV1ToV2, 2: migrationV2ToV3, 3: migrationV3ToV4}
 	changed := false
@@ -309,4 +313,54 @@ func Migrate(db *sql.DB) (bool, error) {
 		return false, fmt.Errorf("commit spine migration: %w", err)
 	}
 	return true, nil
+}
+
+func validateDispatchScalarAdmission(tx *sql.Tx) error {
+	checks := []struct {
+		name  string
+		query string
+	}{
+		{"meta.deployment_uuid", `SELECT typeof(deployment_uuid), CAST(deployment_uuid AS TEXT) FROM meta WHERE id = 1`},
+		{"lock.console_tz", `SELECT typeof(console_tz), CAST(console_tz AS TEXT) FROM lock WHERE id = 1`},
+	}
+	for _, check := range checks {
+		var storage, value string
+		if err := tx.QueryRow(check.query).Scan(&storage, &value); err != nil {
+			return fmt.Errorf("validate %s admission: %w", check.name, err)
+		}
+		if storage != "text" || !validDispatchScalar(value) {
+			return fmt.Errorf("%s is not an admitted ADR-016 D2 scalar", check.name)
+		}
+	}
+	rows, err := tx.Query(`SELECT id, typeof(title), CAST(title AS TEXT) FROM tasks`)
+	if err != nil {
+		return fmt.Errorf("validate tasks.title admission: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id int64
+		var storage, value string
+		if err := rows.Scan(&id, &storage, &value); err != nil {
+			return fmt.Errorf("validate tasks.title admission: %w", err)
+		}
+		if storage != "text" || !validDispatchScalar(value) {
+			return fmt.Errorf("tasks.title for task %d is not an admitted ADR-016 D2 scalar", id)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("validate tasks.title admission: %w", err)
+	}
+	return nil
+}
+
+func validDispatchScalar(value string) bool {
+	if value == "" || len(value) > 4*1024 || !utf8.ValidString(value) {
+		return false
+	}
+	for _, r := range value {
+		if r < 0x20 || r == 0x7f {
+			return false
+		}
+	}
+	return true
 }

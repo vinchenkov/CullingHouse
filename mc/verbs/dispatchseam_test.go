@@ -28,9 +28,13 @@ func strp(s string) *string { return &s }
 // — the vector freezes the wire shape, not a reachable spine state.
 func dsGoldenPrepare() canonicalPrepare {
 	return canonicalPrepare{
-		Version:        1,
-		DeploymentUUID: "de41cafe-0000-4000-8000-000000000001",
-		RequestID:      "00112233445566ff",
+		Version:             1,
+		ReleaseBuildID:      "development",
+		ControlVersion:      1,
+		SpineSchemaVersion:  4,
+		ConfigSchemaVersion: 1,
+		DeploymentUUID:      "de41cafe-0000-4000-8000-000000000001",
+		RequestID:           "00112233445566ff",
 		Tasks: []canonicalTask{
 			{
 				ID: 7, Title: "fix the gate", Scope: "task", InitiativeID: i64p(3),
@@ -83,6 +87,10 @@ func dsGoldenPrepare() canonicalPrepare {
 func dsGoldenPrepareJSON() string {
 	return strings.Join([]string{
 		`{"version":1`,
+		`"release_build_id":"development"`,
+		`"gateway_control_version":1`,
+		`"spine_schema_version":4`,
+		`"config_schema_version":1`,
 		`"deployment_uuid":"de41cafe-0000-4000-8000-000000000001"`,
 		`"request_id":"00112233445566ff"`,
 		`"tasks":[` +

@@ -66,6 +66,19 @@ func TestPromote(t *testing.T) {
 	})
 }
 
+func TestProposalTitlePrivateCarrierAdmission(t *testing.T) {
+	db := openSpine(t)
+	wantCode(t, db, domain.CodeCarrierForbidden, func(ctx context.Context, q domain.Q) error {
+		_, err := domain.BirthProposal(ctx, q, domain.ProposalArgs{
+			Title: strings.Repeat("x", 4097), Origin: "user", Worksource: "ws",
+		})
+		return err
+	})
+	if got := oneInt(t, db, `SELECT COUNT(*) FROM tasks`); got != 0 {
+		t.Fatalf("overlong title admitted %d tasks", got)
+	}
+}
+
 func TestRejectProposal(t *testing.T) {
 	t.Run("rejects_archives_and_records_reason", func(t *testing.T) {
 		db := openSpine(t)
