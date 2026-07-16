@@ -1941,3 +1941,37 @@ Entry template:
   the reversible policy choice in one exported constant.
 - Spec impact: none
 - Needs your decision: no
+
+## 2026-07-16 — mount attest lands fail-closed before its authorization effector
+- Where: Phase 3 ADR-016 D1/D4 and ADR-017 D3-D6 production planner crossing
+- Gap: the existing fake resident owns a static direct workspace bind and the
+  spawn effect has no bounded authorization carrier or pre-create/post-create
+  host-identity recheck. The spine also has no authoritative Git control and
+  task-projection registry. Treating either legacy value as authority would
+  bless the primary checkout and silently drop valid profile mounts.
+- Choice: production host attest now derives and validates ordinary profile
+  requests, but a valid nonempty authorization set returns deployment-owned
+  `mount.runtime_unappliable` until its closed carrier/effector lands. Real Git
+  candidates return the same health class until an authoritative typed registry
+  exists. Only the explicitly test-tagged fake route keeps the Phase-1 static
+  bind; production routing cannot parse that family. Conservative: no Run is
+  claimed under missing authority, no requested mount is dropped or guessed,
+  and the stops are local and deleted when their named prerequisites land.
+- Spec impact: none
+- Needs your decision: no
+
+## 2026-07-16 — jurisdiction errors carry source provenance from the constructor
+- Where: Phase 3 ADR-016 D4 authority classification / ADR-021 D1
+- Gap: `ResolveJurisdiction` mixes deployment-owned protected roots with the
+  selected profile's candidate-authored `denied_paths`; its stable mount code
+  alone cannot tell the D4 router which authority owns a construction failure.
+  Resolving twice to infer provenance introduces a filesystem race and can
+  charge a candidate for deployment drift.
+- Choice: `boundary.MountError` carries a non-wire `CandidateAuthored` marker
+  set only at the three denied-path construction exits. Host attest resolves
+  once and otherwise defaults jurisdiction-construction failures to deployment
+  authority. Conservative: provenance is assigned where it is known, raw path
+  text still never crosses/stores, the stable code set is unchanged, and one
+  filesystem observation replaces a racy heuristic.
+- Spec impact: none
+- Needs your decision: no

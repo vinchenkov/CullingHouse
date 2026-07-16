@@ -615,3 +615,46 @@ NEXT: derive ordinary selected-profile mount requests and the full host
 jurisdiction input red-first, then invoke `planMounts` only during host attest.
 Carry its closed authorization/refusal result through private commit and prove
 invalid plans claim no Run and emit no spawn. Do not load launchd.
+
+## 2026-07-16 (Codex) — ordinary profile requests reach host mount attest
+
+Outgoing NEXT: derive ordinary selected-profile requests, assemble complete
+host jurisdiction, call `planMounts` only in attest, and prove invalid plans
+claim no Run and emit no spawn.
+
+Commit `d7babcb` closes that refusal half. Artifact roots become candidate RW
+requests, readonly mounts become candidate RO requests, and no other
+Worksource contributes a request. Host attest associates the frozen projection
+with the operator account HOME from the account database, trusted MC_HOME,
+present HOME credential classes, every runtime-control path, explicit own/other
+Worksource roots, Git/.mission-control ownership sets, gateway-secret inventory,
+and typed roots. The fixed policy path is `MC_HOME/mount-allowlist`. One
+`ResolveJurisdiction` call marks only selected-profile denied-path construction
+errors as candidate-authored; deployment/protected-root failures remain health
+even under filesystem races.
+
+Invalid requested sources and an invalid nonempty denied policy now flow
+through the private attestation to the existing D4 router: zero Runs, free lock,
+no spawn, sanitized candidate consequence. A real Git Worksource is never
+translated into an ordinary direct workspace bind. Because the authoritative
+Git control/projection registry does not exist yet, production Git candidates
+fail with deployment-owned `mount.runtime_unappliable`. Likewise a valid
+nonempty ordinary authorization set fails deployment health rather than being
+silently dropped until its closed carrier and resident effector exist. The
+Phase-1 fake route alone retains its static workspace fixture; an untagged
+production binary cannot parse that route.
+
+The read-only reviewer rejected three intermediate versions: aggregate/root
+inventory and ambient-HOME gaps (five blockers), then repo authority plus a
+double-resolution race (two blockers). Account-database HOME, zero-request
+denied-policy validation, fixed allowlist naming, authoritative empty in-memory
+gateway inventory, fail-closed Git inventory, and single-pass error provenance
+closed them. Final verdict READY. The five-leg fast lane passed: mc, resident
+45, fake harness 43, agent runner 13, runner image 40.
+
+NEXT: replace the valid-plan `mount.runtime_unappliable` stop with a bounded
+canonical authorization carrier through private attest, spawn effect, and
+resident structured binds. Recheck host identity/trust immediately before
+Docker create and after create/before start; remove the unstarted container on
+drift. Keep production Git health-refused until its authoritative typed
+control/projection registry exists. Do not load launchd.

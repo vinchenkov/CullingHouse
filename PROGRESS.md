@@ -10,7 +10,7 @@ Access does NOT fix it — the failure precedes any policy lookup. Symptom:
 `stat` works, reads return `Operation not permitted`, git says
 `Unable to read current working directory`.
 
-LAST GREEN SHA: 36fc91f (local; the operator pushes manually — decided 2026-07-14. Agents: do not push.)
+LAST GREEN SHA: d7babcb (local; the operator pushes manually — decided 2026-07-14. Agents: do not push.)
 PHASES PASSING: Phase 0 COMPLETE (S1–S8 all green, no fallback ADRs; only operator-leg deferrals remain); Phase 1 COMPLETE (1a substrate 172; 1b walking skeleton reviewed-and-fixed — fake-harness 43, agent-runner 13, runner/image 40, resident 42, dispatch + cmd/mc suites; Docker e2e PASS ×4 total); Phase 2 COMPLETE for every unparked acceptance line (domain/§18 surface, deterministic split-brain convergence, bounded honesty + five mutants, tagged dispatch/metamorphic/twin-spine lifecycle properties; the initiative-wave CLI is no longer isolated — ADR-020 landed 2026-07-14 and closed the last Phase 2 acceptance line)
 KNOWN-FAILING: `TestOnboardConcurrentFreshHomeNeverDeletesTheWinner` (mc/verbs),
 INTERMITTENT — ~1 in 21 full-suite runs; 0/21 at HEAD, 15/15 and 60/60 green in a
@@ -158,9 +158,22 @@ kept below. Operator legs that remain open are under `## Parked`, not here.
         migration, every current writer, and private decode. A focused reviewer
         found and then verified the status-writer rollback boundary; the full
         five-leg fast lane is green
-  - [ ] Derive each candidate's mount requests and complete
-        `boundary.JurisdictionInput`, then wire the already-tested `planMounts`
-        into the now-real host attest crossing. The planner remains test-only
+  - [x] Ordinary selected-profile mount attest (d7babcb): artifact RW and
+        reference RO requests derive only from the token-bound selected
+        profile; the host assembles own/other Worksource, runtime, HOME,
+        MC_HOME, control, and typed-root jurisdiction and calls `planMounts`
+        only in the released-lock attest leg. Invalid requests and nonempty
+        invalid denied policy commit a typed refusal with zero Run/spawn. The
+        single-pass boundary error marks only denied-path construction as
+        candidate-authored; deployment inventory races stay health-owned.
+        Production Git candidates fail health until the authoritative control/
+        projection registry exists; valid nonempty ordinary plans also fail
+        health until their authorization carrier replaces the fake resident
+        bind. Four adversarial rounds closed five then two blockers; all five
+        fast-lane legs pass
+  - [ ] Carry the closed authorization plan through the private attestation,
+        spawn effect, and resident as structured binds with identity rechecks;
+        add the authoritative Git control/projection registry and typed plan
 - [ ] Phase 4 — E2E control loops (six scenario families)
 - [ ] Phase 5 — Real-subscription acceptance (operator-scheduled)
 - [ ] Release prep (after Phase 5): swap the repo's construction face for
@@ -180,12 +193,13 @@ deleted, not struck through. History is in `docs/ledger/`.
   agent cannot sleep the machine it runs on). Instructions in
   `spikes/07-launchd-clock/RESULT.md`. All other S7 sub-tests passed.
 
-NEXT: Wire the tested mount planner into host attest, red-first. Start at the
-mount-attestation TODO in `mc/verbs/dispatchseam.go`: derive the candidate's
-ordinary profile mount requests from the now-token-bound selected Worksource,
-complete `boundary.JurisdictionInput` with the frozen all-Worksource projection
-and protected host roots, and refuse the resident's current direct Git
-workspace bind rather than blessing it. Call `planMounts` only in the
-released-lock host leg, carry only its closed authorization/refusal result
-through private commit, and prove an invalid plan claims no Run and emits no
-spawn. Keep private frames bounded/canonical and do not load launchd.
+NEXT: Replace the valid-plan `mount.runtime_unappliable` stop in
+`mc/verbs/mountattest.go` red-first: define a bounded canonical authorization
+carrier (canonical source, deterministic destination, access, and host identity
+evidence), include it in the private attestation and committed spawn effect,
+and make the resident consume only that structured plan instead of its static
+`workspaceRoot`/`-v` bind. Re-run authorization identity/trust immediately
+before Docker create and after create/before start; any drift removes the
+unstarted container. Keep production Git candidates health-refused until the
+separate authoritative Git control/projection registry supplies their typed
+plan. Do not load launchd.
