@@ -2,6 +2,7 @@ package verbs
 
 import (
 	"context"
+	"database/sql"
 	"strconv"
 
 	"mc/domain"
@@ -54,6 +55,14 @@ type RefusalCandidate struct {
 
 	// SessionID is required for RefusalHomie and ignored otherwise.
 	SessionID string
+
+	// LaunchID is the session's current_launch_id as observed when the
+	// Homie candidate was selected; empty means the row had no launch.
+	// It is D3's generation fence on the end consequence: if the row has
+	// moved to a different generation by commit time, the refusal judged
+	// something that no longer exists and must not end the session.
+	// Ignored for non-Homie candidates.
+	LaunchID string
 }
 
 // applyRefusal routes one classified boundary refusal to its exact D4
@@ -149,13 +158,23 @@ func applyCandidatePolicy(ctx context.Context, q Q, cand RefusalCandidate, r ref
 		// Ended in this same transaction, so it cannot remain the repeatedly
 		// selected oldest active row and starve pipeline work (D4).
 		//
-		// D4 calls this a *launch-fenced* end. The fence is not applied here
-		// and cannot be: none of D3's eleven homie_sessions launch/resume
-		// columns exist yet (48eaf63 landed D2's fences only), so there is no
-		// launch generation to fence against. The fence is vacuous rather than
-		// missing — with launches untracked there is exactly one generation, so
-		// no newer launch can be ended by mistake. When D3's columns land, this
-		// call gains the current_launch_id predicate and nothing else changes.
+		// D4 calls this a *launch-fenced* end: it applies only to the launch
+		// generation the candidate was selected against (D3). A row that has
+		// moved on — a launch bound after selection, or the observed one
+		// superseded — is no longer the thing the refusal judged, so the end
+		// applies NO consequence, the stale class's posture. No starvation
+		// follows: the current generation is attested on the next tick and
+		// earns its own verdict.
+		held, err := homieLaunchFenceHolds(ctx, q, cand.SessionID, cand.LaunchID)
+		if err != nil {
+			return nil, err
+		}
+		if !held {
+			effect["consequence"] = "none"
+			effect["session_id"] = cand.SessionID
+			effect["launch_superseded"] = true
+			return effect, nil
+		}
 		ended, status, err := homieEndTx(ctx, q, "dispatch", cand.SessionID, confinementReason(r.Code))
 		if err != nil {
 			return nil, err
@@ -223,17 +242,40 @@ func validateRefusalCandidate(c RefusalCandidate) error {
 		if c.SessionID == "" {
 			return Domainf("a Homie refusal candidate needs a session id")
 		}
+		if c.LaunchID != "" && !validLowercaseHex(c.LaunchID, 16) {
+			return Domainf("a Homie refusal candidate's observed launch id must be empty or exactly 16 lowercase hex characters (ADR-016 D3)")
+		}
 	default:
 		return Domainf("dispatch: unknown refusal candidate kind %q", c.Kind)
 	}
 	return nil
 }
 
+// homieLaunchFenceHolds is D3's generation comparison for the launch-fenced
+// end: the row's current_launch_id must still be the one the candidate
+// observed at selection (empty = no launch). An unknown session holds the
+// fence so homieEndTx states the canonical unknown-session refusal — the
+// fence never invents its own copy of that error.
+func homieLaunchFenceHolds(ctx context.Context, q Q, sessionID, observed string) (bool, error) {
+	var current sql.NullString
+	err := q.QueryRowContext(ctx,
+		`SELECT current_launch_id FROM homie_sessions WHERE id = ?`, sessionID).Scan(&current)
+	if err == sql.ErrNoRows {
+		return true, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return current.String == observed, nil
+}
+
 // validDispatchKey mirrors the substrate's ADR-016 D2 shape check: exactly 64
 // lowercase hex characters. The storage CHECK pins the same shape with a
 // dual-length NUL fence; this is the honest-error copy, not the authority.
-func validDispatchKey(s string) bool {
-	if len(s) != 64 {
+func validDispatchKey(s string) bool { return validLowercaseHex(s, 64) }
+
+func validLowercaseHex(s string, n int) bool {
+	if len(s) != n {
 		return false
 	}
 	for i := 0; i < len(s); i++ {

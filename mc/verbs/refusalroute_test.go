@@ -445,6 +445,108 @@ func TestRefusalHomieEndIsIdempotent(t *testing.T) {
 	}
 }
 
+// --- ADR-016 D3: the Homie end is launch-fenced -----------------------------
+
+// D4 calls the Homie consequence a *launch-fenced* end: it applies only to
+// the launch generation the candidate was selected against. A session that
+// moved on — a launch bound after selection, the observed launch superseded
+// into resume debt, or replaced by a newer generation — is not the thing the
+// refusal judged, so the end must not touch it. D3's supersede-then-select
+// ordering makes the mismatch detectable as a plain generation comparison.
+func TestRefusalHomieEndIsLaunchFenced(t *testing.T) {
+	launchA := strings.Repeat("a", 16)
+	launchB := strings.Repeat("b", 16)
+	for name, c := range map[string]struct {
+		rowLaunch string // current_launch_id at commit time; "" = none
+		observed  string // what the candidate saw at selection; "" = none
+		wantEnd   bool
+	}{
+		"no_launch_and_none_observed": {rowLaunch: "", observed: "", wantEnd: true},
+		"same_generation":             {rowLaunch: launchA, observed: launchA, wantEnd: true},
+		"newer_generation":            {rowLaunch: launchB, observed: launchA, wantEnd: false},
+		"launch_bound_after_selection": {rowLaunch: launchA, observed: "",
+			wantEnd: false},
+		"observed_launch_superseded": {rowLaunch: "", observed: launchA,
+			wantEnd: false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			db := rrSpine(t)
+			if c.rowLaunch != "" {
+				dvExec(t, db, `UPDATE homie_sessions
+					SET current_launch_id = ?, current_launch_mode = 'fresh'
+					WHERE id = 'sess-1'`, c.rowLaunch)
+			}
+			eff, err := rrApply(t, db, RefusalCandidate{
+				Kind: RefusalHomie, SessionID: "sess-1", LaunchID: c.observed,
+			}, refusal.Refusal{
+				Code: refusal.CodeEnvInvalid, Field: refusal.FieldEnvName,
+				Summary: refusal.SummaryForbidden,
+			}, rrKey)
+			if err != nil {
+				t.Fatalf("launch-fenced refusal errored: %v", err)
+			}
+			rrAssertInert(t, db, eff)
+			if c.wantEnd {
+				if eff["consequence"] != "homie_ended" {
+					t.Errorf("consequence = %v, want \"homie_ended\"", eff["consequence"])
+				}
+				if got := rrHomieStatus(t, db, "sess-1"); got != "ended" {
+					t.Errorf("status = %q, want \"ended\"", got)
+				}
+				if n := len(rrActivity(t, db, "homie.ended")); n != 1 {
+					t.Errorf("wrote %d homie.ended rows, want one", n)
+				}
+				return
+			}
+			// Fenced off: the refusal was about a generation that no longer
+			// exists, so it applies NO consequence — the same no-durable-
+			// mutation posture as the stale class. The current generation
+			// gets its own attestation, and its own verdict, next tick.
+			if eff["consequence"] != "none" {
+				t.Errorf("consequence = %v, want \"none\"", eff["consequence"])
+			}
+			if eff["launch_superseded"] != true {
+				t.Errorf("effect must name the fence: launch_superseded = %v", eff["launch_superseded"])
+			}
+			if got := rrHomieStatus(t, db, "sess-1"); got != "active" {
+				t.Errorf("status = %q; a superseded-generation refusal must not end the session", got)
+			}
+			if n := len(rrActivity(t, db, "homie.ended")); n != 0 {
+				t.Errorf("wrote %d homie.ended rows across the fence", n)
+			}
+		})
+	}
+}
+
+// A malformed observed generation is a protocol error, refused before any
+// write — never coerced to "no launch", which would make the fence pass or
+// fail by accident.
+func TestRefusalHomieMalformedLaunchIDRefused(t *testing.T) {
+	for name, id := range map[string]string{
+		"short":     strings.Repeat("a", 15),
+		"long":      strings.Repeat("a", 17),
+		"uppercase": strings.Repeat("A", 16),
+		"non_hex":   strings.Repeat("a", 15) + "g",
+	} {
+		t.Run(name, func(t *testing.T) {
+			db := rrSpine(t)
+			_, err := rrApply(t, db, RefusalCandidate{
+				Kind: RefusalHomie, SessionID: "sess-1", LaunchID: id,
+			}, refusal.Refusal{
+				Code: refusal.CodeEnvInvalid, Field: refusal.FieldEnvName,
+				Summary: refusal.SummaryForbidden,
+			}, rrKey)
+			if err == nil {
+				t.Fatal("malformed launch id accepted")
+			}
+			rrAssertInert(t, db, nil)
+			if got := rrHomieStatus(t, db, "sess-1"); got != "active" {
+				t.Errorf("status = %q; a refused candidate must mutate nothing", got)
+			}
+		})
+	}
+}
+
 // --- Unknown and incoherent input: refused, never guessed ------------------
 
 // A class the router cannot derive applies NO consequence. Guessing is the
