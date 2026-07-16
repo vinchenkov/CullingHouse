@@ -3,6 +3,8 @@ package verbs
 import (
 	"context"
 	"database/sql"
+
+	"mc/substrate"
 )
 
 type WorksourceAddArgs struct {
@@ -21,6 +23,10 @@ func WorksourceAdd(db *sql.DB, id *RunIdentity, a WorksourceAddArgs) (any, error
 	}
 	if a.ID == "" || a.Title == "" {
 		return nil, Usagef("mc worksource add requires id and --title")
+	}
+	if !validStructuralText(a.ID, maxPrivateScalarBytes) ||
+		(a.SandboxProfile != "" && !validStructuralText(a.SandboxProfile, maxPrivateScalarBytes)) {
+		return nil, Usagef("mc worksource add id/profile must be valid UTF-8 without controls and at most 4096 bytes (ADR-016 D2)")
 	}
 	if a.Kind != "repo" && a.Kind != "personal" && a.Kind != "transient" {
 		return nil, Usagef("mc worksource add --kind must be repo|personal|transient")
@@ -52,7 +58,10 @@ func WorksourceAdd(db *sql.DB, id *RunIdentity, a WorksourceAddArgs) (any, error
 			VALUES (?, ?, ?, ?, ?, ?, ?)`,
 			a.ID, a.Title, a.Kind, nullIfEmpty(a.Jurisdiction),
 			nullIfEmpty(a.SandboxProfile), nullIfEmpty(a.Directive), a.SeedingMode)
-		return err
+		if err != nil {
+			return err
+		}
+		return substrate.ValidateDispatchMountProjection(ctx, q)
 	})
 	if err != nil {
 		return nil, err
@@ -92,7 +101,10 @@ func WorksourceSetStatus(db *sql.DB, id *RunIdentity, worksource, target string)
 		}
 		_, err = q.ExecContext(ctx,
 			`UPDATE worksources SET status = ? WHERE id = ?`, target, worksource)
-		return err
+		if err != nil {
+			return err
+		}
+		return substrate.ValidateDispatchMountProjection(ctx, q)
 	})
 	if err != nil {
 		return nil, err

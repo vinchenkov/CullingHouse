@@ -1,8 +1,10 @@
 package substrate_test
 
 import (
+	"context"
 	"database/sql"
 	_ "embed"
+	"encoding/json"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -146,6 +148,66 @@ func TestMigrateRejectsPrivateCarrierScalarDebt(t *testing.T) {
 	}
 	if got := oneInt(t, db, `SELECT schema_version FROM meta WHERE id=1`); got != substrate.CurrentSchemaVersion {
 		t.Fatalf("failed admission changed schema version to %d", got)
+	}
+}
+
+func TestMigrateRejectsWorksourceProfileCarrierDebt(t *testing.T) {
+	db := openSpine(t)
+	mustExec(t, db, `INSERT INTO meta (id, deployment_uuid, schema_version) VALUES (1, 'fresh', ?)`,
+		substrate.CurrentSchemaVersion)
+	mustExec(t, db, `INSERT INTO sandbox_profiles (id, workspace_root, artifact_roots)
+		VALUES ('profile', '/tmp/workspace', ?)`, `[
+  "`+strings.Repeat("x", 4097)+`"
+]`)
+	mustExec(t, db, `UPDATE worksources SET sandbox_profile='profile' WHERE id='ws'`)
+
+	changed, err := substrate.Migrate(db)
+	if err == nil || changed || !strings.Contains(err.Error(), "artifact_roots") {
+		t.Fatalf("Migrate overlong profile scalar = changed %v, err %v; want admission refusal", changed, err)
+	}
+}
+
+func TestDispatchMountProjectionExactAggregateBudget(t *testing.T) {
+	db := openSpine(t)
+	roots := make([]string, 0, 64)
+	for i := 0; i < 63; i++ {
+		prefix := fmt.Sprintf("/%02d", i)
+		roots = append(roots, prefix+strings.Repeat("x", 4096-len(prefix)))
+	}
+	roots = append(roots, "/z")
+	row := substrate.DispatchWorksource{
+		WorksourceID: "ws", Kind: "repo", Status: "active", ProfilePresent: true,
+		ProfileID: "profile", WorkspaceRoot: "/tmp/workspace", ArtifactRoots: roots,
+		ReadonlyMounts: []string{}, DeniedPaths: []string{},
+	}
+	body, err := json.Marshal([]substrate.DispatchWorksource{row})
+	if err != nil {
+		t.Fatal(err)
+	}
+	delta := substrate.MaxDispatchMountProjectionBytes - len(body)
+	if delta < 0 || delta > 4094 {
+		t.Fatalf("exact-budget fixture needs delta %d outside 0..4094", delta)
+	}
+	roots[len(roots)-1] += strings.Repeat("x", delta)
+	artifactJSON, err := json.Marshal(roots)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mustExec(t, db, `INSERT INTO sandbox_profiles (id, workspace_root, artifact_roots)
+		VALUES ('profile', '/tmp/workspace', ?)`, string(artifactJSON))
+	mustExec(t, db, `UPDATE worksources SET sandbox_profile='profile' WHERE id='ws'`)
+	if err := substrate.ValidateDispatchMountProjection(context.Background(), db); err != nil {
+		t.Fatalf("exact aggregate budget rejected: %v", err)
+	}
+
+	roots[len(roots)-1] += "x"
+	artifactJSON, err = json.Marshal(roots)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mustExec(t, db, `UPDATE sandbox_profiles SET artifact_roots=? WHERE id='profile'`, string(artifactJSON))
+	if err := substrate.ValidateDispatchMountProjection(context.Background(), db); err == nil {
+		t.Fatal("aggregate budget + 1 was admitted")
 	}
 }
 

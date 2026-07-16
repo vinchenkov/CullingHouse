@@ -1,0 +1,134 @@
+package substrate
+
+import (
+	"context"
+	"database/sql"
+	"encoding/json"
+	"fmt"
+	"sort"
+)
+
+// MaxDispatchMountProjectionBytes reserves one quarter of ADR-016 D2's
+// 1 MiB private frame for the complete Worksource/profile projection. The
+// remaining frame carries selection, tunables, candidate, and protocol
+// identity. Admission measures the exact canonical JSON bytes below.
+const MaxDispatchMountProjectionBytes = 256 * 1024
+
+type DispatchMountState struct {
+	SelectedWorksource string               `json:"selected_worksource"`
+	Worksources        []DispatchWorksource `json:"worksources"`
+}
+
+type DispatchWorksource struct {
+	WorksourceID      string   `json:"worksource_id"`
+	Kind              string   `json:"kind"`
+	Status            string   `json:"status"`
+	ProfilePresent    bool     `json:"profile_present"`
+	ProfileID         string   `json:"profile_id"`
+	WorkspaceRoot     string   `json:"workspace_root"`
+	ArtifactRoots     []string `json:"artifact_roots"`
+	ReadonlyMounts    []string `json:"readonly_mounts"`
+	DeniedPaths       []string `json:"denied_paths"`
+	ToolHomeDir       string   `json:"tool_home_dir"`
+	RuntimeControlDir string   `json:"runtime_control_dir"`
+}
+
+type dispatchProjectionQuerier interface {
+	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
+}
+
+func LoadDispatchWorksourceProjection(ctx context.Context, q dispatchProjectionQuerier) ([]DispatchWorksource, error) {
+	rows, err := q.QueryContext(ctx, `
+		SELECT w.id, w.kind, w.status, w.sandbox_profile,
+		       p.id, p.workspace_root, p.artifact_roots, p.readonly_mounts,
+		       p.denied_paths, p.tool_home_dir, p.runtime_control_dir
+		FROM worksources w
+		LEFT JOIN sandbox_profiles p ON p.id = w.sandbox_profile
+		ORDER BY w.id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []DispatchWorksource{}
+	for rows.Next() {
+		var ws DispatchWorksource
+		var associatedProfile, profileID, workspace sql.NullString
+		var artifactRaw, readonlyRaw, deniedRaw sql.NullString
+		var toolHome, runtimeControl sql.NullString
+		if err := rows.Scan(&ws.WorksourceID, &ws.Kind, &ws.Status, &associatedProfile,
+			&profileID, &workspace, &artifactRaw, &readonlyRaw, &deniedRaw,
+			&toolHome, &runtimeControl); err != nil {
+			return nil, err
+		}
+		ws.ProfilePresent = associatedProfile.Valid && profileID.Valid
+		if associatedProfile.Valid {
+			ws.ProfileID = associatedProfile.String
+		}
+		if ws.ProfilePresent {
+			ws.WorkspaceRoot = workspace.String
+			ws.ToolHomeDir = toolHome.String
+			ws.RuntimeControlDir = runtimeControl.String
+			if ws.ArtifactRoots, err = normalizedDispatchPaths(artifactRaw, 64); err != nil {
+				return nil, fmt.Errorf("Worksource %q artifact_roots: %w", ws.WorksourceID, err)
+			}
+			if ws.ReadonlyMounts, err = normalizedDispatchPaths(readonlyRaw, 128); err != nil {
+				return nil, fmt.Errorf("Worksource %q readonly_mounts: %w", ws.WorksourceID, err)
+			}
+			if ws.DeniedPaths, err = normalizedDispatchPaths(deniedRaw, 512); err != nil {
+				return nil, fmt.Errorf("Worksource %q denied_paths: %w", ws.WorksourceID, err)
+			}
+		} else {
+			ws.ArtifactRoots = []string{}
+			ws.ReadonlyMounts = []string{}
+			ws.DeniedPaths = []string{}
+		}
+		if !validDispatchScalar(ws.WorksourceID) || !validDispatchScalar(ws.Kind) || !validDispatchScalar(ws.Status) ||
+			(ws.ProfileID != "" && !validDispatchScalar(ws.ProfileID)) ||
+			(ws.WorkspaceRoot != "" && !validDispatchScalar(ws.WorkspaceRoot)) ||
+			(ws.ToolHomeDir != "" && !validDispatchScalar(ws.ToolHomeDir)) ||
+			(ws.RuntimeControlDir != "" && !validDispatchScalar(ws.RuntimeControlDir)) {
+			return nil, fmt.Errorf("Worksource %q carries a scalar outside ADR-016 D2 bounds", ws.WorksourceID)
+		}
+		out = append(out, ws)
+	}
+	return out, rows.Err()
+}
+
+func ValidateDispatchMountProjection(ctx context.Context, q dispatchProjectionQuerier) error {
+	rows, err := LoadDispatchWorksourceProjection(ctx, q)
+	if err != nil {
+		return err
+	}
+	body, err := json.Marshal(rows)
+	if err != nil {
+		return err
+	}
+	if len(body) > MaxDispatchMountProjectionBytes {
+		return fmt.Errorf("Worksource/profile projection is %d bytes, exceeds %d-byte ADR-016 D2 admission budget",
+			len(body), MaxDispatchMountProjectionBytes)
+	}
+	return nil
+}
+
+func normalizedDispatchPaths(raw sql.NullString, max int) ([]string, error) {
+	if !raw.Valid || raw.String == "" {
+		return []string{}, nil
+	}
+	var values []string
+	if err := json.Unmarshal([]byte(raw.String), &values); err != nil || values == nil {
+		return nil, fmt.Errorf("must be a JSON array of strings")
+	}
+	if len(values) > max {
+		return nil, fmt.Errorf("contains %d items, exceeds bound %d", len(values), max)
+	}
+	sort.Strings(values)
+	for i, value := range values {
+		if !validDispatchScalar(value) {
+			return nil, fmt.Errorf("item %d is not a bounded structural string", i)
+		}
+		if i > 0 && values[i-1] == value {
+			return nil, fmt.Errorf("duplicate path %q", value)
+		}
+	}
+	return values, nil
+}

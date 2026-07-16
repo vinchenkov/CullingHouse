@@ -666,6 +666,10 @@ func onboardWorksource(a OnboardArgs) (string, string, error) {
 	if supplied && (a.Worksource == "" || a.WorkspaceRoot == "") {
 		return "", "", Usagef("mc onboard worksource requires --worksource and --workspace-root together")
 	}
+	if supplied && (!validStructuralText(a.Worksource, maxPrivateScalarBytes) ||
+		!validStructuralText(a.WorkspaceRoot, maxPrivateScalarBytes)) {
+		return "", "", Usagef("mc onboard Worksource and workspace root must be valid UTF-8 without controls and at most 4096 bytes (ADR-016 D2)")
+	}
 	workspaceRoot := ""
 	if supplied {
 		if !filepath.IsAbs(a.WorkspaceRoot) {
@@ -770,6 +774,9 @@ func onboardWorksource(a OnboardArgs) (string, string, error) {
 		if _, err := q.ExecContext(ctx, `
 			INSERT INTO worksources (id, title, kind, sandbox_profile)
 			VALUES (?, ?, 'repo', 'default')`, a.Worksource, a.Worksource); err != nil {
+			return err
+		}
+		if err := substrate.ValidateDispatchMountProjection(ctx, q); err != nil {
 			return err
 		}
 		status = "done"

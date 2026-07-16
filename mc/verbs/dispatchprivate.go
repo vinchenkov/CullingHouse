@@ -52,21 +52,22 @@ type PrivateDispatchPrepareRequest struct {
 }
 
 type PrivateDispatchCandidate struct {
-	RunID               string   `json:"run_id"`
-	Role                string   `json:"role"`
-	SubjectID           *int64   `json:"subject_id"`
-	ProposedPool        []int64  `json:"proposed_pool"`
-	Wave                []int64  `json:"wave"`
-	DedupeTitles        []string `json:"dedupe_titles"`
-	Token               string   `json:"preparation_token"`
-	TimeoutMinutes      int      `json:"timeout_minutes"`
-	GraceMinutes        int      `json:"grace_minutes"`
-	HeartbeatIntervalS  int      `json:"heartbeat_interval_s"`
-	SpawnGraceS         int      `json:"spawn_grace_s"`
-	HardDeadlineMinutes int      `json:"hard_deadline_minutes"`
-	ConsoleHour         int      `json:"console_hour"`
-	ConsoleMinute       int      `json:"console_minute"`
-	ConsoleTZ           string   `json:"console_tz"`
+	RunID               string                    `json:"run_id"`
+	Role                string                    `json:"role"`
+	SubjectID           *int64                    `json:"subject_id"`
+	ProposedPool        []int64                   `json:"proposed_pool"`
+	Wave                []int64                   `json:"wave"`
+	DedupeTitles        []string                  `json:"dedupe_titles"`
+	Token               string                    `json:"preparation_token"`
+	TimeoutMinutes      int                       `json:"timeout_minutes"`
+	GraceMinutes        int                       `json:"grace_minutes"`
+	HeartbeatIntervalS  int                       `json:"heartbeat_interval_s"`
+	SpawnGraceS         int                       `json:"spawn_grace_s"`
+	HardDeadlineMinutes int                       `json:"hard_deadline_minutes"`
+	ConsoleHour         int                       `json:"console_hour"`
+	ConsoleMinute       int                       `json:"console_minute"`
+	ConsoleTZ           string                    `json:"console_tz"`
+	MountState          PrivateDispatchMountState `json:"mount_state"`
 }
 
 type PrivateDispatchPrepareResponse struct {
@@ -301,6 +302,7 @@ func privateCandidateFromPrepared(c *preparedCandidate) *PrivateDispatchCandidat
 		HeartbeatIntervalS: c.tun.heartbeatIntervalS, SpawnGraceS: c.tun.spawnGraceS,
 		HardDeadlineMinutes: c.tun.hardDeadlineMinutes, ConsoleHour: c.tun.consoleHour,
 		ConsoleMinute: c.tun.consoleMinute, ConsoleTZ: c.tun.consoleTZ,
+		MountState: c.mountState,
 	}
 }
 
@@ -335,6 +337,9 @@ func preparedFromCandidate(identity dispatchProtocolIdentity, deploymentUUID, re
 	if c.ProposedPool == nil || c.Wave == nil || c.DedupeTitles == nil {
 		return preparedDispatch{}, Domainf("dispatch: private candidate collections must be explicit")
 	}
+	if err := validatePrivateMountState(c.MountState); err != nil {
+		return preparedDispatch{}, err
+	}
 	if !validPrivateRole(c.Role) {
 		return preparedDispatch{}, Domainf("dispatch: private candidate role is invalid")
 	}
@@ -362,8 +367,62 @@ func preparedFromCandidate(identity dispatchProtocolIdentity, deploymentUUID, re
 	return preparedDispatch{
 		requestID: requestID, deploymentUUID: deploymentUUID,
 		identity:  identity,
-		candidate: &preparedCandidate{spawn: sp, runID: c.RunID, tun: tun, token: c.Token},
+		candidate: &preparedCandidate{spawn: sp, runID: c.RunID, tun: tun, token: c.Token, mountState: c.MountState},
 	}, nil
+}
+
+func validatePrivateMountState(state PrivateDispatchMountState) error {
+	if state.Worksources == nil {
+		return Domainf("dispatch: private mount-state Worksources must be explicit")
+	}
+	projection, err := json.Marshal(state.Worksources)
+	if err != nil || len(projection) > substrate.MaxDispatchMountProjectionBytes {
+		return Domainf("dispatch: private Worksource projection exceeds its admitted byte budget")
+	}
+	foundSelected := state.SelectedWorksource == ""
+	prior := ""
+	for i, ws := range state.Worksources {
+		if !validStructuralText(ws.WorksourceID, maxPrivateScalarBytes) ||
+			!validStructuralText(ws.Kind, maxPrivateScalarBytes) ||
+			!validStructuralText(ws.Status, maxPrivateScalarBytes) ||
+			(i > 0 && ws.WorksourceID <= prior) {
+			return Domainf("dispatch: private Worksource projection is invalid or unsorted")
+		}
+		prior = ws.WorksourceID
+		if ws.WorksourceID == state.SelectedWorksource {
+			foundSelected = true
+		}
+		if ws.ArtifactRoots == nil || ws.ReadonlyMounts == nil || ws.DeniedPaths == nil ||
+			!strictStructuralTexts(ws.ArtifactRoots) || !strictStructuralTexts(ws.ReadonlyMounts) ||
+			!strictStructuralTexts(ws.DeniedPaths) {
+			return Domainf("dispatch: private Worksource path projection is invalid")
+		}
+		for _, value := range []string{ws.ProfileID, ws.WorkspaceRoot, ws.ToolHomeDir, ws.RuntimeControlDir} {
+			if value != "" && !validStructuralText(value, maxPrivateScalarBytes) {
+				return Domainf("dispatch: private Worksource scalar is invalid")
+			}
+		}
+		if ws.ProfilePresent && ws.ProfileID == "" {
+			return Domainf("dispatch: private Worksource profile presence is incoherent")
+		}
+		if !ws.ProfilePresent && (ws.WorkspaceRoot != "" || ws.ToolHomeDir != "" || ws.RuntimeControlDir != "" ||
+			len(ws.ArtifactRoots) != 0 || len(ws.ReadonlyMounts) != 0 || len(ws.DeniedPaths) != 0) {
+			return Domainf("dispatch: absent private Worksource profile carries state")
+		}
+	}
+	if !foundSelected {
+		return Domainf("dispatch: selected Worksource is absent from the private projection")
+	}
+	return nil
+}
+
+func strictStructuralTexts(values []string) bool {
+	for i, value := range values {
+		if !validStructuralText(value, maxPrivateScalarBytes) || (i > 0 && values[i-1] >= value) {
+			return false
+		}
+	}
+	return true
 }
 
 func validPrivateConsole(hour, minute int, timezone string) bool {

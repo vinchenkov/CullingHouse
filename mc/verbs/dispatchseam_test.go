@@ -75,6 +75,16 @@ func dsGoldenPrepare() canonicalPrepare {
 				Binding: "claude", InputSeq: i64p(4),
 			},
 		},
+		MountState: PrivateDispatchMountState{
+			SelectedWorksource: "ws-test",
+			Worksources: []PrivateDispatchWorksource{{
+				WorksourceID: "ws-test", Kind: "repo", Status: "active",
+				ProfilePresent: true, ProfileID: "default", WorkspaceRoot: "/srv/ws-test",
+				ArtifactRoots: []string{"/srv/artifacts"}, ReadonlyMounts: []string{"/srv/reference"},
+				DeniedPaths: []string{"/srv/ws-test/private"}, ToolHomeDir: "/srv/tool-home",
+				RuntimeControlDir: "/srv/runtime-control",
+			}},
+		},
 		Candidate: canonicalCandidate{
 			Kind: "spawn", RunID: "0123456789abcdef", Role: "worker", SubjectID: i64p(7),
 			ProposedPool: []int64{}, Wave: []int64{}, DedupeTitles: []string{},
@@ -118,6 +128,12 @@ func dsGoldenPrepareJSON() string {
 			`"prime_through_seq":7,"prime_row_count":3,"resume_owed":0,"resume_mode":null,` +
 			`"resume_prime_through_seq":null,"resume_prime_row_count":null,` +
 			`"binding":"claude","input_seq":4}]`,
+		`"mount_state":{"selected_worksource":"ws-test","worksources":[{` +
+			`"worksource_id":"ws-test","kind":"repo","status":"active",` +
+			`"profile_present":true,"profile_id":"default","workspace_root":"/srv/ws-test",` +
+			`"artifact_roots":["/srv/artifacts"],"readonly_mounts":["/srv/reference"],` +
+			`"denied_paths":["/srv/ws-test/private"],"tool_home_dir":"/srv/tool-home",` +
+			`"runtime_control_dir":"/srv/runtime-control"}]}`,
 		`"candidate":{"kind":"spawn","run_id":"0123456789abcdef","role":"worker",` +
 			`"subject_id":7,"proposed_pool":[],"wave":[],"dedupe_titles":[]}}`,
 	}, ",")
@@ -243,7 +259,7 @@ func TestDispatchSeamBuildCanonicalPrepareNormalizes(t *testing.T) {
 		},
 	}
 	sp := &dispatch.Spawn{Role: dispatch.Role("worker")}
-	got := buildCanonicalPrepare("uuid-x", "00112233445566ff", rec, dispatch.Lock{}, tunables{}, nil, spawnCandidateProjection("0123456789abcdef", sp))
+	got := buildCanonicalPrepare("uuid-x", "00112233445566ff", rec, dispatch.Lock{}, tunables{}, nil, PrivateDispatchMountState{}, spawnCandidateProjection("0123456789abcdef", sp))
 	if got.Tasks[0].ID != 7 || got.Tasks[1].ID != 9 {
 		t.Fatalf("tasks not sorted by id: %+v", got.Tasks)
 	}
@@ -263,7 +279,7 @@ func TestDispatchSeamBuildCanonicalPrepareNormalizes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("bytes: %v", err)
 	}
-	b2, err := buildCanonicalPrepare("uuid-x", "00112233445566ff", rec, dispatch.Lock{}, tunables{}, nil, spawnCandidateProjection("0123456789abcdef", sp)).bytes()
+	b2, err := buildCanonicalPrepare("uuid-x", "00112233445566ff", rec, dispatch.Lock{}, tunables{}, nil, PrivateDispatchMountState{}, spawnCandidateProjection("0123456789abcdef", sp)).bytes()
 	if err != nil {
 		t.Fatalf("bytes: %v", err)
 	}

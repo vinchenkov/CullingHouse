@@ -3,6 +3,7 @@ package verbs
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -68,6 +69,94 @@ func TestPrivateDispatchFramesRoundTripCandidateWithoutHostReadsInPrepare(t *tes
 	}
 	if effect["action"] != "spawn" || effect["run_id"] != prepared.Candidate.RunID {
 		t.Fatalf("private commit result = %v, want prepared spawn", effect)
+	}
+}
+
+func TestPrivateDispatchCandidateFreezesSelectedWorksourceAndEveryProfile(t *testing.T) {
+	db := dvSpine(t)
+	dvInsertTask(t, db, dvTask(1, dispatch.ScopeTask, dispatch.StatusProposed, 2))
+	dvExec(t, db, `UPDATE sandbox_profiles SET artifact_roots=?, readonly_mounts=?, denied_paths=?,
+		tool_home_dir=?, runtime_control_dir=? WHERE id='default'`,
+		`["/tmp/artifact-b","/tmp/artifact-a"]`, `[
+  "/tmp/reference"
+]`, `["/tmp/denied"]`, `/tmp/tool-home`, `/tmp/runtime-control`)
+	dvExec(t, db, `INSERT INTO sandbox_profiles (id, workspace_root, artifact_roots, readonly_mounts,
+		denied_paths, egress_policy) VALUES ('other-profile','/tmp/other','[]','[]','[]','none')`)
+	dvExec(t, db, `INSERT INTO worksources (id,title,kind,sandbox_profile,status)
+		VALUES ('other','Other','repo','other-profile','paused')`)
+
+	prepare := func(requestID string) PrivateDispatchPrepareResponse {
+		req := privateRequest(dfUUID(t, db))
+		req.DispatchRequestID = requestID
+		var out PrivateDispatchPrepareResponse
+		if err := inTx(db, func(ctx context.Context, q Q) error {
+			var err error
+			out, err = DispatchPreparePrivate(ctx, q, req)
+			return err
+		}); err != nil {
+			t.Fatal(err)
+		}
+		return out
+	}
+
+	first := prepare("0123456789abcdea")
+	if first.Candidate == nil {
+		t.Fatal("prepare returned no candidate")
+	}
+	state := first.Candidate.MountState
+	if state.SelectedWorksource != "ws-test" || len(state.Worksources) != 2 {
+		t.Fatalf("mount state = %+v, want selected ws-test and every Worksource", state)
+	}
+	if got := state.Worksources[1]; got.WorksourceID != "ws-test" || got.ProfileID != "default" ||
+		len(got.ArtifactRoots) != 2 || got.ArtifactRoots[0] != "/tmp/artifact-a" ||
+		len(got.ReadonlyMounts) != 1 || got.DeniedPaths[0] != "/tmp/denied" ||
+		got.ToolHomeDir != "/tmp/tool-home" || got.RuntimeControlDir != "/tmp/runtime-control" {
+		t.Fatalf("normalized selected profile = %+v", got)
+	}
+
+	dvExec(t, db, `UPDATE sandbox_profiles SET readonly_mounts='["/tmp/reference-2"]' WHERE id='default'`)
+	second := prepare("0123456789abcdeb")
+	if second.Candidate.Token == first.Candidate.Token {
+		t.Fatal("profile drift did not change the preparation token")
+	}
+}
+
+func TestWorksourceArchiveRejectsProjectionBeyondAggregateBudget(t *testing.T) {
+	db := dvSpine(t)
+	roots := make([]string, 0, 64)
+	for i := 0; i < 63; i++ {
+		prefix := fmt.Sprintf("/%02d", i)
+		roots = append(roots, prefix+strings.Repeat("x", 4096-len(prefix)))
+	}
+	roots = append(roots, "/z")
+	row := substrate.DispatchWorksource{
+		WorksourceID: "ws-test", Kind: "repo", Status: "active", ProfilePresent: true,
+		ProfileID: "default", WorkspaceRoot: "/tmp/ws-test", ArtifactRoots: roots,
+		ReadonlyMounts: []string{}, DeniedPaths: []string{},
+	}
+	body, err := json.Marshal([]substrate.DispatchWorksource{row})
+	if err != nil {
+		t.Fatal(err)
+	}
+	delta := substrate.MaxDispatchMountProjectionBytes - len(body)
+	if delta < 0 || delta > 4094 {
+		t.Fatalf("exact-budget fixture needs delta %d outside 0..4094", delta)
+	}
+	roots[len(roots)-1] += strings.Repeat("x", delta)
+	artifactJSON, err := json.Marshal(roots)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dvExec(t, db, `UPDATE sandbox_profiles SET artifact_roots=? WHERE id='default'`, string(artifactJSON))
+	if err := substrate.ValidateDispatchMountProjection(context.Background(), db); err != nil {
+		t.Fatalf("exact aggregate budget rejected: %v", err)
+	}
+
+	if _, err := WorksourceSetStatus(db, nil, "ws-test", "archived"); err == nil {
+		t.Fatal("archive admitted a Worksource projection beyond the aggregate budget")
+	}
+	if got := dfStr(t, db, `SELECT status FROM worksources WHERE id='ws-test'`); got != "active" {
+		t.Fatalf("rejected archive left status %q, want transactional rollback to active", got)
 	}
 }
 

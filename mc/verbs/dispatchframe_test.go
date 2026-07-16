@@ -513,6 +513,7 @@ func TestDispatchCommitRefusesDoctoredCandidate(t *testing.T) {
 			return err
 		}
 		canonical, err := buildCanonicalPrepare(uuid, dfRequestID, sel.rec, sel.lk, sel.tun, sel.homies,
+			doctored.mountState,
 			spawnCandidateProjection(doctored.runID, doctored.spawn)).bytes()
 		if err != nil {
 			return err

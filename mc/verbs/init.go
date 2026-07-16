@@ -41,6 +41,10 @@ func Init(a InitArgs) (any, error) {
 	if a.Spine == "" || a.Worksource == "" || a.WorkspaceRoot == "" {
 		return nil, Usagef("mc init requires --spine, --worksource, and --workspace-root")
 	}
+	if !validStructuralText(a.Worksource, maxPrivateScalarBytes) ||
+		!validStructuralText(a.WorkspaceRoot, maxPrivateScalarBytes) {
+		return nil, Usagef("mc init Worksource and workspace root must be valid UTF-8 without controls and at most 4096 bytes (ADR-016 D2)")
+	}
 	if a.ConsoleScheduleSet {
 		if a.ConsoleHour < 0 || a.ConsoleHour > 23 {
 			return nil, Usagef("mc init --console-hour must be 0..23")
@@ -87,7 +91,10 @@ func Init(a InitArgs) (any, error) {
 			VALUES (?, ?, 'repo', 'default')`, a.Worksource, a.Worksource); err != nil {
 			return err
 		}
-		return applyTunables(ctx, q, a)
+		if err := applyTunables(ctx, q, a); err != nil {
+			return err
+		}
+		return substrate.ValidateDispatchMountProjection(ctx, q)
 	})
 	if err != nil {
 		return nil, err

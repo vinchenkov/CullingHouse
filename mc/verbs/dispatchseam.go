@@ -114,20 +114,21 @@ type canonicalCandidate struct {
 // generations the D4 fence compares, in the same frozen homieCandidateState
 // shape the preflight marker key uses.
 type canonicalPrepare struct {
-	Version             int                   `json:"version"`
-	ReleaseBuildID      string                `json:"release_build_id"`
-	ControlVersion      int                   `json:"gateway_control_version"`
-	SpineSchemaVersion  int                   `json:"spine_schema_version"`
-	ConfigSchemaVersion int                   `json:"config_schema_version"`
-	DeploymentUUID      string                `json:"deployment_uuid"`
-	RequestID           string                `json:"request_id"`
-	Tasks               []canonicalTask       `json:"tasks"`
-	Packets             []canonicalPacket     `json:"packets"`
-	LastBriefingAt      *string               `json:"last_briefing_at"`
-	Lock                canonicalLock         `json:"lock"`
-	Tunables            canonicalTunables     `json:"tunables"`
-	Homies              []homieCandidateState `json:"homies"`
-	Candidate           canonicalCandidate    `json:"candidate"`
+	Version             int                       `json:"version"`
+	ReleaseBuildID      string                    `json:"release_build_id"`
+	ControlVersion      int                       `json:"gateway_control_version"`
+	SpineSchemaVersion  int                       `json:"spine_schema_version"`
+	ConfigSchemaVersion int                       `json:"config_schema_version"`
+	DeploymentUUID      string                    `json:"deployment_uuid"`
+	RequestID           string                    `json:"request_id"`
+	Tasks               []canonicalTask           `json:"tasks"`
+	Packets             []canonicalPacket         `json:"packets"`
+	LastBriefingAt      *string                   `json:"last_briefing_at"`
+	Lock                canonicalLock             `json:"lock"`
+	Tunables            canonicalTunables         `json:"tunables"`
+	Homies              []homieCandidateState     `json:"homies"`
+	MountState          PrivateDispatchMountState `json:"mount_state"`
+	Candidate           canonicalCandidate        `json:"candidate"`
 }
 
 type dispatchProtocolIdentity struct {
@@ -250,11 +251,11 @@ func spawnCandidateProjection(runID string, sp *dispatch.Spawn) canonicalCandida
 // buildCanonicalPrepare assembles the closed projection from what the prepare
 // transaction read. Records arrive in SQL order, which is not part of the
 // wire contract, so tasks sort by id and packets by (task_id, created_at).
-func buildCanonicalPrepare(uuid, requestID string, rec dispatch.Records, lk dispatch.Lock, tun tunables, homies []homieCandidateState, cand canonicalCandidate) canonicalPrepare {
-	return buildCanonicalPrepareWithIdentity(defaultDispatchProtocolIdentity, uuid, requestID, rec, lk, tun, homies, cand)
+func buildCanonicalPrepare(uuid, requestID string, rec dispatch.Records, lk dispatch.Lock, tun tunables, homies []homieCandidateState, mounts PrivateDispatchMountState, cand canonicalCandidate) canonicalPrepare {
+	return buildCanonicalPrepareWithIdentity(defaultDispatchProtocolIdentity, uuid, requestID, rec, lk, tun, homies, mounts, cand)
 }
 
-func buildCanonicalPrepareWithIdentity(identity dispatchProtocolIdentity, uuid, requestID string, rec dispatch.Records, lk dispatch.Lock, tun tunables, homies []homieCandidateState, cand canonicalCandidate) canonicalPrepare {
+func buildCanonicalPrepareWithIdentity(identity dispatchProtocolIdentity, uuid, requestID string, rec dispatch.Records, lk dispatch.Lock, tun tunables, homies []homieCandidateState, mounts PrivateDispatchMountState, cand canonicalCandidate) canonicalPrepare {
 	tasks := make([]canonicalTask, 0, len(rec.Tasks))
 	for _, t := range rec.Tasks {
 		tasks = append(tasks, canonicalTask{
@@ -311,6 +312,9 @@ func buildCanonicalPrepareWithIdentity(identity dispatchProtocolIdentity, uuid, 
 	if homies == nil {
 		homies = []homieCandidateState{}
 	}
+	if mounts.Worksources == nil {
+		mounts.Worksources = []PrivateDispatchWorksource{}
+	}
 
 	return canonicalPrepare{
 		Version:             1,
@@ -334,8 +338,9 @@ func buildCanonicalPrepareWithIdentity(identity dispatchProtocolIdentity, uuid, 
 			ConsoleMinute:       tun.consoleMinute,
 			ConsoleTZ:           tun.consoleTZ,
 		},
-		Homies:    homies,
-		Candidate: cand,
+		Homies:     homies,
+		MountState: mounts,
+		Candidate:  cand,
 	}
 }
 
@@ -436,10 +441,11 @@ type preparedDispatch struct {
 }
 
 type preparedCandidate struct {
-	spawn *dispatch.Spawn
-	runID string
-	tun   tunables
-	token string
+	spawn      *dispatch.Spawn
+	runID      string
+	tun        tunables
+	token      string
+	mountState PrivateDispatchMountState
 }
 
 // attestedDispatch is the attest step's host projection: the resolved route
@@ -486,16 +492,21 @@ func dispatchPrepareWithIdentity(ctx context.Context, q Q, identity dispatchProt
 		if err != nil {
 			return preparedDispatch{}, err
 		}
-		canonical, err := buildCanonicalPrepareWithIdentity(identity, uuid, requestID, sel.rec, sel.lk, sel.tun, sel.homies,
+		mountState, err := loadDispatchMountState(ctx, q, sel.action.Spawn, sel.rec)
+		if err != nil {
+			return preparedDispatch{}, err
+		}
+		canonical, err := buildCanonicalPrepareWithIdentity(identity, uuid, requestID, sel.rec, sel.lk, sel.tun, sel.homies, mountState,
 			spawnCandidateProjection(runID, sel.action.Spawn)).bytes()
 		if err != nil {
 			return preparedDispatch{}, err
 		}
 		return preparedDispatch{requestID: requestID, deploymentUUID: uuid, identity: identity, candidate: &preparedCandidate{
-			spawn: sel.action.Spawn,
-			runID: runID,
-			tun:   sel.tun,
-			token: preparationToken(canonical),
+			spawn:      sel.action.Spawn,
+			runID:      runID,
+			tun:        sel.tun,
+			token:      preparationToken(canonical),
+			mountState: mountState,
 		}}, nil
 	}
 
@@ -614,7 +625,14 @@ func dispatchCommit(ctx context.Context, q Q, prepared preparedDispatch, atteste
 	rcand := refusalCandidateFor(cand.spawn)
 
 	proj := spawnCandidateProjection(cand.runID, cand.spawn)
-	canonical, err := buildCanonicalPrepareWithIdentity(prepared.identity, attested.deploymentUUID, prepared.requestID, sel.rec, sel.lk, sel.tun, sel.homies, proj).bytes()
+	currentMountState, err := loadDispatchMountState(ctx, q, cand.spawn, sel.rec)
+	if err != nil {
+		return nil, err
+	}
+	if !reflect.DeepEqual(currentMountState, cand.mountState) {
+		return commitInertRefusal(ctx, q, prepared, rcand, refusal.CodeStale)
+	}
+	canonical, err := buildCanonicalPrepareWithIdentity(prepared.identity, attested.deploymentUUID, prepared.requestID, sel.rec, sel.lk, sel.tun, sel.homies, cand.mountState, proj).bytes()
 	if err != nil {
 		return nil, err
 	}

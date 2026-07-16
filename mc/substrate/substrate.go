@@ -9,6 +9,7 @@
 package substrate
 
 import (
+	"context"
 	"database/sql"
 	_ "embed"
 	"fmt"
@@ -349,6 +350,9 @@ func validateDispatchScalarAdmission(tx *sql.Tx) error {
 	}
 	if err := rows.Err(); err != nil {
 		return fmt.Errorf("validate tasks.title admission: %w", err)
+	}
+	if err := ValidateDispatchMountProjection(context.Background(), tx); err != nil {
+		return err
 	}
 	return nil
 }
