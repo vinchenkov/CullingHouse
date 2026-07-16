@@ -796,61 +796,6 @@ CREATE TABLE homie_sessions (
     binding            TEXT NOT NULL,
     native_session_ref TEXT,
     trace_filename     TEXT,
-
-    -- ADR-016 D3 launch fencing: canonical liveness only — no argv, mount,
-    -- credential, nonce, or launch plan is persisted. The pairing lattice
-    -- lives here as CHECKs, not as Go politeness: a half-bound launch, a
-    -- debt-plus-launch row, or a prime cutoff outside `rows` mode is
-    -- unstorable, so a superseded generation can never be half-cleared.
-    -- The id fences reuse the D2 dual-length shape (see activity above):
-    -- requiring character and byte length to agree admits only NUL-free
-    -- ASCII, which GLOB then reads whole.
-    current_launch_id         TEXT
-                              CHECK (current_launch_id IS NULL OR
-                                     (length(current_launch_id) = 16 AND
-                                      length(CAST(current_launch_id AS BLOB)) = 16 AND
-                                      current_launch_id NOT GLOB '*[^0-9a-f]*')),
-    current_launch_mode       TEXT
-                              CHECK (current_launch_mode IS NULL OR
-                                     current_launch_mode IN ('fresh', 'native', 'rows'))
-                              CHECK ((current_launch_id IS NULL) = (current_launch_mode IS NULL)),
-    current_prime_through_seq INTEGER
-                              CHECK (current_prime_through_seq IS NULL OR
-                                     current_prime_through_seq >= 0)
-                              CHECK ((current_launch_mode IS 'rows') =
-                                     (current_prime_through_seq IS NOT NULL)),
-    current_prime_row_count   INTEGER
-                              CHECK (current_prime_row_count IS NULL OR
-                                     current_prime_row_count >= 0)
-                              CHECK ((current_prime_through_seq IS NULL) =
-                                     (current_prime_row_count IS NULL)),
-    current_container_id      TEXT
-                              CHECK (current_container_id IS NULL OR
-                                     (length(current_container_id) = 64 AND
-                                      length(CAST(current_container_id AS BLOB)) = 64 AND
-                                      current_container_id NOT GLOB '*[^0-9a-f]*')),
-    launch_bound_at           TEXT
-                              CHECK ((current_container_id IS NULL) = (launch_bound_at IS NULL))
-                              CHECK (launch_bound_at IS NULL OR current_launch_id IS NOT NULL),
-    launch_started_at         TEXT
-                              CHECK (launch_started_at IS NULL OR launch_bound_at IS NOT NULL),
-    resume_owed               INTEGER NOT NULL DEFAULT 0
-                              CHECK (resume_owed IN (0, 1))
-                              CHECK (resume_owed = 0 OR current_launch_id IS NULL),
-    resume_mode               TEXT
-                              CHECK (resume_mode IS NULL OR resume_mode IN ('native', 'rows'))
-                              CHECK ((resume_owed = 1) = (resume_mode IS NOT NULL)),
-    resume_prime_through_seq  INTEGER
-                              CHECK (resume_prime_through_seq IS NULL OR
-                                     resume_prime_through_seq >= 0)
-                              CHECK ((resume_mode IS 'rows') =
-                                     (resume_prime_through_seq IS NOT NULL)),
-    resume_prime_row_count    INTEGER
-                              CHECK (resume_prime_row_count IS NULL OR
-                                     resume_prime_row_count >= 0)
-                              CHECK ((resume_prime_through_seq IS NULL) =
-                                     (resume_prime_row_count IS NULL)),
-
     CHECK ((native_session_ref IS NULL) = (trace_filename IS NULL))
 );
 

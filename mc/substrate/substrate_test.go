@@ -929,6 +929,146 @@ func TestHomieSessionRegistryInvariants(t *testing.T) {
 		WHERE id = 'h1'`)
 }
 
+// ADR-016 D3: launch fencing is canonical liveness state on homie_sessions,
+// with the pairing rules as storage CHECKs, not as Go politeness.
+func TestHomieLaunchFenceBackstops(t *testing.T) {
+	assertHomieLaunchFenceBackstops(t, openSpine(t))
+}
+
+// assertHomieLaunchFenceBackstops states D3's homie_sessions storage contract
+// once. A migrated spine is held to it alongside a fresh one (see
+// TestMigrateV2ToCurrent): a fence the migration fails to carry over is a
+// fence that does not exist on any real deployment.
+func assertHomieLaunchFenceBackstops(t *testing.T, db *sql.DB) {
+	t.Helper()
+	mkHomieSession(t, db, "launch-fence")
+
+	// `homie start` names only the five identity columns, so the schema's
+	// defaults ARE its launch initialization: every launch/debt field must
+	// start empty/zero without the Go layer spelling it.
+	if got := oneInt(t, db, `
+		SELECT count(*) FROM homie_sessions WHERE id = 'launch-fence'
+		  AND current_launch_id IS NULL AND current_launch_mode IS NULL
+		  AND current_prime_through_seq IS NULL AND current_prime_row_count IS NULL
+		  AND current_container_id IS NULL
+		  AND launch_bound_at IS NULL AND launch_started_at IS NULL
+		  AND resume_owed = 0 AND resume_mode IS NULL
+		  AND resume_prime_through_seq IS NULL AND resume_prime_row_count IS NULL`,
+	); got != 1 {
+		t.Fatal("a new session must start with every launch/debt field empty/zero (D3)")
+	}
+
+	launch := strings.Repeat("ab", 8)     // 16 lowercase hex
+	container := strings.Repeat("cd", 32) // 64 lowercase hex
+
+	// One full-width UPDATE per case: every launch/debt column is set at
+	// once, so each shape is judged whole and no case leaks into the next.
+	type launchRow struct {
+		launchID, launchMode, primeSeq, primeCount any
+		containerID, boundAt, startedAt            any
+		resumeMode, resumeSeq, resumeCount         any
+		resumeOwed                                 int
+	}
+	for name, c := range map[string]struct {
+		row launchRow
+		ok  bool
+	}{
+		// The legal states of D3's lattice.
+		"all_empty_zero":   {ok: true, row: launchRow{}},
+		"fresh_launch":     {ok: true, row: launchRow{launchID: launch, launchMode: "fresh"}},
+		"native_launch":    {ok: true, row: launchRow{launchID: launch, launchMode: "native"}},
+		"rows_launch":      {ok: true, row: launchRow{launchID: launch, launchMode: "rows", primeSeq: 0, primeCount: 0}},
+		"rows_launch_deep": {ok: true, row: launchRow{launchID: launch, launchMode: "rows", primeSeq: 9214, primeCount: 118}},
+		"bound_launch": {ok: true, row: launchRow{launchID: launch, launchMode: "fresh",
+			containerID: container, boundAt: "2026-07-16 03:00:00"}},
+		"started_launch": {ok: true, row: launchRow{launchID: launch, launchMode: "fresh",
+			containerID: container, boundAt: "2026-07-16 03:00:00", startedAt: "2026-07-16 03:00:05"}},
+		"resume_debt_native": {ok: true, row: launchRow{resumeOwed: 1, resumeMode: "native"}},
+		"resume_debt_rows":   {ok: true, row: launchRow{resumeOwed: 1, resumeMode: "rows", resumeSeq: 0, resumeCount: 41}},
+
+		// Launch id and mode are both-null-or-both-present, and the id is
+		// pinned by the D2 dual-length hex fence: length() and GLOB both stop
+		// at the first NUL, so a forged id could otherwise store as a value
+		// its own generation lookup cannot find.
+		"launch_id_without_mode": {row: launchRow{launchID: launch}},
+		"mode_without_launch_id": {row: launchRow{launchMode: "fresh"}},
+		"launch_mode_unknown":    {row: launchRow{launchID: launch, launchMode: "resume"}},
+		"launch_id_short":        {row: launchRow{launchID: launch[:15], launchMode: "fresh"}},
+		"launch_id_long":         {row: launchRow{launchID: launch + "a", launchMode: "fresh"}},
+		"launch_id_uppercase":    {row: launchRow{launchID: strings.ToUpper(launch), launchMode: "fresh"}},
+		"launch_id_nonhex":       {row: launchRow{launchID: launch[:15] + "g", launchMode: "fresh"}},
+		"launch_id_nul_tail":     {row: launchRow{launchID: launch + "\x00EVIL", launchMode: "fresh"}},
+		"launch_id_nul_pad":      {row: launchRow{launchID: launch[:15] + "\x00", launchMode: "fresh"}},
+
+		// Only `rows` mode carries the prime cutoff/count, always as a
+		// non-negative pair.
+		"fresh_launch_with_prime_pair": {row: launchRow{launchID: launch, launchMode: "fresh", primeSeq: 0, primeCount: 0}},
+		"native_launch_with_prime_pair": {row: launchRow{launchID: launch, launchMode: "native",
+			primeSeq: 0, primeCount: 0}},
+		"rows_launch_missing_prime_pair": {row: launchRow{launchID: launch, launchMode: "rows"}},
+		"rows_launch_half_pair_seq":      {row: launchRow{launchID: launch, launchMode: "rows", primeSeq: 0}},
+		"rows_launch_half_pair_count":    {row: launchRow{launchID: launch, launchMode: "rows", primeCount: 0}},
+		"rows_launch_negative_seq":       {row: launchRow{launchID: launch, launchMode: "rows", primeSeq: -1, primeCount: 0}},
+		"rows_launch_negative_count":     {row: launchRow{launchID: launch, launchMode: "rows", primeSeq: 0, primeCount: -1}},
+		"prime_pair_without_launch":      {row: launchRow{primeSeq: 0, primeCount: 0}},
+
+		// Container id and bound time are paired, require a current launch,
+		// and the id is one 64-lowercase-hex Docker id.
+		"container_without_bound":   {row: launchRow{launchID: launch, launchMode: "fresh", containerID: container}},
+		"bound_without_container":   {row: launchRow{launchID: launch, launchMode: "fresh", boundAt: "2026-07-16 03:00:00"}},
+		"bound_pair_without_launch": {row: launchRow{containerID: container, boundAt: "2026-07-16 03:00:00"}},
+		"container_id_short":        {row: launchRow{launchID: launch, launchMode: "fresh", containerID: container[:63], boundAt: "t"}},
+		"container_id_long":         {row: launchRow{launchID: launch, launchMode: "fresh", containerID: container + "c", boundAt: "t"}},
+		"container_id_uppercase":    {row: launchRow{launchID: launch, launchMode: "fresh", containerID: strings.ToUpper(container), boundAt: "t"}},
+		"container_id_nonhex":       {row: launchRow{launchID: launch, launchMode: "fresh", containerID: container[:63] + "x", boundAt: "t"}},
+		"container_id_nul_tail":     {row: launchRow{launchID: launch, launchMode: "fresh", containerID: container + "\x00EVIL", boundAt: "t"}},
+		"container_id_nul_pad":      {row: launchRow{launchID: launch, launchMode: "fresh", containerID: container[:63] + "\x00", boundAt: "t"}},
+
+		// A start time requires the bound pair (transitively, a launch).
+		"started_without_bound_pair": {row: launchRow{launchID: launch, launchMode: "fresh", startedAt: "t"}},
+		"started_without_launch":     {row: launchRow{startedAt: "t"}},
+
+		// Resume debt is resume_owed=1 plus a mode (`fresh` is not a resume
+		// mode), carries the prime pair only for `rows`, and is mutually
+		// exclusive with a current launch — the supersede-then-select order
+		// is a storage rule, not scheduler politeness.
+		"resume_owed_out_of_range":  {row: launchRow{resumeOwed: 2, resumeMode: "native"}},
+		"resume_owed_without_mode":  {row: launchRow{resumeOwed: 1}},
+		"resume_mode_without_debt":  {row: launchRow{resumeMode: "native"}},
+		"resume_mode_fresh_invalid": {row: launchRow{resumeOwed: 1, resumeMode: "fresh"}},
+		"resume_debt_with_current_launch": {row: launchRow{launchID: launch, launchMode: "fresh",
+			resumeOwed: 1, resumeMode: "native"}},
+		"resume_rows_missing_prime_pair": {row: launchRow{resumeOwed: 1, resumeMode: "rows"}},
+		"resume_native_with_prime_pair":  {row: launchRow{resumeOwed: 1, resumeMode: "native", resumeSeq: 0, resumeCount: 0}},
+		"resume_half_pair_seq":           {row: launchRow{resumeOwed: 1, resumeMode: "rows", resumeSeq: 0}},
+		"resume_half_pair_count":         {row: launchRow{resumeOwed: 1, resumeMode: "rows", resumeCount: 0}},
+		"resume_negative_seq":            {row: launchRow{resumeOwed: 1, resumeMode: "rows", resumeSeq: -1, resumeCount: 0}},
+		"resume_negative_count":          {row: launchRow{resumeOwed: 1, resumeMode: "rows", resumeSeq: 0, resumeCount: -1}},
+		"resume_prime_pair_without_debt": {row: launchRow{resumeSeq: 0, resumeCount: 0}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			const set = `
+				UPDATE homie_sessions SET
+					current_launch_id = ?, current_launch_mode = ?,
+					current_prime_through_seq = ?, current_prime_row_count = ?,
+					current_container_id = ?, launch_bound_at = ?, launch_started_at = ?,
+					resume_owed = ?, resume_mode = ?,
+					resume_prime_through_seq = ?, resume_prime_row_count = ?
+				WHERE id = 'launch-fence'`
+			args := []any{
+				c.row.launchID, c.row.launchMode, c.row.primeSeq, c.row.primeCount,
+				c.row.containerID, c.row.boundAt, c.row.startedAt,
+				c.row.resumeOwed, c.row.resumeMode, c.row.resumeSeq, c.row.resumeCount,
+			}
+			if c.ok {
+				mustExec(t, db, set, args...)
+			} else {
+				wantAbort(t, db, set, args...)
+			}
+		})
+	}
+}
+
 // homie_bindings is bind-event history (§15.4): end -> resume on the same
 // surface/channel appends a fresh row; at most one ACTIVE row per place;
 // the history persists indefinitely (NOTE(P1.19)).

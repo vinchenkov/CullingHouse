@@ -19,6 +19,12 @@ import (
 //go:embed testdata/schema-v1.sql
 var schemaV1 string
 
+// schemaV2 is the spine as frozen at the last commit before ADR-016
+// Decision 3's launch-fencing columns landed (556968c), for the same reason.
+//
+//go:embed testdata/schema-v2.sql
+var schemaV2 string
+
 // A migrated spine and a freshly initialized one must be indistinguishable —
 // structurally and, more importantly, in what they refuse. SQLite cannot ALTER
 // a UNIQUE column onto an existing table, so the obvious ALTER-only migration
@@ -26,16 +32,17 @@ var schemaV1 string
 // key it was supposed to reject is instead applied twice. Asserting only that
 // inserts succeed would grade exactly that spine green.
 func TestMigrateV1ToCurrentMatchesAFreshSpine(t *testing.T) {
-	t.Run("migrated spine enforces every D2 fence a fresh spine does", func(t *testing.T) {
+	t.Run("migrated spine enforces every D2 and D3 fence a fresh spine does", func(t *testing.T) {
 		db := migratedV1Spine(t)
 		assertActivityReceiptBackstops(t, db)
 		assertOutboxDestinationBackstops(t, db)
+		assertHomieLaunchFenceBackstops(t, db)
 	})
 
 	t.Run("migrated spine matches a fresh spine's columns and indexes", func(t *testing.T) {
 		migrated := migratedV1Spine(t)
 		fresh := openSpine(t)
-		for _, table := range []string{"activity", "outbox"} {
+		for _, table := range []string{"activity", "outbox", "homie_sessions"} {
 			if got, want := columnsOf(t, migrated, table), columnsOf(t, fresh, table); got != want {
 				t.Errorf("%s columns after migration:\n  got  %s\n  want %s", table, got, want)
 			}
@@ -119,6 +126,101 @@ func TestMigrateV1ToCurrentMatchesAFreshSpine(t *testing.T) {
 			t.Fatal("v0 refusal changed the schema")
 		}
 	})
+}
+
+// The v2 -> v3 step adds ADR-016 D3's launch fencing to homie_sessions. The
+// hazard is the same as v1 -> v2: an ALTER-only step that silently fails to
+// carry a pairing CHECK yields a spine that accepts a half-bound launch or a
+// debt-plus-launch row a fresh spine refuses, and every generation fence
+// downstream of it fails open.
+func TestMigrateV2ToCurrentMatchesAFreshSpine(t *testing.T) {
+	t.Run("migrated spine enforces every D3 launch fence a fresh spine does", func(t *testing.T) {
+		assertHomieLaunchFenceBackstops(t, migratedV2Spine(t))
+	})
+
+	t.Run("migrated spine matches a fresh spine's columns and indexes", func(t *testing.T) {
+		migrated := migratedV2Spine(t)
+		fresh := openSpine(t)
+		for _, table := range []string{"homie_sessions", "activity", "outbox"} {
+			if got, want := columnsOf(t, migrated, table), columnsOf(t, fresh, table); got != want {
+				t.Errorf("%s columns after migration:\n  got  %s\n  want %s", table, got, want)
+			}
+			if got, want := indexesOf(t, migrated, table), indexesOf(t, fresh, table); got != want {
+				t.Errorf("%s indexes after migration:\n  got  %s\n  want %s", table, got, want)
+			}
+		}
+	})
+
+	// D3: "`homie start` initializes every launch/debt field empty/zero."
+	// For a session that predates the columns, the migration's defaults are
+	// that initialization.
+	t.Run("a session predating launch fencing carries no launch and no debt", func(t *testing.T) {
+		db := migratedV2Spine(t)
+		if got := oneInt(t, db, `
+			SELECT count(*) FROM homie_sessions WHERE id = 'v2-history'
+			  AND current_launch_id IS NULL AND current_launch_mode IS NULL
+			  AND current_prime_through_seq IS NULL AND current_prime_row_count IS NULL
+			  AND current_container_id IS NULL
+			  AND launch_bound_at IS NULL AND launch_started_at IS NULL
+			  AND resume_owed = 0 AND resume_mode IS NULL
+			  AND resume_prime_through_seq IS NULL AND resume_prime_row_count IS NULL`,
+		); got != 1 {
+			t.Fatal("migration must leave a pre-existing session with every launch/debt field empty/zero")
+		}
+	})
+
+	// §16.4 atomicity, aimed at the middle of the step this time: the planted
+	// column makes a LATER ALTER fail after several have already applied, so
+	// only full rollback can leave no half-fenced shape behind.
+	t.Run("failed DDL rolls back every prior statement and the version", func(t *testing.T) {
+		db := legacyV2Spine(t)
+		mustExec(t, db, `ALTER TABLE homie_sessions ADD COLUMN resume_owed TEXT`)
+		if changed, err := substrate.Migrate(db); err == nil || changed {
+			t.Fatalf("Migrate planted v2 = changed %v, err %v; want atomic refusal", changed, err)
+		}
+		if got := oneInt(t, db, `SELECT schema_version FROM meta WHERE id=1`); got != 2 {
+			t.Fatalf("failed migration changed schema_version to %d", got)
+		}
+		if columnExists(t, db, "homie_sessions", "current_launch_id") {
+			t.Fatal("failed migration retained homie_sessions.current_launch_id")
+		}
+	})
+}
+
+// legacyV2Spine is a real v2 spine carrying data, as a live deployment would:
+// a registered Homie session and receipt-fenced dispatch history that must
+// survive the conversion.
+func legacyV2Spine(t *testing.T) *sql.DB {
+	t.Helper()
+	db, err := substrate.Open(filepath.Join(t.TempDir(), "legacy-v2.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { db.Close() })
+	mustExec(t, db, schemaV2)
+	mustExec(t, db, `INSERT INTO meta (id, deployment_uuid, schema_version) VALUES (1, 'legacy-deployment', 2)`)
+	mkHomieSession(t, db, "v2-history")
+	mustExec(t, db, `INSERT INTO activity (actor, kind, detail, dispatch_key)
+		VALUES ('mc', 'dispatch.health', '{}', ?)`, strings.Repeat("f", 64))
+	return db
+}
+
+func migratedV2Spine(t *testing.T) *sql.DB {
+	t.Helper()
+	db := legacyV2Spine(t)
+	sessions := oneInt(t, db, `SELECT count(*) FROM homie_sessions`)
+	changed, err := substrate.Migrate(db)
+	if err != nil {
+		t.Fatalf("Migrate v2: %v", err)
+	}
+	if !changed {
+		t.Fatal("Migrate v2 reported no change")
+	}
+	// §16.4: no path may drop or re-initialize a spine containing data.
+	if after := oneInt(t, db, `SELECT count(*) FROM homie_sessions`); after != sessions {
+		t.Fatalf("migration lost history: %d sessions before, %d after", sessions, after)
+	}
+	return db
 }
 
 // legacyV1Spine is a real v1 spine carrying data, as a live deployment would.

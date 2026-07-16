@@ -67,7 +67,10 @@ func Init(db *sql.DB) error {
 // dispatch replay fences: activity.dispatch_key, the paired
 // activity.dispatch_request_id/dispatch_result receipt, and
 // outbox.source_activity_id/event_destination_key fan-out identity.
-const CurrentSchemaVersion = 2
+// Version 3 adds ADR-016 Decision 3's homie_sessions launch fencing: the
+// current launch/container generation, typed resume debt, and the rows-mode
+// prime cutoff/count pairs.
+const CurrentSchemaVersion = 3
 
 // migrationV1ToV2 is ADR-016 Decision 2's storage step, frozen as history.
 //
@@ -136,6 +139,80 @@ BEGIN
 END;
 `
 
+// migrationV2ToV3 is ADR-016 Decision 3's storage step: launch fencing on
+// homie_sessions, not a plan queue.
+//
+// Additive like v1 -> v2 (§16.4 forbids rebuilding a spine holding data), and
+// under the same SQLite rule: there is no ADD CONSTRAINT, so each pairing
+// CHECK rides on the later column of its pair, where it may reference the
+// siblings added before it. Every existing row satisfies every CHECK at its
+// defaults — a session predating launch fencing carries no launch and no
+// debt, which is exactly the shape `homie start` initializes.
+//
+// No trigger is recreated: the launch/debt columns are mutable liveness
+// bookkeeping, deliberately outside homie_sessions' frozen-identity and
+// locator-immutability triggers.
+//
+// This text is frozen. A later v3 -> v4 step is a new constant, never an edit
+// to this one: it must keep describing the v2 spines it still has to convert.
+const migrationV2ToV3 = `
+ALTER TABLE homie_sessions ADD COLUMN current_launch_id TEXT
+    CHECK (current_launch_id IS NULL OR
+           (length(current_launch_id) = 16 AND
+            length(CAST(current_launch_id AS BLOB)) = 16 AND
+            current_launch_id NOT GLOB '*[^0-9a-f]*'));
+
+ALTER TABLE homie_sessions ADD COLUMN current_launch_mode TEXT
+    CHECK (current_launch_mode IS NULL OR
+           current_launch_mode IN ('fresh', 'native', 'rows'))
+    CHECK ((current_launch_id IS NULL) = (current_launch_mode IS NULL));
+
+ALTER TABLE homie_sessions ADD COLUMN current_prime_through_seq INTEGER
+    CHECK (current_prime_through_seq IS NULL OR
+           current_prime_through_seq >= 0)
+    CHECK ((current_launch_mode IS 'rows') =
+           (current_prime_through_seq IS NOT NULL));
+
+ALTER TABLE homie_sessions ADD COLUMN current_prime_row_count INTEGER
+    CHECK (current_prime_row_count IS NULL OR
+           current_prime_row_count >= 0)
+    CHECK ((current_prime_through_seq IS NULL) =
+           (current_prime_row_count IS NULL));
+
+ALTER TABLE homie_sessions ADD COLUMN current_container_id TEXT
+    CHECK (current_container_id IS NULL OR
+           (length(current_container_id) = 64 AND
+            length(CAST(current_container_id AS BLOB)) = 64 AND
+            current_container_id NOT GLOB '*[^0-9a-f]*'));
+
+ALTER TABLE homie_sessions ADD COLUMN launch_bound_at TEXT
+    CHECK ((current_container_id IS NULL) = (launch_bound_at IS NULL))
+    CHECK (launch_bound_at IS NULL OR current_launch_id IS NOT NULL);
+
+ALTER TABLE homie_sessions ADD COLUMN launch_started_at TEXT
+    CHECK (launch_started_at IS NULL OR launch_bound_at IS NOT NULL);
+
+ALTER TABLE homie_sessions ADD COLUMN resume_owed INTEGER NOT NULL DEFAULT 0
+    CHECK (resume_owed IN (0, 1))
+    CHECK (resume_owed = 0 OR current_launch_id IS NULL);
+
+ALTER TABLE homie_sessions ADD COLUMN resume_mode TEXT
+    CHECK (resume_mode IS NULL OR resume_mode IN ('native', 'rows'))
+    CHECK ((resume_owed = 1) = (resume_mode IS NOT NULL));
+
+ALTER TABLE homie_sessions ADD COLUMN resume_prime_through_seq INTEGER
+    CHECK (resume_prime_through_seq IS NULL OR
+           resume_prime_through_seq >= 0)
+    CHECK ((resume_mode IS 'rows') =
+           (resume_prime_through_seq IS NOT NULL));
+
+ALTER TABLE homie_sessions ADD COLUMN resume_prime_row_count INTEGER
+    CHECK (resume_prime_row_count IS NULL OR
+           resume_prime_row_count >= 0)
+    CHECK ((resume_prime_through_seq IS NULL) =
+           (resume_prime_row_count IS NULL));
+`
+
 // Migrate brings an existing spine up to CurrentSchemaVersion, reporting
 // whether it changed anything. It is the "present with an older schema →
 // migrate" arm of §16.4; the caller owns the "absent on a non-empty volume →
@@ -158,7 +235,7 @@ func Migrate(db *sql.DB) (bool, error) {
 		return false, fmt.Errorf("read spine schema version: %w", err)
 	}
 
-	steps := map[int]string{1: migrationV1ToV2}
+	steps := map[int]string{1: migrationV1ToV2, 2: migrationV2ToV3}
 	changed := false
 	for version < CurrentSchemaVersion {
 		step, ok := steps[version]
