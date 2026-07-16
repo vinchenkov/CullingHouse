@@ -739,6 +739,14 @@ CREATE TABLE activity (
     -- two lengths to agree admits only NUL-free ASCII, which GLOB then reads
     -- whole. Without this a forged key stores as a distinct UNIQUE value that
     -- its own receipt lookup cannot find, and the replay fence fails open.
+    --
+    -- KNOWN GAP (2026-07-16, not yet closed): these fences hold only for
+    -- TEXT. A BLOB bypasses affinity conversion, length(blob) counts bytes,
+    -- and GLOB reads it only to the first NUL — the D3 launch fences on
+    -- homie_sessions below add a typeof pin for exactly this. These columns
+    -- shipped in the frozen v1->v2 migration, and a column CHECK cannot be
+    -- altered afterwards, so closing this needs a fence trigger in a later
+    -- migration, not an edit here. Do not copy this shape without typeof.
     dispatch_key        TEXT
                         CHECK (dispatch_key IS NULL OR
                                (length(dispatch_key) = 64 AND
@@ -802,12 +810,23 @@ CREATE TABLE homie_sessions (
     -- lives here as CHECKs, not as Go politeness: a half-bound launch, a
     -- debt-plus-launch row, or a prime cutoff outside `rows` mode is
     -- unstorable, so a superseded generation can never be half-cleared.
-    -- The id fences reuse the D2 dual-length shape (see activity above):
-    -- requiring character and byte length to agree admits only NUL-free
-    -- ASCII, which GLOB then reads whole.
+    -- The id fences extend the D2 dual-length shape (see activity above)
+    -- with a typeof pin: a BLOB bypasses TEXT affinity entirely, length()
+    -- counts its bytes (NULs included), and GLOB reads it converted, only to
+    -- the first NUL — so without typeof a NUL-embedded 16-byte BLOB forgery
+    -- passes every other conjunct. With typeof(text), the dual length test
+    -- admits only NUL-free ASCII, which GLOB then reads whole.
+    -- The integer fences carry the same pin: INTEGER affinity stores
+    -- non-numeric TEXT and any BLOB as-is, and SQLite's cross-type ordering
+    -- ranks both above every number, so 'abc' >= 0 is TRUE.
+    -- The prime pair is also coherence-checked: D3 closes the empty prefix
+    -- to the single encoding (0,0) — zero is a below-everything sentinel,
+    -- never a row identity — so a zero cutoff claiming rows, or a positive
+    -- cutoff claiming none, is outside the closed grammar.
     current_launch_id         TEXT
                               CHECK (current_launch_id IS NULL OR
-                                     (length(current_launch_id) = 16 AND
+                                     (typeof(current_launch_id) = 'text' AND
+                                      length(current_launch_id) = 16 AND
                                       length(CAST(current_launch_id AS BLOB)) = 16 AND
                                       current_launch_id NOT GLOB '*[^0-9a-f]*')),
     current_launch_mode       TEXT
@@ -816,17 +835,23 @@ CREATE TABLE homie_sessions (
                               CHECK ((current_launch_id IS NULL) = (current_launch_mode IS NULL)),
     current_prime_through_seq INTEGER
                               CHECK (current_prime_through_seq IS NULL OR
-                                     current_prime_through_seq >= 0)
+                                     (typeof(current_prime_through_seq) = 'integer' AND
+                                      current_prime_through_seq >= 0))
                               CHECK ((current_launch_mode IS 'rows') =
                                      (current_prime_through_seq IS NOT NULL)),
     current_prime_row_count   INTEGER
                               CHECK (current_prime_row_count IS NULL OR
-                                     current_prime_row_count >= 0)
+                                     (typeof(current_prime_row_count) = 'integer' AND
+                                      current_prime_row_count >= 0))
                               CHECK ((current_prime_through_seq IS NULL) =
-                                     (current_prime_row_count IS NULL)),
+                                     (current_prime_row_count IS NULL))
+                              CHECK (current_prime_row_count IS NULL OR
+                                     ((current_prime_through_seq = 0) =
+                                      (current_prime_row_count = 0))),
     current_container_id      TEXT
                               CHECK (current_container_id IS NULL OR
-                                     (length(current_container_id) = 64 AND
+                                     (typeof(current_container_id) = 'text' AND
+                                      length(current_container_id) = 64 AND
                                       length(CAST(current_container_id AS BLOB)) = 64 AND
                                       current_container_id NOT GLOB '*[^0-9a-f]*')),
     launch_bound_at           TEXT
@@ -842,14 +867,19 @@ CREATE TABLE homie_sessions (
                               CHECK ((resume_owed = 1) = (resume_mode IS NOT NULL)),
     resume_prime_through_seq  INTEGER
                               CHECK (resume_prime_through_seq IS NULL OR
-                                     resume_prime_through_seq >= 0)
+                                     (typeof(resume_prime_through_seq) = 'integer' AND
+                                      resume_prime_through_seq >= 0))
                               CHECK ((resume_mode IS 'rows') =
                                      (resume_prime_through_seq IS NOT NULL)),
     resume_prime_row_count    INTEGER
                               CHECK (resume_prime_row_count IS NULL OR
-                                     resume_prime_row_count >= 0)
+                                     (typeof(resume_prime_row_count) = 'integer' AND
+                                      resume_prime_row_count >= 0))
                               CHECK ((resume_prime_through_seq IS NULL) =
-                                     (resume_prime_row_count IS NULL)),
+                                     (resume_prime_row_count IS NULL))
+                              CHECK (resume_prime_row_count IS NULL OR
+                                     ((resume_prime_through_seq = 0) =
+                                      (resume_prime_row_count = 0))),
 
     CHECK ((native_session_ref IS NULL) = (trace_filename IS NULL))
 );

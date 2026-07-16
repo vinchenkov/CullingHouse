@@ -60,6 +60,13 @@ func TestHomiePreflightMarkerAppendsClosedDetail(t *testing.T) {
 	if !validLowercaseHex(key, 64) {
 		t.Fatalf("candidate key %q is not 64 lowercase hex", key)
 	}
+	// The write half must store the SAME key the read half recomputes —
+	// the whole defer/consume comparison is that equality. Without this
+	// cross-check a drifted serialization in either half grades green while
+	// no stored marker could ever match a recomputed key.
+	if recomputed := hpKey(t, db, "sess-1"); recomputed != key {
+		t.Errorf("write half stored %q, read half recomputes %q — no marker could ever match", key, recomputed)
+	}
 	details := rrActivity(t, db, "homie.preflight_health")
 	if len(details) != 1 {
 		t.Fatalf("wrote %d homie.preflight_health rows, want one", len(details))
@@ -162,10 +169,16 @@ func TestHomiePreflightCandidateKeyTracksExactlyThePrePrepareState(t *testing.T)
 	if got := hpKey(t, db, "sess-1"); got != withInput {
 		t.Errorf("a reply row changed the key: %q -> %q", withInput, got)
 	}
-	// Completing the turn removes the pending input and returns the key to
-	// baseline: consumed input is gone, not remembered.
+	// A claimed-but-incomplete turn is still pending input (ADR-016 D3
+	// branch 7 keeps the Homie eligible after a crash mid-claim): the key
+	// must hold through the claim and change only at completion.
 	dvExec(t, db, `UPDATE conversation_messages
 		SET claimed_by = 'r1', claimed_at = datetime('now') WHERE seq = 1`)
+	if got := hpKey(t, db, "sess-1"); got != withInput {
+		t.Errorf("a claim must not consume the input: key %q, want %q held", got, withInput)
+	}
+	// Completing the turn removes the pending input and returns the key to
+	// baseline: consumed input is gone, not remembered.
 	dvExec(t, db, `UPDATE conversation_messages
 		SET completed_at = datetime('now') WHERE seq = 1`)
 	if got := hpKey(t, db, "sess-1"); got != baseline {
@@ -195,8 +208,18 @@ func TestHomiePreflightCandidateKeyGoldenVector(t *testing.T) {
 		`"resume_prime_through_seq":null,"resume_prime_row_count":null,` +
 		`"binding":"claude","input_seq":4}`
 	sum := sha256.Sum256([]byte(canonical))
-	if got, want := hpKey(t, db, "sess-1"), hex.EncodeToString(sum[:]); got != want {
+	want := hex.EncodeToString(sum[:])
+	if got := hpKey(t, db, "sess-1"); got != want {
 		t.Errorf("candidate key = %q, want SHA256 of the frozen canonical form %s", got, canonical)
+	}
+	// Both halves are held to the vector: a marker recorded for this state
+	// must carry these exact bytes, not merely agree with itself.
+	recorded, err := hpRecord(t, db, "sess-1")
+	if err != nil {
+		t.Fatalf("recordHomiePreflightHealth: %v", err)
+	}
+	if recorded != want {
+		t.Errorf("recorded marker key = %q, want the frozen vector %q", recorded, want)
 	}
 }
 

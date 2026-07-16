@@ -158,7 +158,8 @@ END;
 const migrationV2ToV3 = `
 ALTER TABLE homie_sessions ADD COLUMN current_launch_id TEXT
     CHECK (current_launch_id IS NULL OR
-           (length(current_launch_id) = 16 AND
+           (typeof(current_launch_id) = 'text' AND
+            length(current_launch_id) = 16 AND
             length(CAST(current_launch_id AS BLOB)) = 16 AND
             current_launch_id NOT GLOB '*[^0-9a-f]*'));
 
@@ -169,19 +170,25 @@ ALTER TABLE homie_sessions ADD COLUMN current_launch_mode TEXT
 
 ALTER TABLE homie_sessions ADD COLUMN current_prime_through_seq INTEGER
     CHECK (current_prime_through_seq IS NULL OR
-           current_prime_through_seq >= 0)
+           (typeof(current_prime_through_seq) = 'integer' AND
+            current_prime_through_seq >= 0))
     CHECK ((current_launch_mode IS 'rows') =
            (current_prime_through_seq IS NOT NULL));
 
 ALTER TABLE homie_sessions ADD COLUMN current_prime_row_count INTEGER
     CHECK (current_prime_row_count IS NULL OR
-           current_prime_row_count >= 0)
+           (typeof(current_prime_row_count) = 'integer' AND
+            current_prime_row_count >= 0))
     CHECK ((current_prime_through_seq IS NULL) =
-           (current_prime_row_count IS NULL));
+           (current_prime_row_count IS NULL))
+    CHECK (current_prime_row_count IS NULL OR
+           ((current_prime_through_seq = 0) =
+            (current_prime_row_count = 0)));
 
 ALTER TABLE homie_sessions ADD COLUMN current_container_id TEXT
     CHECK (current_container_id IS NULL OR
-           (length(current_container_id) = 64 AND
+           (typeof(current_container_id) = 'text' AND
+            length(current_container_id) = 64 AND
             length(CAST(current_container_id AS BLOB)) = 64 AND
             current_container_id NOT GLOB '*[^0-9a-f]*'));
 
@@ -202,15 +209,20 @@ ALTER TABLE homie_sessions ADD COLUMN resume_mode TEXT
 
 ALTER TABLE homie_sessions ADD COLUMN resume_prime_through_seq INTEGER
     CHECK (resume_prime_through_seq IS NULL OR
-           resume_prime_through_seq >= 0)
+           (typeof(resume_prime_through_seq) = 'integer' AND
+            resume_prime_through_seq >= 0))
     CHECK ((resume_mode IS 'rows') =
            (resume_prime_through_seq IS NOT NULL));
 
 ALTER TABLE homie_sessions ADD COLUMN resume_prime_row_count INTEGER
     CHECK (resume_prime_row_count IS NULL OR
-           resume_prime_row_count >= 0)
+           (typeof(resume_prime_row_count) = 'integer' AND
+            resume_prime_row_count >= 0))
     CHECK ((resume_prime_through_seq IS NULL) =
-           (resume_prime_row_count IS NULL));
+           (resume_prime_row_count IS NULL))
+    CHECK (resume_prime_row_count IS NULL OR
+           ((resume_prime_through_seq = 0) =
+            (resume_prime_row_count = 0)));
 `
 
 // Migrate brings an existing spine up to CurrentSchemaVersion, reporting

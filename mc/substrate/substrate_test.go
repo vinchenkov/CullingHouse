@@ -984,7 +984,7 @@ func assertHomieLaunchFenceBackstops(t *testing.T, db *sql.DB) {
 		"started_launch": {ok: true, row: launchRow{launchID: launch, launchMode: "fresh",
 			containerID: container, boundAt: "2026-07-16 03:00:00", startedAt: "2026-07-16 03:00:05"}},
 		"resume_debt_native": {ok: true, row: launchRow{resumeOwed: 1, resumeMode: "native"}},
-		"resume_debt_rows":   {ok: true, row: launchRow{resumeOwed: 1, resumeMode: "rows", resumeSeq: 0, resumeCount: 41}},
+		"resume_debt_rows":   {ok: true, row: launchRow{resumeOwed: 1, resumeMode: "rows", resumeSeq: 41, resumeCount: 2}},
 
 		// Launch id and mode are both-null-or-both-present, and the id is
 		// pinned by the D2 dual-length hex fence: length() and GLOB both stop
@@ -999,6 +999,13 @@ func assertHomieLaunchFenceBackstops(t *testing.T, db *sql.DB) {
 		"launch_id_nonhex":       {row: launchRow{launchID: launch[:15] + "g", launchMode: "fresh"}},
 		"launch_id_nul_tail":     {row: launchRow{launchID: launch + "\x00EVIL", launchMode: "fresh"}},
 		"launch_id_nul_pad":      {row: launchRow{launchID: launch[:15] + "\x00", launchMode: "fresh"}},
+		// A BLOB bypasses TEXT affinity entirely: length() counts its bytes
+		// (NULs included), and GLOB reads it converted, only to the first
+		// NUL — so without a typeof fence a NUL-embedded 16-byte BLOB passes
+		// every other conjunct, and even a hex-clean BLOB stores as a value
+		// the Go layer's string comparisons can never match.
+		"launch_id_blob_nul_pad":   {row: launchRow{launchID: append([]byte(launch[:15]), 0), launchMode: "fresh"}},
+		"launch_id_blob_hex_bytes": {row: launchRow{launchID: []byte(launch), launchMode: "fresh"}},
 
 		// Only `rows` mode carries the prime cutoff/count, always as a
 		// non-negative pair.
@@ -1011,6 +1018,19 @@ func assertHomieLaunchFenceBackstops(t *testing.T, db *sql.DB) {
 		"rows_launch_negative_seq":       {row: launchRow{launchID: launch, launchMode: "rows", primeSeq: -1, primeCount: 0}},
 		"rows_launch_negative_count":     {row: launchRow{launchID: launch, launchMode: "rows", primeSeq: 0, primeCount: -1}},
 		"prime_pair_without_launch":      {row: launchRow{primeSeq: 0, primeCount: 0}},
+		// INTEGER affinity stores non-numeric TEXT and any BLOB as-is, and
+		// SQLite's cross-type ordering ranks both above every number — so
+		// 'abc' >= 0 and X'FF' >= 0 are TRUE and only a typeof fence holds.
+		// A non-integral REAL passes ">= 0" numerically the same way.
+		"prime_seq_nonnumeric_text": {row: launchRow{launchID: launch, launchMode: "rows", primeSeq: "abc", primeCount: 41}},
+		"prime_seq_noninteger_real": {row: launchRow{launchID: launch, launchMode: "rows", primeSeq: 2.5, primeCount: 3}},
+		"prime_count_blob":          {row: launchRow{launchID: launch, launchMode: "rows", primeSeq: 7, primeCount: []byte{0xff}}},
+		// ADR-016 D3: an empty completed prefix has the single closed
+		// encoding (0,0) — zero is a below-everything sentinel, not a row
+		// identity. A zero cutoff claiming rows, or a positive cutoff
+		// claiming none, is outside the closed grammar.
+		"rows_launch_zero_cutoff_with_rows":     {row: launchRow{launchID: launch, launchMode: "rows", primeSeq: 0, primeCount: 41}},
+		"rows_launch_positive_cutoff_zero_rows": {row: launchRow{launchID: launch, launchMode: "rows", primeSeq: 5, primeCount: 0}},
 
 		// Container id and bound time are paired, require a current launch,
 		// and the id is one 64-lowercase-hex Docker id.
@@ -1023,6 +1043,7 @@ func assertHomieLaunchFenceBackstops(t *testing.T, db *sql.DB) {
 		"container_id_nonhex":       {row: launchRow{launchID: launch, launchMode: "fresh", containerID: container[:63] + "x", boundAt: "t"}},
 		"container_id_nul_tail":     {row: launchRow{launchID: launch, launchMode: "fresh", containerID: container + "\x00EVIL", boundAt: "t"}},
 		"container_id_nul_pad":      {row: launchRow{launchID: launch, launchMode: "fresh", containerID: container[:63] + "\x00", boundAt: "t"}},
+		"container_id_blob_nul_pad": {row: launchRow{launchID: launch, launchMode: "fresh", containerID: append([]byte(container[:63]), 0), boundAt: "t"}},
 
 		// A start time requires the bound pair (transitively, a launch).
 		"started_without_bound_pair": {row: launchRow{launchID: launch, launchMode: "fresh", startedAt: "t"}},
@@ -1032,10 +1053,15 @@ func assertHomieLaunchFenceBackstops(t *testing.T, db *sql.DB) {
 		// mode), carries the prime pair only for `rows`, and is mutually
 		// exclusive with a current launch — the supersede-then-select order
 		// is a storage rule, not scheduler politeness.
-		"resume_owed_out_of_range":  {row: launchRow{resumeOwed: 2, resumeMode: "native"}},
-		"resume_owed_without_mode":  {row: launchRow{resumeOwed: 1}},
-		"resume_mode_without_debt":  {row: launchRow{resumeMode: "native"}},
-		"resume_mode_fresh_invalid": {row: launchRow{resumeOwed: 1, resumeMode: "fresh"}},
+		"resume_owed_out_of_range": {row: launchRow{resumeOwed: 2, resumeMode: "native"}},
+		// Out of range with NO mode: the (owed=1)=(mode present) pairing
+		// CHECK is satisfied at owed=2/mode=NULL, so only the IN (0,1)
+		// range fence rejects this shape — the case above alone would grade
+		// a dropped range fence green.
+		"resume_owed_out_of_range_alone": {row: launchRow{resumeOwed: 2}},
+		"resume_owed_without_mode":       {row: launchRow{resumeOwed: 1}},
+		"resume_mode_without_debt":       {row: launchRow{resumeMode: "native"}},
+		"resume_mode_fresh_invalid":      {row: launchRow{resumeOwed: 1, resumeMode: "fresh"}},
 		"resume_debt_with_current_launch": {row: launchRow{launchID: launch, launchMode: "fresh",
 			resumeOwed: 1, resumeMode: "native"}},
 		"resume_rows_missing_prime_pair": {row: launchRow{resumeOwed: 1, resumeMode: "rows"}},
@@ -1045,6 +1071,10 @@ func assertHomieLaunchFenceBackstops(t *testing.T, db *sql.DB) {
 		"resume_negative_seq":            {row: launchRow{resumeOwed: 1, resumeMode: "rows", resumeSeq: -1, resumeCount: 0}},
 		"resume_negative_count":          {row: launchRow{resumeOwed: 1, resumeMode: "rows", resumeSeq: 0, resumeCount: -1}},
 		"resume_prime_pair_without_debt": {row: launchRow{resumeSeq: 0, resumeCount: 0}},
+		"resume_seq_nonnumeric_text":     {row: launchRow{resumeOwed: 1, resumeMode: "rows", resumeSeq: "abc", resumeCount: 41}},
+		"resume_zero_cutoff_with_rows":   {row: launchRow{resumeOwed: 1, resumeMode: "rows", resumeSeq: 0, resumeCount: 41}},
+		"resume_positive_cutoff_zero_rows": {row: launchRow{resumeOwed: 1, resumeMode: "rows",
+			resumeSeq: 5, resumeCount: 0}},
 	} {
 		t.Run(name, func(t *testing.T) {
 			const set = `
@@ -1067,6 +1097,21 @@ func assertHomieLaunchFenceBackstops(t *testing.T, db *sql.DB) {
 			}
 		})
 	}
+
+	// resume_owed is NOT NULL, and NOT NULL is its only fence against NULL:
+	// the launchRow fixture cannot express NULL (a bare int), and NULL slides
+	// through IN (0,1) and every pairing CHECK because a NULL CHECK passes in
+	// SQLite. Probed from the known all-empty state so nothing else can
+	// reject vacuously.
+	mustExec(t, db, `
+		UPDATE homie_sessions SET
+			current_launch_id = NULL, current_launch_mode = NULL,
+			current_prime_through_seq = NULL, current_prime_row_count = NULL,
+			current_container_id = NULL, launch_bound_at = NULL, launch_started_at = NULL,
+			resume_owed = 0, resume_mode = NULL,
+			resume_prime_through_seq = NULL, resume_prime_row_count = NULL
+		WHERE id = 'launch-fence'`)
+	wantAbort(t, db, `UPDATE homie_sessions SET resume_owed = NULL WHERE id = 'launch-fence'`)
 }
 
 // homie_bindings is bind-event history (§15.4): end -> resume on the same
