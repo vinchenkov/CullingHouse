@@ -963,34 +963,13 @@ func HomieEnd(db *sql.DB, id *RunIdentity, sessionID, reason string) (any, error
 				return err
 			}
 		}
-		err := q.QueryRowContext(ctx,
-			`SELECT status FROM homie_sessions WHERE id = ?`, sessionID).Scan(&status)
-		if err == sql.ErrNoRows {
-			return Domainf("unknown Homie session %q", sessionID)
-		}
-		if err != nil {
-			return err
-		}
-		if status != "active" {
-			return nil // host/surface retry: preserve ended or reaped truth
-		}
-		if _, err := q.ExecContext(ctx,
-			`UPDATE homie_sessions SET status = 'ended' WHERE id = ? AND status = 'active'`,
-			sessionID); err != nil {
-			return err
-		}
 		actor := "operator"
 		if id != nil {
 			actor = "homie"
 		}
-		if _, err := q.ExecContext(ctx, `
-			INSERT INTO activity (actor, kind, subject, detail)
-			VALUES (?, 'homie.ended', ?, ?)`, actor, sessionID, reason); err != nil {
-			return err
-		}
-		ended = true
-		status = "ended"
-		return nil
+		var err error
+		ended, status, err = homieEndTx(ctx, q, actor, sessionID, reason)
+		return err
 	})
 	if err != nil {
 		return nil, err
@@ -998,4 +977,46 @@ func HomieEnd(db *sql.DB, id *RunIdentity, sessionID, reason string) (any, error
 	return map[string]any{
 		"session_id": sessionID, "status": status, "ended": ended,
 	}, nil
+}
+
+// homieEndTx is the end transaction's body (ADR-010): `active -> ended` plus
+// one `homie.ended` activity carrying the reason, with the substrate trigger
+// deactivating the bindings alongside it.
+//
+// It takes a Q rather than a *sql.DB so that a caller which already holds a
+// transaction can end a session inside it. ADR-016 D4's dispatch seam is that
+// caller: a policy-invalid Homie must be ended in the *same* transaction that
+// refused it, or it stays the repeatedly selected oldest active row and starves
+// pipeline work. Opening a second transaction from inside the first would
+// deadlock on the spine's single writer.
+//
+// The caller owns authorization: HomieEnd checks caller scope and the frozen
+// verb allowlist before calling in, and the dispatch seam acts as the system.
+func homieEndTx(ctx context.Context, q Q, actor, sessionID, reason string) (bool, string, error) {
+	if reason == "" {
+		return false, "", Usagef("ending a Homie session requires a reason")
+	}
+	var status string
+	err := q.QueryRowContext(ctx,
+		`SELECT status FROM homie_sessions WHERE id = ?`, sessionID).Scan(&status)
+	if err == sql.ErrNoRows {
+		return false, "", Domainf("unknown Homie session %q", sessionID)
+	}
+	if err != nil {
+		return false, "", err
+	}
+	if status != "active" {
+		return false, status, nil // host/surface retry: preserve ended or reaped truth
+	}
+	if _, err := q.ExecContext(ctx,
+		`UPDATE homie_sessions SET status = 'ended' WHERE id = ? AND status = 'active'`,
+		sessionID); err != nil {
+		return false, "", err
+	}
+	if _, err := q.ExecContext(ctx, `
+		INSERT INTO activity (actor, kind, subject, detail)
+		VALUES (?, 'homie.ended', ?, ?)`, actor, sessionID, reason); err != nil {
+		return false, "", err
+	}
+	return true, "ended", nil
 }
