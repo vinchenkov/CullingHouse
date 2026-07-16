@@ -136,7 +136,7 @@ async function makeFixture(): Promise<Fixture> {
   mkdirSync(home);
   mkdirSync(workspace);
 
-  await mcJson(home, undefined, [
+  const initialized = await mcJson(home, undefined, [
     "init",
     "--spine", spine,
     "--worksource", "ws-test",
@@ -145,6 +145,11 @@ async function makeFixture(): Promise<Fixture> {
     // the end of the test; fixture surgery ages only the original claim.
     "--spawn-grace-s", "300",
   ]);
+  const deploymentUUID = initialized.deployment_uuid;
+  if (typeof deploymentUUID !== "string" || deploymentUUID === "") {
+    throw new Error(`mc init returned no deployment_uuid: ${JSON.stringify(initialized)}`);
+  }
+  writeFileSync(join(home, "deployment.uuid"), `${deploymentUUID}\n`, { mode: 0o600 });
   writeFileSync(join(home, "routing.md"), fakeRouting, { mode: 0o600 });
   const added = await mcJson(home, spine, [
     "task", "add", "split-brain subject", "--worksource", "ws-test",
