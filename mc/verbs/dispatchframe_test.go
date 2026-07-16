@@ -67,11 +67,10 @@ func dfPrepare(t *testing.T, db *sql.DB, requestID string) preparedDispatch {
 
 func dfCommit(t *testing.T, db *sql.DB, prepared preparedDispatch, attested attestedDispatch) map[string]any {
 	t.Helper()
-	uuid := dfUUID(t, db)
 	var effect map[string]any
 	err := inTx(db, func(ctx context.Context, q Q) error {
 		var e error
-		effect, e = dispatchCommit(ctx, q, uuid, prepared, attested)
+		effect, e = dispatchCommit(ctx, q, prepared, attested)
 		return e
 	})
 	if err != nil {
@@ -150,6 +149,30 @@ func TestDispatchRequiresDeploymentMirror(t *testing.T) {
 			t.Fatalf("the deployment mirror must be read no-follow (ADR-016 D1)")
 		}
 	})
+}
+
+func TestDispatchAttestReopensDeploymentMirror(t *testing.T) {
+	db := dvSpine(t)
+	dvInsertTask(t, db, dvTask(1, dispatch.ScopeTask, dispatch.StatusProposed, 2))
+	prepared := dfPrepare(t, db, dfRequestID)
+	if prepared.candidate == nil {
+		t.Fatalf("prepare should return a spawn candidate, got %+v", prepared)
+	}
+
+	// The host mirror is an input to both sides of the released-lock window.
+	// Swapping it after prepare must stop attest before commit can claim.
+	path := filepath.Join(os.Getenv("MC_HOME"), "deployment.uuid")
+	if err := os.WriteFile(path, []byte("00000000-0000-4000-8000-000000000000\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dispatchAttest(os.Getenv("MC_HOME"), prepared); err == nil {
+		t.Fatal("attest accepted a deployment mirror swapped after prepare")
+	} else if !strings.Contains(err.Error(), "deployment identity") {
+		t.Fatalf("attest mirror-swap error = %q", err)
+	}
+	if n := dfInt(t, db, `SELECT COUNT(*) FROM runs`) + dfInt(t, db, `SELECT COUNT(*) FROM activity`); n != 0 {
+		t.Fatalf("mirror swap wrote %d rows", n)
+	}
 }
 
 // --- request receipts (ADR-016 D2) ------------------------------------------

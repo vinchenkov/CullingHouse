@@ -1890,3 +1890,25 @@ Entry template:
   crosses a process boundary.
 - Spec impact: none
 - Needs your decision: no
+
+## 2026-07-16 — cross-harness takeover rejects the D1 frame's deferred fences
+- Where: Phase 3 takeover review of `ed55b2c..a1767cd` against
+  `docs/phase3-contract.md:30-51` and matrix rows 169-170/180
+- Gap: the outgoing implementation and its own review treated four contract
+  requirements as later wrappers or harmless in-process narrowings: production
+  host `mc dispatch` still delegates the whole command into the helper; attest
+  does not reopen/recheck `deployment.uuid`; attested spawn/refusal results lack
+  the command-scoped exact-result receipt; and the mount planner has no
+  production caller. The takeover review rejected that posture: all four are
+  explicit Phase 3 requirements and the first three are prerequisites for
+  safely wiring the fourth. It also found the resident split-brain fixture had
+  not propagated the new deployment mirror precondition. No schema-v4 or mount
+  error-shape defect was found.
+- Choice: treat all four as confirmed major findings, not accepted deferrals.
+  Fixed the fixture immediately (`96fffbf`); close the identity recheck and
+  exact-result replay red-first before the host/helper broker slice, then wire
+  the mount planner only through the corrected crossing. Conservative: restores
+  the contract's fail-closed and replay posture without weakening any existing
+  fence, and keeps each protocol change independently reviewable.
+- Spec impact: none
+- Needs your decision: no

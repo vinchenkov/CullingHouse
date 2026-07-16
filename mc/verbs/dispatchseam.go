@@ -402,9 +402,10 @@ func nullInt64Ptr(v sql.NullInt64) *int64 {
 // result (lock-domain consequence or receipt replay) or a candidate that owes
 // attest and commit.
 type preparedDispatch struct {
-	requestID string
-	final     map[string]any
-	candidate *preparedCandidate
+	requestID      string
+	deploymentUUID string
+	final          map[string]any
+	candidate      *preparedCandidate
 }
 
 type preparedCandidate struct {
@@ -417,9 +418,10 @@ type preparedCandidate struct {
 // attestedDispatch is the attest step's host projection: the resolved route
 // and the digest binding it, or a classified refusal — never both.
 type attestedDispatch struct {
-	route         routing.Route
-	routingDigest string
-	refusal       *refusal.Refusal
+	deploymentUUID string
+	route          routing.Route
+	routingDigest  string
+	refusal        *refusal.Refusal
 }
 
 // dispatchPrepare is the helper's first invocation (ADR-016 D1 step 1). Order
@@ -437,7 +439,7 @@ func dispatchPrepare(ctx context.Context, q Q, uuid, requestID string) (prepared
 	if replay, found, err := lookupDispatchReceipt(ctx, q, requestID); err != nil {
 		return preparedDispatch{}, err
 	} else if found {
-		return preparedDispatch{requestID: requestID, final: replay}, nil
+		return preparedDispatch{requestID: requestID, deploymentUUID: uuid, final: replay}, nil
 	}
 
 	sel, err := selectFromSpine(ctx, q)
@@ -458,7 +460,7 @@ func dispatchPrepare(ctx context.Context, q Q, uuid, requestID string) (prepared
 		if err != nil {
 			return preparedDispatch{}, err
 		}
-		return preparedDispatch{requestID: requestID, candidate: &preparedCandidate{
+		return preparedDispatch{requestID: requestID, deploymentUUID: uuid, candidate: &preparedCandidate{
 			spawn: sel.action.Spawn,
 			runID: runID,
 			tun:   sel.tun,
@@ -480,7 +482,7 @@ func dispatchPrepare(ctx context.Context, q Q, uuid, requestID string) (prepared
 			return preparedDispatch{}, err
 		}
 	}
-	return preparedDispatch{requestID: requestID, final: effect}, nil
+	return preparedDispatch{requestID: requestID, deploymentUUID: uuid, final: effect}, nil
 }
 
 // dispatchAttest is the host-authority step, run with the flock and
@@ -496,20 +498,27 @@ func dispatchAttest(home string, prepared preparedDispatch) (attestedDispatch, e
 	if cand == nil {
 		return attestedDispatch{}, Domainf("dispatch: attest requires a prepared candidate")
 	}
+	reattestedUUID, err := readDeploymentMirrorStrict(home)
+	if err != nil {
+		return attestedDispatch{}, err
+	}
+	if reattestedUUID != prepared.deploymentUUID {
+		return attestedDispatch{}, Domainf("deployment identity mirror changed between dispatch prepare and attest")
+	}
 	path := filepath.Join(home, "routing.md")
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return routingRefusal(refusal.SummaryMissing, err), nil
+		return routingRefusal(reattestedUUID, refusal.SummaryMissing, err), nil
 	}
 	sum := sha256.Sum256(data)
 	registry, allowFakeDecorrelation := routing.ActiveRegistry()
 	table, err := routing.Parse(data, registry, allowFakeDecorrelation)
 	if err != nil {
-		return routingRefusal(refusal.SummaryUnparsable, err), nil
+		return routingRefusal(reattestedUUID, refusal.SummaryUnparsable, err), nil
 	}
 	route, err := table.Resolve(baseRole(string(cand.spawn.Role)))
 	if err != nil {
-		return routingRefusal(refusal.SummaryUnresolved, err), nil
+		return routingRefusal(reattestedUUID, refusal.SummaryUnresolved, err), nil
 	}
 	// Mount attestation: planMounts (mountplan.go) is the one gate a
 	// candidate's bind requests go through — an invalid plan classifies into
@@ -518,14 +527,14 @@ func dispatchAttest(home string, prepared preparedDispatch) (attestedDispatch, e
 	// them from Worksource/Profile state supplies the requests and the
 	// JurisdictionInput assembly, and until then an empty set validates
 	// nothing (aggregate no-drop acceptance stays open, PROGRESS NEXT).
-	return attestedDispatch{route: route, routingDigest: hex.EncodeToString(sum[:])}, nil
+	return attestedDispatch{deploymentUUID: reattestedUUID, route: route, routingDigest: hex.EncodeToString(sum[:])}, nil
 }
 
 // routingRefusal classifies one routing failure. The raw error text rides
 // only in Message, which DetailFor drops — routing.md bytes are operator
 // material and never reach a stored detail (ADR-016 D1).
-func routingRefusal(summary refusal.Summary, err error) attestedDispatch {
-	return attestedDispatch{refusal: &refusal.Refusal{
+func routingRefusal(deploymentUUID string, summary refusal.Summary, err error) attestedDispatch {
+	return attestedDispatch{deploymentUUID: deploymentUUID, refusal: &refusal.Refusal{
 		Code:    refusal.CodeRoutingInvalid,
 		Field:   refusal.FieldRouting,
 		Summary: summary,
@@ -540,12 +549,15 @@ func routingRefusal(summary refusal.Summary, err error) attestedDispatch {
 // consequence. Ordinary drift is preflight.stale; a decision that no longer
 // reselects the prepared candidate is preflight.candidate_mismatch — both
 // stale-class, both inert (ADR-016:266-273).
-func dispatchCommit(ctx context.Context, q Q, uuid string, prepared preparedDispatch, attested attestedDispatch) (map[string]any, error) {
+func dispatchCommit(ctx context.Context, q Q, prepared preparedDispatch, attested attestedDispatch) (map[string]any, error) {
 	cand := prepared.candidate
 	if cand == nil {
 		return nil, Domainf("dispatch: commit requires a prepared candidate")
 	}
-	if err := requireDeploymentUUID(ctx, q, uuid); err != nil {
+	if attested.deploymentUUID != prepared.deploymentUUID {
+		return nil, Domainf("dispatch: attested deployment identity does not match prepare")
+	}
+	if err := requireDeploymentUUID(ctx, q, attested.deploymentUUID); err != nil {
 		return nil, err
 	}
 	sel, err := selectFromSpine(ctx, q)
@@ -555,7 +567,7 @@ func dispatchCommit(ctx context.Context, q Q, uuid string, prepared preparedDisp
 	rcand := refusalCandidateFor(cand.spawn)
 
 	proj := spawnCandidateProjection(cand.runID, cand.spawn)
-	canonical, err := buildCanonicalPrepare(uuid, prepared.requestID, sel.rec, sel.lk, sel.tun, sel.homies, proj).bytes()
+	canonical, err := buildCanonicalPrepare(attested.deploymentUUID, prepared.requestID, sel.rec, sel.lk, sel.tun, sel.homies, proj).bytes()
 	if err != nil {
 		return nil, err
 	}

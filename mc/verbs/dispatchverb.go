@@ -57,7 +57,7 @@ func Dispatch(db *sql.DB) (any, error) {
 	var effect map[string]any
 	if err := underDispatchLock(db, func(ctx context.Context, q Q) error {
 		var e error
-		effect, e = dispatchCommit(ctx, q, uuid, prepared, attested)
+		effect, e = dispatchCommit(ctx, q, prepared, attested)
 		return e
 	}); err != nil {
 		return nil, err
