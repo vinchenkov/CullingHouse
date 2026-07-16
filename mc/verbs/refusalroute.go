@@ -3,6 +3,7 @@ package verbs
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"strconv"
 
 	"mc/domain"
@@ -73,14 +74,20 @@ type RefusalCandidate struct {
 // or nothing happened at all. There is no window in which the refusal is known
 // but unapplied.
 //
-// dispatchKey is D2's replay fence, taken as an INPUT rather than derived here:
-// the real derivation needs a preparation token from a prepare step that does
-// not exist yet (there is no prepare/attest/commit seam — this transaction is
-// still Phase 2's single-transaction Decide/apply). Passing it in keeps this
-// slice honest about that gap instead of forging a fence value. An empty key
-// stores NULL, which the UNIQUE index ignores; a malformed one is refused here
-// rather than left to abort against the storage CHECK.
+// dispatchKey is D2's candidate/action replay fence, derived by the dispatch
+// commit seam and passed in because this router owns consequences, not frame
+// hashing. An empty key remains supported for the router's standalone tests;
+// production attested consequences always supply the derived key. A malformed
+// key is refused here rather than left to abort against the storage CHECK.
 func applyRefusal(ctx context.Context, q Q, cand RefusalCandidate, r refusal.Refusal, dispatchKey string) (map[string]any, error) {
+	return applyRefusalWithReceipt(ctx, q, cand, r, dispatchKey, "")
+}
+
+// applyRefusalWithReceipt is dispatchCommit's production entry: requestID is
+// empty for the router's standalone tests/legacy callers, or the command-scoped
+// replay key for an attested consequence. Health owns its activity insert, so
+// it must place the exact result there at creation time (activity is append-only).
+func applyRefusalWithReceipt(ctx context.Context, q Q, cand RefusalCandidate, r refusal.Refusal, dispatchKey, requestID string) (map[string]any, error) {
 	// Classify first, and let an underivable class abort before any write.
 	// Fail-closed: a refusal that does not classify applies NO consequence,
 	// where a guessed one could block a task for the deployment's mistake.
@@ -117,21 +124,21 @@ func applyRefusal(ctx context.Context, q Q, cand RefusalCandidate, r refusal.Ref
 		// The deployment's fault. One health action; no claim, no task
 		// charge/block. If the crossing is down, the first recovered tick
 		// records it.
-		if err := recordDispatchHealth(ctx, q, cand, detail, dispatchKey); err != nil {
+		effect["consequence"] = "health"
+		if err := recordDispatchHealth(ctx, q, cand, detail, dispatchKey, requestID, effect); err != nil {
 			return nil, err
 		}
-		effect["consequence"] = "health"
 		return effect, nil
 
 	case refusal.ClassCandidate:
-		return applyCandidatePolicy(ctx, q, cand, r, detail, dispatchKey, effect)
+		return applyCandidatePolicy(ctx, q, cand, r, detail, dispatchKey, requestID, effect)
 	}
 	return nil, Domainf("refusal class %q has no consequence", class)
 }
 
 // applyCandidatePolicy is D4's candidate-policy row, whose consequence is
 // subject-dependent.
-func applyCandidatePolicy(ctx context.Context, q Q, cand RefusalCandidate, r refusal.Refusal, detail refusal.Detail, dispatchKey string, effect map[string]any) (map[string]any, error) {
+func applyCandidatePolicy(ctx context.Context, q Q, cand RefusalCandidate, r refusal.Refusal, detail refusal.Detail, dispatchKey, requestID string, effect map[string]any) (map[string]any, error) {
 	switch cand.Kind {
 	case RefusalSubjectTask:
 		// Atomically block with the code. The reason is the stable code and
@@ -148,10 +155,10 @@ func applyCandidatePolicy(ctx context.Context, q Q, cand RefusalCandidate, r ref
 		// candidate may recur every tick until its global configuration is
 		// repaired — there is nothing to block, and inventing a task to carry
 		// the blame would be worse than recurring.
-		if err := recordDispatchHealth(ctx, q, cand, detail, dispatchKey); err != nil {
+		effect["consequence"] = "health"
+		if err := recordDispatchHealth(ctx, q, cand, detail, dispatchKey, requestID, effect); err != nil {
 			return nil, err
 		}
-		effect["consequence"] = "health"
 		return effect, nil
 
 	case RefusalHomie:
@@ -206,7 +213,7 @@ func confinementReason(code string) string { return "confinement:" + code }
 // carry a supplied path, env value, credential, or nonce even if the producer
 // tried. The subject is the candidate's own identifier — already spine state,
 // never producer input.
-func recordDispatchHealth(ctx context.Context, q Q, cand RefusalCandidate, d refusal.Detail, dispatchKey string) error {
+func recordDispatchHealth(ctx context.Context, q Q, cand RefusalCandidate, d refusal.Detail, dispatchKey, requestID string, effect map[string]any) error {
 	payload, err := d.Canonical()
 	if err != nil {
 		return Domainf("%v", err)
@@ -222,9 +229,21 @@ func recordDispatchHealth(ctx context.Context, q Q, cand RefusalCandidate, d ref
 	if dispatchKey != "" {
 		key = dispatchKey
 	}
+	if requestID == "" {
+		_, err = q.ExecContext(ctx, `
+			INSERT INTO activity (actor, kind, subject, detail, dispatch_key)
+			VALUES ('dispatch', 'dispatch.health', ?, ?, ?)`, subject, string(payload), key)
+		return err
+	}
+	result, err := json.Marshal(effect)
+	if err != nil {
+		return err
+	}
 	_, err = q.ExecContext(ctx, `
-		INSERT INTO activity (actor, kind, subject, detail, dispatch_key)
-		VALUES ('dispatch', 'dispatch.health', ?, ?, ?)`, subject, string(payload), key)
+		INSERT INTO activity
+			(actor, kind, subject, detail, dispatch_key, dispatch_request_id, dispatch_result)
+		VALUES ('dispatch', 'dispatch.health', ?, ?, ?, ?, ?)`,
+		subject, string(payload), key, requestID, string(result))
 	return err
 }
 

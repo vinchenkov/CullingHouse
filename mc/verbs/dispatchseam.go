@@ -599,7 +599,7 @@ func dispatchCommit(ctx context.Context, q Q, prepared preparedDispatch, atteste
 		if err != nil {
 			return nil, err
 		}
-		return applyRefusal(ctx, q, rcand, *attested.refusal, key)
+		return applyAttestedRefusal(ctx, q, prepared.requestID, rcand, *attested.refusal, key)
 	}
 
 	action := canonicalAction{
@@ -621,10 +621,36 @@ func dispatchCommit(ctx context.Context, q Q, prepared preparedDispatch, atteste
 	if err != nil {
 		return nil, err
 	}
-	if err := writeSpawnReceipt(ctx, q, cand.runID, key); err != nil {
+	if err := writeAttestedReceipt(ctx, q, prepared.requestID, key, effect,
+		"dispatch.spawn", cand.runID); err != nil {
 		return nil, err
 	}
 	return effect, nil
+}
+
+func applyAttestedRefusal(ctx context.Context, q Q, requestID string, cand RefusalCandidate, r refusal.Refusal, key string) (map[string]any, error) {
+	effect, err := applyRefusalWithReceipt(ctx, q, cand, r, key, requestID)
+	if err != nil {
+		return nil, err
+	}
+	if effect["consequence"] != "none" && effect["consequence"] != "health" {
+		if err := writeAttestedReceipt(ctx, q, requestID, key, effect,
+			"dispatch.result", refusalReceiptSubject(cand)); err != nil {
+			return nil, err
+		}
+	}
+	return effect, nil
+}
+
+func refusalReceiptSubject(c RefusalCandidate) any {
+	switch c.Kind {
+	case RefusalSubjectTask:
+		return *c.TaskID
+	case RefusalHomie:
+		return c.SessionID
+	default:
+		return nil
+	}
 }
 
 // commitInertRefusal routes a stale-class preflight refusal through the D4
@@ -743,12 +769,19 @@ func writeDispatchReceipt(ctx context.Context, q Q, requestID string, effect map
 	return err
 }
 
-// writeSpawnReceipt records the attested commit's separate candidate/action
-// digest fence (ADR-016:240-247): one activity row under the derived
-// dispatch_key, whose UNIQUE index makes a same-action replay unstorable.
-func writeSpawnReceipt(ctx context.Context, q Q, runID, key string) error {
-	_, err := q.ExecContext(ctx, `
-		INSERT INTO activity (actor, kind, subject, dispatch_key)
-		VALUES ('dispatch', 'dispatch.spawn', ?, ?)`, runID, key)
+// writeAttestedReceipt closes both replay dimensions on one atomic consequence:
+// dispatch_key is the candidate/action digest fence, while requestID/result is
+// the command's exact lost-response replay. Health writes these fields directly
+// on its action row because activity is append-only; spawn, task-block, and
+// Homie-end consequences use this receipt row.
+func writeAttestedReceipt(ctx context.Context, q Q, requestID, key string, effect map[string]any, fallbackKind string, subject any) error {
+	body, err := json.Marshal(effect)
+	if err != nil {
+		return err
+	}
+	_, err = q.ExecContext(ctx, `
+		INSERT INTO activity
+			(actor, kind, subject, dispatch_key, dispatch_request_id, dispatch_result)
+		VALUES ('dispatch', ?, ?, ?, ?, ?)`, fallbackKind, subject, key, requestID, string(body))
 	return err
 }

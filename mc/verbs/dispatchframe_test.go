@@ -98,6 +98,28 @@ func dfAssertInert(t *testing.T, db *sql.DB, eff map[string]any) {
 	}
 }
 
+func dfAssertExactReplay(t *testing.T, db *sql.DB, requestID string, want map[string]any) {
+	t.Helper()
+	replayed := dfPrepare(t, db, requestID)
+	if replayed.final == nil {
+		t.Fatal("lost-response retry did not return a stored final result")
+	}
+	wantJSON, err := json.Marshal(want)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gotJSON, err := json.Marshal(replayed.final)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(gotJSON) != string(wantJSON) {
+		t.Fatalf("replayed result %s, want exact committed result %s", gotJSON, wantJSON)
+	}
+	if n := dfInt(t, db, `SELECT COUNT(*) FROM activity WHERE dispatch_request_id = ?`, requestID); n != 1 {
+		t.Fatalf("request %s has %d exact-result receipt rows, want one", requestID, n)
+	}
+}
+
 // --- deployment identity precondition (ADR-016 D1 step 1) ------------------
 
 func TestDispatchRequiresDeploymentMirror(t *testing.T) {
@@ -270,6 +292,88 @@ func TestDispatchSpawnWritesDispatchKeyReceipt(t *testing.T) {
 	if !validDispatchKey(key) {
 		t.Fatalf("spawn receipt key %q is not 64 lowercase hex", key)
 	}
+}
+
+func TestDispatchAttestedConsequencesReplayExactResult(t *testing.T) {
+	t.Run("spawn", func(t *testing.T) {
+		db := dvSpine(t)
+		dvInsertTask(t, db, dvTask(1, dispatch.ScopeTask, dispatch.StatusProposed, 2))
+		prepared := dfPrepare(t, db, dfRequestID)
+		attested, err := dispatchAttest(os.Getenv("MC_HOME"), prepared)
+		if err != nil {
+			t.Fatal(err)
+		}
+		effect := dfCommit(t, db, prepared, attested)
+		if effect["action"] != "spawn" {
+			t.Fatalf("effect = %v, want spawn", effect)
+		}
+		dfAssertExactReplay(t, db, dfRequestID, effect)
+		if n := dfInt(t, db, `SELECT COUNT(*) FROM runs`); n != 1 {
+			t.Fatalf("spawn replay left %d runs, want one", n)
+		}
+	})
+
+	t.Run("deployment_health", func(t *testing.T) {
+		db := dvSpine(t)
+		dvInsertTask(t, db, dvTask(1, dispatch.ScopeTask, dispatch.StatusProposed, 2))
+		prepared := dfPrepare(t, db, dfRequestID)
+		if err := os.Remove(filepath.Join(os.Getenv("MC_HOME"), "routing.md")); err != nil {
+			t.Fatal(err)
+		}
+		attested, err := dispatchAttest(os.Getenv("MC_HOME"), prepared)
+		if err != nil {
+			t.Fatal(err)
+		}
+		effect := dfCommit(t, db, prepared, attested)
+		if effect["consequence"] != "health" {
+			t.Fatalf("effect = %v, want health", effect)
+		}
+		dfAssertExactReplay(t, db, dfRequestID, effect)
+		if n := dfInt(t, db, `SELECT COUNT(*) FROM activity WHERE kind='dispatch.health'`); n != 1 {
+			t.Fatalf("health replay wrote %d health rows, want one", n)
+		}
+	})
+
+	t.Run("candidate_task_block", func(t *testing.T) {
+		db := dvSpine(t)
+		dvInsertTask(t, db, dvTask(1, dispatch.ScopeTask, dispatch.StatusProposed, 2))
+		prepared := dfPrepare(t, db, dfRequestID)
+		attested := attestedDispatch{deploymentUUID: prepared.deploymentUUID, refusal: &refusal.Refusal{
+			Code: refusal.CodeEnvForbidden, Field: refusal.FieldEnvName, Summary: refusal.SummaryForbidden,
+		}}
+		effect := dfCommit(t, db, prepared, attested)
+		if effect["consequence"] != "task_blocked" {
+			t.Fatalf("effect = %v, want task_blocked", effect)
+		}
+		dfAssertExactReplay(t, db, dfRequestID, effect)
+		if blocked := dfInt(t, db, `SELECT blocked FROM tasks WHERE id=1`); blocked != 1 {
+			t.Fatalf("task block replay left blocked=%d, want 1", blocked)
+		}
+	})
+
+	t.Run("homie_end", func(t *testing.T) {
+		db := rrSpine(t)
+		var effect map[string]any
+		err := inTx(db, func(ctx context.Context, q Q) error {
+			var e error
+			effect, e = applyAttestedRefusal(ctx, q, dfRequestID,
+				RefusalCandidate{Kind: RefusalHomie, SessionID: "sess-1"}, refusal.Refusal{
+					Code:  refusal.CodeNetworkPolicyMismatch,
+					Field: refusal.FieldNetworkRule, Summary: refusal.SummaryMismatch,
+				}, rrKey)
+			return e
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if effect["consequence"] != "homie_ended" {
+			t.Fatalf("effect = %v, want homie_ended", effect)
+		}
+		dfAssertExactReplay(t, db, dfRequestID, effect)
+		if status := rrHomieStatus(t, db, "sess-1"); status != "ended" {
+			t.Fatalf("Homie end replay left status=%q, want ended", status)
+		}
+	})
 }
 
 func TestDispatchRoutingFailureIsHealthRefusal(t *testing.T) {
