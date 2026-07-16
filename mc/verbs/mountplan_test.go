@@ -129,6 +129,34 @@ func TestPlanMountsInvalidAllowlistIsHealth(t *testing.T) {
 	}
 }
 
+// A trusted, syntactically valid allowlist whose roots overlap (or are
+// absent) fails at ResolveAllowlist with authority-DECIDES codes. The
+// allowlist and its roots are deployment-authored, so the adapter must carry
+// AuthorityDeployment there — an empty authority is unclassifiable, and an
+// unclassifiable refusal hard-errors every tick instead of recording D4's
+// recoverable health action (review finding, 2026-07-16).
+func TestPlanMountsOverlappingAllowRootsAreDeploymentHealth(t *testing.T) {
+	f := mpSetup(t, "")
+	sub := f.mkdir(t, "sub")
+	overlapping := "version = 1\n\n[[allow]]\npath = \"" + f.root + "\"\ntarget = \"data\"\naccess = \"rw\"\n" +
+		"\n[[allow]]\npath = \"" + sub + "\"\ntarget = \"other\"\naccess = \"ro\"\n"
+	if err := os.WriteFile(f.inputs.AllowlistPath, []byte(overlapping), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, r, err := planMounts([]mountRequest{
+		{Source: sub, Access: boundary.AccessRO, Authority: refusal.AuthorityCandidate},
+	}, f.inputs)
+	if err != nil || r == nil {
+		t.Fatalf("planMounts = %v, want a refusal", err)
+	}
+	if r.Code != boundary.CodeSourceAlias || r.Authority != refusal.AuthorityDeployment {
+		t.Fatalf("refusal = {%s %s}, want {%s %s}", r.Code, r.Authority, boundary.CodeSourceAlias, refusal.AuthorityDeployment)
+	}
+	if class, cerr := refusal.Classify(*r); cerr != nil || class != refusal.ClassHealth {
+		t.Fatalf("Classify = %v/%v, want health — a broken allowlist is the deployment's fault, never a wedge", class, cerr)
+	}
+}
+
 func TestPlanMountsRejectionTable(t *testing.T) {
 	idx := func(i int) *int { return &i }
 	cases := []struct {

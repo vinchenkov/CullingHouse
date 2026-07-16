@@ -89,9 +89,15 @@ func planMounts(requests []mountRequest, in mountPlanInputs) ([]boundary.Authori
 		r, aerr := adaptMountError(err, "", nil)
 		return nil, r, aerr
 	}
+	// ResolveAllowlist fails with authority-DECIDES codes (source_alias for
+	// overlapping roots; source_missing/wrong_kind/symlink_escape for a bad
+	// root path). The allowlist and its roots are deployment-authored, so
+	// the deployment carries the authority and the class lands on health —
+	// an empty authority here would be unclassifiable and wedge dispatch on
+	// a recoverable operator misconfig (review finding, 2026-07-16).
 	resolved, err := boundary.ResolveAllowlist(allowlist)
 	if err != nil {
-		r, aerr := adaptMountError(err, "", nil)
+		r, aerr := adaptMountError(err, refusal.AuthorityDeployment, nil)
 		return nil, r, aerr
 	}
 
