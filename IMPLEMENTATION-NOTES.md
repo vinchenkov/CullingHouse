@@ -1436,3 +1436,90 @@ Entry template:
   it and silently undo the split.
 - Needs your decision: no (informational — the handoff is frozen operator input;
   an agent rewording it unilaterally is the larger deviation)
+
+## 2026-07-15 — D4's `field`/`summary` enumerations are authored, and the detail object carries no free text at all
+- Where: Phase 3, ADR-016 D4; `mc/refusal` (315e932)
+- Gap: D4 pins the stored detail as `{code,field,item_index,summary}` and says
+  `field` and `summary` are "enumerated identifiers" — but never enumerates
+  them, and never bounds `item_index` beyond the word "bounded". It also
+  requires the detail never contain a supplied path/value, home/username, env
+  value, credential, nonce, URL query/body, header, raw hostname answer, or
+  secret-derived prefix, and says "logs use the same sanitizer" — without
+  saying what the sanitizer is.
+- Choice: (a) Sixteen `Field` and fifteen `Summary` identifiers are authored
+  here, derived from the code set's own structural positions; they are
+  additive-only. (b) `item_index` is bounded at 255 — D2's largest plan
+  collection is 256 mounts / 256 env entries, so 255 is the widest legal
+  position and anything above it is a producer bug. (c) **The type has no
+  free-text member.** Rather than sanitize a string field, `Field`/`Summary`
+  are closed enums, so hostile input has nowhere to land: leakage is impossible
+  by construction rather than one regex from happening. This is the
+  conservative reading — it preserves the fail-closed posture strictly (a
+  sanitizer can regress; a type cannot), deviates from D4's text not at all
+  (D4 asked for enumerated identifiers), and is trivially reversible (adding a
+  free-text member later is additive).
+  The cost, accepted: an operator reading a stored refusal sees
+  `{"code":"mount.source_blocked","field":"mount.source","item_index":null,
+  "summary":"blocked_floor"}` and cannot tell *which* source failed. That is
+  exactly what D4 mandates; host-side diagnosis is `doctor`/logs, not the spine.
+  `Refusal.Message` carries the raw producer text for that host-side use and
+  `DetailFor` drops it — the drop is the sanitizer, and it is proven by a test
+  asserting exact canonical bytes against path/env/credential-shaped input. The
+  residual risk is that a future author logs `Message`; the field is documented
+  as never-log, but nothing enforces it yet.
+- Spec impact: ADR-016 D4 could name the two enumerations and the item_index
+  bound rather than leaving them to the implementer; the "logs use the same
+  sanitizer" sentence has no referent until a logging seam exists.
+- Needs your decision: no
+
+## 2026-07-15 — `Authority` is modelled as a mount-namespace concept, not a field on every refusal
+- Where: Phase 3, ADR-016 D4; `mc/refusal.Classify` (315e932)
+- Gap: D4's candidate-policy row makes the class of ADR-017's mount codes
+  conditional on "the failing source authority" being the candidate's own
+  profile/Worksource/record reference — but the other three code groups
+  (`preflight.*`, `health.*`, `env`/`auth`/`network`/`identity`) have no
+  authority dimension at all, and D4 does not say what a producer should pass
+  for them, nor what to do when the two allowlist trust codes arrive labelled
+  as candidate-owned.
+- Choice: authority is meaningful for exactly the fourteen candidate-ownable
+  mount codes (required there — its absence is a protocol error, never a silent
+  default into either consequence); *irrelevant* for the two allowlist trust
+  codes, which are health whatever the attester claims; and *forbidden*
+  elsewhere, where supplying it is a category error we refuse rather than
+  ignore. The allowlist carve-out accepting any authority is deliberate and is
+  the fail-closed direction: the deployment's own allowlist file must never
+  become a task's fault because a frame was mislabeled. Unknown codes and
+  incoherent pairs refuse rather than default, because an underivable class
+  applies no consequence at all, whereas a guessed class could block a task for
+  the deployment's mistake — and D4's own "a concurrent operator edit therefore
+  never falsely punishes a task" is the principle being preserved.
+- Spec impact: D4 could state the allowlist carve-out's authority-independence
+  explicitly; as written it is inferable only from the "except the two
+  deployment allowlist-trust codes above" clause.
+- Needs your decision: no
+
+## 2026-07-15 — The repo must never live in macOS's TCC-protected triad
+- Where: Phase 3; environment (AGENTS.md "Environment facts"), the whole session
+- Gap: the handoff's environment facts pin the primary target as this macOS
+  machine but say nothing about *where* the repo may live. It sat in
+  `~/Documents`, which is one of macOS's three TCC-protected folders.
+- Choice: moved to `~/dev/ai/homie` and recorded the constraint in
+  `PROGRESS.md`'s header (state, read every startup) rather than here alone,
+  because an agent hitting the symptom needs it before it reads anything else.
+  Under agent fan-out, `sandboxd` cannot build a TCC attribution chain, `tccd`
+  replies without an `auth_value`, and the sandbox fails closed — silently
+  revoking the running session's own filesystem access, with no prompt, for the
+  life of the process. This is anthropics/claude-code#59065 (open); Full Disk
+  Access does not fix it, because the failure precedes any policy lookup. The
+  conservative option is removing the mechanism (the repo is not in a protected
+  folder) rather than fighting it (grants that #59065 shows to be ineffective).
+  A poisoned tree cannot even copy itself out — recovery needs a fresh terminal.
+  `PROGRESS.md`'s Parked Codex `[projects."…"]` path was corrected with the
+  move; historical references to the old path in `spikes/`, `docs/reviews/`, and
+  `docs/ledger/chronology-phase-0-2.md` are deliberately left as-is, since they
+  record what was true when written.
+- Spec impact: handoff §4.3's environment facts should name the repo-location
+  constraint; it is a hard precondition for any fan-out on macOS, not a
+  preference.
+- Needs your decision: no (done; informational — but note it recurs for any
+  harness doing fan-out, Codex included, if a repo is ever placed back there)

@@ -1,7 +1,16 @@
 # PROGRESS — Mission Control implementation ledger
 
 <!-- Header block: kept current by every session. -->
-LAST GREEN SHA: 48eaf63 (local; the operator pushes manually — decided 2026-07-14, see Parked. Agents: do not push.)
+REPO PATH: `~/dev/ai/homie`. **Never relocate this repo into `~/Documents`,
+`~/Desktop`, or `~/Downloads`.** Those three are macOS's TCC-protected triad;
+agent fan-out breaks TCC attribution there and silently revokes the session's
+own filesystem access mid-run (claude-code#59065, open). Moved out of
+`~/Documents` on 2026-07-15 after exactly that killed a session. Full Disk
+Access does NOT fix it — the failure precedes any policy lookup. Symptom:
+`stat` works, reads return `Operation not permitted`, git says
+`Unable to read current working directory`.
+
+LAST GREEN SHA: 315e932 (local; the operator pushes manually — decided 2026-07-14, see Parked. Agents: do not push.)
 PHASES PASSING: Phase 0 COMPLETE (S1–S8 all green, no fallback ADRs; only operator-leg deferrals remain); Phase 1 COMPLETE (1a substrate 172; 1b walking skeleton reviewed-and-fixed — fake-harness 43, agent-runner 13, runner/image 40, resident 42, dispatch + cmd/mc suites; Docker e2e PASS ×4 total); Phase 2 COMPLETE for every unparked acceptance line (domain/§18 surface, deterministic split-brain convergence, bounded honesty + five mutants, tagged dispatch/metamorphic/twin-spine lifecycle properties; the initiative-wave CLI is no longer isolated — ADR-020 landed 2026-07-14 and closed the last Phase 2 acceptance line)
 KNOWN-FAILING: (none). Note the spine is now schema v2 (substrate.CurrentSchemaVersion): a spine created by an mc build older than 48eaf63 is migrated in place by `mc onboard home`; scratch MC_HOME spines need no action.
 FAST SUITE: mc/check.sh (gofmt + vet on the untagged build AND on the nightly/docker_e2e/test_fake_routing tagged builds — they must compile every commit, added 2026-07-14 after a tagged suite rotted invisibly — + go test ./...; includes substrate + promoted dispatch) + runner/fake-harness/check.sh + runner/agent-runner/check.sh + runner/image/check.sh + resident/check.sh. Docker e2e (phase-completion lane): cd mc && mise exec -- go test -tags docker_e2e -timeout 15m ./e2e/...
@@ -84,6 +93,13 @@ FAST SUITE: mc/check.sh (gofmt + vet on the untagged build AND on the nightly/do
   - [x] macOS ACL leg of the trust seam: native no-follow volume/object
         snapshot, any non-owner allow grant rejected, membership UUID aliases
         resolved fail-closed, portable/static builds retained (942985e)
+  - [x] ADR-016 D4 refusal taxonomy + closed detail, the pure half of the
+        invalid-plan/no-claim transaction (`mc/refusal`, 315e932): whole
+        consequence table by code, authority as a mount-only discriminator,
+        allowlist carve-out always health, unknown/incoherent input refused;
+        detail is enumerated-only so hostile text is leak-proof by
+        construction. Anti-drift guard in boundary/codes_test.go. 4 mutants
+        dead
 - [ ] Phase 4 — E2E control loops (six scenario families)
 - [ ] Phase 5 — Real-subscription acceptance (operator-scheduled)
 - [ ] Release prep (after Phase 5): swap the repo's construction face for
@@ -124,7 +140,7 @@ In both, the struck-through entry was the true one.
       approval_policy = "never"
       sandbox_mode = "danger-full-access"
 
-      [projects."/Users/vinchenkov/Documents/dev/ai/homie"]
+      [projects."/Users/vinchenkov/dev/ai/homie"]
       trust_level = "trusted"
 
 - **Claude Code permission posture** (handoff §1.4): the agent may not widen its
@@ -139,15 +155,32 @@ In both, the struck-through entry was the true one.
   were not seeded. The three §4.3 priors are reconstructed one-line notes marked
   RECONSTRUCTED. Drop original POC material into `docs/priors/` if it exists.
 
-NEXT: Implement ADR-016's invalid-plan/no-claim dispatch transaction red-first,
-without wiring production planning — unchanged from the previous NEXT, which the
-D2 storage slice was the prerequisite for. Re-read Decisions 1–4 and derive the
-exact typed classified-refusal input at the commit seam; prove allowlist
-trust/invalid refusals record deployment health, candidate-owned mount refusals
-apply their subject/task, subjectless, or Homie consequence, and every arm
+NEXT: Apply the ADR-016 D4 consequence router at the dispatch seam, red-first —
+the impure half of the invalid-plan/no-claim transaction, whose input
+(`refusal.Refusal`/`Classify`, 315e932) now exists and is proven. Route
+ClassHealth to one health action, ClassCandidate by subject (block the subject
+task with the code / subjectless pipeline → health / Homie → end with
+`confinement:<code>`), and ClassStale to no mutation at all. Prove every arm
 leaves zero new Run rows, a free lock, no spawn effect, and no fall-through to
-another candidate. D2's fences are now storable: the commit-side `dispatch_key`
-and the prepare-side `dispatch_request_id`/`dispatch_result` receipt exist and
-are enforced, so the transaction can use them rather than re-deriving idempotency.
+another candidate — the four-part invariant has no fixture yet.
+
+Three corrections to the prior NEXT, measured not assumed (see the ledger entry
+for 2026-07-15):
+  1. There is NO commit seam to attach to. `verbs.Dispatch` is still the Phase-2
+     single-transaction `Decide()` → `applyAction` (five kinds); prepare/attest/
+     commit does not exist. This slice creates the seam.
+  2. D2's fences are storage-only. `grep -rn "MC-DISPATCH"` and `sha256` over
+     mc/ both return **zero hits**; no Go code writes dispatch_key,
+     dispatch_request_id, dispatch_result, source_activity_id, or
+     event_destination_key. The real derivation needs a preparation token from a
+     prepare step that does not exist. Take `dispatch_key` as an INPUT to the
+     transaction alongside the refusal; leave derivation to the prepare slice.
+  3. The Homie arm cannot be launch-fenced yet: none of D3's eleven
+     `homie_sessions` launch/resume columns exist (48eaf63 landed D2 only). Land
+     the end arm unfenced with the fence seam explicit, or do D3's v2→v3
+     migration first — an operator-free call, but log it either way.
+
+Also unbuilt and needed: a health-event writer, `homie.preflight_health`, and
+`verbs.HomieEnd`'s body factored out of its own `inTx` so the seam can call it.
 Keep aggregate mount no-drop acceptance open until the planner exists. Do not
 load launchd.
