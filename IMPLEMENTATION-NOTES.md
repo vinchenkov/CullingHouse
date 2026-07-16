@@ -1523,3 +1523,126 @@ Entry template:
   preference.
 - Needs your decision: no (done; informational — but note it recurs for any
   harness doing fan-out, Codex included, if a repo is ever placed back there)
+
+## 2026-07-15 — D4's Homie arm lands unfenced; the fence is vacuous, not missing
+- Where: Phase 3 / ADR-016 D4 consequence router (`mc/verbs/refusalroute.go`,
+  8aa679e); D4's "Homie: launch-fenced end with `confinement:<code>`"
+- Gap: D4 requires the Homie end to be *launch-fenced*, but the fence's inputs
+  do not exist. D3 specifies eleven `homie_sessions` launch/resume columns
+  (`current_launch_id`, `current_launch_mode`, the container/bound/started
+  trio, the resume-debt quartet); 48eaf63 landed D2's replay fences only.
+  Measured, not assumed: none of the eleven are in `schema.sql`.
+- Choice: land the end arm unfenced with the fence seam named in the code, over
+  doing D3's v2→v3 migration first. It is conservative on all three counts.
+  (a) It preserves the fail-closed posture: with launches untracked there is
+  exactly one generation per session, so there is no newer launch the end could
+  hit by mistake — the fence is *vacuous* today rather than absent. It cannot
+  be reached wrongly by another route either: `mc/dispatch` has zero Homie
+  awareness (`grep -rn homie mc/dispatch` → no matches), so nothing selects a
+  Homie candidate at all yet. (b) It deviates least: the alternative fuses two
+  ADR decisions into one slice, and D3's columns carry their own pairing rules
+  (launch id/mode both-or-neither, rows-mode-only cutoffs, debt mutually
+  exclusive with a live launch) that deserve their own red-first slice.
+  (c) It is trivially reversible: the call gains one `current_launch_id`
+  predicate and nothing else changes.
+- Spec impact: none. D4's text stands; this is a build-order note.
+- Needs your decision: no
+
+## 2026-07-15 — `dispatch_key` is an input to the D4 transaction, not derived
+- Where: Phase 3 / ADR-016 D4 router; D2's replay fences
+- Gap: D2's fences are storage-only. The columns and their CHECKs exist on
+  `activity`/`outbox` with a UNIQUE index, but no Go code writes them:
+  `grep -rn "MC-DISPATCH"` and `sha256` over `mc/` both return zero hits. The
+  real `dispatch_key` derivation needs a preparation token from a prepare step
+  that does not exist — `verbs.Dispatch` is still Phase 2's single-transaction
+  `Decide()` → `applyAction`; there is no prepare/attest/commit seam to derive
+  from.
+- Choice: take `dispatch_key` as an INPUT alongside the refusal and leave
+  derivation to the prepare slice. Deriving something *shaped* like a key from
+  what this transaction happens to hold would forge a fence: it would pass every
+  CHECK, store as a distinct UNIQUE value, and fail open exactly as the schema
+  comment at `schema.sql:735-741` warns. Naming the gap is fail-closed; forging
+  is not. An absent key stores NULL (which the UNIQUE index ignores) rather than
+  a fabricated value; a malformed one is refused in Go, on every arm.
+  That last point is not decoration: only the health arm writes an activity row,
+  so only there does the substrate CHECK fire. On the stale and block arms
+  nothing but this router would catch a malformed key — a planted mutant proved
+  it (see the ledger entry).
+- Spec impact: none.
+- Needs your decision: no
+
+## 2026-07-15 — the D4 health action is one activity row; no outbox fan-out
+- Where: Phase 3 / ADR-016 D4 router; spec §15.5/§15.6 alert-class routing
+- Gap: D4 says "one health action" without saying what a health action *is*.
+  Two readings collide. ADR-016's own mechanism text is an activity append
+  (line 433: a Homie-only deployment-health refusal "appends a
+  `homie.preflight_health` activity"), and phase3-contract §29 says the health
+  event is "recorded". But spec §15.5 enumerates `health` among the five outbox
+  kinds, "written by `mc` inside the same transaction that produced the event",
+  and §15.6 routes the health alert class to the dashboard.
+- Choice: one `dispatch.health` activity row, no outbox row. The ADR's own text
+  governs its own consequence, and consistency settles the rest: no health or
+  `blocked_alert` outbox writer exists anywhere in the tree today, so every
+  other block path (`domain.Block`, `ChargeInfra`, `LandReport`) records state
+  without pushing an alert. Making D4 alone fan out would be the deviation, not
+  the compliance. The `dispatch.health` kind is not invented here either —
+  `substrate_test.go` already uses it to exercise D2's fences. Reversible: the
+  fan-out is an insert next to the existing one, behind the alert-class resolver
+  that `verbs/console.go:11-14` already marks as a Phase-5 placeholder.
+- Spec impact: §15.5's "everything the system pushes at the operator becomes
+  rows here" is not yet true of health events or blocked alerts, in this slice
+  or any earlier one. Whoever builds the alert-class resolver owns closing that
+  for all of them at once.
+- Needs your decision: no
+
+## 2026-07-15 — `homie.preflight_health` belongs to D3, not D4
+- Where: Phase 3 / ADR-016 D3 branch 5; the outgoing `NEXT:` listed it as
+  needed for the D4 router
+- Gap: the outgoing `NEXT:` line named `homie.preflight_health` as unbuilt and
+  needed for this slice. Read at the source (ADR-016 line 433), it is not a D4
+  consequence at all: it is D3's starvation-avoidance marker, whose closed
+  detail carries a `candidate_key = SHA256` over the pre-prepare canonical
+  session id, **current launch/input-or-resume debt**, frozen binding, and
+  conversation sequence, plus `defer_pipeline=true` — so that a retained
+  pipeline candidate wins one unconditional turn over a Homie whose deployment
+  is broken.
+- Choice: leave it unbuilt. Its candidate_key hashes the D3 launch/debt columns
+  that do not exist, so it is not constructible in this slice; and its purpose —
+  ordering a Homie candidate against a pipeline candidate — is vacuous while
+  `mc/dispatch` selects no Homie candidates at all. A Homie hitting a
+  *health*-class refusal therefore routes to the ordinary health action for now,
+  which is a real durable record, not a silent drop. Logged rather than parked:
+  the ledger's own `NEXT:` was the thing that was wrong, and it is corrected in
+  place.
+- Spec impact: none.
+- Needs your decision: no
+
+## 2026-07-15 — latent race: concurrent `mc onboard home` can refuse with "restore from backup"
+- Where: Phase 2 / `verbs/onboard.go:446`; surfaced by
+  `TestOnboardConcurrentFreshHomeNeverDeletesTheWinner` failing once during the
+  D4 slice's fast-suite run. NOT caused by that slice.
+- Gap: `onboardHome` refuses when a spine `exists && bytes > 0` but has no meta
+  identity, on the theory that a non-empty spine without meta is corruption that
+  no onboarding path may re-initialize. That is also the exact transient state
+  of a spine another caller is provisioning right now: `substrate.Open` creates
+  the file and SQLite writes its first 4096-byte page before the schema
+  transaction commits, so a concurrent inspector sees `bytes=4096, tables=0` and
+  hard-fails with `restore from backup (§16.4)`. The observed failure was
+  literally that: 7 of 8 callers ok/done, one refused at 4096 bytes. The
+  downstream recovery machinery (`awaitConcurrentProvision`,
+  `recoverConcurrentProvision`) already exists for the *later* stages of this
+  race, but this guard sits ahead of all of it.
+- Choice: log, do not fix in this slice (AGENTS.md §6 log-and-go; §3 "do not
+  invent scope"). It is fail-closed — a false alarm, not data loss or a broken
+  invariant — so it does not park and does not stop the run. Measured, not
+  assumed: 1 failure in 21 working-tree runs, 0 in 21 at HEAD; a clean worktree
+  at HEAD ran the full verbs suite 15/15 green and the test alone 60/60 green.
+  The rate difference is chance, not causation — Go runs a package's tests
+  sequentially in file order and `onboard_test.go` sorts *before*
+  `refusalroute_test.go`, so the new tests cannot influence it. The race is
+  real by code inspection regardless of which run happens to catch it.
+- Spec impact: none — §16.4's posture is right; the guard's *precondition* is
+  too broad, not its consequence.
+- Needs your decision: no (a fix belongs to whoever next touches onboarding:
+  the ambiguous `bytes>0 && tables==0` state should await/retry like the
+  existing concurrent-provision paths, and refuse only if it stays table-less)
