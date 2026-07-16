@@ -15,10 +15,13 @@
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { startTickLoop } from "./tick-loop";
 import type { Exec, ResidentConfig, TickDeps } from "./types";
+import { CONFIG_SCHEMA_VERSION, execMcVia } from "./resident-control";
 
 interface MainConfig extends ResidentConfig {
   mcPath: string;
   tickIntervalMs?: number;
+  releaseBuildId: string;
+  configSchemaVersion: number;
 }
 
 function execVia(binary: string): Exec {
@@ -46,6 +49,12 @@ async function main(): Promise<void> {
   }
   const config = (await Bun.file(configPath).json()) as MainConfig;
 
+  if (config.configSchemaVersion !== CONFIG_SCHEMA_VERSION ||
+      typeof config.releaseBuildId !== "string" || config.releaseBuildId.length === 0) {
+    console.error("resident: config release/schema identity is missing or unsupported");
+    process.exit(2);
+  }
+
   const envInterval = process.env["MC_TICK_INTERVAL_MS"];
   const intervalMs = envInterval
     ? Number.parseInt(envInterval, 10)
@@ -59,7 +68,11 @@ async function main(): Promise<void> {
     intervalMs,
     setTimer: (fn, ms) => setInterval(fn, ms),
     clearTimer: (h) => clearInterval(h as ReturnType<typeof setInterval>),
-    runMc: execVia(config.mcPath),
+    runMc: execMcVia([config.mcPath], {
+      mcHome: config.mcHome,
+      releaseBuildId: config.releaseBuildId,
+      configSchemaVersion: config.configSchemaVersion,
+    }),
     docker: execVia("docker"),
     log: (msg) => console.error(`[resident ${new Date().toISOString()}] ${msg}`),
     fs: {

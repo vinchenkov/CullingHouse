@@ -39,6 +39,9 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	// Self-delegation: host-side mc with no direct spine path but a named
 	// warm helper delegates the whole invocation into the lock domain.
 	if os.Getenv("MC_HELPER") != "" && os.Getenv("MC_SPINE") == "" {
+		if args[0] == "dispatch" {
+			return brokerDispatch(args, stdin, stdout, stderr)
+		}
 		return delegate(args, stdin, stdout, stderr)
 	}
 

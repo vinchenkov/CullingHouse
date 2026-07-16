@@ -8,8 +8,11 @@ package main_test
 import (
 	"bytes"
 	"database/sql"
+	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -20,6 +23,7 @@ import (
 	"testing"
 	"time"
 
+	"golang.org/x/sys/unix"
 	"mc/substrate"
 )
 
@@ -3896,6 +3900,133 @@ func TestSelfDelegation(t *testing.T) {
 			t.Fatalf("MC_SPINE set must not delegate: code %d, out %q", res.code, res.stdout)
 		}
 	})
+}
+
+func TestHostDispatchRequiresOneUseResidentControl(t *testing.T) {
+	stubDir := t.TempDir()
+	stub := filepath.Join(stubDir, "docker")
+	if err := os.WriteFile(stub, []byte("#!/bin/sh\necho '{\"unexpected\":\"docker ran\"}'\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	env := []string{
+		"MC_HELPER=mc-helper-1",
+		"PATH=" + stubDir + string(os.PathListSeparator) + os.Getenv("PATH"),
+	}
+	res := runMC(t, env, "", "dispatch")
+	if res.code != 1 {
+		t.Fatalf("exit = %d, want protocol refusal 1; stdout=%q stderr=%q", res.code, res.stdout, res.stderr)
+	}
+	if !strings.Contains(res.stderr, "resident control descriptor") {
+		t.Fatalf("stderr %q does not name the missing resident control descriptor", res.stderr)
+	}
+	if strings.Contains(res.stdout, "docker ran") {
+		t.Fatalf("dispatch reached the helper without resident control: %q", res.stdout)
+	}
+}
+
+func TestHostDispatchHelloThenPreservesDelegatedResult(t *testing.T) {
+	stubDir := t.TempDir()
+	stub := filepath.Join(stubDir, "docker")
+	script := "#!/bin/sh\necho \"{\\\"stub\\\":\\\"$*\\\"}\"\necho delegated-stderr >&2\nexit 7\n"
+	if err := os.WriteFile(stub, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	home := t.TempDir()
+	if err := os.WriteFile(filepath.Join(home, "deployment.uuid"), []byte("deployment-test-1\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	pair, err := unix.Socketpair(unix.AF_UNIX, unix.SOCK_STREAM, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parent := os.NewFile(uintptr(pair[0]), "resident-control-parent")
+	child := os.NewFile(uintptr(pair[1]), "resident-control-child")
+	defer parent.Close()
+	defer child.Close()
+
+	cmd := exec.Command(mcBin, "dispatch")
+	base := []string{}
+	for _, e := range os.Environ() {
+		if strings.HasPrefix(e, "MC_SPINE=") || strings.HasPrefix(e, "MC_HELPER=") ||
+			strings.HasPrefix(e, "MC_RUN_JSON=") || strings.HasPrefix(e, "MC_HOME=") {
+			continue
+		}
+		base = append(base, e)
+	}
+	cmd.Env = append(base,
+		"MC_HELPER=mc-helper-1",
+		"MC_HOME="+home,
+		"PATH="+stubDir+string(os.PathListSeparator)+os.Getenv("PATH"),
+	)
+	cmd.ExtraFiles = []*os.File{child} // child fd 3
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	serverErr := make(chan error, 1)
+	go func() {
+		var prefix [4]byte
+		if _, err := io.ReadFull(parent, prefix[:]); err != nil {
+			serverErr <- fmt.Errorf("read hello length: %w", err)
+			return
+		}
+		n := binary.BigEndian.Uint32(prefix[:])
+		if n == 0 || n > 64*1024 {
+			serverErr <- fmt.Errorf("hello length %d outside frame bound", n)
+			return
+		}
+		body := make([]byte, n)
+		if _, err := io.ReadFull(parent, body); err != nil {
+			serverErr <- fmt.Errorf("read hello: %w", err)
+			return
+		}
+		var hello struct {
+			Op                  string `json:"op"`
+			Seq                 int    `json:"seq"`
+			ReleaseBuildID      string `json:"release_build_id"`
+			ControlVersion      int    `json:"gateway_control_version"`
+			SpineSchemaVersion  int    `json:"spine_schema_version"`
+			ConfigSchemaVersion int    `json:"config_schema_version"`
+			DeploymentUUID      string `json:"deployment_uuid"`
+		}
+		if err := json.Unmarshal(body, &hello); err != nil {
+			serverErr <- fmt.Errorf("decode hello: %w", err)
+			return
+		}
+		if hello.Op != "hello" || hello.Seq != 1 || hello.ReleaseBuildID == "" ||
+			hello.ControlVersion != 1 || hello.SpineSchemaVersion != substrate.CurrentSchemaVersion ||
+			hello.ConfigSchemaVersion != 1 || hello.DeploymentUUID != "deployment-test-1" {
+			serverErr <- fmt.Errorf("unexpected hello: %+v", hello)
+			return
+		}
+		hello.Op = "hello_ack"
+		ack, err := json.Marshal(hello)
+		if err != nil {
+			serverErr <- err
+			return
+		}
+		binary.BigEndian.PutUint32(prefix[:], uint32(len(ack)))
+		if _, err := parent.Write(append(prefix[:], ack...)); err != nil {
+			serverErr <- fmt.Errorf("write hello_ack: %w", err)
+			return
+		}
+		serverErr <- nil
+	}()
+
+	err = cmd.Run()
+	var exit *exec.ExitError
+	if !errors.As(err, &exit) || exit.ExitCode() != 7 {
+		t.Fatalf("dispatch exit err=%v, want delegated exit 7; stdout=%q stderr=%q", err, stdout.String(), stderr.String())
+	}
+	if err := <-serverErr; err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(stdout.String(), "exec -i mc-helper-1 mc dispatch") {
+		t.Fatalf("stdout %q does not preserve delegated dispatch bytes", stdout.String())
+	}
+	if !strings.Contains(stderr.String(), "delegated-stderr") {
+		t.Fatalf("stderr %q does not preserve delegated stderr", stderr.String())
+	}
 }
 
 // Missing MC_SPINE with no helper is an environment error, not a crash.

@@ -1,0 +1,163 @@
+package main
+
+// The Darwin host half of dispatch is resident-only. ADR-018 D6 gives each
+// tick one inherited AF_UNIX stream at descriptor 3; a shell invocation has
+// no channel and is refused before helper selection or mutation. The channel
+// begins with one closed, canonical hello/hello_ack exchange. Later control
+// operations share this transport, so the broker keeps it open until the one
+// external dispatch command finishes.
+
+import (
+	"bytes"
+	"encoding/binary"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net"
+	"os"
+	"time"
+
+	"golang.org/x/sys/unix"
+	"mc/substrate"
+	"mc/verbs"
+)
+
+const (
+	gatewayControlVersion = 1
+	configSchemaVersion   = 1
+	maxControlFrameBytes  = 64 * 1024
+)
+
+// releaseBuildID is replaced by release builds with
+// -ldflags '-X main.releaseBuildID=<immutable release id>'. Development
+// binaries intentionally match only residents configured for development.
+var releaseBuildID = "development"
+
+type controlHello struct {
+	Op                  string `json:"op"`
+	Seq                 int    `json:"seq"`
+	ReleaseBuildID      string `json:"release_build_id"`
+	ControlVersion      int    `json:"gateway_control_version"`
+	SpineSchemaVersion  int    `json:"spine_schema_version"`
+	ConfigSchemaVersion int    `json:"config_schema_version"`
+	DeploymentUUID      string `json:"deployment_uuid"`
+}
+
+func brokerDispatch(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
+	conn, err := inheritedResidentControl()
+	if err != nil {
+		return writeBrokerRefusal(stdout, stderr, "preflight.frame_invalid", err)
+	}
+	defer conn.Close()
+
+	deploymentUUID, err := verbs.ResolveDispatchDeployment()
+	if err != nil {
+		return writeBrokerRefusal(stdout, stderr, "preflight.frame_invalid", err)
+	}
+	if err := exchangeControlHello(conn, deploymentUUID); err != nil {
+		return writeBrokerRefusal(stdout, stderr, "preflight.frame_invalid", err)
+	}
+	return delegate(args, stdin, stdout, stderr)
+}
+
+func writeBrokerRefusal(stdout, stderr io.Writer, code string, err error) int {
+	msg := err.Error()
+	fmt.Fprintln(stderr, "mc:", msg)
+	writeErrorEnvelope(stdout, stderr, code, msg)
+	return 1
+}
+
+func inheritedResidentControl() (net.Conn, error) {
+	// Set the inherited descriptor close-on-exec immediately: neither the
+	// helper Docker CLI nor any later runtime subprocess may inherit it.
+	unix.CloseOnExec(3)
+	f := os.NewFile(3, "resident-control")
+	if f == nil {
+		return nil, fmt.Errorf("mc dispatch requires inherited resident control descriptor 3 (ADR-018 D6)")
+	}
+	conn, err := net.FileConn(f)
+	_ = f.Close()
+	if err != nil {
+		return nil, fmt.Errorf("mc dispatch requires inherited resident control descriptor 3: %w", err)
+	}
+	if _, ok := conn.(*net.UnixConn); !ok {
+		_ = conn.Close()
+		return nil, fmt.Errorf("mc dispatch resident control descriptor 3 is not an AF_UNIX stream")
+	}
+	return conn, nil
+}
+
+func exchangeControlHello(conn net.Conn, deploymentUUID string) error {
+	if err := conn.SetDeadline(time.Now().Add(2 * time.Second)); err != nil {
+		return fmt.Errorf("set resident control hello deadline: %w", err)
+	}
+	defer conn.SetDeadline(time.Time{})
+
+	hello := controlHello{
+		Op:                  "hello",
+		Seq:                 1,
+		ReleaseBuildID:      releaseBuildID,
+		ControlVersion:      gatewayControlVersion,
+		SpineSchemaVersion:  substrate.CurrentSchemaVersion,
+		ConfigSchemaVersion: configSchemaVersion,
+		DeploymentUUID:      deploymentUUID,
+	}
+	if err := writeControlFrame(conn, hello); err != nil {
+		return fmt.Errorf("write resident control hello: %w", err)
+	}
+	want := hello
+	want.Op = "hello_ack"
+	var got controlHello
+	if err := readCanonicalControlFrame(conn, &got); err != nil {
+		return fmt.Errorf("read resident control hello_ack: %w", err)
+	}
+	if got != want {
+		return fmt.Errorf("resident control hello_ack identity mismatch")
+	}
+	return nil
+}
+
+func writeControlFrame(w io.Writer, v any) error {
+	body, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	if len(body) == 0 || len(body) > maxControlFrameBytes {
+		return fmt.Errorf("control frame length %d exceeds the 64-KiB bound", len(body))
+	}
+	var prefix [4]byte
+	binary.BigEndian.PutUint32(prefix[:], uint32(len(body)))
+	if _, err := w.Write(prefix[:]); err != nil {
+		return err
+	}
+	_, err = w.Write(body)
+	return err
+}
+
+func readCanonicalControlFrame(r io.Reader, dst any) error {
+	var prefix [4]byte
+	if _, err := io.ReadFull(r, prefix[:]); err != nil {
+		return err
+	}
+	n := binary.BigEndian.Uint32(prefix[:])
+	if n == 0 || n > maxControlFrameBytes {
+		return fmt.Errorf("control frame length %d is outside 1..65536", n)
+	}
+	body := make([]byte, int(n))
+	if _, err := io.ReadFull(r, body); err != nil {
+		return err
+	}
+	if err := json.Unmarshal(body, dst); err != nil {
+		return err
+	}
+	canonical, err := json.Marshal(dst)
+	if err != nil {
+		return err
+	}
+	// Exact re-encoding rejects unknown or duplicate fields, reordered keys,
+	// alternate number spellings, whitespace, and trailing bytes at once.
+	if !bytes.Equal(body, canonical) {
+		return fmt.Errorf("control frame is not the closed canonical encoding")
+	}
+	return nil
+}

@@ -739,6 +739,18 @@ func readDeploymentMirrorStrict(home string) (string, error) {
 	return uuid, nil
 }
 
+// ResolveDispatchDeployment is the host broker's pre-handshake identity
+// read. It deliberately reuses the same strict MC_HOME and no-follow mirror
+// seam as the attest step; the broker must not invent a second interpretation
+// of deployment identity (ADR-016 D1; ADR-018 D6).
+func ResolveDispatchDeployment() (string, error) {
+	home, err := resolveMCHome()
+	if err != nil {
+		return "", err
+	}
+	return readDeploymentMirrorStrict(home)
+}
+
 // lookupDispatchReceipt is the D2 replay fence's read half. An unreadable
 // stored result is a protocol error, never a green light to re-execute.
 func lookupDispatchReceipt(ctx context.Context, q Q, requestID string) (map[string]any, bool, error) {
