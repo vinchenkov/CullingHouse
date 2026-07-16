@@ -10,7 +10,7 @@ Access does NOT fix it — the failure precedes any policy lookup. Symptom:
 `stat` works, reads return `Operation not permitted`, git says
 `Unable to read current working directory`.
 
-LAST GREEN SHA: 3feff15 (local; the operator pushes manually — decided 2026-07-14. Agents: do not push.)
+LAST GREEN SHA: add7f2e (local; the operator pushes manually — decided 2026-07-14. Agents: do not push.)
 PHASES PASSING: Phase 0 COMPLETE (S1–S8 all green, no fallback ADRs; only operator-leg deferrals remain); Phase 1 COMPLETE (1a substrate 172; 1b walking skeleton reviewed-and-fixed — fake-harness 43, agent-runner 13, runner/image 40, resident 42, dispatch + cmd/mc suites; Docker e2e PASS ×4 total); Phase 2 COMPLETE for every unparked acceptance line (domain/§18 surface, deterministic split-brain convergence, bounded honesty + five mutants, tagged dispatch/metamorphic/twin-spine lifecycle properties; the initiative-wave CLI is no longer isolated — ADR-020 landed 2026-07-14 and closed the last Phase 2 acceptance line)
 KNOWN-FAILING: `TestOnboardConcurrentFreshHomeNeverDeletesTheWinner` (mc/verbs),
 INTERMITTENT — ~1 in 21 full-suite runs; 0/21 at HEAD, 15/15 and 60/60 green in a
@@ -137,6 +137,17 @@ kept below. Operator legs that remain open are under `## Parked`, not here.
         outbox.event_destination_key, as the v3→v4 migration + fresh shape;
         BLOB forgeries (hex twin, NUL-embedded) proven rejected on fresh and
         v1/v2/v3-migrated spines; testdata/schema-v3.sql frozen at b9bff07
+  - [ ] Cross-harness takeover repair of the Claude D1/v4 range
+        (`ed55b2c..a1767cd`): review found four majors and one minor fixture
+        regression. The resident deployment-mirror fixture is fixed (96fffbf),
+        attest now reopens/binds the mirror across the released-lock window
+        (891bf2f), and every mutating attested outcome has one atomic
+        dispatch_key + request/result receipt with exact lost-response replay
+        (add7f2e: spawn, health, task block, Homie end). Schema v4 and the
+        mount-code adapter held. Still open: production host dispatch delegates
+        the whole command instead of brokering private prepare/commit around
+        host attest; consequently the mount planner remains test-only and must
+        be wired only after that crossing is real
 - [ ] Phase 4 — E2E control loops (six scenario families)
 - [ ] Phase 5 — Real-subscription acceptance (operator-scheduled)
 - [ ] Release prep (after Phase 5): swap the repo's construction face for
@@ -156,18 +167,13 @@ deleted, not struck through. History is in `docs/ledger/`.
   agent cannot sleep the machine it runs on). Instructions in
   `spikes/07-launchd-clock/RESULT.md`. All other S7 sub-tests passed.
 
-NEXT: The mount-request planner slice: derive a candidate's bind requests
-from Worksource/Profile state and assemble `boundary.JurisdictionInput`
-(ADR-021 D1 seam — read `docs/adr/INDEX.md` → 021 D1 line 189 for the
-injected-value shape, then ADR-017 D4 line 289 for the bilateral
-request/allow model), wire them through `dispatchAttest` → `planMounts`
-(mc/verbs/mountplan.go — built, test-driven, no production caller), and only
-then close the aggregate mount no-drop acceptance line.
-
-Measured 2026-07-16 at b9bff07 (+v4 fence since), do not re-derive: the D1
-seam EXISTS — `verbs.Dispatch` is prepare→attest→commit; routing failures
-produce `health.routing_invalid` refusals with derived dispatch_keys;
-reap/reenter write request receipts. Still without production callers: the
-preflight marker (needs branch-7 Homie selection), the launch/debt column
-writers (wake/resume effector slices), `planMounts` (needs this slice). Do
-not load launchd.
+NEXT: Close takeover major 1 before wiring mounts: implement ADR-018 D6's
+one-use resident control descriptor and closed hello/hello_ack framing at fd 3
+(read `docs/adr/INDEX.md` → ADR-018 D6 line 233), refuse direct host-shell
+`mc dispatch`, then split Darwin dispatch into ADR-016 D1's private same-binary
+prepare/commit helper frames with attest remaining host-side (ADR-016 D1 line
+25). A measured Bun 1.3.9 probe proved `Bun.spawn` extra stdio slot 3 is a
+full-duplex inherited fd, so no native launcher is needed. Preserve all other
+verbs' whole-command byte/exit passthrough. After that crossing is green,
+return to the mount-request/JurisdictionInput slice named in the prior NEXT.
+Do not load launchd.

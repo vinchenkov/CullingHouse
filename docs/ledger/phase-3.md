@@ -505,3 +505,44 @@ schema.sql's fresh shape; the KNOWN GAP comment at the D2 columns now points
 at the trigger instead of promising one. dispatch_result got the typeof pin
 too — json_valid(BLOB) is version-dependent SQLite behavior, and the closed
 posture costs one WHEN clause.
+
+## 2026-07-16 (Codex takeover) — the outgoing D1 frame was not safe to extend
+
+Outgoing NEXT (from PROGRESS.md): *derive candidate mount requests and
+JurisdictionInput, then wire the already-tested mount planner into attest.*
+
+The required cross-harness review instead stopped that line. A read-only
+reviewer compared `ed55b2c..a1767cd` to the Phase 3 contract and found four
+majors: Darwin still delegates the entire dispatch into the helper, attest did
+not reopen the deployment mirror, mutating attested commits lacked exact-result
+request receipts, and the mount planner remained test-only. It found no
+schema-v4 defect and no hole in the mount-code/refusal adapter. The startup fast
+lane independently exposed the fifth, minor finding: all nine resident
+split-brain cuts failed because their fixture had not materialized the new
+deployment mirror.
+
+Three green commits closed the independently repairable findings red-first:
+
+- `96fffbf` propagates `mc init`'s deployment UUID into the resident fixture;
+  resident returned to 42/42 and the full five-leg fast lane passed.
+- `891bf2f` reopens the strict mirror during attest, binds that second
+  observation into the attested frame, and makes commit compare it to both the
+  prepared identity and spine. The old code accepted a mirror swap in the
+  released-lock window; the new focused test proves it inert.
+- `add7f2e` stores one atomic candidate/action key plus exact request/result
+  receipt for every mutating attested consequence. Lost-response replay is
+  byte-exact for spawn, deployment health, task block, and launch-fenced Homie
+  end. Health writes the receipt on its original row because activity is
+  append-only; the other consequences insert their receipt in the same
+  transaction. A first attempted UPDATE correctly died on the append-only
+  trigger and was replaced rather than weakening history.
+
+The host/helper major remains the prerequisite for mount wiring. ADR-016 D1
+and ADR-018 D6 require a resident-only one-shot AF_UNIX control channel at
+inherited fd 3, closed bounded hello frames, private same-binary prepare/commit
+helper calls, and host-side attest. A local Bun 1.3.9 probe established that an
+extra `Bun.spawn` stdio slot is a full-duplex inherited descriptor (write then
+read reply through fd 3), so the signed design needs no native launcher. The
+next slice starts with that control handshake/direct-shell refusal and preserves
+ordinary verbs' existing whole-command passthrough before adding the private
+helper frames.
