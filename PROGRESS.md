@@ -139,27 +139,6 @@ deleted, not struck through. History is in `docs/ledger/`.
 - **S7 sleep drill**: the 30-min Mac sleep mid-lease test needs the operator (an
   agent cannot sleep the machine it runs on). Instructions in
   `spikes/07-launchd-clock/RESULT.md`. All other S7 sub-tests passed.
-- **Codex autonomy profile** (handoff §1.5): the agent may not write
-  `approval_policy="never"` / `sandbox_mode="danger-full-access"` into
-  `~/.codex/config.toml` (auto-mode classifier denial — correctly: self-configured
-  unsafe agents need the operator's hand). Operator: append, then the takeover
-  smoke (`codex exec -p mc` + one `/goal` set/clear) can run:
-
-      [features]
-      goals = true
-
-      [profiles.mc]
-      approval_policy = "never"
-      sandbox_mode = "danger-full-access"
-
-      [projects."/Users/vinchenkov/dev/ai/homie"]
-      trust_level = "trusted"
-
-- **Claude Code permission posture** (handoff §1.4): the agent may not widen its
-  own allowlist (`.claude/settings.json` write denied by the classifier).
-  Operator: either run sessions here with `claude --dangerously-skip-permissions`
-  (handoff-recommended), or create `.claude/settings.json` allowing
-  `go/bun/docker/git/mise/sqlite3`.
 
 NEXT: Land ADR-016 D3's launch-fencing columns as the v2→v3 migration, red-first
 (`docs/adr/INDEX.md` → 016 D3, line 275; the column list is lines 280–302). This

@@ -1646,3 +1646,55 @@ Entry template:
 - Needs your decision: no (a fix belongs to whoever next touches onboarding:
   the ambiguous `bytes>0 && tables==0` state should await/retry like the
   existing concurrent-provision paths, and refuse only if it stays table-less)
+
+## 2026-07-15 — both harness autonomy postures declined by the operator; do not re-park
+- Where: handoff §1.4 (Claude Code permissions), §1.5 (Codex profile), §4.5 step 10
+  ("Configure both harnesses' autonomy postures and smoke-test")
+- Gap: the handoff treats both postures as required setup and calls permissions
+  "the #1 autonomy killer". Two Parked entries carried them for weeks. The
+  operator closed both on 2026-07-15: harnesses are alternated manually, and
+  approving the occasional command is acceptable.
+- Choice: deleted both entries outright rather than softening them, and logged
+  here so a future session reading §4.5 step 10 does not helpfully re-park what
+  the operator has already declined. The handoff itself sanctions this posture —
+  §1.4 offers the allowlist-plus-prompts alternative in as many words ("accept
+  occasional prompts — but know each prompt is a stall until you return"). What
+  the operator trades away is throughput, not correctness: no invariant, test, or
+  deliverable depends on either posture.
+  The one consequence worth knowing, because it is not a Claude Code-shaped
+  problem: Codex's default sandbox blocks the Docker socket, which Phases 3–4
+  require. Manual approval does cover it (Codex escalates a sandbox-refused
+  command for approval), so the decision holds — but a Codex session driving the
+  Docker lane will stall per command rather than once. If that becomes intolerable
+  mid-phase, the profile in the deleted entry is recoverable from this commit's
+  parent, and the ledger entry for today restates it.
+- Spec impact: handoff §4.5 step 10 is now partially declined by operator
+  decision; §1.4/§1.5 stand as written for anyone who wants the unattended posture.
+- Needs your decision: no (decided)
+
+## 2026-07-15 — the secrets-in-history worry is closed; measured, not assumed
+- Where: supersedes the 2026-07-10 entry "OPERATOR-INPUTS.md was committed with
+  live secrets" (this file is append-only, so that entry stands as written and
+  this one corrects it)
+- Gap: the 2026-07-10 entry recorded "kept history intact after a history-rewrite
+  attempt was declined; no remote will be created until the operator scrubs
+  history or rotates the keys". That live constraint then looked violated: a
+  remote exists (`git@github.com:vinchenkov/CullingHouse`) and the operator pushed
+  `main` on 2026-07-15.
+- Choice: verified rather than assumed, before saying anything reassuring.
+  `git rev-list --objects --all | grep -i OPERATOR-INPUTS` returns nothing — the
+  file is in NO reachable object on any ref, so the push carried no secrets. The
+  reason is in the reflog: a `git filter-repo` scrub ran on 2026-07-10 (d14578b,
+  "record history scrub (filter-repo), new SHAs, remote pending push"), i.e. AFTER
+  the entry above was written and never folded back into it. The 2026-07-10
+  entry's precondition was therefore satisfied, not violated, and the push was
+  safe.
+  Two records still assert the stale version. This file's 2026-07-10 entry is
+  append-only and is corrected by this entry, not edited. `OPERATOR-INPUTS.md`'s
+  "Secrets-in-history decision (operator, 2026-07-10)" paragraph is an operator
+  decision record in an untracked file: flagged in place for the operator to
+  delete, not rewritten by an agent. It matters because a stale acceptance is
+  worse than none — it could be read as pre-authorizing a future, real leak.
+- Spec impact: none.
+- Needs your decision: no (informational; delete the stale paragraph in
+  OPERATOR-INPUTS.md at your convenience)
