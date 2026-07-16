@@ -10,7 +10,7 @@ Access does NOT fix it — the failure precedes any policy lookup. Symptom:
 `stat` works, reads return `Operation not permitted`, git says
 `Unable to read current working directory`.
 
-LAST GREEN SHA: 747f077 (local; the operator pushes manually — decided 2026-07-14. Agents: do not push.)
+LAST GREEN SHA: 8ad73d6 (local; the operator pushes manually — decided 2026-07-14. Agents: do not push.)
 PHASES PASSING: Phase 0 COMPLETE (S1–S8 all green, no fallback ADRs; only operator-leg deferrals remain); Phase 1 COMPLETE (1a substrate 172; 1b walking skeleton reviewed-and-fixed — fake-harness 43, agent-runner 13, runner/image 40, resident 42, dispatch + cmd/mc suites; Docker e2e PASS ×4 total); Phase 2 COMPLETE for every unparked acceptance line (domain/§18 surface, deterministic split-brain convergence, bounded honesty + five mutants, tagged dispatch/metamorphic/twin-spine lifecycle properties; the initiative-wave CLI is no longer isolated — ADR-020 landed 2026-07-14 and closed the last Phase 2 acceptance line)
 KNOWN-FAILING: `TestOnboardConcurrentFreshHomeNeverDeletesTheWinner` (mc/verbs),
 INTERMITTENT — ~1 in 21 full-suite runs; 0/21 at HEAD, 15/15 and 60/60 green in a
@@ -117,6 +117,21 @@ kept below. Operator legs that remain open are under `## Parked`, not here.
         The launch columns have NO production writer yet (`homie start` uses
         their defaults; resume does not clear/set them) — that is the
         selector/effector slices' work
+  - [x] ADR-016 D1 command frame (49e29d1..8ad73d6): `verbs.Dispatch` is
+        prepare→attest→commit in D1's native single-process form (broker/
+        helper CLI split is a later wrapper; deviations logged 2026-07-16).
+        Golden-vectored canonical projection + preparation token; D2 receipt
+        fence live (reap/reenter receipts, byte-for-byte replay); spawn
+        candidates allocated at prepare, committed under token byte-equality
+        (`preflight.stale`) + re-decide (`preflight.candidate_mismatch`);
+        dispatch_key DERIVED at commit — applyRefusal's honesty gap closed,
+        first production refusals (routing failures → `health.routing_invalid`
+        with keyed dispatch.health rows; dispatch on un-onboarded MC_HOME
+        refuses on the deployment mirror). `planMounts` + the sixteen-code
+        MountError→Refusal adapter exist test-driven; attest skips an empty
+        request set. Adversarial review: 1 confirmed minor (fixed 8ad73d6),
+        rest held. Docker-lane obligation: verify the e2e deployment-mirror
+        write across the VirtioFS bind at the phase-completion run
 - [ ] Phase 4 — E2E control loops (six scenario families)
 - [ ] Phase 5 — Real-subscription acceptance (operator-scheduled)
 - [ ] Release prep (after Phase 5): swap the repo's construction face for
@@ -136,24 +151,22 @@ deleted, not struck through. History is in `docs/ledger/`.
   agent cannot sleep the machine it runs on). Instructions in
   `spikes/07-launchd-clock/RESULT.md`. All other S7 sub-tests passed.
 
-NEXT: Begin ADR-016 D1's dispatch seam — the slice that makes a
-`refusal.Refusal` producible and everything parked behind it reachable: the D4
-router, its launch fence, the preflight marker, and D2's stored receipt fences
-all have no production caller until this exists. Read `docs/adr/INDEX.md` →
-016 D1 (line 25: one external command, private same-binary prepare → attest →
-commit composition) and only then D5 (line 593) for the host-evidence half.
+NEXT: The D2 BLOB fence trigger — the small queued item (header note): a
+v3→v4 migration adding a fence trigger over activity's `dispatch_key` /
+`dispatch_request_id` / `event_destination_key` so a BLOB cannot bypass the
+TEXT-affinity hex CHECKs (the D3 launch columns already carry typeof pins;
+these three shipped in frozen v1→v2 and cannot be re-CHECKed). New fencing
+goes in a NEW migration constant — never edit v2/v3 (substrate.go:156-157).
+Then the mount-request planner slice: derive a candidate's bind requests from
+Worksource/Profile state and assemble `boundary.JurisdictionInput` (ADR-021
+D1 seam; ADR-017 D4/D5 members), wire them through `dispatchAttest` →
+`planMounts` (mc/verbs/mountplan.go — built, test-driven, no production
+caller), and only then close the aggregate mount no-drop acceptance line.
 
-Slice it smallest-first: D1's command frame and the private prepare step that
-(a) derives `dispatch_key` (today an INPUT to `applyRefusal` — the logged
-honesty gap), (b) observes the launch generation the D4 fence compares, and
-(c) runs the plan validator over `mc/boundary` so an invalid plan yields a
-typed `refusal.Refusal` instead of nothing. The full D5 path-evidence predicate
-is its own later slice; do not pull it into the frame slice.
-
-Measured 2026-07-16, do not re-derive: `verbs.Dispatch` is still Phase 2's
-single-transaction `Decide()` → `applyAction` (five kinds). Nothing produces a
-`refusal.Refusal`. The eleven launch/debt columns exist (schema v3) but have NO
-production writer — `homie start` relies on their defaults; resume does not yet
-clear/set them; `grep -rn homie mc/dispatch` → zero hits. Keep aggregate mount
-no-drop acceptance open until the planner exists. Queued behind this slice:
-the D2 BLOB fence trigger (see header note). Do not load launchd.
+Measured 2026-07-16 at 8ad73d6, do not re-derive: the D1 seam EXISTS —
+`verbs.Dispatch` is prepare→attest→commit; routing failures produce
+`health.routing_invalid` refusals with derived dispatch_keys; reap/reenter
+write request receipts. Still without production callers: the preflight
+marker (needs branch-7 Homie selection), the launch/debt column writers
+(wake/resume effector slices), `planMounts` (needs the request-derivation
+planner). Do not load launchd.

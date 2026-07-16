@@ -418,3 +418,69 @@ Nothing produces a `refusal.Refusal`; `applyRefusal` and the marker have no
 caller but tests. The launch/debt columns have no production writer either
 (`homie start` relies on their defaults; resume does not yet clear/set
 them). D1/D5 is what makes all of it reachable.
+
+## 2026-07-16 (later) — ADR-016 D1: the dispatch seam exists; a refusal is producible
+
+Outgoing NEXT (from PROGRESS.md): *Begin ADR-016 D1's dispatch seam — the
+slice that makes a `refusal.Refusal` producible and everything parked behind
+it reachable: the D4 router, its launch fence, the preflight marker, and
+D2's stored receipt fences all have no production caller until this exists.*
+
+Landed as five commits, 49e29d1..8ad73d6, TDD red-first throughout:
+
+- **49e29d1** — the frozen wire half: closed canonical prepare/action
+  structs (golden-vectored like homieCandidateState, separators pinned as
+  test literals), `preparationToken`, `deriveDispatchKey`, request ids, and
+  `loadHomieProjection` (D3's launch-generation observation, held to
+  `homiePrePrepareState` by key equality in tests).
+- **5df4970** — `verbs.Dispatch` became prepare → attest → commit (D1's
+  native single-process form; deviation logged). Prepare: deployment-mirror
+  precondition (strict no-follow), D2 receipt fence before selection state,
+  lock-domain consequences (reap/reenter) committed atomically with their
+  `dispatch_request_id` receipt and replayed byte-for-byte on retry; spawn
+  returns candidate + token. Attest: routing.md read/digest/parse/resolve,
+  failures classified as `health.routing_invalid` refusals instead of
+  command errors (contract row 174). Commit: token byte-equality →
+  `preflight.stale`; re-decide equality → `preflight.candidate_mismatch`;
+  then exactly one consequence — claim-and-spawn with a derived
+  dispatch_key receipt row, or `applyRefusal` with the key finally DERIVED
+  (token + canonical action). The D4 router, the launch-fence read path,
+  and the receipt columns all have production callers now. CAS losers that
+  prepared before the winner committed stale inertly (refused/
+  preflight.stale/none) — the CLI test accepts both loser shapes.
+- **7b1add3** — `planMounts`: the boundary composition the package
+  deliberately does not ship (trust → parse → resolve → authorize →
+  cross-request destination uniqueness, raising the previously-unraised
+  `mount.target_collision`; nested destinations reject whole), plus
+  `refusalForMountError` shaping all sixteen codes into the closed enums
+  with caller-supplied Authority and Msg confined to the dropped Message.
+  No production candidate carries requests yet; attest skips an empty set.
+- **747f077-style review, then 8ad73d6** — adversarial review of the whole
+  range (single consolidated reviewer after two 4-lens workflow attempts
+  died on API ENOTFOUND/529 storms; findings identical in kind): ONE
+  confirmed minor — `ResolveAllowlist`-stage failures adapted with empty
+  Authority, unclassifiable for its authority-decides codes; latent until
+  the planner slice, then a per-tick hard error instead of D4 health. Fixed:
+  that stage carries `AuthorityDeployment`. Held under attack: projection
+  completeness vs `Decide`'s inputs (clock excluded-and-re-decided), the
+  independent isolation of the stale vs candidate-mismatch fences in tests,
+  CAS single-winner, receipt atomicity, mirror no-follow. Refuted: the
+  missing attest-time mirror re-read (within the native-form deviation) and
+  LimitReader truncation.
+
+Phase-completion obligation recorded: the Docker e2e fixture now writes the
+deployment mirror to the host side of the MC_HOME bind — verify at the
+tagged-suite run that containerized dispatch resolves it across VirtioFS
+(no-follow + regular-file checks) before trusting the lane green.
+
+Deviations: two entries in IMPLEMENTATION-NOTES (native single-process form;
+the D2 narrowings — no runtime inventory snapshot yet, routing digest bound
+in canonical_action rather than token variants, spawn replay return-arm
+deferred, land still bare effect, no token TTL invented).
+
+Still true at session end: the eleven launch/debt columns have NO production
+writer (the frame *observes* them; wake/resume writers are the selector/
+effector slices). The preflight marker still has no production caller —
+branch-7 Homie candidate selection does not exist. Routing failures now
+surface as health refusals with derived keys; `mc dispatch` on an
+un-onboarded MC_HOME refuses inertly (run `mc onboard home`).

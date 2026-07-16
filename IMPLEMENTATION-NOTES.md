@@ -1838,3 +1838,55 @@ Entry template:
 - Spec impact: none (ADR-016 D2 could note the typeof requirement)
 - Needs your decision: no (the D2 fence trigger is ordinary engineering,
   queued behind the D1/D5 slice)
+
+## 2026-07-16 — ADR-016 D1 landed in its native single-process form
+- Where: Phase 3 boundary, the dispatch-seam frame slice (49e29d1..8ad73d6);
+  ADR-016 D1
+- Gap: D1 specifies two shapes for one composition: Darwin brokers via
+  private `mc __dispatch-prepare`/`__dispatch-commit` CLI self-delegation
+  over ADR-018's one-shot control descriptor; native Linux calls "the same
+  prepare/attest/commit functions locally in one process". No helper
+  container, resident control channel, or gateway exists on the host yet,
+  so the Darwin broker split has nothing real to broker.
+- Choice: implemented the functions once (`mc/verbs/dispatchseam.go`) and
+  composed them in-process inside `verbs.Dispatch` — D1's own native form,
+  with the exact fences the broker form requires already in place: prepare
+  releases flock+tx before any host I/O, attest alone reads host files,
+  commit reacquires, token-verifies byte-for-byte, and re-decides. The
+  Darwin CLI split becomes a wrapper over these same functions in the
+  resident/control-channel slice. Also within this deviation: the
+  deployment mirror is read once by the same process (attest does not
+  re-open it as D1's broker step 2 does — commit-time `requireDeploymentUUID`
+  catches a spine swap, and a mirror-only swap grants an MC_HOME writer
+  nothing they lack; adversarially reviewed and held), and D2's unstated
+  prepare-token TTL is not invented — in-process the token lives exactly
+  one command invocation.
+- Spec impact: none
+- Needs your decision: no
+
+## 2026-07-16 — the D1 frame narrows ADR-016 D2 where its inputs do not exist yet
+- Where: same slice; ADR-016 D2 (snapshot, token variants, receipts), D6
+  (landing)
+- Gap: D2's frame binds things the host cannot yet observe or that later
+  slices own: the runtime/capability + labeled inventory snapshot (no
+  Docker interrogation exists host-side), the three host-file digests bound
+  into the token variants (the token is computed at prepare, before attest
+  reads any host file), the return-existing-result replay arm for attested
+  same-key commits, and D6's attested landing candidate.
+- Choice: (a) byte-for-byte equality is enforced over the canonical spine
+  projection (tasks/packets/lock/tunables/briefing + the D3 homie
+  launch-generation states); the runtime inventory joins the snapshot with
+  the runtime slices. (b) the routing digest is bound into
+  `canonical_action` — inside the derived dispatch_key, not the token;
+  binding digests into the token itself needs the broker shape (attest
+  before token) and D5 evidence. (c) spawn commits insert their
+  dispatch_key receipt row, but a same-key replay cannot arise in-process
+  (fresh request id per command → fresh token); the UNIQUE index is the
+  backstop and the return-existing-result arm lands with broker retries.
+  (d) land remains Phase 2's bare effect until the attested-landing slice.
+  Each narrowing is flagged at its code site. Note for the broker slice:
+  the canonical prepare projection embeds task titles as hash preimage —
+  fine in-process, but it must pass D2's closed-frame bounds before it ever
+  crosses a process boundary.
+- Spec impact: none
+- Needs your decision: no
