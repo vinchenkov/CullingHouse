@@ -833,6 +833,26 @@ func assertActivityReceiptBackstops(t *testing.T, db *sql.DB) {
 				VALUES ('mc', 'dispatch.reap', ?, ?)`, args...)
 		})
 	}
+
+	// BLOB forgeries (the v4 typeof fence): TEXT affinity never converts a
+	// BLOB, length(blob) counts bytes, and GLOB reads only to the first NUL —
+	// so both a fully-hex BLOB (a UNIQUE value distinct from its TEXT twin,
+	// which the replay lookup can never find) and a NUL-embedded one pass
+	// every column CHECK. The columns shipped in frozen v1→v2, so the fence
+	// is a trigger, not a CHECK.
+	for name, args := range map[string][]any{
+		"key_hex_blob":     {[]byte(strings.Repeat("a", 64)), nil, nil},
+		"key_nul_blob":     {append([]byte(strings.Repeat("a", 63)), 0x00), nil, nil},
+		"request_hex_blob": {nil, []byte(strings.Repeat("b", 16)), result},
+		"request_nul_blob": {nil, append([]byte(strings.Repeat("b", 15)), 0x00), result},
+		"result_blob":      {nil, strings.Repeat("f", 16), []byte(`{"forged":true}`)},
+	} {
+		t.Run("blob_"+name, func(t *testing.T) {
+			wantAbort(t, db, `
+				INSERT INTO activity (actor, kind, detail, dispatch_key, dispatch_request_id, dispatch_result)
+				VALUES ('mc', 'dispatch.health', '{}', ?, ?, ?)`, args...)
+		})
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -1227,6 +1247,19 @@ func assertOutboxDestinationBackstops(t *testing.T, db *sql.DB) {
 	for name, key := range map[string]string{
 		"nul_tail": strings.Repeat("4", 64) + "\x00EVIL",
 		"nul_pad":  strings.Repeat("4", 63) + "\x00",
+	} {
+		t.Run("event_destination_key_"+name, func(t *testing.T) {
+			wantAbort(t, db, `
+				INSERT INTO outbox (kind, surface, payload, source_activity_id, event_destination_key)
+				VALUES ('health', 'dashboard', '{"status":"unavailable"}', ?, ?)`, activityID, key)
+		})
+	}
+
+	// And activity's v4 BLOB fence: a BLOB key passes every CHECK and stores
+	// as a UNIQUE value distinct from its TEXT twin.
+	for name, key := range map[string][]byte{
+		"hex_blob": []byte(strings.Repeat("5", 64)),
+		"nul_blob": append([]byte(strings.Repeat("5", 63)), 0x00),
 	} {
 		t.Run("event_destination_key_"+name, func(t *testing.T) {
 			wantAbort(t, db, `

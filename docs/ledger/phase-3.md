@@ -484,3 +484,24 @@ effector slices). The preflight marker still has no production caller —
 branch-7 Homie candidate selection does not exist. Routing failures now
 surface as health refusals with derived keys; `mc dispatch` on an
 un-onboarded MC_HOME refuses inertly (run `mc onboard home`).
+
+## 2026-07-16 (later still) — schema v4: the D2 BLOB fence triggers
+
+The small queued item behind the D1 frame, landed red-first. The current
+schema.sql was frozen as `testdata/schema-v3.sql` (at b9bff07) BEFORE any
+edit, per the fixture discipline. RED: BLOB forgeries added to the two D2
+backstop helpers — a fully-hex BLOB (a UNIQUE value distinct from its TEXT
+twin, invisible to its own receipt lookup) and a NUL-embedded one, for
+dispatch_key, dispatch_request_id, dispatch_result, and
+event_destination_key — all of which the v3 spine happily stored, proving
+the hole; plus `TestMigrateV3ToCurrentMatchesAFreshSpine` (fence parity,
+trigger parity via a new `triggersOf` helper, version stamp, v3 history
+survival, and §16.4 atomic-rollback with a planted conflicting trigger
+name). GREEN: `migrationV3ToV4` — two INSERT triggers
+(`activity_receipt_keys_are_text`, `outbox_event_destination_key_is_text`);
+activity is append-only and `outbox_content_immutable` already refuses key
+changes on UPDATE, so INSERT is the only write surface. Same triggers in
+schema.sql's fresh shape; the KNOWN GAP comment at the D2 columns now points
+at the trigger instead of promising one. dispatch_result got the typeof pin
+too — json_valid(BLOB) is version-dependent SQLite behavior, and the closed
+posture costs one WHEN clause.

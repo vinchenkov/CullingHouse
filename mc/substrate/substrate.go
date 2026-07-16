@@ -70,7 +70,9 @@ func Init(db *sql.DB) error {
 // Version 3 adds ADR-016 Decision 3's homie_sessions launch fencing: the
 // current launch/container generation, typed resume debt, and the rows-mode
 // prime cutoff/count pairs.
-const CurrentSchemaVersion = 3
+// Version 4 adds the typeof fence triggers over ADR-016 Decision 2's
+// activity/outbox replay-key columns, whose v2 hex CHECKs hold only for TEXT.
+const CurrentSchemaVersion = 4
 
 // migrationV1ToV2 is ADR-016 Decision 2's storage step, frozen as history.
 //
@@ -225,6 +227,36 @@ ALTER TABLE homie_sessions ADD COLUMN resume_prime_row_count INTEGER
             (resume_prime_row_count = 0)));
 `
 
+// migrationV3ToV4 closes the BLOB hole in ADR-016 Decision 2's replay-key
+// fences. The v2 hex CHECKs (length + byte-length + GLOB) hold only for TEXT:
+// a BLOB bypasses affinity conversion, length(blob) counts bytes, and GLOB
+// reads it only to the first NUL — so a BLOB forgery stores as a distinct
+// UNIQUE value whose own receipt lookup can never find it, and the replay
+// fence fails open. Those columns shipped in the frozen v1 -> v2 step and a
+// column CHECK cannot be added afterwards, so the fence is a pair of INSERT
+// triggers (activity is append-only; outbox_content_immutable already refuses
+// any UPDATE that changes the key, including NULL -> BLOB).
+//
+// This text is frozen. A later v4 -> v5 step is a new constant, never an edit
+// to this one: it must keep describing the v3 spines it still has to convert.
+const migrationV3ToV4 = `
+CREATE TRIGGER activity_receipt_keys_are_text
+BEFORE INSERT ON activity
+WHEN (NEW.dispatch_key IS NOT NULL AND typeof(NEW.dispatch_key) != 'text')
+  OR (NEW.dispatch_request_id IS NOT NULL AND typeof(NEW.dispatch_request_id) != 'text')
+  OR (NEW.dispatch_result IS NOT NULL AND typeof(NEW.dispatch_result) != 'text')
+BEGIN
+    SELECT RAISE(ABORT, 'dispatch receipt columns must be TEXT; a BLOB bypasses the hex fences (ADR-016 D2)');
+END;
+
+CREATE TRIGGER outbox_event_destination_key_is_text
+BEFORE INSERT ON outbox
+WHEN NEW.event_destination_key IS NOT NULL AND typeof(NEW.event_destination_key) != 'text'
+BEGIN
+    SELECT RAISE(ABORT, 'outbox.event_destination_key must be TEXT; a BLOB bypasses the hex fence (ADR-016 D2)');
+END;
+`
+
 // Migrate brings an existing spine up to CurrentSchemaVersion, reporting
 // whether it changed anything. It is the "present with an older schema →
 // migrate" arm of §16.4; the caller owns the "absent on a non-empty volume →
@@ -247,7 +279,7 @@ func Migrate(db *sql.DB) (bool, error) {
 		return false, fmt.Errorf("read spine schema version: %w", err)
 	}
 
-	steps := map[int]string{1: migrationV1ToV2, 2: migrationV2ToV3}
+	steps := map[int]string{1: migrationV1ToV2, 2: migrationV2ToV3, 3: migrationV3ToV4}
 	changed := false
 	for version < CurrentSchemaVersion {
 		step, ok := steps[version]

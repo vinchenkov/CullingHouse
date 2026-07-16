@@ -28,7 +28,7 @@ paths (which already handle the *later* stages of this same race) and refuse onl
 if it stays table-less. Owner: whoever next touches onboarding — not a Phase 3
 blocker. Full diagnosis in IMPLEMENTATION-NOTES.md (2026-07-15).
 
-Note the spine is now schema v3 (substrate.CurrentSchemaVersion): `mc onboard home` migrates older spines in place (v1→v2→v3); scratch MC_HOME spines need no action. Known storage gap: ADR-016 D2's activity/outbox hex fences admit BLOB forgeries (no typeof pin — they shipped in frozen v1→v2 and a column CHECK cannot be altered); a fence trigger in a later migration closes it. The D3 launch fences on homie_sessions already carry the typeof pin. Flagged in schema.sql at the D2 columns; log entry 2026-07-16.
+Note the spine is now schema v4 (substrate.CurrentSchemaVersion): `mc onboard home` migrates older spines in place (v1→v2→v3→v4); scratch MC_HOME spines need no action. v4 is the typeof fence-trigger pair closing the D2 BLOB hole on activity/outbox replay keys.
 FAST SUITE: mc/check.sh (gofmt + vet on the untagged build AND on the nightly/docker_e2e/test_fake_routing tagged builds — they must compile every commit, added 2026-07-14 after a tagged suite rotted invisibly — + go test ./...; includes substrate + promoted dispatch) + runner/fake-harness/check.sh + runner/agent-runner/check.sh + runner/image/check.sh + resident/check.sh. Docker e2e (phase-completion lane): cd mc && mise exec -- go test -tags docker_e2e -timeout 15m ./e2e/...
 
 ## Phases
@@ -132,6 +132,11 @@ kept below. Operator legs that remain open are under `## Parked`, not here.
         request set. Adversarial review: 1 confirmed minor (fixed 8ad73d6),
         rest held. Docker-lane obligation: verify the e2e deployment-mirror
         write across the VirtioFS bind at the phase-completion run
+  - [x] The D2 BLOB fence (schema v4): typeof INSERT triggers over
+        activity.dispatch_key/dispatch_request_id/dispatch_result and
+        outbox.event_destination_key, as the v3→v4 migration + fresh shape;
+        BLOB forgeries (hex twin, NUL-embedded) proven rejected on fresh and
+        v1/v2/v3-migrated spines; testdata/schema-v3.sql frozen at b9bff07
 - [ ] Phase 4 — E2E control loops (six scenario families)
 - [ ] Phase 5 — Real-subscription acceptance (operator-scheduled)
 - [ ] Release prep (after Phase 5): swap the repo's construction face for
@@ -151,22 +156,18 @@ deleted, not struck through. History is in `docs/ledger/`.
   agent cannot sleep the machine it runs on). Instructions in
   `spikes/07-launchd-clock/RESULT.md`. All other S7 sub-tests passed.
 
-NEXT: The D2 BLOB fence trigger — the small queued item (header note): a
-v3→v4 migration adding a fence trigger over activity's `dispatch_key` /
-`dispatch_request_id` / `event_destination_key` so a BLOB cannot bypass the
-TEXT-affinity hex CHECKs (the D3 launch columns already carry typeof pins;
-these three shipped in frozen v1→v2 and cannot be re-CHECKed). New fencing
-goes in a NEW migration constant — never edit v2/v3 (substrate.go:156-157).
-Then the mount-request planner slice: derive a candidate's bind requests from
-Worksource/Profile state and assemble `boundary.JurisdictionInput` (ADR-021
-D1 seam; ADR-017 D4/D5 members), wire them through `dispatchAttest` →
-`planMounts` (mc/verbs/mountplan.go — built, test-driven, no production
-caller), and only then close the aggregate mount no-drop acceptance line.
+NEXT: The mount-request planner slice: derive a candidate's bind requests
+from Worksource/Profile state and assemble `boundary.JurisdictionInput`
+(ADR-021 D1 seam — read `docs/adr/INDEX.md` → 021 D1 line 189 for the
+injected-value shape, then ADR-017 D4 line 289 for the bilateral
+request/allow model), wire them through `dispatchAttest` → `planMounts`
+(mc/verbs/mountplan.go — built, test-driven, no production caller), and only
+then close the aggregate mount no-drop acceptance line.
 
-Measured 2026-07-16 at 8ad73d6, do not re-derive: the D1 seam EXISTS —
-`verbs.Dispatch` is prepare→attest→commit; routing failures produce
-`health.routing_invalid` refusals with derived dispatch_keys; reap/reenter
-write request receipts. Still without production callers: the preflight
-marker (needs branch-7 Homie selection), the launch/debt column writers
-(wake/resume effector slices), `planMounts` (needs the request-derivation
-planner). Do not load launchd.
+Measured 2026-07-16 at b9bff07 (+v4 fence since), do not re-derive: the D1
+seam EXISTS — `verbs.Dispatch` is prepare→attest→commit; routing failures
+produce `health.routing_invalid` refusals with derived dispatch_keys;
+reap/reenter write request receipts. Still without production callers: the
+preflight marker (needs branch-7 Homie selection), the launch/debt column
+writers (wake/resume effector slices), `planMounts` (needs this slice). Do
+not load launchd.

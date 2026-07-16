@@ -25,6 +25,12 @@ var schemaV1 string
 //go:embed testdata/schema-v2.sql
 var schemaV2 string
 
+// schemaV3 is the spine as frozen at the last commit before the v4 typeof
+// fence triggers landed (b9bff07), for the same reason.
+//
+//go:embed testdata/schema-v3.sql
+var schemaV3 string
+
 // A migrated spine and a freshly initialized one must be indistinguishable —
 // structurally and, more importantly, in what they refuse. SQLite cannot ALTER
 // a UNIQUE column onto an existing table, so the obvious ALTER-only migration
@@ -187,6 +193,110 @@ func TestMigrateV2ToCurrentMatchesAFreshSpine(t *testing.T) {
 	})
 }
 
+// The v3 -> v4 step adds ADR-016 D2's typeof fence triggers over the
+// activity/outbox replay-key columns. The hazard: those columns' hex CHECKs
+// hold only for TEXT — a BLOB bypasses affinity conversion, length() counts
+// its bytes, and GLOB reads it only to the first NUL, so a BLOB forgery
+// stores as a distinct UNIQUE value whose own receipt lookup cannot find it,
+// and the replay fence fails open. The columns shipped in the frozen v1 -> v2
+// migration, so the fence must be a trigger.
+func TestMigrateV3ToCurrentMatchesAFreshSpine(t *testing.T) {
+	t.Run("migrated spine enforces every fence a fresh spine does", func(t *testing.T) {
+		db := migratedV3Spine(t)
+		assertActivityReceiptBackstops(t, db)
+		assertOutboxDestinationBackstops(t, db)
+		assertHomieLaunchFenceBackstops(t, db)
+	})
+
+	t.Run("migrated spine matches a fresh spine's triggers", func(t *testing.T) {
+		migrated := migratedV3Spine(t)
+		fresh := openSpine(t)
+		for _, table := range []string{"activity", "outbox", "homie_sessions"} {
+			if got, want := triggersOf(t, migrated, table), triggersOf(t, fresh, table); got != want {
+				t.Errorf("%s triggers after migration:\n  got  %s\n  want %s", table, got, want)
+			}
+		}
+	})
+
+	t.Run("migration stamps the version it actually wrote", func(t *testing.T) {
+		db := migratedV3Spine(t)
+		if got := oneInt(t, db, `SELECT schema_version FROM meta WHERE id=1`); got != substrate.CurrentSchemaVersion {
+			t.Fatalf("schema_version = %d, want %d", got, substrate.CurrentSchemaVersion)
+		}
+	})
+
+	t.Run("v3 history survives the conversion untouched", func(t *testing.T) {
+		db := migratedV3Spine(t)
+		if got := oneInt(t, db, `
+			SELECT count(*) FROM homie_sessions WHERE id = 'v3-history'
+			  AND current_launch_id = 'aaaaaaaaaaaaaaaa' AND current_launch_mode = 'fresh'`,
+		); got != 1 {
+			t.Fatal("migration must leave a v3 session's bound launch untouched")
+		}
+		if got := oneInt(t, db, `SELECT count(*) FROM activity WHERE dispatch_key IS NOT NULL`); got != 1 {
+			t.Fatal("migration must preserve keyed dispatch history")
+		}
+	})
+
+	// §16.4 atomicity: a pre-existing trigger name makes the SECOND CREATE
+	// TRIGGER fail after the first applied; only full rollback leaves no
+	// half-fenced shape behind.
+	t.Run("failed DDL rolls back every prior statement and the version", func(t *testing.T) {
+		db := legacyV3Spine(t)
+		mustExec(t, db, `
+			CREATE TRIGGER outbox_event_destination_key_is_text
+			BEFORE INSERT ON outbox BEGIN SELECT 1; END`)
+		if changed, err := substrate.Migrate(db); err == nil || changed {
+			t.Fatalf("Migrate planted v3 = changed %v, err %v; want atomic refusal", changed, err)
+		}
+		if got := oneInt(t, db, `SELECT schema_version FROM meta WHERE id=1`); got != 3 {
+			t.Fatalf("failed migration changed schema_version to %d", got)
+		}
+		if triggerExists(t, db, "activity_receipt_keys_are_text") {
+			t.Fatal("failed migration retained the activity typeof fence")
+		}
+	})
+}
+
+// legacyV3Spine is a real v3 spine carrying data, as a live deployment would:
+// a session with a bound launch generation and keyed dispatch history that
+// must survive the conversion.
+func legacyV3Spine(t *testing.T) *sql.DB {
+	t.Helper()
+	db, err := substrate.Open(filepath.Join(t.TempDir(), "legacy-v3.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { db.Close() })
+	mustExec(t, db, schemaV3)
+	mustExec(t, db, `INSERT INTO meta (id, deployment_uuid, schema_version) VALUES (1, 'legacy-deployment', 3)`)
+	mkHomieSession(t, db, "v3-history")
+	mustExec(t, db, `
+		UPDATE homie_sessions SET current_launch_id = 'aaaaaaaaaaaaaaaa', current_launch_mode = 'fresh'
+		WHERE id = 'v3-history'`)
+	mustExec(t, db, `INSERT INTO activity (actor, kind, detail, dispatch_key)
+		VALUES ('mc', 'dispatch.health', '{}', ?)`, strings.Repeat("f", 64))
+	return db
+}
+
+func migratedV3Spine(t *testing.T) *sql.DB {
+	t.Helper()
+	db := legacyV3Spine(t)
+	before := oneInt(t, db, `SELECT count(*) FROM activity`)
+	changed, err := substrate.Migrate(db)
+	if err != nil {
+		t.Fatalf("Migrate v3: %v", err)
+	}
+	if !changed {
+		t.Fatal("Migrate v3 reported no change")
+	}
+	// §16.4: no path may drop or re-initialize a spine containing data.
+	if after := oneInt(t, db, `SELECT count(*) FROM activity`); after != before {
+		t.Fatalf("migration lost history: %d activity rows before, %d after", before, after)
+	}
+	return db
+}
+
 // legacyV2Spine is a real v2 spine carrying data, as a live deployment would:
 // a registered Homie session and receipt-fenced dispatch history that must
 // survive the conversion.
@@ -254,6 +364,37 @@ func migratedV1Spine(t *testing.T) *sql.DB {
 		t.Fatalf("migration lost history: %d activity rows before, %d after", before, after)
 	}
 	return db
+}
+
+// triggersOf renders a table's trigger names as a comparable string.
+func triggersOf(t *testing.T, db *sql.DB, table string) string {
+	t.Helper()
+	rows, err := db.Query(`
+		SELECT name FROM sqlite_master
+		WHERE type = 'trigger' AND tbl_name = ? ORDER BY name`, table)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			t.Fatal(err)
+		}
+		out = append(out, name)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	return strings.Join(out, ", ")
+}
+
+func triggerExists(t *testing.T, db *sql.DB, name string) bool {
+	t.Helper()
+	return oneInt(t, db, `
+		SELECT count(*) FROM sqlite_master
+		WHERE type = 'trigger' AND name = ?`, name) == 1
 }
 
 // columnsOf renders a table's column list as a comparable string.

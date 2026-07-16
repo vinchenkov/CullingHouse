@@ -740,13 +740,13 @@ CREATE TABLE activity (
     -- whole. Without this a forged key stores as a distinct UNIQUE value that
     -- its own receipt lookup cannot find, and the replay fence fails open.
     --
-    -- These fences hold only for TEXT: a BLOB bypasses affinity conversion,
-    -- length(blob) counts bytes, and GLOB reads it only to the first NUL.
-    -- The columns shipped in the frozen v1->v2 migration and a column CHECK
-    -- cannot be altered afterwards, so the typeof pin lives in the
-    -- activity_receipt_keys_are_text trigger below (v4). Do not copy this
-    -- column shape without typeof — new columns pin it inline like the D3
-    -- launch fences on homie_sessions.
+    -- KNOWN GAP (2026-07-16, not yet closed): these fences hold only for
+    -- TEXT. A BLOB bypasses affinity conversion, length(blob) counts bytes,
+    -- and GLOB reads it only to the first NUL — the D3 launch fences on
+    -- homie_sessions below add a typeof pin for exactly this. These columns
+    -- shipped in the frozen v1->v2 migration, and a column CHECK cannot be
+    -- altered afterwards, so closing this needs a fence trigger in a later
+    -- migration, not an edit here. Do not copy this shape without typeof.
     dispatch_key        TEXT
                         CHECK (dispatch_key IS NULL OR
                                (length(dispatch_key) = 64 AND
@@ -784,19 +784,6 @@ CREATE TRIGGER activity_append_only_delete
 BEFORE DELETE ON activity
 BEGIN
     SELECT RAISE(ABORT, 'activity is append-only (Inv. 7)');
-END;
-
--- The v4 typeof fence (see the column comment above): the hex CHECKs hold
--- only for TEXT, so a BLOB forgery would store as a distinct UNIQUE value
--- whose own receipt lookup can never find it. Activity is append-only, so
--- INSERT is the only write this needs to cover.
-CREATE TRIGGER activity_receipt_keys_are_text
-BEFORE INSERT ON activity
-WHEN (NEW.dispatch_key IS NOT NULL AND typeof(NEW.dispatch_key) != 'text')
-  OR (NEW.dispatch_request_id IS NOT NULL AND typeof(NEW.dispatch_request_id) != 'text')
-  OR (NEW.dispatch_result IS NOT NULL AND typeof(NEW.dispatch_result) != 'text')
-BEGIN
-    SELECT RAISE(ABORT, 'dispatch receipt columns must be TEXT; a BLOB bypasses the hex fences (ADR-016 D2)');
 END;
 
 ------------------------------------------------------------------------------
@@ -1139,16 +1126,6 @@ WHEN NEW.id <> OLD.id
   OR NEW.created_at <> OLD.created_at
 BEGIN
     SELECT RAISE(ABORT, 'outbox content is immutable; only delivery bookkeeping advances (§15.5)');
-END;
-
--- The v4 typeof fence, activity's twin: outbox_content_immutable above
--- already refuses any UPDATE that changes the key (including NULL -> BLOB),
--- so INSERT is the only write this needs to cover.
-CREATE TRIGGER outbox_event_destination_key_is_text
-BEFORE INSERT ON outbox
-WHEN NEW.event_destination_key IS NOT NULL AND typeof(NEW.event_destination_key) != 'text'
-BEGIN
-    SELECT RAISE(ABORT, 'outbox.event_destination_key must be TEXT; a BLOB bypasses the hex fence (ADR-016 D2)');
 END;
 
 CREATE TRIGGER outbox_delivered_once
