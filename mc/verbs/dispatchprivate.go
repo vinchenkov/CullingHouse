@@ -347,6 +347,15 @@ func validatePrivateMountPlan(plan *PrivateDispatchMountPlan) error {
 		if e.Kind != "dir" && e.Kind != "file" {
 			return Domainf("dispatch: private mount entry %d kind is invalid", i)
 		}
+		if e.ContentSHA256 != "" && (!validLowercaseHex(e.ContentSHA256, 64) || e.Kind != "file") {
+			return Domainf("dispatch: private mount entry %d content evidence is invalid", i)
+		}
+		if e.RequireEmptyDir && e.Kind != "dir" {
+			return Domainf("dispatch: private mount entry %d empty-directory evidence is invalid", i)
+		}
+		if e.ContentSHA256 != "" && e.RequireEmptyDir {
+			return Domainf("dispatch: private mount entry %d fixed-shape evidence is incoherent", i)
+		}
 		if e.Access != string(boundary.AccessRO) && e.Access != string(boundary.AccessRW) {
 			return Domainf("dispatch: private mount entry %d access is invalid", i)
 		}

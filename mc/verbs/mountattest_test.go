@@ -2,6 +2,7 @@ package verbs
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -611,6 +612,13 @@ func TestAttestCandidateMountsDerivesTaskLocalPlanThroughRealCapture(t *testing.
 	}
 	if got := byDest["/workspace/git/worktrees/mc-task-7/gitdir"]; got.Access != "ro" || got.Kind != "file" {
 		t.Fatalf("worktree gitdir cover = %+v", got)
+	}
+	emptyDigest := fmt.Sprintf("%x", sha256.Sum256(nil))
+	if got := byDest["/workspace/git/config"]; got.ContentSHA256 != emptyDigest || got.RequireEmptyDir {
+		t.Fatalf("config cover evidence = %+v, want fixed empty-file digest", got)
+	}
+	if got := byDest["/workspace/git/hooks"]; !got.RequireEmptyDir || got.ContentSHA256 != "" {
+		t.Fatalf("hooks cover evidence = %+v, want generated-empty-directory fence", got)
 	}
 }
 

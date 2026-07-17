@@ -66,12 +66,14 @@ var mountClassPrefixes = map[mountClass]string{
 // roots (ADR-021 D10), and lands at its fixed table Destination rather than
 // a class-derived one. Class is unused on a typed request.
 type mountRequest struct {
-	Source      string
-	Access      boundary.Access
-	Authority   refusal.Authority
-	Class       mountClass
-	Kind        boundary.TypedKind
-	Destination string
+	Source          string
+	Access          boundary.Access
+	Authority       refusal.Authority
+	Class           mountClass
+	Kind            boundary.TypedKind
+	Destination     string
+	ContentSHA256   string
+	RequireEmptyDir bool
 }
 
 // PrivateDispatchMountEntry is one authorized bind of the closed plan carrier
@@ -85,15 +87,17 @@ type mountRequest struct {
 // through map[string]any (alphabetical re-encoding). Any other declared order
 // breaks byte-for-byte lost-response replay.
 type PrivateDispatchMountEntry struct {
-	Access      string `json:"access"`
-	Destination string `json:"destination"`
-	Device      string `json:"device"`
-	Inode       string `json:"inode"`
-	Kind        string `json:"kind"`
-	LogicalID   string `json:"logical_id"`
-	Mode        int    `json:"mode"`
-	OwnerUID    int    `json:"owner_uid"`
-	Source      string `json:"source"`
+	Access          string `json:"access"`
+	ContentSHA256   string `json:"content_sha256,omitempty"`
+	Destination     string `json:"destination"`
+	Device          string `json:"device"`
+	Inode           string `json:"inode"`
+	Kind            string `json:"kind"`
+	LogicalID       string `json:"logical_id"`
+	Mode            int    `json:"mode"`
+	OwnerUID        int    `json:"owner_uid"`
+	RequireEmptyDir bool   `json:"require_empty_dir,omitempty"`
+	Source          string `json:"source"`
 }
 
 // PrivateDispatchMountPlan is ADR-016 D5's bounded authorization carrier: the
@@ -231,6 +235,17 @@ func planMounts(requests []mountRequest, in mountPlanInputs) ([]PrivateDispatchM
 		if err != nil {
 			return nil, nil, err
 		}
+		if req.ContentSHA256 != "" && entry.Kind != "file" {
+			return nil, nil, Domainf("mount request %d carries file-content evidence for a non-file", i)
+		}
+		if req.RequireEmptyDir && entry.Kind != "dir" {
+			return nil, nil, Domainf("mount request %d carries empty-directory evidence for a non-directory", i)
+		}
+		if req.ContentSHA256 != "" && req.RequireEmptyDir {
+			return nil, nil, Domainf("mount request %d carries incoherent fixed-shape evidence", i)
+		}
+		entry.ContentSHA256 = req.ContentSHA256
+		entry.RequireEmptyDir = req.RequireEmptyDir
 		entries = append(entries, entry)
 	}
 	sort.Slice(entries, func(i, j int) bool { return entries[i].Destination < entries[j].Destination })

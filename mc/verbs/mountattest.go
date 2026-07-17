@@ -249,10 +249,16 @@ func deriveDispatchMountRequests(state PrivateDispatchMountState, role string, s
 		if row.Rel != "" {
 			source = filepath.Join(root, filepath.FromSlash(row.Rel))
 		}
-		requests = append(requests, mountRequest{
+		request := mountRequest{
 			Source: source, Access: row.Access, Authority: refusal.AuthorityDeployment,
 			Kind: row.Kind, Destination: row.Dest,
-		})
+			RequireEmptyDir: row.MustBeEmptyDir,
+		}
+		if row.WantBytes != nil {
+			sum := sha256.Sum256(row.WantBytes)
+			request.ContentSHA256 = hex.EncodeToString(sum[:])
+		}
+		requests = append(requests, request)
 	}
 	return requests, selected, nil, nil
 }

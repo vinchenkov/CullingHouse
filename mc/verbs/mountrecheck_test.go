@@ -6,6 +6,7 @@ package verbs
 // and mode-grant changes — and must trust nothing about the plan file itself.
 
 import (
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -136,6 +137,37 @@ func TestMountRecheckCatchesEveryDriftClass(t *testing.T) {
 			mrAssertDrift(t, path, boundary.CodeIdentityChanged)
 		})
 	}
+}
+
+func TestMountRecheckCatchesFixedControlShapeDrift(t *testing.T) {
+	t.Run("fixed file bytes", func(t *testing.T) {
+		root := t.TempDir()
+		source := filepath.Join(root, "config")
+		want := []byte{}
+		if err := os.WriteFile(source, want, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		entry := mrEntry(t, source, "/workspace/git/config", "task-git-config-cover", "ro")
+		sum := sha256.Sum256(want)
+		entry.ContentSHA256 = fmt.Sprintf("%x", sum[:])
+		path := mrWritePlan(t, root, []PrivateDispatchMountEntry{entry})
+		if err := os.WriteFile(source, []byte("[core]\n\thooksPath=/tmp\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		mrAssertDrift(t, path, boundary.CodeIdentityChanged)
+	})
+
+	t.Run("generated empty directory", func(t *testing.T) {
+		root := t.TempDir()
+		source := maMkdir(t, root, "hooks")
+		entry := mrEntry(t, source, "/workspace/git/hooks", "task-git-hooks-cover", "ro")
+		entry.RequireEmptyDir = true
+		path := mrWritePlan(t, root, []PrivateDispatchMountEntry{entry})
+		if err := os.WriteFile(filepath.Join(source, "pre-commit"), []byte("#!/bin/sh\n"), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		mrAssertDrift(t, path, boundary.CodeIdentityChanged)
+	})
 }
 
 func TestMountRecheckRefusesUntrustedOrMalformedPlanFile(t *testing.T) {

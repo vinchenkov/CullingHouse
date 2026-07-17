@@ -10,6 +10,8 @@ package verbs
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"os"
 	"strconv"
@@ -87,6 +89,28 @@ func recheckMountEntry(entry PrivateDispatchMountEntry) error {
 	}
 	if int(identity.Info.Mode().Perm()) != entry.Mode {
 		return Domainf("source mode grant changed from the attested bits")
+	}
+	if entry.ContentSHA256 != "" {
+		if identity.Info.Size() > maxGitPointerBytes {
+			return Domainf("fixed control file exceeds its attested content bound")
+		}
+		body, err := os.ReadFile(entry.Source)
+		if err != nil {
+			return Domainf("fixed control file is unreadable: %v", err)
+		}
+		sum := sha256.Sum256(body)
+		if hex.EncodeToString(sum[:]) != entry.ContentSHA256 {
+			return Domainf("fixed control file content changed from the attested bytes")
+		}
+	}
+	if entry.RequireEmptyDir {
+		children, err := os.ReadDir(entry.Source)
+		if err != nil {
+			return Domainf("generated empty control directory is unreadable: %v", err)
+		}
+		if len(children) != 0 {
+			return Domainf("generated empty control directory gained an entry")
+		}
 	}
 	return nil
 }
