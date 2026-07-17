@@ -39,6 +39,11 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	if args[0] == "__dispatch-prepare" || args[0] == "__dispatch-commit" {
 		return runPrivateDispatch(args, stdin, stdout, stderr)
 	}
+	// The launch-time identity recheck reads HOST files by definition: it must
+	// run locally even when every ordinary verb self-delegates into the helper.
+	if args[0] == "__mount-recheck" {
+		return runLocal(args, stdin, stdout, stderr)
+	}
 
 	// Self-delegation: host-side mc with no direct spine path but a named
 	// warm helper delegates the whole invocation into the lock domain.
@@ -49,6 +54,10 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return delegate(args, stdin, stdout, stderr)
 	}
 
+	return runLocal(args, stdin, stdout, stderr)
+}
+
+func runLocal(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	out, err := dispatchVerb(args, stdin)
 	if err != nil {
 		fmt.Fprintln(stderr, "mc:", err)
@@ -120,6 +129,18 @@ func dispatchVerb(args []string, stdin io.Reader) (any, error) {
 	verb := args[0]
 	rest := args[1:]
 	switch verb {
+	case "__mount-recheck":
+		if len(rest) != 1 {
+			return nil, verbs.Usagef("usage: mc __mount-recheck <plan-file>")
+		}
+		id, err := verbs.LoadIdentity()
+		if err != nil {
+			return nil, err
+		}
+		if err := verbs.RequireHostScope(id, "mc __mount-recheck"); err != nil {
+			return nil, err
+		}
+		return verbs.MountRecheck(rest[0])
 	case "onboard":
 		return cmdOnboard(rest)
 	case "init":
