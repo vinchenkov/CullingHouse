@@ -66,31 +66,60 @@ func (f mpFixture) mkdir(t *testing.T, rel string) string {
 }
 
 func TestPlanMountsEmptyRequestsValidateNothing(t *testing.T) {
-	auths, r, err := planMounts(nil, mountPlanInputs{AllowlistPath: "/nonexistent"})
-	if auths != nil || r != nil || err != nil {
-		t.Fatalf("empty plan = (%v, %v, %v), want all nil", auths, r, err)
+	entries, r, err := planMounts(nil, mountPlanInputs{AllowlistPath: "/nonexistent"})
+	if entries != nil || r != nil || err != nil {
+		t.Fatalf("empty plan = (%v, %v, %v), want all nil", entries, r, err)
 	}
 }
 
-func TestPlanMountsAuthorizesAndDerivesDestinations(t *testing.T) {
+func TestPlanMountsAuthorizesAndDerivesClassedDestinations(t *testing.T) {
 	f := mpSetup(t, "")
 	one := f.mkdir(t, "one")
 	two := f.mkdir(t, "two")
-	auths, r, err := planMounts([]mountRequest{
-		{Source: one, Access: boundary.AccessRO, Authority: refusal.AuthorityCandidate},
-		{Source: two, Access: boundary.AccessRW, Authority: refusal.AuthorityCandidate},
+	entries, r, err := planMounts([]mountRequest{
+		{Source: two, Access: boundary.AccessRW, Authority: refusal.AuthorityCandidate, Class: classArtifact},
+		{Source: one, Access: boundary.AccessRO, Authority: refusal.AuthorityCandidate, Class: classReference},
 	}, f.inputs)
 	if err != nil || r != nil {
 		t.Fatalf("planMounts = refusal %+v err %v, want success", r, err)
 	}
-	if len(auths) != 2 {
-		t.Fatalf("authorized %d mounts, want 2", len(auths))
+	if len(entries) != 2 {
+		t.Fatalf("authorized %d mounts, want 2", len(entries))
 	}
-	if auths[0].Target != "data" || auths[0].Suffix != "one" || auths[0].Access != boundary.AccessRO {
-		t.Fatalf("first authorization = %+v", auths[0])
+	// Sorted by destination, so the artifact-class entry leads regardless of
+	// request order.
+	if entries[0].Destination != "/workspace/artifacts/data/two" || entries[0].Access != "rw" ||
+		entries[0].LogicalID != "artifact:data/two" || entries[0].Kind != "dir" {
+		t.Fatalf("first entry = %+v", entries[0])
 	}
-	if auths[1].Suffix != "two" || auths[1].Access != boundary.AccessRW {
-		t.Fatalf("second authorization = %+v", auths[1])
+	if entries[1].Destination != "/workspace/references/data/one" || entries[1].Access != "ro" ||
+		entries[1].LogicalID != "reference:data/one" {
+		t.Fatalf("second entry = %+v", entries[1])
+	}
+	for i, entry := range entries {
+		if entry.Device == "" || entry.Inode == "" || entry.OwnerUID != os.Getuid() || entry.Mode != 0o700 {
+			t.Fatalf("entry %d carries no host identity evidence: %+v", i, entry)
+		}
+	}
+}
+
+// The same source may serve two classes (an artifact root doubling as a
+// reference): the class prefixes make the destinations disjoint, so it is not
+// a collision. A destinationless request is a protocol error, never guessed.
+func TestPlanMountsClassesDisambiguateAndAreRequired(t *testing.T) {
+	f := mpSetup(t, "")
+	x := f.mkdir(t, "x")
+	entries, r, err := planMounts([]mountRequest{
+		{Source: x, Access: boundary.AccessRW, Authority: refusal.AuthorityCandidate, Class: classArtifact},
+		{Source: x, Access: boundary.AccessRO, Authority: refusal.AuthorityCandidate, Class: classReference},
+	}, f.inputs)
+	if err != nil || r != nil || len(entries) != 2 {
+		t.Fatalf("cross-class same-source plan = (%v, %+v, %v), want two entries", entries, r, err)
+	}
+	if _, _, err := planMounts([]mountRequest{
+		{Source: x, Access: boundary.AccessRO, Authority: refusal.AuthorityCandidate},
+	}, f.inputs); err == nil {
+		t.Fatalf("a request without a destination class must be a protocol error")
 	}
 }
 
@@ -100,7 +129,7 @@ func TestPlanMountsUntrustedAllowlistIsHealth(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, r, err := planMounts([]mountRequest{
-		{Source: f.root, Access: boundary.AccessRO, Authority: refusal.AuthorityCandidate},
+		{Source: f.root, Access: boundary.AccessRO, Authority: refusal.AuthorityCandidate, Class: classArtifact},
 	}, f.inputs)
 	if err != nil || r == nil {
 		t.Fatalf("planMounts = %v, want a refusal", err)
@@ -119,7 +148,7 @@ func TestPlanMountsInvalidAllowlistIsHealth(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, r, err := planMounts([]mountRequest{
-		{Source: f.root, Access: boundary.AccessRO, Authority: refusal.AuthorityCandidate},
+		{Source: f.root, Access: boundary.AccessRO, Authority: refusal.AuthorityCandidate, Class: classArtifact},
 	}, f.inputs)
 	if err != nil || r == nil {
 		t.Fatalf("planMounts = %v, want a refusal", err)
@@ -144,7 +173,7 @@ func TestPlanMountsOverlappingAllowRootsAreDeploymentHealth(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, r, err := planMounts([]mountRequest{
-		{Source: sub, Access: boundary.AccessRO, Authority: refusal.AuthorityCandidate},
+		{Source: sub, Access: boundary.AccessRO, Authority: refusal.AuthorityCandidate, Class: classArtifact},
 	}, f.inputs)
 	if err != nil || r == nil {
 		t.Fatalf("planMounts = %v, want a refusal", err)
@@ -172,8 +201,8 @@ func TestPlanMountsRejectionTable(t *testing.T) {
 			name: "blocked_floor_component",
 			requests: func(t *testing.T, f mpFixture) []mountRequest {
 				return []mountRequest{
-					{Source: f.mkdir(t, "ok"), Access: boundary.AccessRO, Authority: refusal.AuthorityCandidate},
-					{Source: f.mkdir(t, ".ssh"), Access: boundary.AccessRO, Authority: refusal.AuthorityCandidate},
+					{Source: f.mkdir(t, "ok"), Access: boundary.AccessRO, Authority: refusal.AuthorityCandidate, Class: classArtifact},
+					{Source: f.mkdir(t, ".ssh"), Access: boundary.AccessRO, Authority: refusal.AuthorityCandidate, Class: classArtifact},
 				}
 			},
 			code: boundary.CodeSourceBlocked, field: refusal.FieldMountSource,
@@ -183,7 +212,7 @@ func TestPlanMountsRejectionTable(t *testing.T) {
 			name: "missing_source",
 			requests: func(t *testing.T, f mpFixture) []mountRequest {
 				return []mountRequest{
-					{Source: filepath.Join(f.root, "absent"), Access: boundary.AccessRO, Authority: refusal.AuthorityCandidate},
+					{Source: filepath.Join(f.root, "absent"), Access: boundary.AccessRO, Authority: refusal.AuthorityCandidate, Class: classArtifact},
 				}
 			},
 			code: boundary.CodeSourceMissing, field: refusal.FieldMountSource,
@@ -194,7 +223,7 @@ func TestPlanMountsRejectionTable(t *testing.T) {
 			requests: func(t *testing.T, f mpFixture) []mountRequest {
 				outside := t.TempDir()
 				return []mountRequest{
-					{Source: outside, Access: boundary.AccessRO, Authority: refusal.AuthorityCandidate},
+					{Source: outside, Access: boundary.AccessRO, Authority: refusal.AuthorityCandidate, Class: classArtifact},
 				}
 			},
 			code: boundary.CodeNotAllowlisted, field: refusal.FieldMountSource,
@@ -205,7 +234,7 @@ func TestPlanMountsRejectionTable(t *testing.T) {
 			access: "ro",
 			requests: func(t *testing.T, f mpFixture) []mountRequest {
 				return []mountRequest{
-					{Source: f.root, Access: boundary.AccessRW, Authority: refusal.AuthorityCandidate},
+					{Source: f.root, Access: boundary.AccessRW, Authority: refusal.AuthorityCandidate, Class: classArtifact},
 				}
 			},
 			code: boundary.CodeRWNotPermitted, field: refusal.FieldMountSource,
@@ -220,8 +249,8 @@ func TestPlanMountsRejectionTable(t *testing.T) {
 				x := f.mkdir(t, "x")
 				y := f.mkdir(t, "x/y")
 				return []mountRequest{
-					{Source: x, Access: boundary.AccessRO, Authority: refusal.AuthorityCandidate},
-					{Source: y, Access: boundary.AccessRO, Authority: refusal.AuthorityCandidate},
+					{Source: x, Access: boundary.AccessRO, Authority: refusal.AuthorityCandidate, Class: classArtifact},
+					{Source: y, Access: boundary.AccessRO, Authority: refusal.AuthorityCandidate, Class: classArtifact},
 				}
 			},
 			code: boundary.CodeTargetCollision, field: refusal.FieldMountTarget,
@@ -232,8 +261,8 @@ func TestPlanMountsRejectionTable(t *testing.T) {
 			requests: func(t *testing.T, f mpFixture) []mountRequest {
 				x := f.mkdir(t, "x")
 				return []mountRequest{
-					{Source: x, Access: boundary.AccessRO, Authority: refusal.AuthorityCandidate},
-					{Source: x, Access: boundary.AccessRO, Authority: refusal.AuthorityCandidate},
+					{Source: x, Access: boundary.AccessRO, Authority: refusal.AuthorityCandidate, Class: classArtifact},
+					{Source: x, Access: boundary.AccessRO, Authority: refusal.AuthorityCandidate, Class: classArtifact},
 				}
 			},
 			code: boundary.CodeTargetCollision, field: refusal.FieldMountTarget,
@@ -273,7 +302,7 @@ func TestPlanMountsZeroJurisdictionRejectsOutsideJurisdiction(t *testing.T) {
 	f := mpSetup(t, "")
 	f.inputs.Jurisdiction = boundary.Jurisdiction{} // fails closed by design
 	_, r, err := planMounts([]mountRequest{
-		{Source: f.root, Access: boundary.AccessRO, Authority: refusal.AuthorityDeployment},
+		{Source: f.root, Access: boundary.AccessRO, Authority: refusal.AuthorityDeployment, Class: classArtifact},
 	}, f.inputs)
 	if err != nil || r == nil {
 		t.Fatalf("planMounts = %v, want a refusal", err)
@@ -292,7 +321,7 @@ func TestPlanMountsHostileTextStaysOutOfDetail(t *testing.T) {
 	f := mpSetup(t, "")
 	secret := f.mkdir(t, ".ssh")
 	_, r, err := planMounts([]mountRequest{
-		{Source: secret, Access: boundary.AccessRO, Authority: refusal.AuthorityCandidate},
+		{Source: secret, Access: boundary.AccessRO, Authority: refusal.AuthorityCandidate, Class: classArtifact},
 	}, f.inputs)
 	if err != nil || r == nil {
 		t.Fatalf("planMounts = %v, want a refusal", err)
@@ -346,7 +375,7 @@ func TestPlanMountsBoundsRequests(t *testing.T) {
 	f := mpSetup(t, "")
 	requests := make([]mountRequest, 257)
 	for i := range requests {
-		requests[i] = mountRequest{Source: f.root, Access: boundary.AccessRO, Authority: refusal.AuthorityCandidate}
+		requests[i] = mountRequest{Source: f.root, Access: boundary.AccessRO, Authority: refusal.AuthorityCandidate, Class: classArtifact}
 	}
 	if _, _, err := planMounts(requests, f.inputs); err == nil {
 		t.Fatalf("a plan over 256 mounts must refuse at the frame bound (ADR-016:158-163)")

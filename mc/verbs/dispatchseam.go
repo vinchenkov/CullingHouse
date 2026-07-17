@@ -448,12 +448,14 @@ type preparedCandidate struct {
 	mountState PrivateDispatchMountState
 }
 
-// attestedDispatch is the attest step's host projection: the resolved route
-// and the digest binding it, or a classified refusal — never both.
+// attestedDispatch is the attest step's host projection: the resolved route,
+// the digest binding it, and the validated mount plan — or a classified
+// refusal, never both.
 type attestedDispatch struct {
 	deploymentUUID string
 	route          routing.Route
 	routingDigest  string
+	mountPlan      *PrivateDispatchMountPlan
 	refusal        *refusal.Refusal
 }
 
@@ -562,17 +564,18 @@ func dispatchAttest(home string, prepared preparedDispatch) (attestedDispatch, e
 	if err != nil {
 		return routingRefusal(reattestedUUID, refusal.SummaryUnresolved, err), nil
 	}
-	// Test-fake routing is the only place the Phase-1 resident's static
-	// workspace bind survives. It cannot be parsed by an untagged production
+	// Test-fake routing is the only route family that may authorize the
+	// Phase-1 legacy workspace bind, and it now rides the same plan carrier
+	// as every ordinary mount. It cannot be parsed by an untagged production
 	// binary, so it supplies no production mount authority.
-	mountRefusal, err := attestCandidateMounts(home, cand, route.Harness == "fake")
+	plan, mountRefusal, err := attestCandidateMounts(home, cand, route.Harness == "fake")
 	if err != nil {
 		return attestedDispatch{}, err
 	}
 	if mountRefusal != nil {
 		return attestedDispatch{deploymentUUID: reattestedUUID, refusal: mountRefusal}, nil
 	}
-	return attestedDispatch{deploymentUUID: reattestedUUID, route: route, routingDigest: hex.EncodeToString(sum[:])}, nil
+	return attestedDispatch{deploymentUUID: reattestedUUID, route: route, routingDigest: hex.EncodeToString(sum[:]), mountPlan: plan}, nil
 }
 
 // dispatchRecheckAttestation is D1's immediate pre-commit host-file fence.

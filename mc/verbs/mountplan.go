@@ -23,7 +23,10 @@ import (
 	"errors"
 	"os"
 	"path"
+	"sort"
+	"strconv"
 	"strings"
+	"syscall"
 
 	"mc/boundary"
 	"mc/refusal"
@@ -35,14 +38,58 @@ import (
 // [0,255] domain.
 const maxPlanMounts = 256
 
+// mountClass names which ADR-017 D6 destination family a request belongs to.
+// The container path is derived, never operator-chosen: the allowlist target
+// is the stable external-root name and the class supplies its fixed prefix.
+type mountClass string
+
+const (
+	classArtifact        mountClass = "artifact"
+	classReference       mountClass = "reference"
+	classWorkspaceLegacy mountClass = "workspace"
+)
+
+var mountClassPrefixes = map[mountClass]string{
+	classArtifact:        "workspace/artifacts",
+	classReference:       "workspace/references",
+	classWorkspaceLegacy: "workspace",
+}
+
 // mountRequest is one requested bind: the raw source spelling, the requested
-// access, and whose authority the request rides on (candidate-authored
+// access, whose authority the request rides on (candidate-authored
 // profile/Worksource state vs deployment-shared configuration) — D4's sole
-// class discriminator for the mount codes.
+// class discriminator for the mount codes — and the D6 destination class.
 type mountRequest struct {
 	Source    string
 	Access    boundary.Access
 	Authority refusal.Authority
+	Class     mountClass
+}
+
+// PrivateDispatchMountEntry is one authorized bind of the closed plan carrier
+// (ADR-016 D6: ordered {logical_id,source,destination,kind,access} with
+// captured host identity evidence). Device and inode are decimal strings so a
+// JavaScript consumer can carry the plan without 2^53 truncation; the resident
+// treats them as opaque and only the host recheck compares them.
+type PrivateDispatchMountEntry struct {
+	LogicalID   string `json:"logical_id"`
+	Source      string `json:"source"`
+	Destination string `json:"destination"`
+	Kind        string `json:"kind"`
+	Access      string `json:"access"`
+	Device      string `json:"device"`
+	Inode       string `json:"inode"`
+	OwnerUID    int    `json:"owner_uid"`
+	Mode        int    `json:"mode"`
+}
+
+// PrivateDispatchMountPlan is ADR-016 D5's bounded authorization carrier: the
+// complete validated plan the attestation and the committed spawn effect
+// carry, and the only mount authority the resident may consume. Entries are
+// sorted by destination (the declared key of a semantically unordered set).
+type PrivateDispatchMountPlan struct {
+	Version int                         `json:"version"`
+	Entries []PrivateDispatchMountEntry `json:"entries"`
 }
 
 type mountPlanInputs struct {
@@ -54,11 +101,12 @@ type mountPlanInputs struct {
 
 // planMounts authorizes every requested source against the operator's
 // allowlist, the blocked floor, and jurisdiction, then requires the derived
-// container destinations to be mutually collision-free (equal or
+// absolute container destinations to be mutually collision-free (equal or
 // ancestor-overlapping destinations reject, the same grammar the allowlist's
 // own parse-time target set enforces). It returns exactly one of: the full
-// ordered authorization set, a classified refusal, or a protocol error.
-func planMounts(requests []mountRequest, in mountPlanInputs) ([]boundary.Authorization, *refusal.Refusal, error) {
+// evidence-backed plan entry set sorted by destination, a classified refusal,
+// or a protocol error.
+func planMounts(requests []mountRequest, in mountPlanInputs) ([]PrivateDispatchMountEntry, *refusal.Refusal, error) {
 	if len(requests) == 0 {
 		return nil, nil, nil
 	}
@@ -101,21 +149,25 @@ func planMounts(requests []mountRequest, in mountPlanInputs) ([]boundary.Authori
 		return nil, r, aerr
 	}
 
-	auths := make([]boundary.Authorization, 0, len(requests))
-	destinations := make([]string, 0, len(requests))
+	entries := make([]PrivateDispatchMountEntry, 0, len(requests))
 	for i, req := range requests {
 		i := i
+		prefix, ok := mountClassPrefixes[req.Class]
+		if !ok {
+			return nil, nil, Domainf("mount request %d carries no destination class (ADR-017 D6)", i)
+		}
 		auth, err := resolved.Authorize(req.Source, req.Access, in.Blocked, in.Jurisdiction)
 		if err != nil {
 			r, aerr := adaptMountError(err, req.Authority, &i)
 			return nil, r, aerr
 		}
-		dest := path.Join(auth.Target, auth.Suffix)
-		for _, prior := range destinations {
-			if dest == prior || strings.HasPrefix(dest, prior+"/") || strings.HasPrefix(prior, dest+"/") {
+		dest := "/" + path.Join(prefix, auth.Target, auth.Suffix)
+		for _, prior := range entries {
+			if dest == prior.Destination || strings.HasPrefix(dest, prior.Destination+"/") ||
+				strings.HasPrefix(prior.Destination, dest+"/") {
 				r, rerr := refusalForMountError(&boundary.MountError{
 					Code: boundary.CodeTargetCollision,
-					Msg:  "destination " + dest + " collides with " + prior,
+					Msg:  "destination " + dest + " collides with " + prior.Destination,
 				}, req.Authority, &i)
 				if rerr != nil {
 					return nil, nil, rerr
@@ -123,10 +175,39 @@ func planMounts(requests []mountRequest, in mountPlanInputs) ([]boundary.Authori
 				return nil, &r, nil
 			}
 		}
-		destinations = append(destinations, dest)
-		auths = append(auths, auth)
+		entry, err := planEntryFor(req.Class, dest, auth)
+		if err != nil {
+			return nil, nil, err
+		}
+		entries = append(entries, entry)
 	}
-	return auths, nil, nil
+	sort.Slice(entries, func(i, j int) bool { return entries[i].Destination < entries[j].Destination })
+	return entries, nil, nil
+}
+
+// planEntryFor captures ADR-016 D5's host identity evidence for one
+// authorized source: the canonical resolved path plus the (device, inode,
+// kind, owner, mode) identity the pre-create and pre-start rechecks compare.
+func planEntryFor(class mountClass, dest string, auth boundary.Authorization) (PrivateDispatchMountEntry, error) {
+	st, ok := auth.Source.Info.Sys().(*syscall.Stat_t)
+	if !ok {
+		return PrivateDispatchMountEntry{}, Domainf("mount source %q has no native identity evidence (ADR-016 D5)", auth.Source.Canonical)
+	}
+	kind := "file"
+	if auth.Source.IsDir {
+		kind = "dir"
+	}
+	return PrivateDispatchMountEntry{
+		LogicalID:   string(class) + ":" + path.Join(auth.Target, auth.Suffix),
+		Source:      auth.Source.Canonical,
+		Destination: dest,
+		Kind:        kind,
+		Access:      string(auth.Access),
+		Device:      strconv.FormatUint(uint64(st.Dev), 10),
+		Inode:       strconv.FormatUint(st.Ino, 10),
+		OwnerUID:    int(st.Uid),
+		Mode:        int(auth.Source.Info.Mode().Perm()),
+	}, nil
 }
 
 // adaptMountError unwraps a boundary rejection into (nil refusal, error) or

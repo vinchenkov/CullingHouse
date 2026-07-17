@@ -1,6 +1,7 @@
 package verbs
 
 import (
+	"encoding/json"
 	"errors"
 	"os"
 	"os/user"
@@ -57,48 +58,73 @@ func selectedProfileMountRequests(state PrivateDispatchMountState) ([]mountReque
 		return nil, selected, nil, err
 	}
 	if !selected.ProfilePresent {
+		// An absent profile is deployment configuration the candidate never
+		// authored: health, not a per-task confinement block (contract §1.3;
+		// takeover-review reclassification, 2026-07-16).
 		r, err := refusalForMountError(&boundary.MountError{
 			Code: boundary.CodeRuntimeUnappliable, Msg: "selected Worksource has no sandbox profile",
-		}, refusal.AuthorityCandidate, nil)
+		}, refusal.AuthorityDeployment, nil)
 		return nil, selected, &r, err
 	}
 	requests := make([]mountRequest, 0, len(selected.ArtifactRoots)+len(selected.ReadonlyMounts))
 	for _, source := range selected.ArtifactRoots {
-		requests = append(requests, mountRequest{Source: source, Access: boundary.AccessRW, Authority: refusal.AuthorityCandidate})
+		requests = append(requests, mountRequest{Source: source, Access: boundary.AccessRW, Authority: refusal.AuthorityCandidate, Class: classArtifact})
 	}
 	for _, source := range selected.ReadonlyMounts {
-		requests = append(requests, mountRequest{Source: source, Access: boundary.AccessRO, Authority: refusal.AuthorityCandidate})
+		requests = append(requests, mountRequest{Source: source, Access: boundary.AccessRO, Authority: refusal.AuthorityCandidate, Class: classReference})
+	}
+	return requests, selected, nil, nil
+}
+
+// deriveDispatchMountRequests is the single derivation point for a
+// candidate's ordinary mount requests: the selected profile's artifact RW and
+// reference RO sources, the production repo gate, and — under test-fake
+// routing only — the Phase-1 legacy workspace bind rerouted through the same
+// allowlist/jurisdiction authorization as every other request. A repo
+// Worksource categorically cannot use its real checkout as /workspace/source
+// in production: ADR-017 requires the task-local repository/projection typed
+// plane, which is not represented by an ordinary profile request.
+func deriveDispatchMountRequests(state PrivateDispatchMountState, allowLegacyFakeWorkspace bool) ([]mountRequest, PrivateDispatchWorksource, *refusal.Refusal, error) {
+	requests, selected, r, err := selectedProfileMountRequests(state)
+	if err != nil || r != nil {
+		return nil, selected, r, err
+	}
+	if selected.WorksourceID == "" {
+		return requests, selected, nil, nil
+	}
+	if selected.Kind == "repo" {
+		if !allowLegacyFakeWorkspace {
+			r, err := refusalForMountError(&boundary.MountError{
+				Code: boundary.CodeRuntimeUnappliable,
+				Msg:  "a Git Worksource requires a task-local repository or committed projection; its real workspace is never an agent mount",
+			}, refusal.AuthorityDeployment, nil)
+			return nil, selected, &r, err
+		}
+		if selected.WorkspaceRoot != "" {
+			requests = append(requests, mountRequest{
+				Source: selected.WorkspaceRoot, Access: boundary.AccessRW,
+				Authority: refusal.AuthorityCandidate, Class: classWorkspaceLegacy,
+			})
+		}
 	}
 	return requests, selected, nil, nil
 }
 
 // assembleDispatchMountInputs associates the frozen all-Worksource projection
-// with independently resolved host identities. A repo Worksource categorically
-// cannot use its real checkout as /workspace/source: ADR-017 requires the
-// task-local repository/projection typed plane, which is not represented by an
-// ordinary profile request. The explicit test-fake exception preserves the
-// Phase-1 fake resident only; fake routing is unreachable in production.
-func assembleDispatchMountInputs(snapshot dispatchMountHostSnapshot, state PrivateDispatchMountState, allowLegacyFakeWorkspace bool) (dispatchMountAssembly, *refusal.Refusal, error) {
-	requests, selected, r, err := selectedProfileMountRequests(state)
-	if err != nil || r != nil {
-		return dispatchMountAssembly{}, r, err
-	}
+// with independently resolved host identities. Request derivation (including
+// the repo gate and the test-fake workspace exception) lives in
+// deriveDispatchMountRequests; this function owns only the ADR-021
+// jurisdiction assembly for an already-derived request set.
+func assembleDispatchMountInputs(snapshot dispatchMountHostSnapshot, state PrivateDispatchMountState, requests []mountRequest, selected PrivateDispatchWorksource) (dispatchMountAssembly, error) {
 	if selected.WorksourceID == "" {
-		return dispatchMountAssembly{Requests: requests}, nil, nil
-	}
-	if selected.Kind == "repo" && !allowLegacyFakeWorkspace {
-		r, err := refusalForMountError(&boundary.MountError{
-			Code: boundary.CodeRuntimeUnappliable,
-			Msg:  "a Git Worksource requires a task-local repository or committed projection; its real workspace is never an agent mount",
-		}, refusal.AuthorityDeployment, nil)
-		return dispatchMountAssembly{}, &r, err
+		return dispatchMountAssembly{Requests: requests}, nil
 	}
 	if snapshot.ResolveDeclared == nil {
-		return dispatchMountAssembly{}, nil, Domainf("dispatch: host mount snapshot has no protected-path resolver")
+		return dispatchMountAssembly{}, Domainf("dispatch: host mount snapshot has no protected-path resolver")
 	}
 	own, ok := snapshot.WorksourceRoots[selected.WorksourceID]
 	if !ok {
-		return dispatchMountAssembly{}, nil, Domainf("dispatch: host snapshot omitted selected Worksource roots")
+		return dispatchMountAssembly{}, Domainf("dispatch: host snapshot omitted selected Worksource roots")
 	}
 
 	in := boundary.JurisdictionInput{
@@ -119,12 +145,12 @@ func assembleDispatchMountInputs(snapshot dispatchMountHostSnapshot, state Priva
 	for _, ws := range state.Worksources {
 		roots, ok := snapshot.WorksourceRoots[ws.WorksourceID]
 		if !ok {
-			return dispatchMountAssembly{}, nil, Domainf("dispatch: host snapshot omitted Worksource %q roots", ws.WorksourceID)
+			return dispatchMountAssembly{}, Domainf("dispatch: host snapshot omitted Worksource %q roots", ws.WorksourceID)
 		}
 		if ws.RuntimeControlDir != "" {
 			id, err := snapshot.ResolveDeclared(ws.RuntimeControlDir)
 			if err != nil {
-				return dispatchMountAssembly{}, nil, err
+				return dispatchMountAssembly{}, err
 			}
 			in.RuntimeControls = append(in.RuntimeControls, id)
 		}
@@ -135,7 +161,7 @@ func assembleDispatchMountInputs(snapshot dispatchMountHostSnapshot, state Priva
 		in.OtherGitControls = append(in.OtherGitControls, snapshot.GitControls[ws.WorksourceID]...)
 		in.OtherMissionControlRoots = append(in.OtherMissionControlRoots, snapshot.MissionControlRoots[ws.WorksourceID]...)
 	}
-	return dispatchMountAssembly{Requests: requests, Jurisdiction: in}, nil, nil
+	return dispatchMountAssembly{Requests: requests, Jurisdiction: in}, nil
 }
 
 func resolveDispatchProtected(path string, absentAllowed bool) (boundary.ProtectedID, error) {
@@ -259,32 +285,47 @@ func mustDispatchProtected(path string) boundary.ProtectedID {
 	return boundary.ProtectedID{Canonical: filepath.Clean(path)}
 }
 
-func attestCandidateMounts(home string, cand *preparedCandidate, allowLegacyFakeWorkspace bool) (*refusal.Refusal, error) {
-	requests, selected, r, err := selectedProfileMountRequests(cand.mountState)
+// maxDispatchMountPlanBytes bounds the serialized carrier at attest, BEFORE
+// any claim: the committed spawn effect embeds the plan and must survive the
+// broker's 64 KiB canonical-result cap (ADR-016 D2), so an oversized plan is
+// a pre-commit deployment-health refusal, never a post-commit wedge
+// (takeover-review finding, 2026-07-16).
+const maxDispatchMountPlanBytes = 32 * 1024
+
+// attestCandidateMounts is the host-authority mount leg of dispatchAttest: it
+// derives the candidate's ordinary requests, assembles jurisdiction from
+// independently resolved host identities, authorizes the whole set, and
+// returns ADR-016 D5's bounded evidence-backed plan carrier — or exactly one
+// classified refusal. An empty plan (subjectless candidate, empty profile) is
+// explicit, never absent.
+func attestCandidateMounts(home string, cand *preparedCandidate, allowLegacyFakeWorkspace bool) (*PrivateDispatchMountPlan, *refusal.Refusal, error) {
+	empty := &PrivateDispatchMountPlan{Version: 1, Entries: []PrivateDispatchMountEntry{}}
+	requests, selected, r, err := deriveDispatchMountRequests(cand.mountState, allowLegacyFakeWorkspace)
 	if err != nil || r != nil {
-		return r, err
-	}
-	if selected.Kind == "repo" && !allowLegacyFakeWorkspace {
-		_, r, err := assembleDispatchMountInputs(dispatchMountHostSnapshot{}, cand.mountState, false)
-		return r, err
+		return nil, r, err
 	}
 	if selected.WorksourceID == "" {
-		return nil, nil
+		return empty, nil, nil
 	}
 	// A truly empty ordinary policy has nothing to authorize. A nonempty
 	// denied_paths set still constructs below even with zero requests: malformed
 	// candidate policy must refuse before claim, not hide behind an empty plan.
 	if len(requests) == 0 && len(selected.DeniedPaths) == 0 {
-		return nil, nil
+		return empty, nil, nil
 	}
 	snapshot, err := captureDispatchMountSnapshot(home, cand.mountState, allowLegacyFakeWorkspace)
 	if err != nil {
 		r, aerr := adaptMountError(err, refusal.AuthorityDeployment, nil)
-		return r, aerr
+		return nil, r, aerr
 	}
-	assembled, r, err := assembleDispatchMountInputs(snapshot, cand.mountState, allowLegacyFakeWorkspace)
-	if err != nil || r != nil {
-		return r, err
+	assembled, err := assembleDispatchMountInputs(snapshot, cand.mountState, requests, selected)
+	if err != nil {
+		// A boundary rejection during assembly (a declared runtime-control
+		// path failing resolution) is deployment configuration: health, not a
+		// dispatch protocol error (takeover-review fix, 2026-07-16). Non-mount
+		// errors stay protocol errors.
+		r, aerr := adaptMountError(err, refusal.AuthorityDeployment, nil)
+		return nil, r, aerr
 	}
 	j, err := boundary.ResolveJurisdiction(assembled.Jurisdiction, snapshot.OwnerUID)
 	if err != nil {
@@ -294,21 +335,29 @@ func attestCandidateMounts(home string, cand *preparedCandidate, allowLegacyFake
 			authority = refusal.AuthorityCandidate
 		}
 		r, aerr := adaptMountError(err, authority, nil)
-		return r, aerr
+		return nil, r, aerr
 	}
-	auths, r, err := planMounts(assembled.Requests, mountPlanInputs{
+	entries, r, err := planMounts(assembled.Requests, mountPlanInputs{
 		AllowlistPath: filepath.Join(home, "mount-allowlist"), OwnerUID: snapshot.OwnerUID,
 		Blocked: boundary.BlockPolicy{}, Jurisdiction: j,
 	})
 	if err != nil || r != nil {
-		return r, err
+		return nil, r, err
 	}
-	if len(auths) != 0 {
+	if entries == nil {
+		entries = []PrivateDispatchMountEntry{}
+	}
+	plan := &PrivateDispatchMountPlan{Version: 1, Entries: entries}
+	body, err := json.Marshal(plan)
+	if err != nil {
+		return nil, nil, err
+	}
+	if len(body) > maxDispatchMountPlanBytes {
 		r, err := refusalForMountError(&boundary.MountError{
 			Code: boundary.CodeRuntimeUnappliable,
-			Msg:  "authorized ordinary mounts cannot be applied until the closed plan carrier replaces the fake resident mount",
+			Msg:  "the authorized mount plan exceeds its effect byte budget",
 		}, refusal.AuthorityDeployment, nil)
-		return &r, err
+		return nil, &r, err
 	}
-	return nil, nil
+	return plan, nil, nil
 }

@@ -6,7 +6,9 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 
 	"mc/boundary"
@@ -105,13 +107,17 @@ func TestAssembleDispatchMountInputsUsesSelectedProfileAndCompleteJurisdiction(t
 		},
 	}
 
-	assembled, r, err := assembleDispatchMountInputs(snapshot, state, false)
+	requests, selected, r, err := deriveDispatchMountRequests(state, false)
 	if err != nil || r != nil {
-		t.Fatalf("assemble = refusal %+v err %v", r, err)
+		t.Fatalf("derive = refusal %+v err %v", r, err)
+	}
+	assembled, err := assembleDispatchMountInputs(snapshot, state, requests, selected)
+	if err != nil {
+		t.Fatalf("assemble: %v", err)
 	}
 	wantRequests := []mountRequest{
-		{Source: ownArtifact, Access: boundary.AccessRW, Authority: refusal.AuthorityCandidate},
-		{Source: reference, Access: boundary.AccessRO, Authority: refusal.AuthorityCandidate},
+		{Source: ownArtifact, Access: boundary.AccessRW, Authority: refusal.AuthorityCandidate, Class: classArtifact},
+		{Source: reference, Access: boundary.AccessRO, Authority: refusal.AuthorityCandidate, Class: classReference},
 	}
 	if !reflect.DeepEqual(assembled.Requests, wantRequests) {
 		t.Fatalf("requests = %+v, want %+v", assembled.Requests, wantRequests)
@@ -139,7 +145,7 @@ func TestAssembleDispatchMountInputsUsesSelectedProfileAndCompleteJurisdiction(t
 	}
 }
 
-func TestAssembleDispatchMountInputsRefusesDirectGitWorkspace(t *testing.T) {
+func TestDeriveDispatchMountRequestsRefusesDirectGitWorkspace(t *testing.T) {
 	root := t.TempDir()
 	workspace := maMkdir(t, root, "repo")
 	maMkdir(t, workspace, ".git")
@@ -148,9 +154,9 @@ func TestAssembleDispatchMountInputsRefusesDirectGitWorkspace(t *testing.T) {
 		ProfileID: "default", WorkspaceRoot: workspace,
 		ArtifactRoots: []string{}, ReadonlyMounts: []string{}, DeniedPaths: []string{},
 	}}}
-	assembled, r, err := assembleDispatchMountInputs(dispatchMountHostSnapshot{}, state, false)
-	if err != nil || r == nil || len(assembled.Requests) != 0 {
-		t.Fatalf("direct Git assembly = %+v refusal %+v err %v", assembled, r, err)
+	requests, _, r, err := deriveDispatchMountRequests(state, false)
+	if err != nil || r == nil || len(requests) != 0 {
+		t.Fatalf("direct Git derivation = %+v refusal %+v err %v", requests, r, err)
 	}
 	if r.Code != boundary.CodeRuntimeUnappliable || r.Authority != refusal.AuthorityDeployment {
 		t.Fatalf("direct Git refusal = %+v", r)
@@ -290,5 +296,227 @@ func TestJurisdictionErrorProvenanceDoesNotChargeCandidateForDeploymentFailure(t
 	me = nil
 	if !errors.As(err, &me) || me.CandidateAuthored {
 		t.Fatalf("deployment failure provenance = %#v, must not charge candidate", err)
+	}
+}
+
+// maStubSnapshot installs a hand-built host snapshot for the given
+// Worksources, returning the operator home it fabricates. The real capture is
+// exercised separately; these tests own the plan construction after it.
+func maStubSnapshot(t *testing.T, root string, wsIDs ...string) string {
+	t.Helper()
+	operatorHome := maMkdir(t, root, "operator-home")
+	oldCapture := captureDispatchMountSnapshot
+	captureDispatchMountSnapshot = func(home string, state PrivateDispatchMountState, allowFake bool) (dispatchMountHostSnapshot, error) {
+		snapshot := dispatchMountHostSnapshot{
+			OperatorHome: operatorHome, OwnerUID: os.Getuid(), MCHome: maID(t, home),
+			HomeClassRoots: []boundary.ProtectedID{}, GatewaySecrets: []boundary.ProtectedID{},
+			WorksourceRoots:     map[string]boundary.WorksourceRoots{},
+			GitControls:         map[string][]boundary.ProtectedID{},
+			MissionControlRoots: map[string][]boundary.ProtectedID{},
+			TypedRoots:          map[boundary.TypedKind][]boundary.ProtectedID{},
+			ResolveDeclared: func(path string) (boundary.ProtectedID, error) {
+				return resolveDispatchProtected(path, true)
+			},
+		}
+		for _, id := range wsIDs {
+			snapshot.WorksourceRoots[id] = boundary.WorksourceRoots{
+				Workspace: boundary.ProtectedID{Canonical: "/tmp/" + id},
+			}
+			snapshot.GitControls[id] = []boundary.ProtectedID{}
+			snapshot.MissionControlRoots[id] = []boundary.ProtectedID{
+				{Canonical: "/tmp/" + id + "/.mission-control"},
+			}
+		}
+		return snapshot, nil
+	}
+	t.Cleanup(func() { captureDispatchMountSnapshot = oldCapture })
+	return operatorHome
+}
+
+func maEvidence(t *testing.T, source string) (device, inode string, uid, mode int) {
+	t.Helper()
+	res, err := boundary.ResolveSource(source)
+	if err != nil {
+		t.Fatalf("ResolveSource(%q): %v", source, err)
+	}
+	st, ok := res.Info.Sys().(*syscall.Stat_t)
+	if !ok {
+		t.Fatalf("no Stat_t for %q", source)
+	}
+	return strconv.FormatUint(uint64(st.Dev), 10), strconv.FormatUint(st.Ino, 10),
+		int(st.Uid), int(res.Info.Mode().Perm())
+}
+
+// The replacement for the runtime_unappliable stop: a valid nonempty ordinary
+// profile yields ADR-016 D5's evidence-backed plan carrier instead of a
+// refusal — canonical sources, class-prefixed deterministic destinations,
+// access, and (device,inode,kind,owner,mode) identity, sorted by destination.
+func TestAttestCandidateMountsBuildsEvidencePlan(t *testing.T) {
+	root := t.TempDir()
+	mcHome := maMkdir(t, root, "mc-home")
+	artifact := maMkdir(t, root, "artifact")
+	reference := filepath.Join(root, "reference.md")
+	if err := os.WriteFile(reference, []byte("ref\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	allowlist := fmt.Sprintf("version = 1\n\n[[allow]]\npath = %q\ntarget = \"art\"\naccess = \"rw\"\n"+
+		"\n[[allow]]\npath = %q\ntarget = \"refdoc\"\naccess = \"ro\"\n", artifact, reference)
+	if err := os.WriteFile(filepath.Join(mcHome, "mount-allowlist"), []byte(allowlist), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	maStubSnapshot(t, root, "ws-plan")
+	state := PrivateDispatchMountState{SelectedWorksource: "ws-plan", Worksources: []PrivateDispatchWorksource{{
+		WorksourceID: "ws-plan", Kind: "personal", Status: "active", ProfilePresent: true,
+		ProfileID: "p", WorkspaceRoot: "/tmp/ws-plan",
+		ArtifactRoots: []string{artifact}, ReadonlyMounts: []string{reference}, DeniedPaths: []string{},
+	}}}
+
+	plan, r, err := attestCandidateMounts(mcHome, &preparedCandidate{mountState: state}, false)
+	if err != nil || r != nil {
+		t.Fatalf("attest = refusal %+v err %v, want a plan", r, err)
+	}
+	if plan == nil || plan.Version != 1 || len(plan.Entries) != 2 {
+		t.Fatalf("plan = %+v, want version 1 with two entries", plan)
+	}
+	artDev, artIno, artUID, artMode := maEvidence(t, artifact)
+	artCanonical, _ := boundary.ResolveSource(artifact)
+	want0 := PrivateDispatchMountEntry{
+		LogicalID: "artifact:art", Source: artCanonical.Canonical, Destination: "/workspace/artifacts/art",
+		Kind: "dir", Access: "rw", Device: artDev, Inode: artIno, OwnerUID: artUID, Mode: artMode,
+	}
+	if plan.Entries[0] != want0 {
+		t.Fatalf("artifact entry = %+v, want %+v", plan.Entries[0], want0)
+	}
+	refDev, refIno, refUID, refMode := maEvidence(t, reference)
+	refCanonical, _ := boundary.ResolveSource(reference)
+	want1 := PrivateDispatchMountEntry{
+		LogicalID: "reference:refdoc", Source: refCanonical.Canonical, Destination: "/workspace/references/refdoc",
+		Kind: "file", Access: "ro", Device: refDev, Inode: refIno, OwnerUID: refUID, Mode: refMode,
+	}
+	if plan.Entries[1] != want1 {
+		t.Fatalf("reference entry = %+v, want %+v", plan.Entries[1], want1)
+	}
+}
+
+// Under test-fake routing only, the Phase-1 workspace bind is rerouted
+// through the same carrier: the profile's workspace root authorizes via the
+// allowlist to exactly /workspace/source RW. The same candidate without the
+// fake exception keeps the production repo health stop.
+func TestAttestCandidateMountsFakeLegacyWorkspaceRidesTheCarrier(t *testing.T) {
+	root := t.TempDir()
+	mcHome := maMkdir(t, root, "mc-home")
+	workspace := maMkdir(t, root, "checkout")
+	allowlist := fmt.Sprintf("version = 1\n\n[[allow]]\npath = %q\ntarget = \"source\"\naccess = \"rw\"\n", workspace)
+	if err := os.WriteFile(filepath.Join(mcHome, "mount-allowlist"), []byte(allowlist), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	maStubSnapshot(t, root, "ws-fake")
+	state := PrivateDispatchMountState{SelectedWorksource: "ws-fake", Worksources: []PrivateDispatchWorksource{{
+		WorksourceID: "ws-fake", Kind: "repo", Status: "active", ProfilePresent: true,
+		ProfileID: "default", WorkspaceRoot: workspace,
+		ArtifactRoots: []string{}, ReadonlyMounts: []string{}, DeniedPaths: []string{},
+	}}}
+
+	plan, r, err := attestCandidateMounts(mcHome, &preparedCandidate{mountState: state}, true)
+	if err != nil || r != nil {
+		t.Fatalf("fake-lane attest = refusal %+v err %v, want a plan", r, err)
+	}
+	if len(plan.Entries) != 1 {
+		t.Fatalf("fake-lane plan = %+v, want exactly the workspace entry", plan)
+	}
+	entry := plan.Entries[0]
+	wsCanonical, _ := boundary.ResolveSource(workspace)
+	if entry.Destination != "/workspace/source" || entry.Access != "rw" || entry.Kind != "dir" ||
+		entry.LogicalID != "workspace:source" || entry.Source != wsCanonical.Canonical ||
+		entry.Device == "" || entry.Inode == "" {
+		t.Fatalf("workspace entry = %+v", entry)
+	}
+
+	plan, r, err = attestCandidateMounts(mcHome, &preparedCandidate{mountState: state}, false)
+	if err != nil || r == nil || plan != nil {
+		t.Fatalf("production repo attest = plan %+v refusal %+v err %v, want the health stop", plan, r, err)
+	}
+	if r.Code != boundary.CodeRuntimeUnappliable || r.Authority != refusal.AuthorityDeployment {
+		t.Fatalf("production repo refusal = %+v", r)
+	}
+}
+
+// An absent sandbox profile is deployment configuration the candidate never
+// authored: deployment health, not a per-task confinement block
+// (takeover-review reclassification, 2026-07-16).
+func TestAttestCandidateMountsAbsentProfileIsDeploymentHealth(t *testing.T) {
+	root := t.TempDir()
+	mcHome := maMkdir(t, root, "mc-home")
+	state := PrivateDispatchMountState{SelectedWorksource: "ws-bare", Worksources: []PrivateDispatchWorksource{{
+		WorksourceID: "ws-bare", Kind: "personal", Status: "active", ProfilePresent: false,
+		ArtifactRoots: []string{}, ReadonlyMounts: []string{}, DeniedPaths: []string{},
+	}}}
+	plan, r, err := attestCandidateMounts(mcHome, &preparedCandidate{mountState: state}, false)
+	if err != nil || r == nil || plan != nil {
+		t.Fatalf("absent-profile attest = plan %+v refusal %+v err %v", plan, r, err)
+	}
+	if r.Code != boundary.CodeRuntimeUnappliable || r.Authority != refusal.AuthorityDeployment {
+		t.Fatalf("absent-profile refusal = %+v", r)
+	}
+	if class, cerr := refusal.Classify(*r); cerr != nil || class != refusal.ClassHealth {
+		t.Fatalf("absent-profile classify = %v/%v, want health", class, cerr)
+	}
+}
+
+// A boundary rejection while assembling jurisdiction (a declared
+// runtime-control path failing resolution) is deployment health, never a
+// dispatch protocol error (takeover-review fix, 2026-07-16).
+func TestAttestCandidateMountsAssemblyFailureIsDeploymentHealth(t *testing.T) {
+	root := t.TempDir()
+	mcHome := maMkdir(t, root, "mc-home")
+	artifact := maMkdir(t, root, "artifact")
+	maStubSnapshot(t, root, "own", "other")
+	state := PrivateDispatchMountState{SelectedWorksource: "own", Worksources: []PrivateDispatchWorksource{
+		{WorksourceID: "other", Kind: "personal", Status: "active", ProfilePresent: true,
+			ProfileID: "p2", RuntimeControlDir: "relative/path",
+			ArtifactRoots: []string{}, ReadonlyMounts: []string{}, DeniedPaths: []string{}},
+		{WorksourceID: "own", Kind: "personal", Status: "active", ProfilePresent: true,
+			ProfileID: "p1", ArtifactRoots: []string{artifact}, ReadonlyMounts: []string{}, DeniedPaths: []string{}},
+	}}
+	plan, r, err := attestCandidateMounts(mcHome, &preparedCandidate{mountState: state}, false)
+	if err != nil || r == nil || plan != nil {
+		t.Fatalf("assembly-failure attest = plan %+v refusal %+v err %v, want a health refusal", plan, r, err)
+	}
+	if r.Code != boundary.CodeSourceWrongKind || r.Authority != refusal.AuthorityDeployment {
+		t.Fatalf("assembly-failure refusal = %+v", r)
+	}
+	if class, cerr := refusal.Classify(*r); cerr != nil || class != refusal.ClassHealth {
+		t.Fatalf("assembly-failure classify = %v/%v, want health", class, cerr)
+	}
+}
+
+// The carrier is byte-bounded at attest, BEFORE any claim: the committed
+// spawn effect embeds the plan and must survive the broker's 64 KiB result
+// cap, so an oversized plan refuses health here rather than wedging
+// post-commit (takeover-review finding, 2026-07-16).
+func TestAttestCandidateMountsOversizedPlanFailsHealth(t *testing.T) {
+	root := t.TempDir()
+	mcHome := maMkdir(t, root, "mc-home")
+	bulk := maMkdir(t, root, "bulk")
+	sources := make([]string, 0, 60)
+	for i := 0; i < 60; i++ {
+		name := fmt.Sprintf("%s%03d", strings.Repeat("a", 237), i)
+		sources = append(sources, maMkdir(t, bulk, name))
+	}
+	allowlist := fmt.Sprintf("version = 1\n\n[[allow]]\npath = %q\ntarget = \"bulk\"\naccess = \"ro\"\n", bulk)
+	if err := os.WriteFile(filepath.Join(mcHome, "mount-allowlist"), []byte(allowlist), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	maStubSnapshot(t, root, "ws-bulk")
+	state := PrivateDispatchMountState{SelectedWorksource: "ws-bulk", Worksources: []PrivateDispatchWorksource{{
+		WorksourceID: "ws-bulk", Kind: "personal", Status: "active", ProfilePresent: true,
+		ProfileID: "p", ArtifactRoots: []string{}, ReadonlyMounts: sources, DeniedPaths: []string{},
+	}}}
+	plan, r, err := attestCandidateMounts(mcHome, &preparedCandidate{mountState: state}, false)
+	if err != nil || r == nil || plan != nil {
+		t.Fatalf("oversized attest = plan %+v refusal %+v err %v, want the byte-bound refusal", plan, r, err)
+	}
+	if r.Code != boundary.CodeRuntimeUnappliable || r.Authority != refusal.AuthorityDeployment {
+		t.Fatalf("oversized refusal = %+v", r)
 	}
 }
