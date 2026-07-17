@@ -20,6 +20,10 @@ func loadDispatchMountState(ctx context.Context, q Q, sp *dispatch.Spawn, rec di
 		for _, task := range rec.Tasks {
 			if task.ID == *sp.SubjectID {
 				state.SelectedWorksource = task.Worksource
+				if task.InitiativeID != nil {
+					initiativeID := *task.InitiativeID
+					state.SubjectInitiativeID = &initiativeID
+				}
 				break
 			}
 		}

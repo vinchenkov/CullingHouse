@@ -1,6 +1,7 @@
 package verbs
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -169,6 +170,44 @@ func TestDeriveDispatchMountRequestsRefusesDirectGitWorkspace(t *testing.T) {
 	encoded, err := detail.Canonical()
 	if err != nil || strings.Contains(string(encoded), workspace) {
 		t.Fatalf("sanitized refusal detail = %s err %v", encoded, err)
+	}
+}
+
+func TestDeriveDispatchMountRequestsRefusesInitiativeChildStandaloneTable(t *testing.T) {
+	root := t.TempDir()
+	workspace := maMkdir(t, root, "repo")
+	initiativeID := int64(9)
+	taskID := int64(7)
+	state := PrivateDispatchMountState{
+		SelectedWorksource:  "repo",
+		SubjectInitiativeID: &initiativeID,
+		Worksources: []PrivateDispatchWorksource{{
+			WorksourceID: "repo", Kind: "repo", Status: "active", ProfilePresent: true,
+			ProfileID: "default", WorkspaceRoot: workspace,
+			ArtifactRoots: []string{}, ReadonlyMounts: []string{}, DeniedPaths: []string{},
+		}},
+	}
+	requests, _, r, err := deriveDispatchMountRequests(state, "worker", &taskID, false)
+	if err != nil || r == nil || len(requests) != 0 {
+		t.Fatalf("initiative-child derivation = %+v refusal %+v err %v", requests, r, err)
+	}
+	if r.Code != boundary.CodeRuntimeUnappliable || r.Authority != refusal.AuthorityDeployment {
+		t.Fatalf("initiative-child refusal = %+v", r)
+	}
+}
+
+func TestLoadDispatchMountStateFreezesInitiativeChildIdentity(t *testing.T) {
+	db := dvSpine(t)
+	initiativeID := int64(9)
+	taskID := int64(7)
+	state, err := loadDispatchMountState(context.Background(), db, &dispatch.Spawn{SubjectID: &taskID}, dispatch.Records{
+		Tasks: []dispatch.Task{{ID: taskID, Worksource: "ws-test", InitiativeID: &initiativeID}},
+	})
+	if err != nil {
+		t.Fatalf("loadDispatchMountState: %v", err)
+	}
+	if state.SubjectInitiativeID == nil || *state.SubjectInitiativeID != initiativeID {
+		t.Fatalf("subject initiative = %v, want %d", state.SubjectInitiativeID, initiativeID)
 	}
 }
 

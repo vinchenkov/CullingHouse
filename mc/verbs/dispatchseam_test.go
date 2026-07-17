@@ -129,7 +129,7 @@ func dsGoldenPrepareJSON() string {
 			`"prime_through_seq":7,"prime_row_count":3,"resume_owed":0,"resume_mode":null,` +
 			`"resume_prime_through_seq":null,"resume_prime_row_count":null,` +
 			`"binding":"claude","input_seq":4}]`,
-		`"mount_state":{"selected_worksource":"ws-test","worksources":[{` +
+		`"mount_state":{"selected_worksource":"ws-test","subject_initiative_id":null,"worksources":[{` +
 			`"worksource_id":"ws-test","kind":"repo","status":"active",` +
 			`"profile_present":true,"profile_id":"default","workspace_root":"/srv/ws-test",` +
 			`"artifact_roots":["/srv/artifacts"],"readonly_mounts":["/srv/reference"],` +

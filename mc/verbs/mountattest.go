@@ -88,6 +88,18 @@ func selectedProfileMountRequests(state PrivateDispatchMountState) ([]mountReque
 // the sealed views Packager/Refiner read) refuses health rather than being
 // guessed.
 func deriveDispatchMountRequests(state PrivateDispatchMountState, role string, subjectID *int64, allowLegacyFakeWorkspace bool) ([]mountRequest, PrivateDispatchWorksource, *refusal.Refusal, error) {
+	if state.SubjectInitiativeID != nil && !allowLegacyFakeWorkspace {
+		// ADR-017 D6 explicitly excludes initiative children from the
+		// standalone-task table while their shared-worktree representation is
+		// parked. Preserve that fact in the prepared mount projection so a
+		// child Worker cannot be mistaken for an ordinary task merely because
+		// both carry a positive subject id.
+		r, err := refusalForMountError(&boundary.MountError{
+			Code: boundary.CodeRuntimeUnappliable,
+			Msg:  "initiative children have no authorized mount representation (ADR-017 D6)",
+		}, refusal.AuthorityDeployment, nil)
+		return nil, PrivateDispatchWorksource{}, &r, err
+	}
 	requests, selected, r, err := selectedProfileMountRequests(state)
 	if err != nil || r != nil {
 		return nil, selected, r, err

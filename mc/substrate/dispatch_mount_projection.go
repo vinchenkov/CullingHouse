@@ -15,8 +15,9 @@ import (
 const MaxDispatchMountProjectionBytes = 256 * 1024
 
 type DispatchMountState struct {
-	SelectedWorksource string               `json:"selected_worksource"`
-	Worksources        []DispatchWorksource `json:"worksources"`
+	SelectedWorksource  string               `json:"selected_worksource"`
+	SubjectInitiativeID *int64               `json:"subject_initiative_id"`
+	Worksources         []DispatchWorksource `json:"worksources"`
 }
 
 type DispatchWorksource struct {

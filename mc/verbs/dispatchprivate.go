@@ -463,6 +463,9 @@ func validatePrivateMountState(state PrivateDispatchMountState) error {
 	if state.Worksources == nil {
 		return Domainf("dispatch: private mount-state Worksources must be explicit")
 	}
+	if state.SubjectInitiativeID != nil && *state.SubjectInitiativeID <= 0 {
+		return Domainf("dispatch: private mount-state initiative id must be positive")
+	}
 	projection, err := json.Marshal(state.Worksources)
 	if err != nil || len(projection) > substrate.MaxDispatchMountProjectionBytes {
 		return Domainf("dispatch: private Worksource projection exceeds its admitted byte budget")
