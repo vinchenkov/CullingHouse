@@ -8,8 +8,10 @@ package verbs
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"mc/boundary"
@@ -172,5 +174,23 @@ func TestMountRecheckRefusesUntrustedOrMalformedPlanFile(t *testing.T) {
 				t.Fatal("malformed plan file passed the recheck")
 			}
 		})
+	}
+}
+
+// The recheck's own byte budget: a structurally valid plan file past 32 KiB
+// refuses before any per-entry work, whatever the resident wrote.
+func TestMountRecheckRefusesOversizedPlanFile(t *testing.T) {
+	root := t.TempDir()
+	source := maMkdir(t, root, "artifact")
+	entries := make([]PrivateDispatchMountEntry, 0, 9)
+	for i := 0; i < 9; i++ {
+		entry := mrEntry(t, source,
+			fmt.Sprintf("/workspace/artifacts/bulk-%d", i),
+			fmt.Sprintf("artifact:bulk-%d:%s", i, strings.Repeat("x", 4000)), "rw")
+		entries = append(entries, entry)
+	}
+	path := mrWritePlan(t, root, entries)
+	if _, err := MountRecheck(path); err == nil {
+		t.Fatal("an oversized plan file passed the recheck")
 	}
 }

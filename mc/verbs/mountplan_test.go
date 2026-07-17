@@ -381,3 +381,43 @@ func TestPlanMountsBoundsRequests(t *testing.T) {
 		t.Fatalf("a plan over 256 mounts must refuse at the frame bound (ADR-016:158-163)")
 	}
 }
+
+// The destination sort is load-bearing determinism (ADR-016 D2: semantically
+// unordered arrays sort by their declared key): allowlist targets that invert
+// the request order must still produce ascending destinations, or the
+// helper's order validator wedges a valid operator config as a protocol
+// error every tick.
+func TestPlanMountsSortsEntriesByDestinationNotRequestOrder(t *testing.T) {
+	dir := t.TempDir()
+	zetaRoot := filepath.Join(dir, "first")
+	alphaRoot := filepath.Join(dir, "second")
+	for _, p := range []string{zetaRoot, alphaRoot} {
+		if err := os.MkdirAll(p, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	allowlistTOML := "version = 1\n\n[[allow]]\npath = \"" + zetaRoot + "\"\ntarget = \"zeta\"\naccess = \"rw\"\n" +
+		"\n[[allow]]\npath = \"" + alphaRoot + "\"\ntarget = \"alpha\"\naccess = \"rw\"\n"
+	path := filepath.Join(dir, "mount-allowlist.toml")
+	if err := os.WriteFile(path, []byte(allowlistTOML), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	home := filepath.Join(dir, "home")
+	if err := os.MkdirAll(home, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	j, err := boundary.ResolveJurisdiction(boundary.JurisdictionInput{Home: home}, os.Getuid())
+	if err != nil {
+		t.Fatal(err)
+	}
+	entries, r, err := planMounts([]mountRequest{
+		{Source: zetaRoot, Access: boundary.AccessRW, Authority: refusal.AuthorityCandidate, Class: classArtifact},
+		{Source: alphaRoot, Access: boundary.AccessRW, Authority: refusal.AuthorityCandidate, Class: classArtifact},
+	}, mountPlanInputs{AllowlistPath: path, OwnerUID: os.Getuid(), Blocked: boundary.BlockPolicy{}, Jurisdiction: j})
+	if err != nil || r != nil || len(entries) != 2 {
+		t.Fatalf("planMounts = (%v, %+v, %v)", entries, r, err)
+	}
+	if entries[0].Destination != "/workspace/artifacts/alpha" || entries[1].Destination != "/workspace/artifacts/zeta" {
+		t.Fatalf("entries not sorted by destination: %q, %q", entries[0].Destination, entries[1].Destination)
+	}
+}

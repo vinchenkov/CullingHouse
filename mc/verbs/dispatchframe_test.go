@@ -550,3 +550,35 @@ func TestDispatchTokensAreRequestScoped(t *testing.T) {
 		t.Fatalf("two request ids produced the same preparation token")
 	}
 }
+
+// A deployment-owned mount health arm crossing the whole commit seam: an
+// absent sandbox profile refuses health with D4's four-part invariant — zero
+// Runs, free lock, no spawn, and the subject task never blocked (an absent
+// profile is deployment config, not candidate policy).
+func TestDispatchAbsentProfileHealthArmIsInertAtCommit(t *testing.T) {
+	db := dvSpine(t)
+	dvInsertTask(t, db, dvTask(1, dispatch.ScopeTask, dispatch.StatusProposed, 2))
+	dvExec(t, db, `UPDATE worksources SET sandbox_profile=NULL WHERE id='ws-test'`)
+
+	prepared := dfPrepare(t, db, dfRequestID)
+	attested, err := dispatchAttest(os.Getenv("MC_HOME"), prepared)
+	if err != nil {
+		t.Fatalf("dispatchAttest: %v", err)
+	}
+	if attested.refusal == nil || attested.refusal.Code != "mount.runtime_unappliable" {
+		t.Fatalf("absent-profile attestation = %+v", attested.refusal)
+	}
+	eff := dfCommit(t, db, prepared, attested)
+	if eff["consequence"] != "health" {
+		t.Fatalf("absent-profile effect = %v, want a health consequence", eff)
+	}
+	if n := dfInt(t, db, `SELECT COUNT(*) FROM runs`); n != 0 {
+		t.Fatalf("absent-profile health arm opened %d runs", n)
+	}
+	if got := dfStr(t, db, `SELECT COALESCE(run_id,'') FROM lock WHERE id=1`); got != "" {
+		t.Fatalf("absent-profile health arm holds the lock as %q", got)
+	}
+	if n := dfInt(t, db, `SELECT COUNT(*) FROM tasks WHERE id=1 AND blocked=1`); n != 0 {
+		t.Fatalf("absent-profile health arm blocked the subject task")
+	}
+}

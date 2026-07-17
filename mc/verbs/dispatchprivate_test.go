@@ -369,6 +369,28 @@ func TestValidatePrivateAttestationMountPlanRules(t *testing.T) {
 		"duplicate_destinations": func(p *PrivateDispatchMountPlan) {
 			p.Entries = append(p.Entries, entry)
 		},
+		"colon_destination": func(p *PrivateDispatchMountPlan) { p.Entries[0].Destination = "/workspace/a:b" },
+		"destination_outside_workspace": func(p *PrivateDispatchMountPlan) {
+			p.Entries[0].Destination = "/mc/session"
+			p.Entries[0].LogicalID = "artifact:session"
+		},
+		"duplicate_logical_ids": func(p *PrivateDispatchMountPlan) {
+			second := entry
+			second.Destination = "/workspace/artifacts/other"
+			p.Entries = append([]PrivateDispatchMountEntry{second}, p.Entries...)
+		},
+		"oversized_plan_bytes": func(p *PrivateDispatchMountPlan) {
+			// Structurally valid and honestly sorted, but past the 32 KiB
+			// byte budget: the helper's own bound must refuse it even though
+			// the producer bound would never have emitted it.
+			p.Entries = nil
+			for i := 0; i < 9; i++ {
+				huge := entry
+				huge.Destination = fmt.Sprintf("/workspace/artifacts/bulk-%d", i)
+				huge.LogicalID = fmt.Sprintf("artifact:bulk-%d:%s", i, strings.Repeat("x", 4000))
+				p.Entries = append(p.Entries, huge)
+			}
+		},
 	}
 	for name, mutate := range mutations {
 		t.Run(name, func(t *testing.T) {

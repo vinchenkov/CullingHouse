@@ -316,15 +316,26 @@ func validatePrivateMountPlan(plan *PrivateDispatchMountPlan) error {
 		return Domainf("dispatch: private mount plan exceeds its byte budget")
 	}
 	prior := ""
+	logicalIDs := map[string]bool{}
 	for i, e := range plan.Entries {
 		if !validStructuralText(e.LogicalID, maxPrivateScalarBytes) ||
 			!validStructuralText(e.Source, maxPrivateScalarBytes) ||
 			!validStructuralText(e.Destination, maxPrivateScalarBytes) {
 			return Domainf("dispatch: private mount entry %d text is invalid", i)
 		}
-		if !strings.HasPrefix(e.Source, "/") || !strings.HasPrefix(e.Destination, "/") ||
-			path.Clean(e.Destination) != e.Destination || strings.Contains(e.Source, ":") {
+		if logicalIDs[e.LogicalID] {
+			return Domainf("dispatch: private mount logical ids must be unique (ADR-016 D2)")
+		}
+		logicalIDs[e.LogicalID] = true
+		if !strings.HasPrefix(e.Source, "/") || path.Clean(e.Destination) != e.Destination ||
+			strings.Contains(e.Source, ":") || strings.Contains(e.Destination, ":") {
 			return Domainf("dispatch: private mount entry %d path shape is invalid", i)
+		}
+		// Ordinary plan destinations live only under the derived /workspace/
+		// namespace: the runtime/system planes (/mc, /app/src, /home/agent,
+		// /etc) are never plan-addressable, whatever the broker claims.
+		if !strings.HasPrefix(e.Destination, "/workspace/") {
+			return Domainf("dispatch: private mount entry %d destination is outside the ordinary namespace", i)
 		}
 		if e.Kind != "dir" && e.Kind != "file" {
 			return Domainf("dispatch: private mount entry %d kind is invalid", i)
