@@ -1,0 +1,126 @@
+import { chmod, lstat, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
+import { afterEach, describe, expect, test } from "bun:test";
+import { precreateTaskSkeleton, type PathIdentity } from "./task-skeleton";
+
+const homes: string[] = [];
+
+afterEach(async () => {
+  for (const path of homes.splice(0)) {
+    await chmod(join(path, "workspace", ".mission-control", "tasks", "task-7"), 0o700).catch(() => {});
+    await rm(path, { recursive: true, force: true });
+  }
+});
+
+async function fixture(): Promise<{ workspace: string; tasks: string; identity: PathIdentity }> {
+  const root = await realpath(await mkdtemp(join(tmpdir(), "mc-task-skeleton-")));
+  homes.push(root);
+  const workspace = join(root, "workspace");
+  const tasks = join(workspace, ".mission-control", "tasks");
+  await mkdir(tasks, { recursive: true, mode: 0o700 });
+  const canonical = await realpath(tasks);
+  const stat = await lstat(canonical, { bigint: true });
+  return {
+    workspace,
+    tasks,
+    identity: {
+      canonical,
+      device: stat.dev.toString(10),
+      inode: stat.ino.toString(10),
+      owner_uid: Number(stat.uid),
+    },
+  };
+}
+
+describe("resident task-skeleton precreate (ADR-017:437-441)", () => {
+  test("creates children first, fixes the parent 0555, and returns its registered identity", async () => {
+    const f = await fixture();
+    const result = await precreateTaskSkeleton({
+      workspace_root: f.workspace,
+      task_id: 7,
+      child_mode: 0o700,
+      tasks_parent: f.identity,
+    });
+    const taskRoot = join(f.tasks, "task-7");
+    expect(result.canonical).toBe(taskRoot);
+    const rootStat = await lstat(taskRoot, { bigint: true });
+    expect(Number(rootStat.mode & 0o777n)).toBe(0o555);
+    expect(result.device).toBe(rootStat.dev.toString(10));
+    expect(result.inode).toBe(rootStat.ino.toString(10));
+    for (const child of ["source", "git"]) {
+      const stat = await lstat(join(taskRoot, child), { bigint: true });
+      expect(stat.isDirectory()).toBe(true);
+      expect(Number(stat.mode & 0o777n)).toBe(0o700);
+    }
+  });
+
+  test("refuses an existing task identity without touching its bytes", async () => {
+    const f = await fixture();
+    const taskRoot = join(f.tasks, "task-7");
+    await mkdir(taskRoot, { mode: 0o700 });
+    const sentinel = join(taskRoot, "operator.txt");
+    await writeFile(sentinel, "keep me\n", { mode: 0o600 });
+    await expect(precreateTaskSkeleton({
+      workspace_root: f.workspace,
+      task_id: 7,
+      child_mode: 0o700,
+      tasks_parent: f.identity,
+    })).rejects.toThrow("already exists");
+    expect(await readFile(sentinel, "utf8")).toBe("keep me\n");
+  });
+
+  test("refuses parent identity drift before creating task bytes", async () => {
+    const f = await fixture();
+    const drifted = { ...f.identity, inode: (BigInt(f.identity.inode) + 1n).toString(10) };
+    await expect(precreateTaskSkeleton({
+      workspace_root: f.workspace,
+      task_id: 7,
+      child_mode: 0o700,
+      tasks_parent: drifted,
+    })).rejects.toThrow("parent identity changed");
+    await expect(lstat(join(f.tasks, "task-7"))).rejects.toThrow();
+  });
+
+  test("refuses bytes raced into a child before the empty skeleton is registered", async () => {
+    const f = await fixture();
+    const injected = join(f.tasks, "task-7", "source", "injected");
+    const inject = async (): Promise<void> => {
+      for (;;) {
+        try {
+          await writeFile(injected, "not empty\n", { mode: 0o600 });
+          return;
+        } catch (err) {
+          if ((err as { code?: string }).code !== "ENOENT") throw err;
+        }
+      }
+    };
+    await expect(Promise.all([
+      precreateTaskSkeleton({
+        workspace_root: f.workspace,
+        task_id: 7,
+        child_mode: 0o700,
+        tasks_parent: f.identity,
+      }),
+      inject(),
+    ])).rejects.toThrow("child source changed or is not empty");
+  });
+
+  test("refuses noncanonical ids and a child mode without owner rwx", async () => {
+    const f = await fixture();
+    for (const task_id of [0, -1, 1.5]) {
+      await expect(precreateTaskSkeleton({
+        workspace_root: f.workspace,
+        task_id,
+        child_mode: 0o700,
+        tasks_parent: f.identity,
+      })).rejects.toThrow("task_id");
+    }
+    await expect(precreateTaskSkeleton({
+      workspace_root: f.workspace,
+      task_id: 7,
+      child_mode: 0o500,
+      tasks_parent: f.identity,
+    })).rejects.toThrow("child_mode");
+  });
+});
