@@ -19,6 +19,9 @@ type closedPrivateTestFrame struct {
 }
 
 func TestPrivateHelperSelfDeadlineTerminatesContainerSideProcess(t *testing.T) {
+	if os.Getenv("MC_TEST_PRIVATE_INSTANT_EXIT") == "1" {
+		os.Exit(0)
+	}
 	if os.Getenv("MC_TEST_PRIVATE_SELF_DEADLINE") == "1" {
 		reader, writer, err := os.Pipe()
 		if err != nil {
@@ -29,6 +32,7 @@ func TestPrivateHelperSelfDeadlineTerminatesContainerSideProcess(t *testing.T) {
 		os.Exit(runPrivateDispatchInScope("__dispatch-prepare", time.Now().Add(20*time.Millisecond), reader, os.Stdout, os.Stderr))
 	}
 
+	startup := privateHelperTestStartup(t, "TestPrivateHelperSelfDeadlineTerminatesContainerSideProcess")
 	cmd := exec.Command(os.Args[0], "-test.run=^TestPrivateHelperSelfDeadlineTerminatesContainerSideProcess$")
 	cmd.Env = append(os.Environ(), "MC_TEST_PRIVATE_SELF_DEADLINE=1")
 	start := time.Now()
@@ -37,12 +41,15 @@ func TestPrivateHelperSelfDeadlineTerminatesContainerSideProcess(t *testing.T) {
 	if !errors.As(err, &exit) || exit.ExitCode() != privateHelperTimeoutExitCode {
 		t.Fatalf("container-side helper exit = %v, want code %d", err, privateHelperTimeoutExitCode)
 	}
-	if elapsed := time.Since(start); elapsed > 500*time.Millisecond {
-		t.Fatalf("container-side self-deadline took %s", elapsed)
+	if elapsed := time.Since(start); elapsed > startup+250*time.Millisecond {
+		t.Fatalf("container-side self-deadline took %s, startup baseline %s", elapsed, startup)
 	}
 }
 
 func TestPrivateHelperAbsoluteDeadlineIncludesBrokerStartup(t *testing.T) {
+	if os.Getenv("MC_TEST_PRIVATE_INSTANT_EXIT") == "1" {
+		os.Exit(0)
+	}
 	if raw := os.Getenv("MC_TEST_PRIVATE_ABSOLUTE_DEADLINE"); raw != "" {
 		millis, err := strconv.ParseInt(raw, 10, 64)
 		if err != nil {
@@ -57,6 +64,7 @@ func TestPrivateHelperAbsoluteDeadlineIncludesBrokerStartup(t *testing.T) {
 		os.Exit(runPrivateDispatchInScope("__dispatch-commit", time.UnixMilli(millis), reader, os.Stdout, os.Stderr))
 	}
 
+	startup := privateHelperTestStartup(t, "TestPrivateHelperAbsoluteDeadlineIncludesBrokerStartup")
 	deadline := time.Now().Add(20 * time.Millisecond).UnixMilli()
 	time.Sleep(40 * time.Millisecond) // stand in for Docker startup latency
 	cmd := exec.Command(os.Args[0], "-test.run=^TestPrivateHelperAbsoluteDeadlineIncludesBrokerStartup$")
@@ -67,9 +75,24 @@ func TestPrivateHelperAbsoluteDeadlineIncludesBrokerStartup(t *testing.T) {
 	if !errors.As(err, &exit) || exit.ExitCode() != privateHelperTimeoutExitCode {
 		t.Fatalf("late-starting helper exit = %v, want code %d", err, privateHelperTimeoutExitCode)
 	}
-	if elapsed := time.Since(start); elapsed > 500*time.Millisecond {
-		t.Fatalf("expired absolute deadline took %s after helper startup", elapsed)
+	if elapsed := time.Since(start); elapsed > startup+250*time.Millisecond {
+		t.Fatalf("expired absolute deadline took %s after helper startup, baseline %s", elapsed, startup)
 	}
+}
+
+// privateHelperTestStartup removes Go test-binary process startup from the
+// deadline assertion. The production requirement is that the in-scope helper
+// observes its absolute deadline promptly once it starts; test-harness startup
+// is outside that process and is highly variable on macOS under load.
+func privateHelperTestStartup(t *testing.T, testName string) time.Duration {
+	t.Helper()
+	cmd := exec.Command(os.Args[0], "-test.run=^"+testName+"$")
+	cmd.Env = append(os.Environ(), "MC_TEST_PRIVATE_INSTANT_EXIT=1")
+	start := time.Now()
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("startup baseline failed: %v", err)
+	}
+	return time.Since(start)
 }
 
 func TestPrivateHelperNoProgressDeadline(t *testing.T) {

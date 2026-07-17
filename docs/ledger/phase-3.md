@@ -991,3 +991,23 @@ runs: `TestPrivateHelperSelfDeadlineTerminatesContainerSideProcess` and
 timeout exit code. The four non-mc lanes passed. Preserve the red state and
 diagnose that unrelated test/process-start bound before committing; do not
 weaken the setup receipt fence to route around it.
+
+## 2026-07-17 — helper deadline tests fence helper time, not Go test startup
+
+The two deadline tests were red because their fixed 500 ms outer wall-clock
+limit included launching a fresh Go test binary, which takes roughly 550–660 ms
+on this Mac under current load. The child still returned the required timeout
+exit code; the failure never demonstrated a late in-scope deadline.
+
+Each test now first measures the same test-binary's immediate-exit startup,
+then permits only 250 ms beyond that baseline for the helper process. This
+keeps the asserted property at the correct seam: once the helper is executing,
+an already-expired or self-expiring absolute deadline terminates promptly. The
+two focused tests passed five consecutive runs.
+
+NEXT: implement the fixed first-task setup action red-first. It must consume
+only the durable exact root receipt, populate the pinned reachable closure and
+relative Git controls, then inspect/recheck the result before the 15 task mount
+rows can enter an agent plan. Keep accepted seals, downstream reconciliation,
+disposable/committed projections, structured Engine-API binds, and launchd in
+their named later slices.
