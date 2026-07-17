@@ -71,25 +71,31 @@ type mountRequest struct {
 // captured host identity evidence). Device and inode are decimal strings so a
 // JavaScript consumer can carry the plan without 2^53 truncation; the resident
 // treats them as opaque and only the host recheck compares them.
+//
+// Fields are declared in alphabetical json-key order ON PURPOSE: the plan
+// rides inside the spawn effect, whose D2 exact-replay path round-trips
+// through map[string]any (alphabetical re-encoding). Any other declared order
+// breaks byte-for-byte lost-response replay.
 type PrivateDispatchMountEntry struct {
-	LogicalID   string `json:"logical_id"`
-	Source      string `json:"source"`
-	Destination string `json:"destination"`
-	Kind        string `json:"kind"`
 	Access      string `json:"access"`
+	Destination string `json:"destination"`
 	Device      string `json:"device"`
 	Inode       string `json:"inode"`
-	OwnerUID    int    `json:"owner_uid"`
+	Kind        string `json:"kind"`
+	LogicalID   string `json:"logical_id"`
 	Mode        int    `json:"mode"`
+	OwnerUID    int    `json:"owner_uid"`
+	Source      string `json:"source"`
 }
 
 // PrivateDispatchMountPlan is ADR-016 D5's bounded authorization carrier: the
 // complete validated plan the attestation and the committed spawn effect
 // carry, and the only mount authority the resident may consume. Entries are
 // sorted by destination (the declared key of a semantically unordered set).
+// The alphabetical field order is load-bearing — see the entry type.
 type PrivateDispatchMountPlan struct {
-	Version int                         `json:"version"`
 	Entries []PrivateDispatchMountEntry `json:"entries"`
+	Version int                         `json:"version"`
 }
 
 type mountPlanInputs struct {

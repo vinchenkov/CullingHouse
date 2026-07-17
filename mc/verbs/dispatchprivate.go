@@ -9,8 +9,11 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"path"
+	"strings"
 	"unicode/utf8"
 
+	"mc/boundary"
 	"mc/dispatch"
 	"mc/refusal"
 	"mc/routing"
@@ -92,10 +95,11 @@ type PrivateDispatchRefusal struct {
 }
 
 type PrivateDispatchAttestation struct {
-	RoutingDigest string                  `json:"routing_digest"`
-	Harness       string                  `json:"harness"`
-	Binding       string                  `json:"binding"`
-	Refusal       *PrivateDispatchRefusal `json:"refusal"`
+	RoutingDigest string                    `json:"routing_digest"`
+	Harness       string                    `json:"harness"`
+	Binding       string                    `json:"binding"`
+	MountPlan     *PrivateDispatchMountPlan `json:"mount_plan"`
+	Refusal       *PrivateDispatchRefusal   `json:"refusal"`
 }
 
 type PrivateDispatchCommitRequest struct {
@@ -205,6 +209,7 @@ func canonicalPrivateAttestation(attested attestedDispatch) PrivateDispatchAttes
 	frame := PrivateDispatchAttestation{
 		RoutingDigest: attested.routingDigest,
 		Harness:       attested.route.Harness, Binding: attested.route.Binding,
+		MountPlan: attested.mountPlan,
 	}
 	if attested.refusal != nil {
 		frame.Refusal = &PrivateDispatchRefusal{
@@ -221,6 +226,7 @@ func attestedFromPrivate(frame PrivateDispatchAttestation, deploymentUUID string
 		deploymentUUID: deploymentUUID,
 		route:          routing.Route{Harness: frame.Harness, Binding: frame.Binding},
 		routingDigest:  frame.RoutingDigest,
+		mountPlan:      frame.MountPlan,
 	}
 	if frame.Refusal != nil {
 		r := frame.Refusal
@@ -271,7 +277,7 @@ func DispatchCommitPrivate(ctx context.Context, q Q, req PrivateDispatchCommitRe
 
 func validatePrivateAttestation(a PrivateDispatchAttestation) error {
 	if a.Refusal != nil {
-		if a.RoutingDigest != "" || a.Harness != "" || a.Binding != "" {
+		if a.RoutingDigest != "" || a.Harness != "" || a.Binding != "" || a.MountPlan != nil {
 			return Domainf("dispatch: private attestation carries both a route and refusal")
 		}
 		r := a.Refusal
@@ -290,7 +296,66 @@ func validatePrivateAttestation(a PrivateDispatchAttestation) error {
 	if want, ok := registry[a.Binding]; !ok || want != a.Harness {
 		return Domainf("dispatch: private route attestation is unresolved")
 	}
+	return validatePrivateMountPlan(a.MountPlan)
+}
+
+// validatePrivateMountPlan re-validates the carrier at the helper boundary: a
+// route attestation always carries an explicit plan (possibly empty), whose
+// entries are bounded, evidence-complete, and strictly ordered by unique
+// non-overlapping absolute destinations. The helper never trusts the broker's
+// shape.
+func validatePrivateMountPlan(plan *PrivateDispatchMountPlan) error {
+	if plan == nil || plan.Version != 1 || plan.Entries == nil {
+		return Domainf("dispatch: private route attestation carries no explicit mount plan")
+	}
+	if len(plan.Entries) > maxPlanMounts {
+		return Domainf("dispatch: private mount plan exceeds %d entries (ADR-016 D2)", maxPlanMounts)
+	}
+	body, err := json.Marshal(plan)
+	if err != nil || len(body) > maxDispatchMountPlanBytes {
+		return Domainf("dispatch: private mount plan exceeds its byte budget")
+	}
+	prior := ""
+	for i, e := range plan.Entries {
+		if !validStructuralText(e.LogicalID, maxPrivateScalarBytes) ||
+			!validStructuralText(e.Source, maxPrivateScalarBytes) ||
+			!validStructuralText(e.Destination, maxPrivateScalarBytes) {
+			return Domainf("dispatch: private mount entry %d text is invalid", i)
+		}
+		if !strings.HasPrefix(e.Source, "/") || !strings.HasPrefix(e.Destination, "/") ||
+			path.Clean(e.Destination) != e.Destination || strings.Contains(e.Source, ":") {
+			return Domainf("dispatch: private mount entry %d path shape is invalid", i)
+		}
+		if e.Kind != "dir" && e.Kind != "file" {
+			return Domainf("dispatch: private mount entry %d kind is invalid", i)
+		}
+		if e.Access != string(boundary.AccessRO) && e.Access != string(boundary.AccessRW) {
+			return Domainf("dispatch: private mount entry %d access is invalid", i)
+		}
+		if !validDecimalText(e.Device) || !validDecimalText(e.Inode) {
+			return Domainf("dispatch: private mount entry %d identity evidence is invalid", i)
+		}
+		if e.OwnerUID < 0 || e.Mode < 0 || e.Mode > 0o777 {
+			return Domainf("dispatch: private mount entry %d owner/mode evidence is invalid", i)
+		}
+		if i > 0 && (e.Destination <= prior || strings.HasPrefix(e.Destination, prior+"/")) {
+			return Domainf("dispatch: private mount destinations are unsorted or overlapping")
+		}
+		prior = e.Destination
+	}
 	return nil
+}
+
+func validDecimalText(value string) bool {
+	if value == "" || len(value) > 20 {
+		return false
+	}
+	for _, r := range value {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 func privateCandidateFromPrepared(c *preparedCandidate) *PrivateDispatchCandidate {

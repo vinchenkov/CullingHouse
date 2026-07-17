@@ -12,6 +12,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"strings"
 	"testing"
 	"time"
@@ -176,7 +177,7 @@ func TestDispatchSeamDispatchKeyDerivation(t *testing.T) {
 	wantSpawnJSON := `{"version":1,"request_id":"00112233445566ff","consequence":"spawn",` +
 		`"run_id":"0123456789abcdef","role":"worker","subject_id":7,` +
 		`"routing_digest":"` + strings.Repeat("ab", 32) + `",` +
-		`"harness":"claude-sdk","binding":"minimax","refusal":null}`
+		`"harness":"claude-sdk","binding":"minimax","plan_digest":"","refusal":null}`
 	gotJSON, err := spawnAction.bytes()
 	if err != nil {
 		t.Fatalf("canonical action bytes: %v", err)
@@ -200,6 +201,39 @@ func TestDispatchSeamDispatchKeyDerivation(t *testing.T) {
 	}
 }
 
+// plan_digest = SHA256("MC-DISPATCH-PLAN-V1\x00" || canonical_plan), hex —
+// the canonical plan bytes are pinned here because the effect's D2 replay
+// path round-trips maps alphabetically, so the declared field order must be
+// alphabetical and must never drift.
+func TestDispatchSeamMountPlanDigestDerivation(t *testing.T) {
+	plan := &PrivateDispatchMountPlan{Version: 1, Entries: []PrivateDispatchMountEntry{{
+		Access: "rw", Destination: "/workspace/artifacts/art", Device: "42", Inode: "7",
+		Kind: "dir", LogicalID: "artifact:art", Mode: 448, OwnerUID: 501, Source: "/srv/artifact",
+	}}}
+	wantJSON := `{"entries":[{"access":"rw","destination":"/workspace/artifacts/art",` +
+		`"device":"42","inode":"7","kind":"dir","logical_id":"artifact:art",` +
+		`"mode":448,"owner_uid":501,"source":"/srv/artifact"}],"version":1}`
+	gotJSON, err := json.Marshal(plan)
+	if err != nil {
+		t.Fatalf("canonical plan bytes: %v", err)
+	}
+	if string(gotJSON) != wantJSON {
+		t.Fatalf("canonical plan bytes drifted\n got: %s\nwant: %s", gotJSON, wantJSON)
+	}
+	sum := sha256.Sum256(append([]byte("MC-DISPATCH-PLAN-V1\x00"), gotJSON...))
+	want := hex.EncodeToString(sum[:])
+	got, err := mountPlanDigest(plan)
+	if err != nil {
+		t.Fatalf("mountPlanDigest: %v", err)
+	}
+	if got != want {
+		t.Fatalf("mountPlanDigest = %q, want %q", got, want)
+	}
+	if empty, err := mountPlanDigest(nil); err != nil || empty != "" {
+		t.Fatalf("nil-plan digest = (%q, %v), want the explicit empty string", empty, err)
+	}
+}
+
 func TestDispatchSeamCanonicalActionRefusalVariant(t *testing.T) {
 	idx := 2
 	action := canonicalAction{
@@ -212,7 +246,7 @@ func TestDispatchSeamCanonicalActionRefusalVariant(t *testing.T) {
 	}
 	want := `{"version":1,"request_id":"00112233445566ff","consequence":"refusal",` +
 		`"run_id":"0123456789abcdef","role":"worker","subject_id":null,` +
-		`"routing_digest":"","harness":"","binding":"",` +
+		`"routing_digest":"","harness":"","binding":"","plan_digest":"",` +
 		`"refusal":{"code":"health.routing_invalid","authority":"","field":"routing",` +
 		`"summary":"unparsable","item_index":2}}`
 	got, err := action.bytes()

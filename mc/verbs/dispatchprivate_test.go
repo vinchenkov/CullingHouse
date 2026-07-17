@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"mc/dispatch"
+	"mc/refusal"
 	"mc/substrate"
 )
 
@@ -274,6 +275,16 @@ func TestPrivateCandidateStructuralBounds(t *testing.T) {
 		TimeoutMinutes: 120, GraceMinutes: 30, HeartbeatIntervalS: 30,
 		SpawnGraceS: 300, HardDeadlineMinutes: 480, ConsoleHour: 9,
 		ConsoleMinute: 30, ConsoleTZ: "America/Los_Angeles",
+		MountState: PrivateDispatchMountState{Worksources: []PrivateDispatchWorksource{}},
+	}
+	// The unmutated base must be ACCEPTED, or every subtest below rejects for
+	// the wrong reason and the named validations go unproven (the takeover
+	// review found exactly that: a missing MountState voided all five,
+	// 2026-07-16).
+	accepted := base
+	if _, err := preparedFromCandidate(defaultDispatchProtocolIdentity,
+		"deployment-test", dfRequestID, &accepted); err != nil {
+		t.Fatalf("the unmutated base candidate must be accepted, got: %v", err)
 	}
 	tests := map[string]func(*PrivateDispatchCandidate){
 		"role_control":  func(c *PrivateDispatchCandidate) { c.Role = "worker\n" },
@@ -293,5 +304,192 @@ func TestPrivateCandidateStructuralBounds(t *testing.T) {
 				t.Fatal("malformed candidate projection was accepted")
 			}
 		})
+	}
+}
+
+// The helper never trusts the broker's plan shape: a route attestation must
+// carry an explicit, bounded, evidence-complete plan with strictly ordered
+// unique non-overlapping absolute destinations; a refusal carries none.
+func TestValidatePrivateAttestationMountPlanRules(t *testing.T) {
+	digest := strings.Repeat("ab", 32)
+	entry := PrivateDispatchMountEntry{
+		Access: "rw", Destination: "/workspace/artifacts/art", Device: "42", Inode: "7",
+		Kind: "dir", LogicalID: "artifact:art", Mode: 448, OwnerUID: 501, Source: "/srv/artifact",
+	}
+	route := func(plan *PrivateDispatchMountPlan) PrivateDispatchAttestation {
+		return PrivateDispatchAttestation{
+			RoutingDigest: digest, Harness: "claude-sdk", Binding: "minimax", MountPlan: plan,
+		}
+	}
+	valid := func() *PrivateDispatchMountPlan {
+		return &PrivateDispatchMountPlan{Version: 1, Entries: []PrivateDispatchMountEntry{entry}}
+	}
+	if err := validatePrivateAttestation(route(valid())); err != nil {
+		t.Fatalf("a valid route+plan attestation was rejected: %v", err)
+	}
+	if err := validatePrivateAttestation(route(&PrivateDispatchMountPlan{
+		Version: 1, Entries: []PrivateDispatchMountEntry{},
+	})); err != nil {
+		t.Fatalf("an explicit empty plan was rejected: %v", err)
+	}
+	if err := validatePrivateAttestation(route(nil)); err == nil {
+		t.Fatal("a route attestation without an explicit plan was accepted")
+	}
+	if err := validatePrivateAttestation(PrivateDispatchAttestation{
+		MountPlan: valid(),
+		Refusal:   &PrivateDispatchRefusal{Code: refusal.CodeStale, Field: "none", Summary: "mismatch"},
+	}); err == nil {
+		t.Fatal("a refusal attestation carrying a plan was accepted")
+	}
+
+	mutations := map[string]func(*PrivateDispatchMountPlan){
+		"nil_entries":     func(p *PrivateDispatchMountPlan) { p.Entries = nil },
+		"bad_version":     func(p *PrivateDispatchMountPlan) { p.Version = 2 },
+		"bad_access":      func(p *PrivateDispatchMountPlan) { p.Entries[0].Access = "rwx" },
+		"bad_kind":        func(p *PrivateDispatchMountPlan) { p.Entries[0].Kind = "socket" },
+		"relative_source": func(p *PrivateDispatchMountPlan) { p.Entries[0].Source = "srv/artifact" },
+		"colon_source":    func(p *PrivateDispatchMountPlan) { p.Entries[0].Source = "/srv/a:b" },
+		"unclean_dest":    func(p *PrivateDispatchMountPlan) { p.Entries[0].Destination = "/workspace//art" },
+		"hex_inode":       func(p *PrivateDispatchMountPlan) { p.Entries[0].Inode = "0x2a" },
+		"empty_device":    func(p *PrivateDispatchMountPlan) { p.Entries[0].Device = "" },
+		"mode_over_perm":  func(p *PrivateDispatchMountPlan) { p.Entries[0].Mode = 0o1000 },
+		"negative_owner":  func(p *PrivateDispatchMountPlan) { p.Entries[0].OwnerUID = -1 },
+		"unsorted_destinations": func(p *PrivateDispatchMountPlan) {
+			second := entry
+			second.Destination = "/workspace/artifacts/aaa"
+			second.LogicalID = "artifact:aaa"
+			p.Entries = append(p.Entries, second)
+		},
+		"overlapping_destinations": func(p *PrivateDispatchMountPlan) {
+			second := entry
+			second.Destination = entry.Destination + "/nested"
+			second.LogicalID = "artifact:art/nested"
+			p.Entries = append(p.Entries, second)
+		},
+		"duplicate_destinations": func(p *PrivateDispatchMountPlan) {
+			p.Entries = append(p.Entries, entry)
+		},
+	}
+	for name, mutate := range mutations {
+		t.Run(name, func(t *testing.T) {
+			plan := valid()
+			mutate(plan)
+			if err := validatePrivateAttestation(route(plan)); err == nil {
+				t.Fatal("a malformed plan attestation was accepted")
+			}
+		})
+	}
+}
+
+// The commit-side mount-state drift fence (the reflect.DeepEqual reload in
+// dispatchCommit) — the token structurally cannot catch profile drift because
+// it is rebuilt from the PREPARED state, so this fence alone stands between a
+// stale mount authorization and a claim (takeover-review finding, 2026-07-16).
+func TestPrivateDispatchCommitStalesOnMountStateDrift(t *testing.T) {
+	db := dvSpine(t)
+	dvInsertTask(t, db, dvTask(1, dispatch.ScopeTask, dispatch.StatusProposed, 2))
+	var prepared PrivateDispatchPrepareResponse
+	if err := inTx(db, func(ctx context.Context, q Q) error {
+		var err error
+		prepared, err = DispatchPreparePrivate(ctx, q, privateRequest(dfUUID(t, db)))
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if prepared.Kind != "candidate" {
+		t.Fatalf("prepare = %q, want a candidate", prepared.Kind)
+	}
+	// A concurrent operator edit to the selected profile between prepare and
+	// commit: the reloaded projection must stale the prepared candidate.
+	dvExec(t, db, `UPDATE sandbox_profiles SET readonly_mounts='["/srv/added-after-prepare"]' WHERE id='default'`)
+
+	commit, err := DispatchAttestPrivate(os.Getenv("MC_HOME"), prepared)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var result PrivateDispatchResult
+	if err := inTx(db, func(ctx context.Context, q Q) error {
+		var err error
+		result, err = DispatchCommitPrivate(ctx, q, commit)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	var effect map[string]any
+	if err := json.Unmarshal(result.Result, &effect); err != nil {
+		t.Fatal(err)
+	}
+	if effect["action"] != "refused" || effect["code"] != refusal.CodeStale || effect["consequence"] != "none" {
+		t.Fatalf("mount-state drift effect = %v, want inert preflight.stale", effect)
+	}
+	if got := dfInt(t, db, `SELECT COUNT(*) FROM runs`); got != 0 {
+		t.Fatalf("mount-state drift opened %d runs", got)
+	}
+}
+
+// ADR-016 D5's before-commit repeat, end to end through the private frames: a
+// host chmod on an authorized source between attest and commit changes the
+// plan's mode evidence, so the recheck's canonical attestation differs and
+// the candidate stales — no claim from drifted host authority.
+func TestPrivateDispatchRecheckStalesOnMountEvidenceDrift(t *testing.T) {
+	db := dvSpine(t)
+	dvInsertTask(t, db, dvTask(1, dispatch.ScopeTask, dispatch.StatusProposed, 2))
+	dvExec(t, db, `UPDATE worksources SET kind='personal' WHERE id='ws-test'`)
+	root := t.TempDir()
+	reference := maMkdir(t, root, "reference")
+	dvExec(t, db, `UPDATE sandbox_profiles SET readonly_mounts=? WHERE id='default'`, fmt.Sprintf(`[%q]`, reference))
+	home := os.Getenv("MC_HOME")
+	if err := os.Chmod(home, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	allowlist := fmt.Sprintf("version = 1\n\n[[allow]]\npath = %q\ntarget = \"reference\"\naccess = \"ro\"\n", reference)
+	if err := os.WriteFile(filepath.Join(home, "mount-allowlist"), []byte(allowlist), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	maStubSnapshot(t, root, "ws-test")
+
+	var prepared PrivateDispatchPrepareResponse
+	if err := inTx(db, func(ctx context.Context, q Q) error {
+		var err error
+		prepared, err = DispatchPreparePrivate(ctx, q, privateRequest(dfUUID(t, db)))
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	commit, err := DispatchAttestPrivate(home, prepared)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan := commit.Attestation.MountPlan
+	if plan == nil || len(plan.Entries) != 1 || plan.Entries[0].Mode != 0o700 {
+		t.Fatalf("attested plan = %+v, want the reference entry with its mode evidence", plan)
+	}
+
+	// Host drift inside the released-lock window: same path, same inode, new
+	// mode grant. Docker inspect could never see this; the evidence does.
+	if err := os.Chmod(reference, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	commit = DispatchRecheckPrivate(home, prepared, commit)
+	if commit.Attestation.Refusal == nil || commit.Attestation.Refusal.Code != refusal.CodeStale {
+		t.Fatalf("evidence-drift recheck = %+v, want stale refusal", commit.Attestation)
+	}
+	var result PrivateDispatchResult
+	if err := inTx(db, func(ctx context.Context, q Q) error {
+		var err error
+		result, err = DispatchCommitPrivate(ctx, q, commit)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	var effect map[string]any
+	if err := json.Unmarshal(result.Result, &effect); err != nil {
+		t.Fatal(err)
+	}
+	if effect["action"] != "refused" || effect["consequence"] != "none" {
+		t.Fatalf("evidence-drift effect = %v", effect)
+	}
+	if got := dfInt(t, db, `SELECT COUNT(*) FROM runs`); got != 0 {
+		t.Fatalf("evidence drift opened %d runs", got)
 	}
 }

@@ -40,11 +40,13 @@ import (
 	"mc/substrate"
 )
 
-// Domain separators, exactly ADR-016:130-131 and :238-240. The preparation
-// token participates in dispatch_key derivation in its hex ASCII form.
+// Domain separators, exactly ADR-016:130-131, :150-151, and :238-240. The
+// preparation token participates in dispatch_key derivation in its hex ASCII
+// form; the plan digest participates in the canonical action the same way.
 const (
 	prepareTokenDomain = "MC-DISPATCH-PREPARE-V1\x00"
 	dispatchKeyDomain  = "MC-DISPATCH-ACTION-V1\x00"
+	dispatchPlanDomain = "MC-DISPATCH-PLAN-V1\x00"
 )
 
 type canonicalTask struct {
@@ -170,6 +172,7 @@ type canonicalAction struct {
 	RoutingDigest string            `json:"routing_digest"`
 	Harness       string            `json:"harness"`
 	Binding       string            `json:"binding"`
+	PlanDigest    string            `json:"plan_digest"`
 	Refusal       *canonicalRefusal `json:"refusal"`
 }
 
@@ -184,6 +187,24 @@ func preparationToken(canonical []byte) string {
 	h.Write([]byte(prepareTokenDomain))
 	h.Write(canonical)
 	return hex.EncodeToString(h.Sum(nil))
+}
+
+// mountPlanDigest derives ADR-016 D2's plan digest over the canonical plan
+// bytes: SHA-256 of the domain-separated closed encoding, hex. A spawn action
+// binds it into dispatch_key; a refusal consequence carries no plan and
+// encodes the explicit empty string.
+func mountPlanDigest(plan *PrivateDispatchMountPlan) (string, error) {
+	if plan == nil {
+		return "", nil
+	}
+	body, err := json.Marshal(plan)
+	if err != nil {
+		return "", err
+	}
+	h := sha256.New()
+	h.Write([]byte(dispatchPlanDomain))
+	h.Write(body)
+	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
 // deriveDispatchKey computes the commit-side idempotency fence
@@ -673,6 +694,13 @@ func dispatchCommit(ctx context.Context, q Q, prepared preparedDispatch, atteste
 		return applyAttestedRefusal(ctx, q, prepared.requestID, rcand, *attested.refusal, key)
 	}
 
+	if attested.mountPlan == nil {
+		return nil, Domainf("dispatch: a spawn attestation carries no mount plan (ADR-016 D5)")
+	}
+	planDigest, err := mountPlanDigest(attested.mountPlan)
+	if err != nil {
+		return nil, err
+	}
 	action := canonicalAction{
 		Version:       1,
 		RequestID:     prepared.requestID,
@@ -683,12 +711,13 @@ func dispatchCommit(ctx context.Context, q Q, prepared preparedDispatch, atteste
 		RoutingDigest: attested.routingDigest,
 		Harness:       attested.route.Harness,
 		Binding:       attested.route.Binding,
+		PlanDigest:    planDigest,
 	}
 	key, err := deriveDispatchKey(cand.token, action)
 	if err != nil {
 		return nil, err
 	}
-	effect, err := applySpawn(ctx, q, sel.now, sel.action.Spawn, sel.tun, attested.route, cand.runID)
+	effect, err := applySpawn(ctx, q, sel.now, sel.action.Spawn, sel.tun, attested.route, cand.runID, attested.mountPlan)
 	if err != nil {
 		return nil, err
 	}

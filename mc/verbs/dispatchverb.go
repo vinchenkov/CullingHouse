@@ -422,7 +422,7 @@ func applyAction(ctx context.Context, q Q, now time.Time, a dispatch.Action, tun
 // applySpawn is the claim-and-spawn behind lease.Claim: CAS the free lock +
 // INSERT the runs row (Inv. 4), one transaction. The run id arrives from the
 // prepared candidate — allocated at prepare, canonical only now (ADR-016 D2).
-func applySpawn(ctx context.Context, q Q, now time.Time, sp *dispatch.Spawn, tun tunables, route routing.Route, runID string) (map[string]any, error) {
+func applySpawn(ctx context.Context, q Q, now time.Time, sp *dispatch.Spawn, tun tunables, route routing.Route, runID string, mountPlan *PrivateDispatchMountPlan) (map[string]any, error) {
 	owner := baseRole(string(sp.Role))
 	sessionPath := "sessions/" + runID // MC_HOME-relative (§16.1)
 	brief, err := buildSpawnBrief(ctx, q, sp)
@@ -487,6 +487,7 @@ func applySpawn(ctx context.Context, q Q, now time.Time, sp *dispatch.Spawn, tun
 		"harness":              route.Harness,
 		"model_binding":        route.Binding,
 		"brief":                brief,
+		"mount_plan":           mountPlan,
 	}, nil
 }
 
