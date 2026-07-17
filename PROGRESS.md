@@ -232,6 +232,12 @@ deleted, not struck through. History is in `docs/ledger/`.
 - **S7 sleep drill**: the 30-min Mac sleep mid-lease test needs the operator (an
   agent cannot sleep the machine it runs on). Instructions in
   `spikes/07-launchd-clock/RESULT.md`. All other S7 sub-tests passed.
+- **Uncommitted IMPLEMENTATION-NOTES.md compaction**: the working tree holds an
+  unrecorded 2026-07-17 11:39 rewrite (81 full entries → one-line index +
+  Standing obligations; bodies now only in git history at 0bb0114). No session
+  or ledger entry claims it and §6 calls the file append-only, so agents are
+  leaving it untouched and uncommitted. Decide: yours → say commit it (and
+  whether §6's append-only wording should change); not yours → say restore.
 
 NEXT: First, re-run the adversarial review of the registry/typed-plan slice
 (`git diff 8799370..c24e319 -- mc resident` vs docs/phase3-contract.md §4 and
