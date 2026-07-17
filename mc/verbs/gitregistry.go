@@ -38,6 +38,30 @@ func resolveWorksourceGitControls(workspaceRoot string) ([]boundary.ProtectedID,
 	gitPath := filepath.Join(workspaceRoot, ".git")
 	info, err := os.Lstat(gitPath)
 	if os.IsNotExist(err) {
+		// A bare repository has no .git child: its registered workspace root
+		// is itself the administrative identity. Protect the root whenever any
+		// closed bare-control marker is present; treating it as an ordinary
+		// non-Git workspace would expose objects/refs/config through an
+		// allowlisted descendant. Partial or malformed bare shapes are still
+		// protected here and will fail closed when a later projection/setup
+		// slice tries to consume them.
+		bare, err := workspaceHasBareGitMarker(workspaceRoot)
+		if err != nil {
+			return nil, err
+		}
+		if bare {
+			root, err := resolveDispatchProtected(workspaceRoot, false)
+			if err != nil {
+				return nil, err
+			}
+			if !root.IsDir {
+				return nil, &boundary.MountError{
+					Code: boundary.CodeSourceWrongKind,
+					Msg:  "registered bare Git control root is not a directory",
+				}
+			}
+			return []boundary.ProtectedID{root}, nil
+		}
 		return []boundary.ProtectedID{{Canonical: filepath.Clean(gitPath)}}, nil
 	}
 	if err != nil {
@@ -67,6 +91,24 @@ func resolveWorksourceGitControls(workspaceRoot string) ([]boundary.ProtectedID,
 			Msg:  "registered workspace .git is neither a directory nor a gitdir pointer file",
 		}
 	}
+}
+
+func workspaceHasBareGitMarker(workspaceRoot string) (bool, error) {
+	for _, name := range []string{"HEAD", "objects", "refs"} {
+		_, err := os.Lstat(filepath.Join(workspaceRoot, name))
+		switch {
+		case err == nil:
+			return true, nil
+		case os.IsNotExist(err):
+			continue
+		default:
+			return false, &boundary.MountError{
+				Code: boundary.CodeSourceWrongKind,
+				Msg:  "registered bare Git control marker is unreadable: " + err.Error(),
+			}
+		}
+	}
+	return false, nil
 }
 
 // resolveGitPointerControls chases a linked-worktree checkout: the `.git`

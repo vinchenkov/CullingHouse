@@ -82,6 +82,26 @@ func TestGitRegistryEncodesAbsentControlAsMember(t *testing.T) {
 	}
 }
 
+func TestGitRegistryProtectsBareRepositoryRoot(t *testing.T) {
+	ws := grWorkspace(t)
+	for _, dir := range []string{"objects", "refs"} {
+		if err := os.Mkdir(filepath.Join(ws, dir), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(ws, "HEAD"), []byte("ref: refs/heads/main\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	controls, err := resolveWorksourceGitControls(ws)
+	if err != nil {
+		t.Fatalf("resolve bare repository: %v", err)
+	}
+	if len(controls) != 1 || controls[0].Canonical != ws || !controls[0].Present() || !controls[0].IsDir {
+		t.Fatalf("bare repository root must be the protected control identity, got %+v", controls)
+	}
+}
+
 func TestGitRegistryChasesWorktreePointerInsideWorkspace(t *testing.T) {
 	ws := grWorkspace(t)
 	// A linked-worktree checkout: .git is a regular file whose gitdir points at
