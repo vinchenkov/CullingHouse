@@ -857,3 +857,52 @@ resident's structured binds, and the Docker-lane phase-completion run.
 
 Outgoing NEXT (superseded): build the authoritative Git control/projection
 registry and its typed plan class red-first. Done as above.
+
+## 2026-07-17 — registry re-review and identity-fenced skeleton precreate
+
+Codex session, continuing the standing two-part NEXT. The registry/typed-plan
+range was reviewed by three spawned read-only lenses against phase-3 contract
+§4, ADR-017 D6, ADR-016 D5, and ADR-021 D8-D11, then cross-verified. Six
+confirmed findings were closed red-first; two alleged helper-boundary findings
+were refuted against ADR-016 D1's trusted Darwin-broker boundary:
+
+- aded102 refuses initiative children before standalone-task mount derivation;
+  the token-bound mount state now preserves the task's initiative identity.
+- cbc6244 protects a Worksource root carrying bare-repository markers instead
+  of misregistering its Git control as an absent `.git` member.
+- d0aa1d0 binds the protected-set membership identity into the canonical plan
+  digest, so unchanged mount rows cannot hide jurisdiction drift.
+- e967341 carries fixed Git-control byte digests and empty-directory predicates
+  into both launch rechecks.
+- 1826490 resolves declared protected and denied paths through the exact D8
+  effective-ancestor algorithm, binding anchor identity plus absent suffix.
+- 0733f7b preserves candidate authority when denied-path evidence changes
+  between jurisdiction construction and digesting.
+
+The first skeleton-materialization slice then landed as 31e1127. The resident
+now has an exclusive primitive for creating an absent
+`task-<id>/{source,git}` beneath the exact preclaim tasks-parent identity. It
+creates children before fixing the root 0555, applies only the canary-supplied
+final-uid writable child mode, returns the registered root identity, and never
+repairs or cleans up an unexpected existing/residual path. A spawned verifier
+found that the first version did not recheck child identity and emptiness at
+the end of precreate; a concurrent test proved the gap red, the primitive now
+rechecks both children, and the verifier returned VERIFIED. The full fast lane
+is green: mc, fake-harness 43, agent-runner 13, runner/image 40, resident 57.
+
+The human operator's IMPLEMENTATION-NOTES compaction is recorded in 87ac29a;
+its stale Parked request was therefore removed from live state. No launchd,
+setup closure fill, fixed covers, seal, projection, or Engine-API work occurred
+in this slice.
+
+Outgoing NEXT (superseded): re-run the registry/typed-plan review with spawned
+lenses and verifiers, then precreate the empty identity-fenced task skeleton.
+Done as above.
+
+NEXT: integrate `precreateTaskSkeleton` red-first into the digest-covered
+post-claim effect path. Carry the exact preclaim tasks-parent identity and
+canary-proved child mode, invoke precreate immediately after a repo Worker's
+claim, and register the returned task-root identity before first setup. Resolve
+the current prepare-time demand for an already populated skeleton without
+weakening D8's absent-path fence. Keep setup fill/covers, seals, projections,
+structured Engine-API binds, and launchd in later slices.

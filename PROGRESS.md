@@ -10,11 +10,8 @@ Access does NOT fix it — the failure precedes any policy lookup. Symptom:
 `stat` works, reads return `Operation not permitted`, git says
 `Unable to read current working directory`.
 
-LAST GREEN SHA: c24e319 (local; the operator pushes manually — decided 2026-07-14. Agents: do not push.)
+LAST GREEN SHA: 31e1127 (local; the operator pushes manually — decided 2026-07-14. Agents: do not push.)
 
-QUOTA: the session usage limit was hit 2026-07-17 (resets 01:50 PT) — it
-killed this slice's spawned review lenses. Per §8 the session banked at a
-green commit; the re-review is the incoming session's first act (see NEXT).
 PHASES PASSING: Phase 0 COMPLETE (S1–S8 all green, no fallback ADRs; only operator-leg deferrals remain); Phase 1 COMPLETE (1a substrate 172; 1b walking skeleton reviewed-and-fixed — fake-harness 43, agent-runner 13, runner/image 40, resident 42, dispatch + cmd/mc suites; Docker e2e PASS ×4 total); Phase 2 COMPLETE for every unparked acceptance line (domain/§18 surface, deterministic split-brain convergence, bounded honesty + five mutants, tagged dispatch/metamorphic/twin-spine lifecycle properties; the initiative-wave CLI is no longer isolated — ADR-020 landed 2026-07-14 and closed the last Phase 2 acceptance line)
 KNOWN-FLAKY: `TestPrivateHelperSelfDeadlineTerminatesContainerSideProcess`
 (mc/cmd/mc) can blow its 500ms wall-clock bound when the whole suite runs in
@@ -212,8 +209,24 @@ kept below. Operator legs that remain open are under `## Parked`, not here.
         naming its missing materialization. Pins owed to later slices:
         empty git/config until setup's sanitized grammar; worktree name
         mc-task-<id>; fake lane keeps empty GitControls. Session
-        self-review fixed a pre-existing helper overlap gap (c24e319);
-        the spawned slice review died on quota and is owed (NEXT)
+        self-review fixed a pre-existing helper overlap gap (c24e319)
+  - [x] Spawned adversarial re-review of the registry/typed-plan slice
+        (8799370..c24e319), with independent cross-verification. Six confirmed
+        gaps closed red-first (aded102..0733f7b): initiative children cannot
+        enter the standalone task-plan class; bare Git roots are protected;
+        plan digests bind both declared and D8 effective protected identities;
+        fixed Git-control bytes and empty directories recheck at launch; and a
+        denied-path evidence race retains candidate authority. Two hostile-
+        broker completeness claims were refuted because ADR-016 D1 makes the
+        Darwin broker trusted and production derivation supplies the evidence
+  - [x] First skeleton-materialization slice (31e1127): resident primitive
+        exclusively precreates empty `task-<id>/{source,git}` as the host
+        operator beneath the exact preclaim parent identity, children first,
+        final canary-supplied writable mode, root 0555, and returned registered
+        root identity. Existing/residual paths, parent drift, and raced child
+        replacement/population refuse without cleanup. Spawned verifier:
+        VERIFIED. The primitive has no production caller yet; post-claim
+        carrier/effect integration is NEXT
 - [ ] Phase 4 — E2E control loops (six scenario families)
 - [ ] Phase 5 — Real-subscription acceptance (operator-scheduled)
 - [ ] Release prep (after Phase 5): swap the repo's construction face for
@@ -232,20 +245,12 @@ deleted, not struck through. History is in `docs/ledger/`.
 - **S7 sleep drill**: the 30-min Mac sleep mid-lease test needs the operator (an
   agent cannot sleep the machine it runs on). Instructions in
   `spikes/07-launchd-clock/RESULT.md`. All other S7 sub-tests passed.
-- **Uncommitted IMPLEMENTATION-NOTES.md compaction**: the working tree holds an
-  unrecorded 2026-07-17 11:39 rewrite (81 full entries → one-line index +
-  Standing obligations; bodies now only in git history at 0bb0114). No session
-  or ledger entry claims it and §6 calls the file append-only, so agents are
-  leaving it untouched and uncommitted. Decide: yours → say commit it (and
-  whether §6's append-only wording should change); not yours → say restore.
 
-NEXT: First, re-run the adversarial review of the registry/typed-plan slice
-(`git diff 8799370..c24e319 -- mc resident` vs docs/phase3-contract.md §4 and
-ADR-017 D6 / ADR-016 D5 / ADR-021 D8-D11) with spawned lenses + verifiers —
-the 2026-07-17 session limit killed the spawned review and only the session
-agent's direct-reading pass has covered it; fold findings red-first. Then
-start the skeleton-materialization slice red-first: the resident's
-post-claim precreate of the identity-fenced empty `task-<id>/{source,git}`
-skeleton (ADR-017:437-441 — created as the host operator, children first,
-root fixed 0555, identity registered), leaving setup's closure fill, seals,
-and projections behind their own later slices. Do not load launchd.
+NEXT: Integrate `precreateTaskSkeleton` red-first into the digest-covered
+post-claim effect path: carry the exact preclaim `.mission-control/tasks`
+parent identity and canary-proved child mode, invoke the resident primitive
+immediately after a repo Worker's claim, and register its returned task-root
+identity before the first setup action. Resolve the current prepare-time
+requirement for an already populated skeleton without weakening the absent-
+path/D8 fence. Leave setup closure fill, fixed covers, seals, projections,
+structured Engine-API binds, and launchd to their named later slices.
