@@ -2026,3 +2026,56 @@ Entry template:
   every confirmed gap has a named owner, nothing is silently absorbed.
 - Spec impact: none
 - Needs your decision: no
+
+## 2026-07-16 — authorization-carrier slice: representation choices and residuals
+- Where: Phase 3, ADR-016 D2/D5/D6 + ADR-017 D6 (the mount plan carrier,
+  760b66c..HEAD)
+- Gap: five judgment calls the ADRs delegate or do not pin exactly:
+  (1) the carrier's serialized byte bound is 32 KiB — the ADRs pin the 64 KiB
+  canonical-result cap and the 1 MiB frame, not a plan-specific number; 32 KiB
+  leaves headroom for the brief inside the committed effect and refuses
+  deployment health BEFORE any claim; (2) carrier fields are declared in
+  alphabetical json-key order because the D2 exact-replay path round-trips the
+  effect through map[string]any (alphabetical re-encoding) — any other order
+  breaks byte-for-byte replay; (3) device/inode evidence rides as decimal
+  strings (a JavaScript consumer would truncate >2^53 inodes); (4) the
+  launch-time rechecks compare canonical path + (device,inode,kind,owner,mode)
+  — the ACL-snapshot and protected-containment halves of D5's full predicate
+  need carriers that do not exist yet and remain residuals, as does the D6 row
+  giving production non-repo Worksources their workspace RO bind at
+  /workspace/source (only artifact/reference classes and the test-fake legacy
+  workspace derive today); (5) `mc __mount-recheck` is a host-scope private
+  verb handled BEFORE self-delegation (its sources are host paths), and the
+  resident writes the plan sibling 0600 because the verb's trust seam refuses
+  group/other-readable plan files. The D6 launch receipts (`mc run
+  launch-bind`/`runner-started`) stay with the selector/effector slices.
+- Choice: as described; every residual fails closed (drift refuses, absent
+  carriers refuse health) and each is deleted by its named future slice.
+- Spec impact: none
+- Needs your decision: no
+
+## 2026-07-16 — resident binds ride docker CLI `-v` strings, not structured objects
+- Where: Phase 3 carrier slice adversarial review, finding 1 (major);
+  ADR-017 D3 ("Docker gets structured bind objects with separate source,
+  destination, and read-only fields—never a shell or concatenated `-v`
+  string"); phase3-contract §1.4
+- Gap: the Phase-1 skeleton resident drives the docker CLI, so both its
+  pre-existing static binds and this slice's plan-derived binds are
+  concatenated `-v source:destination[:ro]` argv elements. The 2026-07-14
+  note keeping fullwidth solidus legal in targets cited structured bind
+  objects as the reason it cannot smuggle a path break — that premise does
+  not hold at this effector yet. Not exploitable as shipped: colons are
+  refused in sources and destinations at three independent layers (target
+  grammar, the helper's plan validator, the resident's own checks), `-v`
+  splits only on colons, argv is an array (no shell), and U+FF0F is not a
+  separator to either.
+- Choice: log-and-go with a named owner — the structured-mount effector
+  (Docker Engine API `Mounts` objects) belongs to the production resident
+  slice that replaces the fake-only skeleton; until then the triple colon
+  refusal carries the posture. Also recorded from the same review: the
+  after-create Docker-inspect verification (ADR-017 D3 step 7) is a further
+  logged residual of the launch legs, owed by the same slice. Conservative:
+  no invariant is currently breachable, the gap is visible instead of
+  silent, and the fix point is the component that already owns it.
+- Spec impact: none
+- Needs your decision: no

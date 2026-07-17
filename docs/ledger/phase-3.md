@@ -728,3 +728,68 @@ ADR-016 D2/D5/D6 and ADR-017 D6; design pins for the implementing session:
 Quota note: the session usage limit was hit mid-review (resets 2026-07-16
 20:40 PT). Per §8 this session banks the review + design at a green docs
 commit; implementation proceeds in micro-steps only while budget lasts.
+
+## 2026-07-16 — the authorization carrier lands: attest → frames → effect → resident
+
+Claude session, continuing from the same-day design entry. The standing NEXT
+is implemented across six green commits (acf78f0..b1de870), every fast-lane
+leg passing after each:
+
+- acf78f0 — attestCandidateMounts returns the bounded evidence-backed
+  PrivateDispatchMountPlan (canonical source, ADR-017 D6 class-prefixed
+  destination, access, decimal-string device/inode + kind/owner/mode
+  evidence, sorted by destination, 32 KiB attest-side byte bound) and the
+  runtime_unappliable stop at the old mountattest.go:306 is gone. The
+  test-fake legacy workspace request now rides the same
+  allowlist/jurisdiction pipeline to exactly /workspace/source RW. Folded
+  takeover fixes: absent profile and assembly-stage MountErrors are
+  deployment health.
+- f2f899d — the private attestation frames the plan (helper re-validates:
+  refusal XOR route+plan), canonicalAction gains plan_digest under
+  MC-DISPATCH-PLAN-V1 bound into dispatch_key (golden vectors updated
+  deliberately; the canonical plan bytes have their own frozen vector), and
+  the committed spawn effect carries mount_plan with byte-exact replay —
+  carrier fields are declared in alphabetical json order because the D2
+  replay path round-trips maps. DispatchRecheckPrivate stales on evidence
+  drift, proven end-to-end with a chmod between attest and commit. The
+  vacuous structural-bounds test and the untested commit-side mount-state
+  drift fence from the takeover review are both fixed.
+- d0ae10d — `mc __mount-recheck`: ADR-016 D5's launch-time identity/trust
+  legs as a host-scope read-only private verb handled before
+  self-delegation. Trusts the plan file (operator-owned 0600 non-symlink),
+  strict-decodes the closed carrier, and requires canonical-path plus
+  (device,inode,kind,owner,mode) equality; five drift classes proven.
+- 582ae9d — the resident consumes only the committed plan: ordinary binds
+  derive from mount_plan, the static workspaceRoot spawn bind is gone
+  (land keeps it until the Git slice), the plan rides a host-only 0600
+  sibling of the envelope (never mounted; the agent-visible run.json
+  carries no host source paths), and launch is recheck → docker create →
+  recheck → docker start with drift removing the unstarted container. The
+  split-brain acceptance suite drives the whole carrier through the real
+  binary; its docker seams model create/start and its fixtures gained the
+  trusted MC_HOME, the workspace allowlist, and a canonicalized suite root.
+- 40fe18e — Docker-lane e2e fixture obligations (0700 MC_HOME, workspace
+  allowlist, host-path --workspace-root). The docker_e2e suite is compile-
+  checked every commit and runs at phase completion.
+- b1de870 — hardening from this slice's own adversarial review (one major,
+  four verified minors, three empirical mutants): destination namespace
+  confinement (/workspace/ only) and colon refusal and logical-id
+  uniqueness in the helper validator, the same namespace rule resident-side,
+  mutant-killing tests for the destination sort and both consumer-side byte
+  bounds, and the absent-profile health arm proven inert through
+  dispatchCommit. The major — concatenated `-v` binds vs ADR-017 D3's
+  structured objects — is logged with a named owner (the production
+  resident's Engine-API effector); colon refusals at three layers carry the
+  posture meanwhile.
+
+Review verdicts on the remaining hunt categories: no hostile input reaches a
+spawn or bind without a typed refusal; dispatch_key/replay coherence holds
+(distinct plans cannot share a key; a nonempty-plan spawn replay is verified
+analytically, driven end-to-end only for the empty plan); the second-recheck→
+start window is exactly ADR-016 D5's documented Docker path-string residual.
+The fake-lane e2e trace found no breaker but the Docker lane has not run in
+this range — a phase-completion obligation alongside the D1 deployment-mirror
+check.
+
+Outgoing NEXT (superseded): implement the authorization-carrier slice as
+pinned in the same-day design entry. Done as above.

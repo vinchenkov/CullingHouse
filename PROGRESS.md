@@ -177,9 +177,23 @@ kept below. Operator legs that remain open are under `## Parked`, not here.
         into the carrier slice, 4 recorded for later slices, 1 alleged major
         refuted. Disposition in IMPLEMENTATION-NOTES.md (2026-07-16); design
         pins for the carrier slice in docs/ledger/phase-3.md (same date)
-  - [ ] Carry the closed authorization plan through the private attestation,
-        spawn effect, and resident as structured binds with identity rechecks;
-        add the authoritative Git control/projection registry and typed plan
+  - [x] The authorization carrier (acf78f0..b1de870): attest builds the
+        bounded evidence-backed plan (class-prefixed destinations, decimal
+        device/inode + kind/owner/mode evidence, 32 KiB bound); the private
+        attestation frames it, plan_digest binds into dispatch_key, the spawn
+        effect replays it byte-exactly; `mc __mount-recheck` repeats
+        identity/trust before create and after create/before start and drift
+        removes the unstarted container; the resident consumes only the plan
+        (static workspace spawn bind gone; land keeps config.workspaceRoot).
+        Slice review: 1 major logged with owner (`-v` strings vs ADR-017 D3
+        structured binds — production-resident slice), residuals logged
+        (ACL/containment recheck halves, after-create Docker inspect, D6
+        production workspace RO row, launch-bind receipts). Docker-lane
+        obligations at phase completion: e2e with the carrier fixtures + the
+        D1 deployment-mirror check
+  - [ ] Add the authoritative Git control/projection registry and typed plan
+        (ADR-016 D5 Git shape; ADR-017 D6 task-local rows) so production repo
+        candidates stop health-refusing
 - [ ] Phase 4 — E2E control loops (six scenario families)
 - [ ] Phase 5 — Real-subscription acceptance (operator-scheduled)
 - [ ] Release prep (after Phase 5): swap the repo's construction face for
@@ -199,21 +213,13 @@ deleted, not struck through. History is in `docs/ledger/`.
   agent cannot sleep the machine it runs on). Instructions in
   `spikes/07-launchd-clock/RESULT.md`. All other S7 sub-tests passed.
 
-QUOTA: the session usage limit was hit 2026-07-16 mid-takeover-review (resets
-20:40 PT). Spawned agents are unavailable until then; implement solo in small
-green-commit micro-steps or hand off.
-
-NEXT: Implement the authorization-carrier slice exactly as pinned in
-docs/ledger/phase-3.md (2026-07-16 design entry) — red-first, in this order:
-(1) `PrivateDispatchMountPlan` + `attestCandidateMounts` returns it, deleting
-the `mount.runtime_unappliable` stop at mountattest.go:306, with the five
-folded review fixes (vacuous structural-bounds test, commit-side mount-drift
-test, health-stop tests at enforcement points, profile-less Worksource →
-AuthorityDeployment, assembly MountError → health) and an attest-side plan
-byte bound; (2) plan through PrivateDispatchAttestation/canonical frame/
-plan_digest in canonicalAction (golden vectors updated deliberately) and the
-committed spawn effect; (3) `mc __mount-recheck` verb; (4) resident consumes
-only the plan via `<mcHome>/runs/<run_id>.mounts.json`, create→recheck→start,
-drift removes the unstarted container (lockstep TS test updates listed in the
-ledger entry); (5) e2e fixture obligations (Docker lane, phase completion).
-Keep production Git candidates health-refused. Do not load launchd.
+NEXT: Build the authoritative Git control/projection registry and its typed
+plan class red-first, so production repo candidates stop health-refusing:
+register Git administrative identities per Worksource (the
+`registered Git control identities are not yet available` stop in
+`captureDispatchMountHostSnapshot`), derive the ADR-017 D6 task-local
+repository/projection rows through the same carrier, and keep every
+still-unrealizable arm health-refused rather than guessed. ADR-016 D5's Git
+shape (closure extraction, task-local skeleton) stays behind its own later
+slices — this one is the registry + typed plan derivation only. Do not load
+launchd.
