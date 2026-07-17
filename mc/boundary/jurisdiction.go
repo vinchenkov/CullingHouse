@@ -61,6 +61,34 @@ type ProtectedID struct {
 // source in either direction even though the member's Info remains nil.
 func (p ProtectedID) Present() bool { return p.Info != nil }
 
+// ProtectedEvidence is D8's effective identity for one declared protected
+// member. Anchor is the full present member or its nearest existing canonical
+// ancestor; Suffix is the unresolved component sequence below that anchor.
+// Callers that bind a jurisdiction snapshot use this shape so an absent
+// member's protection cannot silently follow a replaced ancestor inode.
+type ProtectedEvidence struct {
+	Declared string
+	Anchor   ProtectedID
+	Suffix   []string
+}
+
+// ResolveProtectedEvidence exposes the same D8 resolution used by
+// ResolveJurisdiction without exposing its comparison-only absentRoot type.
+// It performs no authorization and grants nothing; it is a canonical evidence
+// projection for callers that must bind or recheck the jurisdiction input.
+func ResolveProtectedEvidence(id ProtectedID) (ProtectedEvidence, error) {
+	resolved, absent, err := resolveProtectedIDWith(id, liveProtectedPathOps)
+	if err != nil {
+		return ProtectedEvidence{}, err
+	}
+	evidence := ProtectedEvidence{Declared: id.Canonical, Anchor: resolved}
+	if absent != nil {
+		evidence.Anchor = absent.anchor
+		evidence.Suffix = append([]string(nil), absent.suffix...)
+	}
+	return evidence, nil
+}
+
 // WorksourceRoots is one Worksource's six root classes (ADR-017:368-369).
 // Any of them may be absent; see ProtectedID.
 type WorksourceRoots struct {

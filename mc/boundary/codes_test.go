@@ -208,6 +208,10 @@ func TestEveryPublicMountRejectionIsCoded(t *testing.T) {
 			_, err := boundary.ResolveJurisdiction(boundary.JurisdictionInput{}, os.Getuid())
 			return err
 		}},
+		{name: "ResolveProtectedEvidence", want: boundary.CodeDeniedRoot, run: func() error {
+			_, err := boundary.ResolveProtectedEvidence(boundary.ProtectedID{Canonical: "relative"})
+			return err
+		}},
 		{name: "Jurisdiction.Rejects", want: boundary.CodeDeniedRoot, run: func() error {
 			return (boundary.Jurisdiction{}).Rejects(boundary.SourceIdentity{}, boundary.TypedClaim{})
 		}},
@@ -222,6 +226,7 @@ func TestEveryPublicMountRejectionIsCoded(t *testing.T) {
 		"ResolveAllowlist":            true,
 		"ResolvedAllowlist.Authorize": true,
 		"ResolveJurisdiction":         true,
+		"ResolveProtectedEvidence":    true,
 		"Jurisdiction.Rejects":        true,
 	}
 	exportedErrorAPIs := exportedErrorReturningAPIs(t)

@@ -704,6 +704,60 @@ func TestAttestCandidateMountsCarriesProtectedSetIdentityDrift(t *testing.T) {
 	}
 }
 
+func TestJurisdictionDigestCarriesAbsentMemberAnchorIdentity(t *testing.T) {
+	root := t.TempDir()
+	anchor := maMkdir(t, root, "anchor")
+	declared := filepath.Join(anchor, "future", "git")
+	in := boundary.JurisdictionInput{
+		DeniedPaths:      []string{},
+		OtherGitControls: []boundary.ProtectedID{{Canonical: declared}},
+		TypedRoots:       map[boundary.TypedKind][]boundary.ProtectedID{},
+	}
+	first, err := jurisdictionInputDigest(in, os.Getuid())
+	if err != nil {
+		t.Fatalf("first digest: %v", err)
+	}
+	if err := os.Rename(anchor, filepath.Join(root, "old-anchor")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(anchor, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	second, err := jurisdictionInputDigest(in, os.Getuid())
+	if err != nil {
+		t.Fatalf("second digest: %v", err)
+	}
+	if first == second {
+		t.Fatal("D8 absent-member digest omitted its effective nearest-existing-ancestor identity")
+	}
+}
+
+func TestJurisdictionDigestCarriesDeniedPathIdentity(t *testing.T) {
+	root := t.TempDir()
+	denied := maMkdir(t, root, "denied")
+	in := boundary.JurisdictionInput{
+		DeniedPaths: []string{denied},
+		TypedRoots:  map[boundary.TypedKind][]boundary.ProtectedID{},
+	}
+	first, err := jurisdictionInputDigest(in, os.Getuid())
+	if err != nil {
+		t.Fatalf("first digest: %v", err)
+	}
+	if err := os.Rename(denied, filepath.Join(root, "old-denied")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(denied, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	second, err := jurisdictionInputDigest(in, os.Getuid())
+	if err != nil {
+		t.Fatalf("second digest: %v", err)
+	}
+	if first == second {
+		t.Fatal("denied-path identity drift disappeared behind its unchanged raw spelling")
+	}
+}
+
 func TestDispatchRepoWorkerCommitsTaskLocalMountPlan(t *testing.T) {
 	ws, _ := tsBuild(t)
 	if err := os.Mkdir(filepath.Join(ws, ".git"), 0o700); err != nil {

@@ -39,12 +39,14 @@ type dispatchMountAssembly struct {
 }
 
 type jurisdictionDigestMember struct {
-	Class     string `json:"class"`
-	Canonical string `json:"canonical"`
-	Device    string `json:"device"`
-	Inode     string `json:"inode"`
-	Kind      string `json:"kind"`
-	Present   bool   `json:"present"`
+	Anchor   string   `json:"anchor"`
+	Class    string   `json:"class"`
+	Declared string   `json:"declared"`
+	Device   string   `json:"device"`
+	Inode    string   `json:"inode"`
+	Kind     string   `json:"kind"`
+	Present  bool     `json:"present"`
+	Suffix   []string `json:"suffix"`
 }
 
 // jurisdictionInputDigest preserves ADR-021 D9/D11's distinction between
@@ -61,15 +63,23 @@ func jurisdictionInputDigest(in boundary.JurisdictionInput, ownerUID int) (strin
 	}{DeniedPaths: append([]string(nil), in.DeniedPaths...), Home: in.Home, OwnerUID: ownerUID}
 	sort.Strings(projection.DeniedPaths)
 	add := func(class string, id boundary.ProtectedID) error {
-		member := jurisdictionDigestMember{Class: class, Canonical: id.Canonical, Present: id.Present()}
-		if id.Present() {
-			st, ok := id.Info.Sys().(*syscall.Stat_t)
+		effective, err := boundary.ResolveProtectedEvidence(id)
+		if err != nil {
+			return err
+		}
+		anchor := effective.Anchor
+		member := jurisdictionDigestMember{
+			Anchor: anchor.Canonical, Class: class, Declared: effective.Declared,
+			Present: anchor.Present(), Suffix: append([]string(nil), effective.Suffix...),
+		}
+		if anchor.Present() {
+			st, ok := anchor.Info.Sys().(*syscall.Stat_t)
 			if !ok {
 				return Domainf("protected root %q has no native identity evidence (ADR-021 D11)", id.Canonical)
 			}
 			member.Device = strconv.FormatUint(uint64(st.Dev), 10)
 			member.Inode = strconv.FormatUint(st.Ino, 10)
-			if id.IsDir {
+			if anchor.IsDir {
 				member.Kind = "dir"
 			} else {
 				member.Kind = "file"
@@ -77,6 +87,11 @@ func jurisdictionInputDigest(in boundary.JurisdictionInput, ownerUID int) (strin
 		}
 		projection.Members = append(projection.Members, member)
 		return nil
+	}
+	for i, path := range projection.DeniedPaths {
+		if err := add("denied."+strconv.Itoa(i), boundary.ProtectedID{Canonical: path}); err != nil {
+			return "", err
+		}
 	}
 	addRoots := func(prefix string, roots boundary.WorksourceRoots) error {
 		for class, id := range map[string]boundary.ProtectedID{
@@ -139,7 +154,10 @@ func jurisdictionInputDigest(in boundary.JurisdictionInput, ownerUID int) (strin
 		if a.Class != b.Class {
 			return a.Class < b.Class
 		}
-		return a.Canonical < b.Canonical
+		if a.Declared != b.Declared {
+			return a.Declared < b.Declared
+		}
+		return a.Anchor < b.Anchor
 	})
 	body, err := json.Marshal(projection)
 	if err != nil {
@@ -507,10 +525,6 @@ func attestCandidateMounts(home string, cand *preparedCandidate, allowLegacyFake
 		r, aerr := adaptMountError(err, refusal.AuthorityDeployment, nil)
 		return nil, r, aerr
 	}
-	jurisdictionDigest, err := jurisdictionInputDigest(assembled.Jurisdiction, snapshot.OwnerUID)
-	if err != nil {
-		return nil, nil, err
-	}
 	j, err := boundary.ResolveJurisdiction(assembled.Jurisdiction, snapshot.OwnerUID)
 	if err != nil {
 		authority := refusal.AuthorityDeployment
@@ -519,6 +533,11 @@ func attestCandidateMounts(home string, cand *preparedCandidate, allowLegacyFake
 			authority = refusal.AuthorityCandidate
 		}
 		r, aerr := adaptMountError(err, authority, nil)
+		return nil, r, aerr
+	}
+	jurisdictionDigest, err := jurisdictionInputDigest(assembled.Jurisdiction, snapshot.OwnerUID)
+	if err != nil {
+		r, aerr := adaptMountError(err, refusal.AuthorityDeployment, nil)
 		return nil, r, aerr
 	}
 	entries, r, err := planMounts(assembled.Requests, mountPlanInputs{
