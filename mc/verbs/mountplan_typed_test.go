@@ -3,6 +3,7 @@ package verbs
 import (
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
 
 	"mc/boundary"
@@ -192,5 +193,29 @@ func TestValidatePrivateMountPlanAcceptsTypedTaskPlan(t *testing.T) {
 	evil.Entries[0].LogicalID = "task-root-evil"
 	if err := validatePrivateMountPlan(&evil); err == nil {
 		t.Fatal("an out-of-table destination must refuse at the helper boundary")
+	}
+}
+
+func TestValidatePrivateMountPlanCatchesNonAdjacentOverlap(t *testing.T) {
+	// Sorted order interleaves a sibling between an ancestor and its
+	// descendant ("a" < "a-x" < "a/b" because '-' < '/'), so an
+	// adjacent-only overlap check misses the forbidden a -> a/b nesting.
+	// The helper boundary must scan every prior ancestor.
+	base := PrivateDispatchMountEntry{
+		Access: "rw", Device: "1", Inode: "2", Kind: "dir",
+		Mode: 0o700, OwnerUID: os.Getuid(),
+	}
+	entries := []PrivateDispatchMountEntry{}
+	for i, d := range []string{
+		"/workspace/artifacts/a", "/workspace/artifacts/a-x", "/workspace/artifacts/a/b",
+	} {
+		e := base
+		e.Destination = d
+		e.Source = "/host/src" + strconv.Itoa(i)
+		e.LogicalID = "artifact:" + strconv.Itoa(i)
+		entries = append(entries, e)
+	}
+	if err := validatePrivateMountPlan(&PrivateDispatchMountPlan{Version: 1, Entries: entries}); err == nil {
+		t.Fatal("a non-adjacent forbidden overlap must refuse at the helper boundary")
 	}
 }

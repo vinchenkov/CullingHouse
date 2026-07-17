@@ -353,9 +353,16 @@ func validatePrivateMountPlan(plan *PrivateDispatchMountPlan) error {
 		if e.OwnerUID < 0 || e.Mode < 0 || e.Mode > 0o777 {
 			return Domainf("dispatch: private mount entry %d owner/mode evidence is invalid", i)
 		}
-		if i > 0 && (e.Destination <= prior ||
-			(strings.HasPrefix(e.Destination, prior+"/") && !mountOverlapPermitted(prior, e.Destination))) {
+		if i > 0 && e.Destination <= prior {
 			return Domainf("dispatch: private mount destinations are unsorted or overlapping")
+		}
+		// Sorted order puts an ancestor before every descendant but NOT
+		// adjacent to it ('-' sorts before '/', so a sibling can interleave):
+		// the overlap scan must walk every prior entry, not just the last.
+		for _, p := range plan.Entries[:i] {
+			if strings.HasPrefix(e.Destination, p.Destination+"/") && !mountOverlapPermitted(p.Destination, e.Destination) {
+				return Domainf("dispatch: private mount destinations are unsorted or overlapping")
+			}
 		}
 		prior = e.Destination
 	}
