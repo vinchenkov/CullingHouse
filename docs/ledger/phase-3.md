@@ -1028,3 +1028,22 @@ reachable closure and relative Git controls, then inspect/recheck the result
 before the 15 task mount rows can enter an agent plan. Keep accepted seals,
 downstream reconciliation, disposable/committed projections, structured
 Engine-API binds, and launchd in their named later slices.
+
+## 2026-07-17 — takeover repair before closure materialization
+
+The required cross-harness review of `d2f3e68..c27616e` found two genuine
+repairs: the resident control channel still announced schema v4 after the
+receipt's v5 migration, and a host-scope caller could register a root receipt
+for a foreign uid. `3473492` pins the resident handshake and test fixture to
+v5, and makes registration plus root re-attestation require `os.Getuid()`.
+The alleged empty-skeleton-to-Worker-launch path was refuted by the existing
+fifteen-row resolver: resident precreate leaves only `source/` and `git/`, so
+the absent fixed cover rows refuse before a Worker plan can be emitted.
+Focused `mc/verbs` and full resident lanes are green.
+
+NEXT: implement the fixed first-task setup closure materialization red-first.
+It must build from that receipt-attested root, populate only the pinned
+reachable closure and relative Git controls, then inspect/recheck the result
+before the 15 task mount rows can enter an agent plan. Keep accepted seals,
+downstream reconciliation, disposable/committed projections, structured
+Engine-API binds, and launchd in their named later slices.
