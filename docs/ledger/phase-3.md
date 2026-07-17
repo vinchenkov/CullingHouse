@@ -1011,3 +1011,20 @@ relative Git controls, then inspect/recheck the result before the 15 task mount
 rows can enter an agent plan. Keep accepted seals, downstream reconciliation,
 disposable/committed projections, structured Engine-API binds, and launchd in
 their named later slices.
+
+## 2026-07-17 — first-task setup receipt-attested entry gate
+
+The first setup micro-step is green. `AttestFirstTaskSetupRoot` consumes the
+existing live run/task-fenced receipt, derives the one task root from its task
+id beneath a canonical Worksource root, then proves that the root remains a
+non-symlink mode-0555 directory with the receipt's exact device/inode/operator
+owner identity. It accepts no caller-provided task path and creates no Git
+state or mount rows. The focused refusal test covers the mode drift arm; the
+full five-leg fast lane is green.
+
+NEXT: implement the fixed first-task setup closure materialization red-first.
+It must build from that receipt-attested root, populate only the pinned
+reachable closure and relative Git controls, then inspect/recheck the result
+before the 15 task mount rows can enter an agent plan. Keep accepted seals,
+downstream reconciliation, disposable/committed projections, structured
+Engine-API binds, and launchd in their named later slices.

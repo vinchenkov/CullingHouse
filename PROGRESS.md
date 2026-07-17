@@ -241,6 +241,11 @@ kept below. Operator legs that remain open are under `## Parked`, not here.
         refuses. The resident replaces its process-local registration map with
         host-scoped `mc task setup-register`, so restart cannot attach a later
         root to the claimed Worker.
+  - [x] Fixed first-task setup entry gate: consumes the live durable receipt,
+        derives the task root only from its task id under the canonical
+        Worksource root, and re-attests non-symlink directory shape, 0555 mode,
+        operator ownership, and device/inode identity before any setup can
+        populate it. It creates no Git state or task mount rows.
 - [ ] Phase 4 — E2E control loops (six scenario families)
 - [ ] Phase 5 — Real-subscription acceptance (operator-scheduled)
 - [ ] Release prep (after Phase 5): swap the repo's construction face for
@@ -260,9 +265,9 @@ deleted, not struck through. History is in `docs/ledger/`.
   agent cannot sleep the machine it runs on). Instructions in
   `spikes/07-launchd-clock/RESULT.md`. All other S7 sub-tests passed.
 
-NEXT: Implement the fixed first-task setup action red-first. It must consume
-only the durable exact root receipt, populate the pinned reachable closure and
-relative Git controls, then inspect/recheck the result before the 15 task mount
-rows can enter an agent plan. Keep accepted seals, downstream reconciliation,
-disposable/committed projections, structured Engine-API binds, and launchd in
-their named later slices.
+NEXT: Implement the fixed first-task setup closure materialization red-first.
+It must build from the durable-receipt-attested root, populate only the pinned
+reachable closure and relative Git controls, then inspect/recheck the result
+before the 15 task mount rows can enter an agent plan. Keep accepted seals,
+downstream reconciliation, disposable/committed projections, structured
+Engine-API binds, and launchd in their named later slices.

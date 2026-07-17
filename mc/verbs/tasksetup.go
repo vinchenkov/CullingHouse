@@ -3,7 +3,13 @@ package verbs
 import (
 	"context"
 	"database/sql"
+	"os"
+	"path/filepath"
 	"regexp"
+	"strconv"
+	"syscall"
+
+	"mc/boundary"
 )
 
 // TaskSetupIdentity is the durable, path-free receipt for a resident-created
@@ -19,6 +25,15 @@ type TaskSetupReceipt struct {
 	RunID  string            `json:"run_id"`
 	TaskID int64             `json:"task_id"`
 	Root   TaskSetupIdentity `json:"root"`
+}
+
+// FirstTaskSetupRoot is the fixed setup action's host-side input. The caller
+// supplies only the registered Worksource root; the task-root spelling is
+// constructed from the durable receipt's task id and then re-attested. No
+// caller-provided task path can be substituted for the resident-created root.
+type FirstTaskSetupRoot struct {
+	Receipt   TaskSetupReceipt
+	Canonical string
 }
 
 var decimalIdentity = regexp.MustCompile(`^(0|[1-9][0-9]*)$`)
@@ -124,4 +139,51 @@ func ReadFirstTaskSetup(db *sql.DB, runID string) (TaskSetupReceipt, error) {
 		return nil
 	})
 	return out, err
+}
+
+// AttestFirstTaskSetupRoot is the first fixed-setup action's narrow entry
+// gate. It consumes the durable live run/task-fenced receipt, derives the one
+// allowed task-root path under the registered Worksource, and proves that it
+// is still the exact operator-owned 0555 directory the resident registered.
+//
+// It deliberately does not populate Git state or invent mount rows. Those
+// later setup stages must build on this result after closure extraction and
+// inspect; accepting a path supplied by a resident retry would reopen the
+// post-claim root substitution hole the receipt closes.
+func AttestFirstTaskSetupRoot(db *sql.DB, runID, workspaceRoot string) (FirstTaskSetupRoot, error) {
+	receipt, err := ReadFirstTaskSetup(db, runID)
+	if err != nil {
+		return FirstTaskSetupRoot{}, err
+	}
+	workspace, err := boundary.ResolveSource(workspaceRoot)
+	if err != nil {
+		return FirstTaskSetupRoot{}, err
+	}
+	if !workspace.IsDir || workspace.Canonical != filepath.Clean(workspaceRoot) {
+		return FirstTaskSetupRoot{}, Domainf("task setup Worksource root is not its exact canonical directory")
+	}
+	root := filepath.Join(workspace.Canonical, ".mission-control", "tasks", "task-"+strconv.FormatInt(receipt.TaskID, 10))
+	info, err := os.Lstat(root)
+	if os.IsNotExist(err) {
+		return FirstTaskSetupRoot{}, Domainf("task setup registered root is absent")
+	}
+	if err != nil {
+		return FirstTaskSetupRoot{}, Domainf("task setup registered root is unreadable: %v", err)
+	}
+	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 || info.Mode().Perm() != 0o555 {
+		return FirstTaskSetupRoot{}, Domainf("task setup registered root is not the fixed non-symlink mode-0555 directory")
+	}
+	st, ok := info.Sys().(*syscall.Stat_t)
+	if !ok || strconv.FormatUint(uint64(st.Dev), 10) != receipt.Root.Device ||
+		strconv.FormatUint(st.Ino, 10) != receipt.Root.Inode || int(st.Uid) != receipt.Root.OwnerUID {
+		return FirstTaskSetupRoot{}, Domainf("task setup registered root identity changed")
+	}
+	resolved, err := boundary.ResolveSource(root)
+	if err != nil {
+		return FirstTaskSetupRoot{}, err
+	}
+	if resolved.Canonical != root {
+		return FirstTaskSetupRoot{}, Domainf("task setup registered root does not resolve to its constructed path")
+	}
+	return FirstTaskSetupRoot{Receipt: receipt, Canonical: root}, nil
 }
