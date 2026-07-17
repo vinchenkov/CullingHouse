@@ -906,3 +906,41 @@ claim, and register the returned task-root identity before first setup. Resolve
 the current prepare-time demand for an already populated skeleton without
 weakening D8's absent-path fence. Keep setup fill/covers, seals, projections,
 structured Engine-API binds, and launchd in later slices.
+
+## 2026-07-17 — absent first-task state crosses claim and reaches the resident
+
+The outgoing NEXT above is complete in 8aea935. A first standalone repo Worker
+no longer needs a populated task skeleton at prepare: attest distinguishes the
+exact absent task root from existing retry residue, binds the canonical
+mode-0700 `.mission-control/tasks` parent `(device,inode,owner)` identity and
+closed child mode into the plan digest, filters only the not-yet-existing typed
+task rows, then commits the ordinary claim. The committed effect replays
+byte-for-byte with one Run and one `dispatch.spawn` activity.
+
+The resident performs the closed post-claim prefix only: repeat parent
+identity, exact mode, native ACL trust, and absence through host `mc`; call the
+exclusive precreate primitive; validate its returned identity; register that
+exact object in the per-resident run context; stop. It never launches an agent
+against the empty skeleton and never guesses the future 15-row plan. Creation,
+registration, and trust failures leave no session/run envelope or Docker
+effect. The in-memory registration is intentionally not represented as crash-
+durable: the next setup slice owns that receipt/recovery boundary before it
+adds a setup consumer.
+
+The session-start cross-harness review found `31e1127..d2f3e68` was
+administrative-only and passed. The post-implementation spawned review found
+one blocker—the first carrier captured inode/owner but omitted exact mode and
+native ACL repetition. Red tests and the host-local task-parent recheck closed
+it; the final verdict was PASS. It also prompted hostile candidate/step tests,
+exact replay/no-duplicate coverage, the JS-safe task-id bound, and an exact
+0700 anti-widening fence at helper and resident. All five fast-lane legs pass:
+mc, fake-harness 43, agent-runner 13, runner/image 40, resident 63.
+
+NEXT: implement the first-task setup transaction red-first. Replace the
+per-resident task-root registration with a durable run/task-fenced setup
+receipt that recognizes only the exact returned identity on retry; consume it
+in the first fixed setup action to populate the pinned reachable closure and
+relative Git controls; inspect/recheck the result before the 15 task mount rows
+can enter an agent plan. Keep accepted seals, downstream reconciliation,
+disposable/committed projections, structured Engine-API binds, and launchd in
+their named later slices.

@@ -10,7 +10,7 @@ Access does NOT fix it — the failure precedes any policy lookup. Symptom:
 `stat` works, reads return `Operation not permitted`, git says
 `Unable to read current working directory`.
 
-LAST GREEN SHA: 31e1127 (local; the operator pushes manually — decided 2026-07-14. Agents: do not push.)
+LAST GREEN SHA: 8aea935 (local; the operator pushes manually — decided 2026-07-14. Agents: do not push.)
 
 PHASES PASSING: Phase 0 COMPLETE (S1–S8 all green, no fallback ADRs; only operator-leg deferrals remain); Phase 1 COMPLETE (1a substrate 172; 1b walking skeleton reviewed-and-fixed — fake-harness 43, agent-runner 13, runner/image 40, resident 42, dispatch + cmd/mc suites; Docker e2e PASS ×4 total); Phase 2 COMPLETE for every unparked acceptance line (domain/§18 surface, deterministic split-brain convergence, bounded honesty + five mutants, tagged dispatch/metamorphic/twin-spine lifecycle properties; the initiative-wave CLI is no longer isolated — ADR-020 landed 2026-07-14 and closed the last Phase 2 acceptance line)
 KNOWN-FLAKY: `TestPrivateHelperSelfDeadlineTerminatesContainerSideProcess`
@@ -225,8 +225,20 @@ kept below. Operator legs that remain open are under `## Parked`, not here.
         final canary-supplied writable mode, root 0555, and returned registered
         root identity. Existing/residual paths, parent drift, and raced child
         replacement/population refuse without cleanup. Spawned verifier:
-        VERIFIED. The primitive has no production caller yet; post-claim
-        carrier/effect integration is NEXT
+        VERIFIED
+  - [x] Post-claim skeleton carrier/effect integration (8aea935): a first
+        standalone repo Worker now attests exact absence beneath the
+        operator-owned mode-0700 tasks parent, carries its decimal identity
+        plus the closed child mode inside the digest-covered plan, claims, and
+        returns that step without fabricating any of the 15 not-yet-existing
+        task mount rows. The resident repeats identity/mode/native-ACL/absence,
+        exclusively precreates, validates and registers the returned root in
+        its per-resident run context, then stops before setup or launch. The
+        private helper rejects hostile candidate/step pairings and widened
+        modes; lost-response replay is byte-exact with one Run/activity.
+        Cross-harness takeover review of 31e1127..d2f3e68: PASS (administrative
+        only). Spawned slice review found the missing mode/ACL repetition; fixed
+        and reverified PASS. Full five-leg fast lane green (resident 63)
 - [ ] Phase 4 — E2E control loops (six scenario families)
 - [ ] Phase 5 — Real-subscription acceptance (operator-scheduled)
 - [ ] Release prep (after Phase 5): swap the repo's construction face for
@@ -246,11 +258,11 @@ deleted, not struck through. History is in `docs/ledger/`.
   agent cannot sleep the machine it runs on). Instructions in
   `spikes/07-launchd-clock/RESULT.md`. All other S7 sub-tests passed.
 
-NEXT: Integrate `precreateTaskSkeleton` red-first into the digest-covered
-post-claim effect path: carry the exact preclaim `.mission-control/tasks`
-parent identity and canary-proved child mode, invoke the resident primitive
-immediately after a repo Worker's claim, and register its returned task-root
-identity before the first setup action. Resolve the current prepare-time
-requirement for an already populated skeleton without weakening the absent-
-path/D8 fence. Leave setup closure fill, fixed covers, seals, projections,
-structured Engine-API binds, and launchd to their named later slices.
+NEXT: Implement the first-task setup transaction red-first. Replace the
+per-resident task-root registration with a durable run/task-fenced setup
+receipt that recognizes only the exact returned identity on retry; consume it
+in the first fixed setup action to populate the pinned reachable closure and
+relative Git controls; inspect/recheck the result before the 15 task mount rows
+can enter an agent plan. Keep accepted seals, downstream reconciliation,
+disposable/committed projections, structured Engine-API binds, and launchd in
+their named later slices.
