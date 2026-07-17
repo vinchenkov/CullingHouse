@@ -281,6 +281,18 @@ func setup(t *testing.T) *fixture {
 			t.Fatal(err)
 		}
 	}
+	// Host mount attest trusts MC_HOME the way it trusts the allowlist:
+	// operator-only, no group/other bits (boundary.TrustHomeDir).
+	if err := os.Chmod(f.home, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	// The test-fake workspace bind rides the plan carrier: the allowlist
+	// authorizes the host worksource root to exactly /workspace/source RW,
+	// and the resident consumes only the attested plan.
+	allowlist := fmt.Sprintf("version = 1\n\n[[allow]]\npath = %q\ntarget = \"source\"\naccess = \"rw\"\n", f.ws)
+	if err := os.WriteFile(filepath.Join(f.home, "mount-allowlist"), []byte(allowlist), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.WriteFile(filepath.Join(f.home, "routing.md"), []byte(`# fake E2E routing
 | role | harness | binding |
 | --- | --- | --- |
@@ -351,8 +363,11 @@ func setup(t *testing.T) *fixture {
 	f.env = append(f.env, "MC_HELPER="+f.helper)
 
 	// Provision: shrunk tunables (contract §7 fixture list).
+	// The profile's workspace root is the HOST path: the mount attest derives
+	// the plan's canonical source from it; /workspace/source is the derived
+	// container destination, never operator input.
 	initEffect := f.mcOK("", "init", "--spine", spineDBPath,
-		"--worksource", worksource, "--workspace-root", "/workspace/source",
+		"--worksource", worksource, "--workspace-root", f.ws,
 		"--timeout-minutes", "10", "--grace-minutes", "5",
 		"--heartbeat-interval-s", "1", "--spawn-grace-s", "5",
 		"--hard-deadline-minutes", "30")
