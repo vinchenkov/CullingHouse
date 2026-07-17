@@ -758,6 +758,17 @@ func TestJurisdictionDigestCarriesDeniedPathIdentity(t *testing.T) {
 	}
 }
 
+func TestJurisdictionDigestPreservesDeniedPathCandidateAuthority(t *testing.T) {
+	_, err := jurisdictionInputDigest(boundary.JurisdictionInput{
+		DeniedPaths: []string{"relative/path"},
+		TypedRoots:  map[boundary.TypedKind][]boundary.ProtectedID{},
+	}, os.Getuid())
+	var mountErr *boundary.MountError
+	if !errors.As(err, &mountErr) || !mountErr.CandidateAuthored {
+		t.Fatalf("denied-path evidence error = %v, want candidate-authored MountError", err)
+	}
+}
+
 func TestDispatchRepoWorkerCommitsTaskLocalMountPlan(t *testing.T) {
 	ws, _ := tsBuild(t)
 	if err := os.Mkdir(filepath.Join(ws, ".git"), 0o700); err != nil {

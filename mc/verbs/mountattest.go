@@ -90,6 +90,12 @@ func jurisdictionInputDigest(in boundary.JurisdictionInput, ownerUID int) (strin
 	}
 	for i, path := range projection.DeniedPaths {
 		if err := add("denied."+strconv.Itoa(i), boundary.ProtectedID{Canonical: path}); err != nil {
+			var mountErr *boundary.MountError
+			if errors.As(err, &mountErr) {
+				candidateErr := *mountErr
+				candidateErr.CandidateAuthored = true
+				return "", &candidateErr
+			}
 			return "", err
 		}
 	}
@@ -537,7 +543,12 @@ func attestCandidateMounts(home string, cand *preparedCandidate, allowLegacyFake
 	}
 	jurisdictionDigest, err := jurisdictionInputDigest(assembled.Jurisdiction, snapshot.OwnerUID)
 	if err != nil {
-		r, aerr := adaptMountError(err, refusal.AuthorityDeployment, nil)
+		authority := refusal.AuthorityDeployment
+		var mountErr *boundary.MountError
+		if errors.As(err, &mountErr) && mountErr.CandidateAuthored {
+			authority = refusal.AuthorityCandidate
+		}
+		r, aerr := adaptMountError(err, authority, nil)
 		return nil, r, aerr
 	}
 	entries, r, err := planMounts(assembled.Requests, mountPlanInputs{
