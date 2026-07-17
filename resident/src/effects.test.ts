@@ -82,8 +82,9 @@ describe("spawn effect", () => {
         events.push(`precreate:${request.task_id}`);
         return registered;
       },
-      registerTaskRoot: async (runId, identity) => {
-        events.push(`register:${runId}`);
+		registerTaskRoot: async (runId, taskId, identity) => {
+			events.push(`register:${runId}`);
+			expect(taskId).toBe(42);
         expect(identity).toBe(registered);
       },
     });

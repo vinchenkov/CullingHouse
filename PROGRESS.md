@@ -239,6 +239,12 @@ kept below. Operator legs that remain open are under `## Parked`, not here.
         Cross-harness takeover review of 31e1127..d2f3e68: PASS (administrative
         only). Spawned slice review found the missing mode/ACL repetition; fixed
         and reverified PASS. Full five-leg fast lane green (resident 63)
+  - [x] Durable first-task setup receipt: schema v5 carries only the
+        run/task-fenced returned root device/inode/owner identity (never a host
+        path); exact retry is idempotent and a changed identity or lost lease
+        refuses. The resident replaces its process-local registration map with
+        host-scoped `mc task setup-register`, so restart cannot attach a later
+        root to the claimed Worker.
 - [ ] Phase 4 — E2E control loops (six scenario families)
 - [ ] Phase 5 — Real-subscription acceptance (operator-scheduled)
 - [ ] Release prep (after Phase 5): swap the repo's construction face for
@@ -258,11 +264,9 @@ deleted, not struck through. History is in `docs/ledger/`.
   agent cannot sleep the machine it runs on). Instructions in
   `spikes/07-launchd-clock/RESULT.md`. All other S7 sub-tests passed.
 
-NEXT: Implement the first-task setup transaction red-first. Replace the
-per-resident task-root registration with a durable run/task-fenced setup
-receipt that recognizes only the exact returned identity on retry; consume it
-in the first fixed setup action to populate the pinned reachable closure and
-relative Git controls; inspect/recheck the result before the 15 task mount rows
-can enter an agent plan. Keep accepted seals, downstream reconciliation,
+NEXT: Implement the fixed first-task setup action red-first. It must consume
+only the durable exact root receipt, populate the pinned reachable closure and
+relative Git controls, then inspect/recheck the result before the 15 task mount
+rows can enter an agent plan. Keep accepted seals, downstream reconciliation,
 disposable/committed projections, structured Engine-API binds, and launchd in
 their named later slices.

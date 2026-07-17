@@ -16,7 +16,7 @@ import { mkdir, rm, writeFile } from "node:fs/promises";
 import { startTickLoop } from "./tick-loop";
 import type { Exec, ResidentConfig, TickDeps } from "./types";
 import { CONFIG_SCHEMA_VERSION, execMcVia } from "./resident-control";
-import { precreateTaskSkeleton, type PathIdentity } from "./task-skeleton";
+import { precreateTaskSkeleton } from "./task-skeleton";
 
 interface MainConfig extends ResidentConfig {
   mcPath: string;
@@ -65,8 +65,6 @@ async function main(): Promise<void> {
     console.error(`resident: invalid tick interval ${JSON.stringify(envInterval)}`);
     process.exit(2);
   }
-	const registeredTaskRoots = new Map<string, PathIdentity>();
-
 	const runMc = execMcVia([config.mcPath], {
 		mcHome: config.mcHome,
 		releaseBuildId: config.releaseBuildId,
@@ -105,12 +103,15 @@ async function main(): Promise<void> {
 				throw new Error(`task parent recheck refused (exit ${result.exitCode}): ${result.stderr.trim()}`);
 			}
 		},
-		registerTaskRoot: async (runId, identity) => {
-			const prior = registeredTaskRoots.get(runId);
-			if (prior !== undefined && JSON.stringify(prior) !== JSON.stringify(identity)) {
-				throw new Error(`task root registration for ${runId} changed identity`);
+		registerTaskRoot: async (runId, taskId, identity) => {
+			const result = await runMc([
+				"task", "setup-register", "--run", runId, "--task", String(taskId),
+				"--device", identity.device, "--inode", identity.inode,
+				"--owner-uid", String(identity.owner_uid),
+			]);
+			if (result.exitCode !== 0) {
+				throw new Error(`task setup registration refused (exit ${result.exitCode}): ${result.stderr.trim()}`);
 			}
-			registeredTaskRoots.set(runId, identity);
 		},
     config,
   };

@@ -74,7 +74,8 @@ func Init(db *sql.DB) error {
 // prime cutoff/count pairs.
 // Version 4 adds the typeof fence triggers over ADR-016 Decision 2's
 // activity/outbox replay-key columns, whose v2 hex CHECKs hold only for TEXT.
-const CurrentSchemaVersion = 4
+// Version 5 adds the durable run/task-fenced first-task setup receipt.
+const CurrentSchemaVersion = 5
 
 // migrationV1ToV2 is ADR-016 Decision 2's storage step, frozen as history.
 //
@@ -259,6 +260,42 @@ BEGIN
 END;
 `
 
+// migrationV4ToV5 adds recovery evidence for the resident-owned first task
+// skeleton.  It intentionally stores only the returned filesystem identity:
+// the mutable absolute host path is reconstructed from the registered
+// Worksource and re-attested by the setup action, never persisted in the
+// spine.
+const migrationV4ToV5 = `
+CREATE TABLE task_setup_receipts (
+    run_id          TEXT PRIMARY KEY REFERENCES runs(id),
+    task_id         INTEGER NOT NULL REFERENCES tasks(id),
+    root_device     TEXT NOT NULL
+                   CHECK (typeof(root_device) = 'text' AND
+                          root_device GLOB '[0-9]*' AND
+                          root_device NOT GLOB '*[^0-9]*'),
+    root_inode      TEXT NOT NULL
+                   CHECK (typeof(root_inode) = 'text' AND
+                          root_inode GLOB '[0-9]*' AND
+                          root_inode NOT GLOB '*[^0-9]*'),
+    root_owner_uid  INTEGER NOT NULL
+                   CHECK (typeof(root_owner_uid) = 'integer' AND root_owner_uid >= 0),
+    registered_at   TEXT NOT NULL DEFAULT (datetime('now')),
+    CHECK (length(root_device) <= 20 AND length(root_inode) <= 20)
+);
+
+CREATE TRIGGER task_setup_receipts_immutable
+BEFORE UPDATE ON task_setup_receipts
+BEGIN
+    SELECT RAISE(ABORT, 'task setup receipt is immutable; retry must match its registered identity (ADR-016 D5)');
+END;
+
+CREATE TRIGGER task_setup_receipts_no_delete
+BEFORE DELETE ON task_setup_receipts
+BEGIN
+    SELECT RAISE(ABORT, 'task setup receipts are durable recovery evidence (ADR-016 D5)');
+END;
+`
+
 // Migrate brings an existing spine up to CurrentSchemaVersion, reporting
 // whether it changed anything. It is the "present with an older schema →
 // migrate" arm of §16.4; the caller owns the "absent on a non-empty volume →
@@ -284,7 +321,7 @@ func Migrate(db *sql.DB) (bool, error) {
 		return false, err
 	}
 
-	steps := map[int]string{1: migrationV1ToV2, 2: migrationV2ToV3, 3: migrationV3ToV4}
+	steps := map[int]string{1: migrationV1ToV2, 2: migrationV2ToV3, 3: migrationV3ToV4, 4: migrationV4ToV5}
 	changed := false
 	for version < CurrentSchemaVersion {
 		step, ok := steps[version]

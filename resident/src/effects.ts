@@ -162,7 +162,7 @@ async function spawn(effect: SpawnEffect, deps: TickDeps): Promise<void> {
 			registered.owner_uid !== step.tasks_parent.owner_uid) {
 			throw new Error("precreated task root returned invalid registration evidence");
 		}
-		await deps.registerTaskRoot(run_id, registered);
+		await deps.registerTaskRoot(run_id, step.task_id, registered);
 		log(`spawn ${run_id}: task root registered; setup pending`);
 		// The setup-fill slice will consume this exact registered identity and
 		// only then produce the task mount rows. Starting without those rows

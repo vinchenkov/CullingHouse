@@ -401,9 +401,29 @@ func cmdInit(args []string) (any, error) {
 
 func cmdTask(args []string) (any, error) {
 	if len(args) == 0 {
-		return nil, verbs.Usagef("usage: mc task add|get|block|unblock …")
+		return nil, verbs.Usagef("usage: mc task add|get|block|unblock|setup-register …")
 	}
 	switch args[0] {
+	case "setup-register":
+		fs := newFlags("mc task setup-register")
+		runID := fs.String("run", "", "pipeline run id")
+		taskID := fs.Int64("task", 0, "task id")
+		device := fs.String("device", "", "registered task-root device")
+		inode := fs.String("inode", "", "registered task-root inode")
+		ownerUID := fs.Int("owner-uid", -1, "registered task-root owner uid")
+		if err := parse(fs, args[1:]); err != nil {
+			return nil, err
+		}
+		idn, err := verbs.LoadIdentity()
+		if err != nil {
+			return nil, err
+		}
+		if err := verbs.RequireHostScope(idn, "mc task setup-register"); err != nil {
+			return nil, err
+		}
+		receipt := verbs.TaskSetupReceipt{RunID: *runID, TaskID: *taskID,
+			Root: verbs.TaskSetupIdentity{Device: *device, Inode: *inode, OwnerUID: *ownerUID}}
+		return withSpine(func(db *sql.DB) (any, error) { return verbs.RegisterFirstTaskSetup(db, receipt) })
 	case "add":
 		title, rest, err := positional("mc task add", args[1:])
 		if err != nil {

@@ -72,8 +72,8 @@ export interface TickDeps {
 	precreateTaskSkeleton(request: TaskSkeletonRequest): Promise<PathIdentity>;
 	/** Repeats parent identity, owner-only mode, and native ACL trust. */
 	recheckTaskParent(request: TaskSkeletonRequest): Promise<void>;
-	/** Registers the exact returned identity before any setup consumer runs. */
-	registerTaskRoot(runId: string, identity: PathIdentity): Promise<void>;
+	/** Durably registers the exact returned identity before any setup consumer runs. */
+	registerTaskRoot(runId: string, taskId: number, identity: PathIdentity): Promise<void>;
   config: ResidentConfig;
 }
 

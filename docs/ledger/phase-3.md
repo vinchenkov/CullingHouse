@@ -944,3 +944,32 @@ relative Git controls; inspect/recheck the result before the 15 task mount rows
 can enter an agent plan. Keep accepted seals, downstream reconciliation,
 disposable/committed projections, structured Engine-API binds, and launchd in
 their named later slices.
+
+## 2026-07-17 — durable first-task setup registration
+
+The first green micro-step of the setup transaction replaces the resident's
+process-local `registeredTaskRoots` map. Schema v5 adds
+`task_setup_receipts`, an immutable/no-delete receipt keyed by run and carrying
+only `{task_id, root_device, root_inode, root_owner_uid}`. It intentionally
+does not persist a host path: the fixed setup action must derive that from the
+registered Worksource and re-attest it.
+
+`verbs.RegisterFirstTaskSetup` takes `BEGIN IMMEDIATE`, requires a live
+pipeline Worker run whose subject matches the claimed task and whose lock row
+still names the same run/task, then inserts the receipt. A lost-response retry
+with exactly the same identity succeeds; a changed identity, ended/wrong role
+run, or lost lease refuses. The resident now calls host-scoped `mc task
+setup-register` after local skeleton creation, before it can return with setup
+pending, so a resident restart cannot rebind a new task root in memory.
+
+Focused Go/substrate/CLI tests and the five-leg fast lane passed. The direct
+`bun test` invocation from `resident/` is not a valid lane on this host because
+it lacks `go` in PATH for split-brain fixtures; `resident/check.sh` supplies
+the project environment and passed all 63 resident tests.
+
+NEXT: implement the fixed first-task setup action red-first. It must consume
+only the durable exact root receipt, populate the pinned reachable closure and
+relative Git controls, then inspect/recheck the result before the 15 task mount
+rows can enter an agent plan. Keep accepted seals, downstream reconciliation,
+disposable/committed projections, structured Engine-API binds, and launchd in
+their named later slices.

@@ -721,6 +721,42 @@ BEGIN
 END;
 
 ------------------------------------------------------------------------------
+-- task_setup_receipts — durable post-claim identities for the closed setup
+-- plane (ADR-016 D5 / ADR-017 D5).  A resident restart may retry setup, but
+-- it may only recognize the exact task-root object it registered for the
+-- still-live Worker run; host paths deliberately stay out of the spine.
+------------------------------------------------------------------------------
+
+CREATE TABLE task_setup_receipts (
+    run_id          TEXT PRIMARY KEY REFERENCES runs(id),
+    task_id         INTEGER NOT NULL REFERENCES tasks(id),
+    root_device     TEXT NOT NULL
+                   CHECK (typeof(root_device) = 'text' AND
+                          root_device GLOB '[0-9]*' AND
+                          root_device NOT GLOB '*[^0-9]*'),
+    root_inode      TEXT NOT NULL
+                   CHECK (typeof(root_inode) = 'text' AND
+                          root_inode GLOB '[0-9]*' AND
+                          root_inode NOT GLOB '*[^0-9]*'),
+    root_owner_uid  INTEGER NOT NULL
+                   CHECK (typeof(root_owner_uid) = 'integer' AND root_owner_uid >= 0),
+    registered_at   TEXT NOT NULL DEFAULT (datetime('now')),
+    CHECK (length(root_device) <= 20 AND length(root_inode) <= 20)
+);
+
+CREATE TRIGGER task_setup_receipts_immutable
+BEFORE UPDATE ON task_setup_receipts
+BEGIN
+    SELECT RAISE(ABORT, 'task setup receipt is immutable; retry must match its registered identity (ADR-016 D5)');
+END;
+
+CREATE TRIGGER task_setup_receipts_no_delete
+BEFORE DELETE ON task_setup_receipts
+BEGIN
+    SELECT RAISE(ABORT, 'task setup receipts are durable recovery evidence (ADR-016 D5)');
+END;
+
+------------------------------------------------------------------------------
 -- activity — the append-only log (Inv. 7). actor is the logical originator;
 -- the physical writer is always mc.
 ------------------------------------------------------------------------------
