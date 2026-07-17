@@ -265,9 +265,9 @@ deleted, not struck through. History is in `docs/ledger/`.
   agent cannot sleep the machine it runs on). Instructions in
   `spikes/07-launchd-clock/RESULT.md`. All other S7 sub-tests passed.
 
-NEXT: Implement the fixed first-task setup closure materialization red-first.
-It must build from the durable-receipt-attested root, populate only the pinned
-reachable closure and relative Git controls, then inspect/recheck the result
-before the 15 task mount rows can enter an agent plan. Keep accepted seals,
-downstream reconciliation, disposable/committed projections, structured
-Engine-API binds, and launchd in their named later slices.
+NEXT: Implement the fixed first-task setup closure writer red-first. It must
+build from the durable-receipt-attested root, populate only the pinned
+reachable closure and relative Git controls, then call the completed
+receipt-plus-15-row inspection before those rows can enter an agent plan. Keep
+accepted seals, downstream reconciliation, disposable/committed projections,
+structured Engine-API binds, and launchd in their named later slices.

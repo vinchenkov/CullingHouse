@@ -191,3 +191,27 @@ func AttestFirstTaskSetupRoot(db *sql.DB, runID, workspaceRoot string) (FirstTas
 	}
 	return FirstTaskSetupRoot{Receipt: receipt, Canonical: root}, nil
 }
+
+// InspectFirstTaskSetup joins the two gates that must bracket first-task
+// materialization. A fixed setup writer calls the receipt-attested root gate
+// before it writes, then this inspection before it can expose the task rows to
+// an agent plan. Keeping the result path-free outside this narrow boundary is
+// deliberate: every row is reconstructed from the receipt's task id under the
+// canonical registered Worksource, never accepted from a setup caller.
+//
+// This does not populate the Git closure. That writer is the next setup
+// operation; until it exists an empty resident skeleton still refuses here.
+func InspectFirstTaskSetup(db *sql.DB, runID, workspaceRoot string) (FirstTaskSetupRoot, map[boundary.TypedKind]boundary.ProtectedID, error) {
+	root, err := AttestFirstTaskSetupRoot(db, runID, workspaceRoot)
+	if err != nil {
+		return FirstTaskSetupRoot{}, nil, err
+	}
+	rows, err := resolveTaskLocalSkeleton(workspaceRoot, root.Receipt.TaskID, root.Receipt.Root.OwnerUID)
+	if err != nil {
+		return FirstTaskSetupRoot{}, nil, err
+	}
+	if got, ok := rows[boundary.KindTaskRoot]; !ok || got.Canonical != root.Canonical {
+		return FirstTaskSetupRoot{}, nil, Domainf("task setup inspection did not recover its receipt-attested task root")
+	}
+	return root, rows, nil
+}

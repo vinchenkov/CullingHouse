@@ -1047,3 +1047,24 @@ reachable closure and relative Git controls, then inspect/recheck the result
 before the 15 task mount rows can enter an agent plan. Keep accepted seals,
 downstream reconciliation, disposable/committed projections, structured
 Engine-API binds, and launchd in their named later slices.
+
+## 2026-07-17 — first-task setup inspection seam
+
+The first closure-materialization micro-step is green. `InspectFirstTaskSetup`
+now joins the durable receipt-attested root gate with the complete closed
+fifteen-row task-table resolver. It returns only after the root still matches
+the live run/task/lease receipt and every generated fixed cover exists with its
+required kind, trust, and content pin. A focused test proves that deleting a
+fixed cover after successful receipt attestation refuses the inspection.
+
+No closure writer or agent-plan admission was added: an empty resident
+skeleton remains unplannable. The remaining writer must create only the pinned
+reachable object closure and relative Git controls, then call this inspection
+before it makes the rows usable. The five-leg fast lane passes.
+
+NEXT: implement the fixed first-task setup closure writer red-first. It must
+build from the durable-receipt-attested root, populate only the pinned
+reachable closure and relative Git controls, then call the completed
+receipt-plus-15-row inspection before those rows can enter an agent plan. Keep
+accepted seals, downstream reconciliation, disposable/committed projections,
+structured Engine-API binds, and launchd in their named later slices.

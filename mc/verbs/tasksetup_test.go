@@ -2,6 +2,7 @@ package verbs
 
 import (
 	"os"
+	"path/filepath"
 	"strconv"
 	"syscall"
 	"testing"
@@ -127,5 +128,46 @@ func TestAttestFirstTaskSetupRootDerivesAndMatchesOnlyTheRegisteredRoot(t *testi
 	}
 	if _, err := AttestFirstTaskSetupRoot(db, "setup-run", ws); err == nil {
 		t.Fatal("non-0555 registered root was accepted for setup")
+	}
+}
+
+func TestInspectFirstTaskSetupRequiresTheReceiptAttestedCompleteTaskTable(t *testing.T) {
+	db := dvSpine(t)
+	ws, root := tsBuild(t)
+	dvInsertTask(t, db, dvTask(7, "task", "seeded", 2))
+	dvExec(t, db, `INSERT INTO runs (id, tier, role, worksource, subject) VALUES ('setup-run', 'pipeline', 'worker', 'ws-test', 7)`)
+	dvExec(t, db, `UPDATE lock SET run_id='setup-run', subject=7, owner='worker', acquired_at=datetime('now'), hard_deadline_at=datetime('now', '+1 hour') WHERE id=1`)
+	info, err := os.Lstat(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	st := info.Sys().(*syscall.Stat_t)
+	receipt := setupReceipt("setup-run", 7)
+	receipt.Root.Device = strconv.FormatUint(uint64(st.Dev), 10)
+	receipt.Root.Inode = strconv.FormatUint(st.Ino, 10)
+	receipt.Root.OwnerUID = int(st.Uid)
+	if _, err := RegisterFirstTaskSetup(db, receipt); err != nil {
+		t.Fatalf("register receipt: %v", err)
+	}
+
+	got, rows, err := InspectFirstTaskSetup(db, "setup-run", ws)
+	if err != nil {
+		t.Fatalf("inspect setup: %v", err)
+	}
+	if got.Receipt != receipt || got.Canonical != root {
+		t.Fatalf("attested root = %+v, want receipt %+v at %q", got, receipt, root)
+	}
+	if len(rows) != len(taskPlanRows(7)) {
+		t.Fatalf("inspected rows = %d, want %d", len(rows), len(taskPlanRows(7)))
+	}
+
+	if err := os.Chmod(root, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(filepath.Join(root, "git", "shallow")); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := InspectFirstTaskSetup(db, "setup-run", ws); err == nil {
+		t.Fatal("incomplete task table was accepted after receipt attestation")
 	}
 }
