@@ -81,3 +81,47 @@ func RegisterFirstTaskSetup(db *sql.DB, receipt TaskSetupReceipt) (TaskSetupRece
 	})
 	return out, err
 }
+
+// ReadFirstTaskSetup returns the one durable root identity a fixed setup
+// action may consume. It intentionally returns no host path: the setup
+// effector derives its constructed task path from the attested Worksource,
+// then must prove that path still has this exact identity. The same live
+// run/task/lease fence as registration prevents an abandoned Worker from
+// donating a skeleton to a later claim.
+func ReadFirstTaskSetup(db *sql.DB, runID string) (TaskSetupReceipt, error) {
+	if runID == "" {
+		return TaskSetupReceipt{}, Domainf("task setup receipt run is absent")
+	}
+	var out TaskSetupReceipt
+	err := inTx(db, func(ctx context.Context, q Q) error {
+		var role, tier string
+		var subject sql.NullInt64
+		var ended sql.NullString
+		if err := q.QueryRowContext(ctx, `SELECT role, tier, subject, ended_at FROM runs WHERE id=?`, runID).
+			Scan(&role, &tier, &subject, &ended); err != nil {
+			return Domainf("task setup receipt run is absent")
+		}
+		if tier != "pipeline" || role != "worker" || !subject.Valid || ended.Valid {
+			return Domainf("task setup receipt does not name a live standalone Worker run")
+		}
+		var lockRun sql.NullString
+		var lockSubject sql.NullInt64
+		if err := q.QueryRowContext(ctx, `SELECT run_id, subject FROM lock WHERE id=1`).Scan(&lockRun, &lockSubject); err != nil {
+			return err
+		}
+		if !lockRun.Valid || lockRun.String != runID || !lockSubject.Valid || lockSubject.Int64 != subject.Int64 {
+			return Domainf("task setup receipt lost its run/task lease fence")
+		}
+		out.RunID = runID
+		out.TaskID = subject.Int64
+		if err := q.QueryRowContext(ctx, `SELECT root_device, root_inode, root_owner_uid
+			FROM task_setup_receipts WHERE run_id=? AND task_id=?`, runID, subject.Int64).
+			Scan(&out.Root.Device, &out.Root.Inode, &out.Root.OwnerUID); err == sql.ErrNoRows {
+			return Domainf("task setup receipt is absent")
+		} else if err != nil {
+			return err
+		}
+		return nil
+	})
+	return out, err
+}

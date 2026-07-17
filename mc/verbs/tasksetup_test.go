@@ -43,3 +43,37 @@ func TestRegisterFirstTaskSetupRejectsStaleOrWrongRunTask(t *testing.T) {
 		t.Fatal("wrong task registration was accepted")
 	}
 }
+
+func TestReadFirstTaskSetupRequiresTheLiveRunTaskLeaseAndExactReceipt(t *testing.T) {
+	db := dvSpine(t)
+	dvInsertTask(t, db, dvTask(7, "task", "seeded", 2))
+	dvExec(t, db, `INSERT INTO runs (id, tier, role, worksource, subject) VALUES ('setup-run', 'pipeline', 'worker', 'ws-test', 7)`)
+	dvExec(t, db, `UPDATE lock SET run_id='setup-run', subject=7, owner='worker', acquired_at=datetime('now'), hard_deadline_at=datetime('now', '+1 hour') WHERE id=1`)
+	want := setupReceipt("setup-run", 7)
+	if _, err := RegisterFirstTaskSetup(db, want); err != nil {
+		t.Fatalf("register receipt: %v", err)
+	}
+
+	if got, err := ReadFirstTaskSetup(db, "setup-run"); err != nil || got != want {
+		t.Fatalf("read = (%+v, %v), want (%+v, nil)", got, err, want)
+	}
+	dvExec(t, db, `UPDATE lock SET run_id='other-run' WHERE id=1`)
+	if _, err := ReadFirstTaskSetup(db, "setup-run"); err == nil {
+		t.Fatal("stale run lease exposed its setup receipt")
+	}
+	dvExec(t, db, `UPDATE lock SET run_id='setup-run' WHERE id=1`)
+	dvExec(t, db, `UPDATE runs SET ended_at=datetime('now') WHERE id='setup-run'`)
+	if _, err := ReadFirstTaskSetup(db, "setup-run"); err == nil {
+		t.Fatal("ended run exposed its setup receipt")
+	}
+}
+
+func TestReadFirstTaskSetupRefusesAnUnregisteredRun(t *testing.T) {
+	db := dvSpine(t)
+	dvInsertTask(t, db, dvTask(7, "task", "seeded", 2))
+	dvExec(t, db, `INSERT INTO runs (id, tier, role, worksource, subject) VALUES ('setup-run', 'pipeline', 'worker', 'ws-test', 7)`)
+	dvExec(t, db, `UPDATE lock SET run_id='setup-run', subject=7, owner='worker', acquired_at=datetime('now'), hard_deadline_at=datetime('now', '+1 hour') WHERE id=1`)
+	if _, err := ReadFirstTaskSetup(db, "setup-run"); err == nil {
+		t.Fatal("missing setup receipt was accepted")
+	}
+}

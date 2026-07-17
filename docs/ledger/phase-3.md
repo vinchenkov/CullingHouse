@@ -973,3 +973,21 @@ relative Git controls, then inspect/recheck the result before the 15 task mount
 rows can enter an agent plan. Keep accepted seals, downstream reconciliation,
 disposable/committed projections, structured Engine-API binds, and launchd in
 their named later slices.
+
+## 2026-07-17 — setup receipt consumer seam, held red on deadline tests
+
+Started the fixed first-task setup action with the narrow persistence seam:
+`ReadFirstTaskSetup` returns only a live standalone Worker's exact durable
+root receipt, after rechecking the matching active lock/run/task fence. It
+returns no host path and refuses absent receipts, ended runs, and stale leases;
+the future fixed setup effector must construct and re-attest its path rather
+than accepting one from the database. Focused receipt tests pass.
+
+This micro-step is deliberately uncommitted. The required mc fast lane now
+fails its two known deadline timing tests even in isolation, five consecutive
+runs: `TestPrivateHelperSelfDeadlineTerminatesContainerSideProcess` and
+`TestPrivateHelperAbsoluteDeadlineIncludesBrokerStartup` take roughly
+550–660ms while their assertion is 500ms. Both still observe the required
+timeout exit code. The four non-mc lanes passed. Preserve the red state and
+diagnose that unrelated test/process-start bound before committing; do not
+weaken the setup receipt fence to route around it.
