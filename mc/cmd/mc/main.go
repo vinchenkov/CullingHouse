@@ -41,7 +41,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	}
 	// The launch-time identity recheck reads HOST files by definition: it must
 	// run locally even when every ordinary verb self-delegates into the helper.
-	if args[0] == "__mount-recheck" {
+	if args[0] == "__mount-recheck" || args[0] == "__task-parent-recheck" {
 		return runLocal(args, stdin, stdout, stderr)
 	}
 
@@ -129,6 +129,27 @@ func dispatchVerb(args []string, stdin io.Reader) (any, error) {
 	verb := args[0]
 	rest := args[1:]
 	switch verb {
+	case "__task-parent-recheck":
+		if len(rest) != 1 {
+			return nil, verbs.Usagef("usage: mc __task-parent-recheck <step-json>")
+		}
+		id, err := verbs.LoadIdentity()
+		if err != nil {
+			return nil, err
+		}
+		if err := verbs.RequireHostScope(id, "mc __task-parent-recheck"); err != nil {
+			return nil, err
+		}
+		var step verbs.PrivateDispatchTaskPrecreate
+		dec := json.NewDecoder(strings.NewReader(rest[0]))
+		dec.DisallowUnknownFields()
+		if err := dec.Decode(&step); err != nil {
+			return nil, verbs.Usagef("task parent recheck step is invalid: %v", err)
+		}
+		if dec.More() {
+			return nil, verbs.Usagef("task parent recheck step carries trailing data")
+		}
+		return verbs.TaskParentRecheck(step)
 	case "__mount-recheck":
 		if len(rest) != 1 {
 			return nil, verbs.Usagef("usage: mc __mount-recheck <plan-file>")

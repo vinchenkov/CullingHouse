@@ -106,7 +106,7 @@ describe("resident task-skeleton precreate (ADR-017:437-441)", () => {
     ])).rejects.toThrow("child source changed or is not empty");
   });
 
-  test("refuses noncanonical ids and a child mode without owner rwx", async () => {
+  test("refuses noncanonical ids and every child mode except closed 0700", async () => {
     const f = await fixture();
     for (const task_id of [0, -1, 1.5]) {
       await expect(precreateTaskSkeleton({
@@ -122,5 +122,11 @@ describe("resident task-skeleton precreate (ADR-017:437-441)", () => {
       child_mode: 0o500,
       tasks_parent: f.identity,
     })).rejects.toThrow("child_mode");
+	await expect(precreateTaskSkeleton({
+		workspace_root: f.workspace,
+		task_id: 7,
+		child_mode: 0o777,
+		tasks_parent: f.identity,
+	})).rejects.toThrow("child_mode");
   });
 });

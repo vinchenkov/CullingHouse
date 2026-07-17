@@ -403,6 +403,103 @@ func TestValidatePrivateAttestationMountPlanRules(t *testing.T) {
 	}
 }
 
+func TestValidatePrivateAttestationTaskPrecreateRules(t *testing.T) {
+	digest := strings.Repeat("ab", 32)
+	valid := func() *PrivateDispatchMountPlan {
+		return &PrivateDispatchMountPlan{
+			Entries: []PrivateDispatchMountEntry{},
+			TaskPrecreate: &PrivateDispatchTaskPrecreate{
+				ChildMode: 0o700, TaskID: 7, WorkspaceRoot: "/srv/repo",
+				TasksParent: PrivateDispatchPathIdentity{
+					Canonical: "/srv/repo/.mission-control/tasks", Device: "8", Inode: "9", OwnerUID: 501,
+				},
+			},
+			Version: 1,
+		}
+	}
+	route := func(plan *PrivateDispatchMountPlan) PrivateDispatchAttestation {
+		return PrivateDispatchAttestation{
+			RoutingDigest: digest, Harness: "claude-sdk", Binding: "minimax", MountPlan: plan,
+		}
+	}
+	if err := validatePrivateAttestation(route(valid())); err != nil {
+		t.Fatalf("valid task precreate rejected: %v", err)
+	}
+	mutations := map[string]func(*PrivateDispatchTaskPrecreate){
+		"relative_workspace": func(s *PrivateDispatchTaskPrecreate) { s.WorkspaceRoot = "srv/repo" },
+		"wrong_parent":       func(s *PrivateDispatchTaskPrecreate) { s.TasksParent.Canonical = "/srv/other" },
+		"hex_device":         func(s *PrivateDispatchTaskPrecreate) { s.TasksParent.Device = "0x8" },
+		"negative_owner":     func(s *PrivateDispatchTaskPrecreate) { s.TasksParent.OwnerUID = -1 },
+		"zero_task":          func(s *PrivateDispatchTaskPrecreate) { s.TaskID = 0 },
+		"unwritable_mode":    func(s *PrivateDispatchTaskPrecreate) { s.ChildMode = 0o500 },
+		"widened_mode":       func(s *PrivateDispatchTaskPrecreate) { s.ChildMode = 0o777 },
+	}
+	for name, mutate := range mutations {
+		t.Run(name, func(t *testing.T) {
+			plan := valid()
+			mutate(plan.TaskPrecreate)
+			if err := validatePrivateAttestation(route(plan)); err == nil {
+				t.Fatal("malformed task precreate was accepted")
+			}
+		})
+	}
+	plan := valid()
+	plan.Entries = []PrivateDispatchMountEntry{{
+		Access: "ro", Destination: "/workspace", Device: "42", Inode: "7",
+		Kind: "dir", LogicalID: "task-root", Mode: 0o555, OwnerUID: 501, Source: "/srv/repo/task-7",
+	}}
+	if err := validatePrivateAttestation(route(plan)); err == nil {
+		t.Fatal("precreate plan fabricated an existing task-root bind")
+	}
+}
+
+func TestValidatePrivateTaskPrecreateCandidateRejectsHostilePairings(t *testing.T) {
+	taskID := int64(7)
+	step := &PrivateDispatchTaskPrecreate{
+		ChildMode: 0o700, TaskID: taskID, WorkspaceRoot: "/srv/repo",
+		TasksParent: PrivateDispatchPathIdentity{
+			Canonical: "/srv/repo/.mission-control/tasks", Device: "8", Inode: "9", OwnerUID: 501,
+		},
+	}
+	valid := func() *preparedCandidate {
+		return &preparedCandidate{
+			spawn: &dispatch.Spawn{Role: dispatch.RoleWorker, SubjectID: &taskID},
+			mountState: PrivateDispatchMountState{
+				SelectedWorksource: "repo",
+				Worksources: []PrivateDispatchWorksource{{
+					WorksourceID: "repo", Kind: "repo", WorkspaceRoot: "/srv/repo",
+				}},
+			},
+		}
+	}
+	plan := &PrivateDispatchMountPlan{Entries: []PrivateDispatchMountEntry{}, TaskPrecreate: step, Version: 1}
+	if err := validatePrivateTaskPrecreateCandidate(valid(), plan); err != nil {
+		t.Fatalf("valid candidate pairing rejected: %v", err)
+	}
+	cases := map[string]func(*preparedCandidate){
+		"non_worker": func(c *preparedCandidate) { c.spawn.Role = dispatch.RoleEditor },
+		"wrong_task": func(c *preparedCandidate) {
+			other := int64(8)
+			c.spawn.SubjectID = &other
+		},
+		"initiative_child": func(c *preparedCandidate) {
+			initiative := int64(9)
+			c.mountState.SubjectInitiativeID = &initiative
+		},
+		"wrong_workspace": func(c *preparedCandidate) { c.mountState.Worksources[0].WorkspaceRoot = "/srv/other" },
+		"non_repo":        func(c *preparedCandidate) { c.mountState.Worksources[0].Kind = "personal" },
+	}
+	for name, mutate := range cases {
+		t.Run(name, func(t *testing.T) {
+			cand := valid()
+			mutate(cand)
+			if err := validatePrivateTaskPrecreateCandidate(cand, plan); err == nil {
+				t.Fatal("hostile task-precreate pairing was accepted")
+			}
+		})
+	}
+}
+
 // The commit-side mount-state drift fence (the reflect.DeepEqual reload in
 // dispatchCommit) — the token structurally cannot catch profile drift because
 // it is rebuilt from the PREPARED state, so this fence alone stands between a

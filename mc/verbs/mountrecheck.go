@@ -14,11 +14,49 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"os"
+	"path/filepath"
 	"strconv"
 	"syscall"
 
 	"mc/boundary"
 )
+
+// TaskParentRecheck repeats the complete trust predicate for the exact
+// precreate parent immediately before the resident creates the task root.
+// Unlike an ordinary mount entry, this path is a creation authority, so its
+// fixed owner-only mode and native macOS ACL predicate are both mandatory.
+func TaskParentRecheck(step PrivateDispatchTaskPrecreate) (map[string]any, error) {
+	plan := &PrivateDispatchMountPlan{
+		Entries: []PrivateDispatchMountEntry{}, TaskPrecreate: &step, Version: 1,
+	}
+	if err := validatePrivateMountPlan(plan); err != nil {
+		return nil, err
+	}
+	parent := step.TasksParent
+	if err := boundary.TrustHomeDir(parent.Canonical, parent.OwnerUID); err != nil {
+		return nil, &DomainError{Code: boundary.CodeIdentityChanged,
+			Msg: "task parent recheck: trust predicate changed: " + err.Error()}
+	}
+	identity, err := boundary.ResolveSource(parent.Canonical)
+	if err != nil {
+		return nil, err
+	}
+	st, ok := identity.Info.Sys().(*syscall.Stat_t)
+	if !ok || identity.Canonical != parent.Canonical || !identity.IsDir || identity.Info.Mode().Perm() != 0o700 ||
+		strconv.FormatUint(uint64(st.Dev), 10) != parent.Device ||
+		strconv.FormatUint(st.Ino, 10) != parent.Inode || int(st.Uid) != parent.OwnerUID {
+		return nil, &DomainError{Code: boundary.CodeIdentityChanged,
+			Msg: "task parent recheck: identity changed after preclaim"}
+	}
+	root := filepath.Join(parent.Canonical, "task-"+strconv.FormatInt(step.TaskID, 10))
+	if _, err := os.Lstat(root); err == nil {
+		return nil, &DomainError{Code: boundary.CodeIdentityChanged,
+			Msg: "task parent recheck: expected-absent task root appeared"}
+	} else if !os.IsNotExist(err) {
+		return nil, err
+	}
+	return map[string]any{"action": "task-parent-recheck", "status": "ok"}, nil
+}
 
 // MountRecheck validates the plan file's own trust seam, decodes the closed
 // carrier strictly, and requires every entry's source to still resolve to the

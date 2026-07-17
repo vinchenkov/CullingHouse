@@ -66,6 +66,203 @@ describe("idle / reenter / unknown", () => {
 
 describe("spawn effect", () => {
 
+  test("post-claim task precreate registers the returned identity before setup or launch", async () => {
+    const events: string[] = [];
+    const registered = {
+      canonical: "/host/workspace/.mission-control/tasks/task-42",
+      device: "9",
+      inode: "99",
+      owner_uid: 501,
+    };
+    const rig = makeRig({
+		recheckTaskParent: async (request) => {
+			events.push(`recheck:${request.task_id}`);
+		},
+      precreateTaskSkeleton: async (request) => {
+        events.push(`precreate:${request.task_id}`);
+        return registered;
+      },
+      registerTaskRoot: async (runId, identity) => {
+        events.push(`register:${runId}`);
+        expect(identity).toBe(registered);
+      },
+    });
+    await applyEffect({
+      ...spawnEffect,
+      mount_plan: {
+        entries: [],
+        task_precreate: {
+          child_mode: 0o700,
+          task_id: 42,
+          tasks_parent: {
+            canonical: "/host/workspace/.mission-control/tasks",
+            device: "8",
+            inode: "88",
+            owner_uid: 501,
+          },
+          workspace_root: "/host/workspace",
+        },
+        version: 1,
+      },
+    }, rig.deps);
+	expect(events).toEqual(["recheck:42", "precreate:42", "register:run-42-worker"]);
+    expect(rig.fakeFs.events).toEqual([]);
+    expect(rig.docker.calls).toEqual([]);
+    expect(rig.logs.some((line) => line.includes("task root registered") && line.includes("setup pending"))).toBe(true);
+  });
+
+  test("task precreate failure performs no later effect", async () => {
+    const rig = makeRig({
+      precreateTaskSkeleton: async () => {
+        throw new Error("task parent identity changed after preclaim");
+      },
+    });
+    await expect(applyEffect({
+      ...spawnEffect,
+      mount_plan: {
+        entries: [],
+        task_precreate: {
+          child_mode: 0o700,
+          task_id: 42,
+          tasks_parent: {
+            canonical: "/host/workspace/.mission-control/tasks",
+            device: "8",
+            inode: "88",
+            owner_uid: 501,
+          },
+          workspace_root: "/host/workspace",
+        },
+        version: 1,
+      },
+    }, rig.deps)).rejects.toThrow("parent identity changed");
+    expect(rig.fakeFs.events).toEqual([]);
+    expect(rig.docker.calls).toEqual([]);
+  });
+
+  test("task-parent trust recheck refusal performs no precreate", async () => {
+	let precreated = false;
+	const rig = makeRig({
+		recheckTaskParent: async () => {
+			throw new Error("task parent recheck refused: ACL grants non-owner access");
+		},
+		precreateTaskSkeleton: async (request) => {
+			precreated = true;
+			return request.tasks_parent;
+		},
+	});
+	await expect(applyEffect({
+		...spawnEffect,
+		mount_plan: {
+			entries: [],
+			task_precreate: {
+				child_mode: 0o700, task_id: 42,
+				tasks_parent: {
+					canonical: "/host/workspace/.mission-control/tasks",
+					device: "8", inode: "88", owner_uid: 501,
+				},
+				workspace_root: "/host/workspace",
+			},
+			version: 1,
+		},
+	}, rig.deps)).rejects.toThrow("ACL grants non-owner access");
+	expect(precreated).toBe(false);
+	expect(rig.fakeFs.events).toEqual([]);
+	expect(rig.docker.calls).toEqual([]);
+  });
+
+  test("task-root registration failure leaves the created residue and performs no launch", async () => {
+    const events: string[] = [];
+    const rig = makeRig({
+      precreateTaskSkeleton: async (request) => {
+        events.push("precreate");
+        return {
+          canonical: `${request.tasks_parent.canonical}/task-${request.task_id}`,
+          device: "9", inode: "99", owner_uid: request.tasks_parent.owner_uid,
+        };
+      },
+      registerTaskRoot: async () => {
+        events.push("register");
+        throw new Error("registration fence failed");
+      },
+    });
+    await expect(applyEffect({
+      ...spawnEffect,
+      mount_plan: {
+        entries: [],
+        task_precreate: {
+          child_mode: 0o700, task_id: 42,
+          tasks_parent: {
+            canonical: "/host/workspace/.mission-control/tasks",
+            device: "8", inode: "88", owner_uid: 501,
+          },
+          workspace_root: "/host/workspace",
+        },
+        version: 1,
+      },
+    }, rig.deps)).rejects.toThrow("registration fence failed");
+    expect(events).toEqual(["precreate", "register"]);
+    expect(rig.fakeFs.events).toEqual([]);
+    expect(rig.docker.calls).toEqual([]);
+  });
+
+  test("forged returned task-root identity is never registered", async () => {
+    let registered = false;
+    const rig = makeRig({
+      precreateTaskSkeleton: async () => ({
+        canonical: "/host/workspace/.mission-control/tasks/task-evil",
+        device: "9", inode: "99", owner_uid: 501,
+      }),
+      registerTaskRoot: async () => {
+        registered = true;
+      },
+    });
+    await expect(applyEffect({
+      ...spawnEffect,
+      mount_plan: {
+        entries: [],
+        task_precreate: {
+          child_mode: 0o700, task_id: 42,
+          tasks_parent: {
+            canonical: "/host/workspace/.mission-control/tasks",
+            device: "8", inode: "88", owner_uid: 501,
+          },
+          workspace_root: "/host/workspace",
+        },
+        version: 1,
+      },
+    }, rig.deps)).rejects.toThrow("invalid registration evidence");
+    expect(registered).toBe(false);
+    expect(rig.fakeFs.events).toEqual([]);
+    expect(rig.docker.calls).toEqual([]);
+  });
+
+  test("a widened task child mode is refused before precreate", async () => {
+    let called = false;
+    const rig = makeRig({
+      precreateTaskSkeleton: async (request) => {
+        called = true;
+        return request.tasks_parent;
+      },
+    });
+    await applyEffect({
+      ...spawnEffect,
+      mount_plan: {
+        entries: [],
+        task_precreate: {
+          child_mode: 0o777, task_id: 42,
+          tasks_parent: {
+            canonical: "/host/workspace/.mission-control/tasks",
+            device: "8", inode: "88", owner_uid: 501,
+          },
+          workspace_root: "/host/workspace",
+        },
+        version: 1,
+      },
+    }, rig.deps);
+    expect(called).toBe(false);
+    expect(rig.logs.some((line) => line.includes("task precreate descriptor is malformed"))).toBe(true);
+  });
+
   test("canonical route is refused before the fake-only skeleton can mislabel execution", async () => {
     const rig = makeRig();
     await applyEffect(

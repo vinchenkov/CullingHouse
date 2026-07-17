@@ -16,6 +16,7 @@ import { mkdir, rm, writeFile } from "node:fs/promises";
 import { startTickLoop } from "./tick-loop";
 import type { Exec, ResidentConfig, TickDeps } from "./types";
 import { CONFIG_SCHEMA_VERSION, execMcVia } from "./resident-control";
+import { precreateTaskSkeleton, type PathIdentity } from "./task-skeleton";
 
 interface MainConfig extends ResidentConfig {
   mcPath: string;
@@ -64,16 +65,18 @@ async function main(): Promise<void> {
     console.error(`resident: invalid tick interval ${JSON.stringify(envInterval)}`);
     process.exit(2);
   }
+	const registeredTaskRoots = new Map<string, PathIdentity>();
 
+	const runMc = execMcVia([config.mcPath], {
+		mcHome: config.mcHome,
+		releaseBuildId: config.releaseBuildId,
+		configSchemaVersion: config.configSchemaVersion,
+	});
   const deps: TickDeps = {
     intervalMs,
     setTimer: (fn, ms) => setInterval(fn, ms),
     clearTimer: (h) => clearInterval(h as ReturnType<typeof setInterval>),
-    runMc: execMcVia([config.mcPath], {
-      mcHome: config.mcHome,
-      releaseBuildId: config.releaseBuildId,
-      configSchemaVersion: config.configSchemaVersion,
-    }),
+		runMc,
     docker: execVia("docker"),
     log: (msg) => console.error(`[resident ${new Date().toISOString()}] ${msg}`),
     fs: {
@@ -84,6 +87,31 @@ async function main(): Promise<void> {
         opts?.mode !== undefined ? writeFile(path, data, { mode: opts.mode }) : writeFile(path, data),
       rm: (path) => rm(path, { force: true }),
     },
+		precreateTaskSkeleton,
+		recheckTaskParent: async (step) => {
+			const frame = JSON.stringify({
+				child_mode: step.child_mode,
+				task_id: step.task_id,
+				tasks_parent: {
+					canonical: step.tasks_parent.canonical,
+					device: step.tasks_parent.device,
+					inode: step.tasks_parent.inode,
+					owner_uid: step.tasks_parent.owner_uid,
+				},
+				workspace_root: step.workspace_root,
+			});
+			const result = await runMc(["__task-parent-recheck", frame]);
+			if (result.exitCode !== 0) {
+				throw new Error(`task parent recheck refused (exit ${result.exitCode}): ${result.stderr.trim()}`);
+			}
+		},
+		registerTaskRoot: async (runId, identity) => {
+			const prior = registeredTaskRoots.get(runId);
+			if (prior !== undefined && JSON.stringify(prior) !== JSON.stringify(identity)) {
+				throw new Error(`task root registration for ${runId} changed identity`);
+			}
+			registeredTaskRoots.set(runId, identity);
+		},
     config,
   };
 

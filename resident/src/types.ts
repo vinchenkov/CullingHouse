@@ -5,6 +5,8 @@
 // (folder + run.json writes, §10 effect order); both are injectable so
 // `bun test` never touches the real filesystem or Docker.
 
+import type { PathIdentity, TaskSkeletonRequest } from "./task-skeleton";
+
 /** Result of running an external command (mc or docker). */
 export interface ExecResult {
   exitCode: number;
@@ -66,6 +68,12 @@ export interface TickDeps {
     /** rm -f semantics (missing file is not an error). */
     rm(path: string): Promise<void>;
   };
+	/** Exclusive post-claim task-root materializer (ADR-016 D5). */
+	precreateTaskSkeleton(request: TaskSkeletonRequest): Promise<PathIdentity>;
+	/** Repeats parent identity, owner-only mode, and native ACL trust. */
+	recheckTaskParent(request: TaskSkeletonRequest): Promise<void>;
+	/** Registers the exact returned identity before any setup consumer runs. */
+	registerTaskRoot(runId: string, identity: PathIdentity): Promise<void>;
   config: ResidentConfig;
 }
 
@@ -88,6 +96,7 @@ export interface MountPlanEntry {
 /** The committed spawn effect's validated mount plan; explicit, never absent. */
 export interface MountPlan {
   entries: MountPlanEntry[];
+	task_precreate?: TaskSkeletonRequest;
   version: number;
 }
 

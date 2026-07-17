@@ -100,15 +100,38 @@ type PrivateDispatchMountEntry struct {
 	Source          string `json:"source"`
 }
 
+// PrivateDispatchPathIdentity is host identity evidence carried as decimal
+// strings so the JavaScript resident never truncates device/inode values.
+// Field order is alphabetical because the containing plan is replayed through
+// canonical JSON.
+type PrivateDispatchPathIdentity struct {
+	Canonical string `json:"canonical"`
+	Device    string `json:"device"`
+	Inode     string `json:"inode"`
+	OwnerUID  int    `json:"owner_uid"`
+}
+
+// PrivateDispatchTaskPrecreate is ADR-016 D5/D6's first post-claim setup
+// operation. Presence means the exact task root was proved absent beneath the
+// captured parent. It authorizes only resident precreation; it does not invent
+// mount rows for paths that do not exist yet.
+type PrivateDispatchTaskPrecreate struct {
+	ChildMode     int                         `json:"child_mode"`
+	TaskID        int64                       `json:"task_id"`
+	TasksParent   PrivateDispatchPathIdentity `json:"tasks_parent"`
+	WorkspaceRoot string                      `json:"workspace_root"`
+}
+
 // PrivateDispatchMountPlan is ADR-016 D5's bounded authorization carrier: the
 // complete validated plan the attestation and the committed spawn effect
 // carry, and the only mount authority the resident may consume. Entries are
 // sorted by destination (the declared key of a semantically unordered set).
 // The alphabetical field order is load-bearing — see the entry type.
 type PrivateDispatchMountPlan struct {
-	Entries            []PrivateDispatchMountEntry `json:"entries"`
-	JurisdictionDigest string                      `json:"jurisdiction_digest,omitempty"`
-	Version            int                         `json:"version"`
+	Entries            []PrivateDispatchMountEntry   `json:"entries"`
+	JurisdictionDigest string                        `json:"jurisdiction_digest,omitempty"`
+	TaskPrecreate      *PrivateDispatchTaskPrecreate `json:"task_precreate,omitempty"`
+	Version            int                           `json:"version"`
 }
 
 type mountPlanInputs struct {

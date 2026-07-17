@@ -232,6 +232,28 @@ func TestDispatchSeamMountPlanDigestDerivation(t *testing.T) {
 	if empty, err := mountPlanDigest(nil); err != nil || empty != "" {
 		t.Fatalf("nil-plan digest = (%q, %v), want the explicit empty string", empty, err)
 	}
+	withPrecreate := &PrivateDispatchMountPlan{
+		Entries: []PrivateDispatchMountEntry{},
+		TaskPrecreate: &PrivateDispatchTaskPrecreate{
+			ChildMode: 0o700, TaskID: 7, WorkspaceRoot: "/srv/repo",
+			TasksParent: PrivateDispatchPathIdentity{
+				Canonical: "/srv/repo/.mission-control/tasks", Device: "8", Inode: "9", OwnerUID: 501,
+			},
+		},
+		Version: 1,
+	}
+	first, err := mountPlanDigest(withPrecreate)
+	if err != nil {
+		t.Fatal(err)
+	}
+	withPrecreate.TaskPrecreate.TasksParent.Inode = "10"
+	second, err := mountPlanDigest(withPrecreate)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first == second {
+		t.Fatal("task-parent identity drift did not change the digest-covered plan")
+	}
 }
 
 func TestDispatchSeamCanonicalActionRefusalVariant(t *testing.T) {

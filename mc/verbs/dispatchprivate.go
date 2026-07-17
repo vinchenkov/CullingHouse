@@ -258,6 +258,9 @@ func DispatchCommitPrivate(ctx context.Context, q Q, req PrivateDispatchCommitRe
 	if err := validatePrivateAttestation(req.Attestation); err != nil {
 		return PrivateDispatchResult{}, err
 	}
+	if err := validatePrivateTaskPrecreateCandidate(prepared.candidate, req.Attestation.MountPlan); err != nil {
+		return PrivateDispatchResult{}, err
+	}
 	attested := attestedFromPrivate(req.Attestation, req.DeploymentUUID)
 	effect, err := dispatchCommit(ctx, q, prepared, attested)
 	if err != nil {
@@ -273,6 +276,23 @@ func DispatchCommitPrivate(ctx context.Context, q Q, req PrivateDispatchCommitRe
 		ConfigSchemaVersion: req.ConfigSchemaVersion, DeploymentUUID: req.DeploymentUUID,
 		DispatchRequestID: req.DispatchRequestID, Result: result,
 	}, nil
+}
+
+func validatePrivateTaskPrecreateCandidate(cand *preparedCandidate, plan *PrivateDispatchMountPlan) error {
+	if plan == nil || plan.TaskPrecreate == nil {
+		return nil
+	}
+	step := plan.TaskPrecreate
+	if cand == nil || cand.spawn == nil || baseRole(string(cand.spawn.Role)) != "worker" ||
+		cand.spawn.SubjectID == nil || *cand.spawn.SubjectID != step.TaskID ||
+		cand.mountState.SubjectInitiativeID != nil {
+		return Domainf("dispatch: private task precreate does not match a standalone Worker candidate")
+	}
+	selected, err := selectedDispatchWorksource(cand.mountState)
+	if err != nil || selected.Kind != "repo" || selected.WorkspaceRoot != step.WorkspaceRoot {
+		return Domainf("dispatch: private task precreate does not match the selected repo Worksource")
+	}
+	return nil
 }
 
 func validatePrivateAttestation(a PrivateDispatchAttestation) error {
@@ -318,6 +338,19 @@ func validatePrivateMountPlan(plan *PrivateDispatchMountPlan) error {
 	if err != nil || len(body) > maxDispatchMountPlanBytes {
 		return Domainf("dispatch: private mount plan exceeds its byte budget")
 	}
+	if step := plan.TaskPrecreate; step != nil {
+		if step.TaskID < 1 || step.TaskID > maxJavaScriptSafeInteger || step.ChildMode != taskSkeletonChildMode {
+			return Domainf("dispatch: private task precreate identity/mode is invalid")
+		}
+		parent := step.TasksParent
+		if !validStructuralText(step.WorkspaceRoot, maxPrivateScalarBytes) ||
+			!validStructuralText(parent.Canonical, maxPrivateScalarBytes) ||
+			!path.IsAbs(step.WorkspaceRoot) || path.Clean(step.WorkspaceRoot) != step.WorkspaceRoot ||
+			parent.Canonical != path.Join(step.WorkspaceRoot, ".mission-control", "tasks") ||
+			!validDecimalText(parent.Device) || !validDecimalText(parent.Inode) || parent.OwnerUID < 0 {
+			return Domainf("dispatch: private task precreate parent evidence is invalid")
+		}
+	}
 	prior := ""
 	logicalIDs := map[string]bool{}
 	for i, e := range plan.Entries {
@@ -343,6 +376,9 @@ func validatePrivateMountPlan(plan *PrivateDispatchMountPlan) error {
 			!strings.HasPrefix(e.Destination, "/workspace/references/") &&
 			!validTaskPlanDestination(e.Destination) {
 			return Domainf("dispatch: private mount entry %d destination is outside the ordinary namespace", i)
+		}
+		if plan.TaskPrecreate != nil && validTaskPlanDestination(e.Destination) {
+			return Domainf("dispatch: task precreate plan fabricates a not-yet-existing task mount row")
 		}
 		if e.Kind != "dir" && e.Kind != "file" {
 			return Domainf("dispatch: private mount entry %d kind is invalid", i)

@@ -30,8 +30,16 @@ type dispatchMountHostSnapshot struct {
 	GitControls         map[string][]boundary.ProtectedID
 	MissionControlRoots map[string][]boundary.ProtectedID
 	TypedRoots          map[boundary.TypedKind][]boundary.ProtectedID
+	TaskPrecreate       *PrivateDispatchTaskPrecreate
 	ResolveDeclared     func(string) (boundary.ProtectedID, error)
 }
+
+// taskSkeletonChildMode is the closed mode the Phase-3 final-uid VirtioFS
+// canary must prove before acceptance. The immutable carrier transports the
+// exact value; there is no permission-widening fallback if the Docker lane
+// disproves this minimum.
+const taskSkeletonChildMode = 0o700
+const maxJavaScriptSafeInteger = int64(1<<53 - 1)
 
 type dispatchMountAssembly struct {
 	Requests     []mountRequest
@@ -468,16 +476,78 @@ func captureDispatchMountHostSnapshot(home string, state PrivateDispatchMountSta
 			return dispatchMountHostSnapshot{}, err
 		}
 		if selected.Kind == "repo" && selected.WorkspaceRoot != "" {
-			typed, err := resolveTaskLocalSkeleton(selected.WorkspaceRoot, *subjectTaskID, uid)
-			if err != nil {
+			root := filepath.Join(selected.WorkspaceRoot, ".mission-control", "tasks", "task-"+strconv.FormatInt(*subjectTaskID, 10))
+			if _, err := os.Lstat(root); os.IsNotExist(err) {
+				step, err := captureTaskPrecreate(selected.WorkspaceRoot, *subjectTaskID, uid)
+				if err != nil {
+					return dispatchMountHostSnapshot{}, err
+				}
+				snapshot.TaskPrecreate = &step
+			} else if err != nil {
 				return dispatchMountHostSnapshot{}, err
-			}
-			for kind, id := range typed {
-				snapshot.TypedRoots[kind] = []boundary.ProtectedID{id}
+			} else {
+				typed, err := resolveTaskLocalSkeleton(selected.WorkspaceRoot, *subjectTaskID, uid)
+				if err != nil {
+					return dispatchMountHostSnapshot{}, err
+				}
+				for kind, id := range typed {
+					snapshot.TypedRoots[kind] = []boundary.ProtectedID{id}
+				}
 			}
 		}
 	}
 	return snapshot, nil
+}
+
+func captureTaskPrecreate(workspaceRoot string, taskID int64, ownerUID int) (PrivateDispatchTaskPrecreate, error) {
+	if taskID < 1 || taskID > maxJavaScriptSafeInteger {
+		return PrivateDispatchTaskPrecreate{}, Domainf("task id %d is not a canonical positive decimal (ADR-017 D6)", taskID)
+	}
+	workspace, err := boundary.ResolveSource(workspaceRoot)
+	if err != nil {
+		return PrivateDispatchTaskPrecreate{}, err
+	}
+	if workspace.Canonical != filepath.Clean(workspaceRoot) {
+		return PrivateDispatchTaskPrecreate{}, &boundary.MountError{
+			Code: boundary.CodeSourceWrongKind, Msg: "repo workspace is not its exact canonical path",
+		}
+	}
+	tasksParentPath := filepath.Join(workspace.Canonical, ".mission-control", "tasks")
+	if err := boundary.TrustHomeDir(tasksParentPath, ownerUID); err != nil {
+		return PrivateDispatchTaskPrecreate{}, err
+	}
+	parent, err := boundary.ResolveSource(tasksParentPath)
+	if err != nil {
+		return PrivateDispatchTaskPrecreate{}, err
+	}
+	if !parent.IsDir || parent.Canonical != tasksParentPath || parent.Info.Mode().Perm() != 0o700 {
+		return PrivateDispatchTaskPrecreate{}, &boundary.MountError{
+			Code: boundary.CodeSourceWrongKind, Msg: "task parent is not the exact canonical mode-0700 .mission-control/tasks directory",
+		}
+	}
+	st, ok := parent.Info.Sys().(*syscall.Stat_t)
+	if !ok || int(st.Uid) != ownerUID {
+		return PrivateDispatchTaskPrecreate{}, &boundary.MountError{
+			Code: boundary.CodeRuntimeUnappliable, Msg: "task parent is not owned by the operator",
+		}
+	}
+	root := filepath.Join(tasksParentPath, "task-"+strconv.FormatInt(taskID, 10))
+	if _, err := os.Lstat(root); err == nil {
+		return PrivateDispatchTaskPrecreate{}, &boundary.MountError{
+			Code: boundary.CodeRuntimeUnappliable, Msg: "task root appeared during absent-path attestation",
+		}
+	} else if !os.IsNotExist(err) {
+		return PrivateDispatchTaskPrecreate{}, err
+	}
+	return PrivateDispatchTaskPrecreate{
+		ChildMode: taskSkeletonChildMode, TaskID: taskID, WorkspaceRoot: workspace.Canonical,
+		TasksParent: PrivateDispatchPathIdentity{
+			Canonical: parent.Canonical,
+			Device:    strconv.FormatUint(uint64(st.Dev), 10),
+			Inode:     strconv.FormatUint(st.Ino, 10),
+			OwnerUID:  int(st.Uid),
+		},
+	}, nil
 }
 
 var captureDispatchMountSnapshot = captureDispatchMountHostSnapshot
@@ -522,6 +592,15 @@ func attestCandidateMounts(home string, cand *preparedCandidate, allowLegacyFake
 		r, aerr := adaptMountError(err, refusal.AuthorityDeployment, nil)
 		return nil, r, aerr
 	}
+	if snapshot.TaskPrecreate != nil {
+		ordinary := requests[:0]
+		for _, request := range requests {
+			if request.Kind == boundary.KindNone {
+				ordinary = append(ordinary, request)
+			}
+		}
+		requests = ordinary
+	}
 	assembled, err := assembleDispatchMountInputs(snapshot, cand.mountState, requests, selected)
 	if err != nil {
 		// A boundary rejection during assembly (a declared runtime-control
@@ -561,7 +640,10 @@ func attestCandidateMounts(home string, cand *preparedCandidate, allowLegacyFake
 	if entries == nil {
 		entries = []PrivateDispatchMountEntry{}
 	}
-	plan := &PrivateDispatchMountPlan{Version: 1, Entries: entries, JurisdictionDigest: jurisdictionDigest}
+	plan := &PrivateDispatchMountPlan{
+		Version: 1, Entries: entries, JurisdictionDigest: jurisdictionDigest,
+		TaskPrecreate: snapshot.TaskPrecreate,
+	}
 	body, err := json.Marshal(plan)
 	if err != nil {
 		return nil, nil, err

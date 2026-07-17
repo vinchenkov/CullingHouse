@@ -86,6 +86,53 @@ func TestMountRecheckPassesUnchangedEvidence(t *testing.T) {
 	}
 }
 
+func mrTaskPrecreate(t *testing.T) PrivateDispatchTaskPrecreate {
+	t.Helper()
+	workspace := maMkdir(t, t.TempDir(), "workspace")
+	tasks := filepath.Join(workspace, ".mission-control", "tasks")
+	if err := os.MkdirAll(tasks, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(tasks, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	workspaceID, err := boundary.ResolveSource(workspace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tasks = filepath.Join(workspaceID.Canonical, ".mission-control", "tasks")
+	device, inode, uid, _ := maEvidence(t, tasks)
+	return PrivateDispatchTaskPrecreate{
+		ChildMode: 0o700, TaskID: 7, WorkspaceRoot: workspaceID.Canonical,
+		TasksParent: PrivateDispatchPathIdentity{
+			Canonical: tasks, Device: device, Inode: inode, OwnerUID: uid,
+		},
+	}
+}
+
+func TestTaskParentRecheckRepeatsTrustIdentityAndAbsence(t *testing.T) {
+	step := mrTaskPrecreate(t)
+	if out, err := TaskParentRecheck(step); err != nil || out["status"] != "ok" {
+		t.Fatalf("unchanged task parent = (%v, %v)", out, err)
+	}
+	if err := os.Chmod(step.TasksParent.Canonical, 0o770); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := TaskParentRecheck(step); err == nil {
+		t.Fatal("group-writable task parent passed the post-claim trust recheck")
+	}
+	if err := os.Chmod(step.TasksParent.Canonical, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	root := filepath.Join(step.TasksParent.Canonical, "task-7")
+	if err := os.Mkdir(root, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := TaskParentRecheck(step); err == nil {
+		t.Fatal("appeared task root passed the post-claim absent-path recheck")
+	}
+}
+
 func TestMountRecheckCatchesEveryDriftClass(t *testing.T) {
 	cases := map[string]struct {
 		drift func(t *testing.T, source string)

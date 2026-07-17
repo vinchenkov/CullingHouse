@@ -119,6 +119,14 @@ export function makeRig(overrides: Partial<TickDeps> = {}): TestRig {
     docker: docker.exec,
     log: (msg) => logs.push(msg),
     fs: fakeFs.fs,
+		precreateTaskSkeleton: async (request) => ({
+			canonical: `${request.tasks_parent.canonical}/task-${request.task_id}`,
+			device: request.tasks_parent.device,
+			inode: request.tasks_parent.inode,
+			owner_uid: request.tasks_parent.owner_uid,
+		}),
+		recheckTaskParent: async () => {},
+		registerTaskRoot: async () => {},
     config: testConfig,
     ...overrides,
   };

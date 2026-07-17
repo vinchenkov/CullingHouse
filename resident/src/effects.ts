@@ -96,7 +96,27 @@ function invalidMountPlanReason(plan: MountPlan | undefined): string | null {
     if (entry.access !== "ro" && entry.access !== "rw") {
       return `mount access ${JSON.stringify(entry.access)} is not ro|rw`;
     }
+		if (plan.task_precreate !== undefined &&
+			!entry.destination.startsWith("/workspace/artifacts/") &&
+			!entry.destination.startsWith("/workspace/references/")) {
+			return "task precreate plan fabricates a not-yet-existing task mount row";
+		}
   }
+	const step = plan.task_precreate;
+	if (step !== undefined) {
+		if (step === null || typeof step !== "object" ||
+			!Number.isSafeInteger(step.task_id) || step.task_id < 1 ||
+			step.child_mode !== 0o700 ||
+			typeof step.workspace_root !== "string" || !step.workspace_root.startsWith("/") ||
+			posix.normalize(step.workspace_root) !== step.workspace_root ||
+			step.tasks_parent === null || typeof step.tasks_parent !== "object" ||
+			step.tasks_parent.canonical !== posix.join(step.workspace_root, ".mission-control", "tasks") ||
+			!(/^(0|[1-9][0-9]*)$/).test(step.tasks_parent.device) ||
+			!(/^(0|[1-9][0-9]*)$/).test(step.tasks_parent.inode) ||
+			!Number.isSafeInteger(step.tasks_parent.owner_uid) || step.tasks_parent.owner_uid < 0) {
+			return "task precreate descriptor is malformed";
+		}
+	}
   return null;
 }
 
@@ -109,17 +129,10 @@ type ReapEffect = Extract<Effect, { action: "reap" }>;
 async function spawn(effect: SpawnEffect, deps: TickDeps): Promise<void> {
   const { config, log } = deps;
   const { run_id, role } = effect;
-  if (!SAFE_ID.test(run_id)) {
+	if (!SAFE_ID.test(run_id)) {
     log(`spawn refused: run_id ${JSON.stringify(run_id)} fails the container-name charset`);
     return;
   }
-	if (effect.harness !== "fake" || effect.model_binding !== "fake") {
-		log(
-			`spawn refused: unsupported route ${JSON.stringify(`${effect.harness}/${effect.model_binding}`)}; ` +
-				"the current resident image contains only the explicitly test-tagged fake adapter (fail-closed)",
-		);
-		return;
-	}
 	if (typeof effect.brief !== "string" || effect.brief.length === 0) {
 		log("spawn refused: dispatch effect carries no immutable brief (fail-closed)");
 		return;
@@ -134,6 +147,35 @@ async function spawn(effect: SpawnEffect, deps: TickDeps): Promise<void> {
     log(`spawn refused: no behavior mapped for role ${JSON.stringify(role)} (fail-closed)`);
     return;
   }
+	if (effect.mount_plan.task_precreate !== undefined) {
+		const step = effect.mount_plan.task_precreate;
+		if (role.split(":", 1)[0] !== "worker" || effect.subject_id !== step.task_id) {
+			log("spawn refused: task precreate does not match the claimed standalone Worker (fail-closed)");
+			return;
+		}
+		await deps.recheckTaskParent(step);
+		const registered = await deps.precreateTaskSkeleton(step);
+		if (registered === null || typeof registered !== "object" ||
+			registered.canonical !== posix.join(step.tasks_parent.canonical, `task-${step.task_id}`) ||
+			!(/^(0|[1-9][0-9]*)$/).test(registered.device) ||
+			!(/^(0|[1-9][0-9]*)$/).test(registered.inode) ||
+			registered.owner_uid !== step.tasks_parent.owner_uid) {
+			throw new Error("precreated task root returned invalid registration evidence");
+		}
+		await deps.registerTaskRoot(run_id, registered);
+		log(`spawn ${run_id}: task root registered; setup pending`);
+		// The setup-fill slice will consume this exact registered identity and
+		// only then produce the task mount rows. Starting without those rows
+		// would expose an empty or reconstructed workspace.
+		return;
+	}
+	if (effect.harness !== "fake" || effect.model_binding !== "fake") {
+		log(
+			`spawn refused: unsupported route ${JSON.stringify(`${effect.harness}/${effect.model_binding}`)}; ` +
+				"the current resident image contains only the explicitly test-tagged fake adapter (fail-closed)",
+		);
+		return;
+	}
 
   // 1. folder — the trace-only session folder (Inv. 26) plus the sibling
   // envelope dir: run.json must live OUTSIDE the session folder so the RW

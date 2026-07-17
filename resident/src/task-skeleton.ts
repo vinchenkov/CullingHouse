@@ -71,9 +71,8 @@ export async function precreateTaskSkeleton(request: TaskSkeletonRequest): Promi
   if (!Number.isSafeInteger(request.task_id) || request.task_id < 1) {
     throw new Error("task_id must be a canonical positive safe integer");
   }
-  if (!Number.isInteger(request.child_mode) || request.child_mode < 0 || request.child_mode > 0o777 ||
-      (request.child_mode & 0o700) !== 0o700) {
-    throw new Error("child_mode must be a permission mode with owner rwx, supplied by the final-uid canary");
+	if (request.child_mode !== 0o700) {
+		throw new Error("child_mode must be the closed mode 0700 supplied to the final-uid canary");
   }
   if (!isAbsolute(request.workspace_root) || normalize(request.workspace_root) !== request.workspace_root) {
     throw new Error("workspace_root must be an absolute normalized canonical path");
@@ -88,7 +87,8 @@ export async function precreateTaskSkeleton(request: TaskSkeletonRequest): Promi
     throw new Error("task parent is not the exact canonical .mission-control/tasks path");
   }
   const parentStat = await lstat(tasksParent, { bigint: true });
-  if (!parentStat.isDirectory() || parentStat.isSymbolicLink() || !sameIdentity(parentStat, request.tasks_parent)) {
+	if (!parentStat.isDirectory() || parentStat.isSymbolicLink() || !sameIdentity(parentStat, request.tasks_parent) ||
+		Number(parentStat.mode & 0o777n) !== 0o700) {
     throw new Error("task parent identity changed after preclaim");
   }
   const operatorUID = typeof process.getuid === "function" ? process.getuid() : -1;

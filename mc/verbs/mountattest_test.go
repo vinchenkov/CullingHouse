@@ -622,20 +622,67 @@ func TestAttestCandidateMountsDerivesTaskLocalPlanThroughRealCapture(t *testing.
 	}
 }
 
-func TestAttestCandidateMountsAbsentSkeletonIsDeploymentHealth(t *testing.T) {
+func TestAttestCandidateMountsAbsentSkeletonCarriesPostClaimPrecreate(t *testing.T) {
 	subject := int64(9) // no task-9 skeleton exists
-	mcHome, cand, _ := maRepoCandidate(t, dispatch.RoleWorker, &subject)
+	mcHome, cand, ws := maRepoCandidate(t, dispatch.RoleWorker, &subject)
 
 	plan, r, err := attestCandidateMounts(mcHome, cand, false)
+	if err != nil || r != nil || plan == nil {
+		t.Fatalf("attest = plan %+v refusal %+v err %v, want a post-claim precreate plan", plan, r, err)
+	}
+	if len(plan.Entries) != 0 {
+		t.Fatalf("absent task plan fabricated %d not-yet-existing mount rows: %+v", len(plan.Entries), plan.Entries)
+	}
+	step := plan.TaskPrecreate
+	if step == nil {
+		t.Fatal("absent task plan carries no task precreate step")
+	}
+	tasksParent := filepath.Join(ws, ".mission-control", "tasks")
+	device, inode, uid, _ := maEvidence(t, tasksParent)
+	if step.WorkspaceRoot != ws || step.TaskID != subject || step.ChildMode != 0o700 ||
+		step.TasksParent.Canonical != tasksParent || step.TasksParent.Device != device ||
+		step.TasksParent.Inode != inode || step.TasksParent.OwnerUID != uid {
+		t.Fatalf("task precreate = %+v, want exact parent identity under %q", step, ws)
+	}
+}
+
+func TestAttestCandidateMountsAbsentSkeletonRejectsWrongModeParent(t *testing.T) {
+	subject := int64(9)
+	mcHome, cand, ws := maRepoCandidate(t, dispatch.RoleWorker, &subject)
+	tasksParent := filepath.Join(ws, ".mission-control", "tasks")
+	t.Cleanup(func() { _ = os.Chmod(tasksParent, 0o700) })
+	if err := os.Chmod(tasksParent, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	plan, r, err := attestCandidateMounts(mcHome, cand, false)
 	if err != nil || r == nil || plan != nil {
-		t.Fatalf("attest = plan %+v refusal %+v err %v, want the absent-skeleton refusal", plan, r, err)
+		t.Fatalf("wrong-mode parent = plan %+v refusal %+v err %v", plan, r, err)
 	}
-	if r.Code != boundary.CodeSourceMissing || r.Authority != refusal.AuthorityDeployment {
-		t.Fatalf("absent-skeleton refusal = %+v", r)
+	if r.Code != boundary.CodeSourceWrongKind || r.Authority != refusal.AuthorityDeployment {
+		t.Fatalf("wrong-mode parent refusal = %+v", r)
 	}
-	class, cerr := refusal.Classify(*r)
-	if cerr != nil || class != refusal.ClassHealth {
-		t.Fatalf("absent skeleton must record health, got %v (%v)", class, cerr)
+}
+
+func TestRepeatedAttestRejectsWhenAbsentTaskRootAppears(t *testing.T) {
+	subject := int64(9)
+	mcHome, cand, ws := maRepoCandidate(t, dispatch.RoleWorker, &subject)
+	// dispatchRecheckAttestation repeats this exact host capture immediately
+	// before commit, so appearance can never claim under an absent-path plan.
+	plan, r, err := attestCandidateMounts(mcHome, cand, false)
+	if err != nil || r != nil || plan == nil || plan.TaskPrecreate == nil {
+		t.Fatalf("first attest = plan %+v refusal %+v err %v", plan, r, err)
+	}
+	first := attestedDispatch{mountPlan: plan}
+	root := filepath.Join(ws, ".mission-control", "tasks", "task-9")
+	if err := os.Mkdir(root, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	secondPlan, secondRefusal, secondErr := attestCandidateMounts(mcHome, cand, false)
+	if secondErr != nil || secondRefusal == nil || secondPlan != nil {
+		t.Fatalf("appeared-root attest = plan %+v refusal %+v err %v", secondPlan, secondRefusal, secondErr)
+	}
+	if reflect.DeepEqual(canonicalPrivateAttestation(first), canonicalPrivateAttestation(attestedDispatch{mountPlan: secondPlan, refusal: secondRefusal})) {
+		t.Fatal("appeared task root reproduced the absent-path attestation")
 	}
 }
 
@@ -814,5 +861,73 @@ func TestDispatchRepoWorkerCommitsTaskLocalMountPlan(t *testing.T) {
 	}
 	if n := dfInt(t, db, `SELECT COUNT(*) FROM activity WHERE kind='dispatch.spawn'`); n != 1 {
 		t.Fatalf("spawn wrote %d dispatch.spawn rows, want one", n)
+	}
+}
+
+func TestDispatchRepoWorkerClaimsBeforeReturningTaskPrecreate(t *testing.T) {
+	ws, _ := tsBuild(t) // task-7 exists; task-9 is the proved-absent first-run path.
+	if err := os.Mkdir(filepath.Join(ws, ".git"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	db := dvSpine(t, func(a *InitArgs) { a.WorkspaceRoot = ws })
+	dvExec(t, db, `UPDATE worksources SET kind='repo' WHERE id='ws-test'`)
+	dvInsertTask(t, db, dvTask(9, dispatch.ScopeTask, dispatch.StatusSeeded, 2))
+	if err := os.Chmod(os.Getenv("MC_HOME"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(os.Getenv("MC_HOME"), "mount-allowlist"), []byte("version = 1\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	prepared := dfPrepare(t, db, dfRequestID)
+	attested, err := dispatchAttest(os.Getenv("MC_HOME"), prepared)
+	if err != nil || attested.refusal != nil {
+		t.Fatalf("dispatchAttest = refusal %+v err %v", attested.refusal, err)
+	}
+	eff := dfCommit(t, db, prepared, attested)
+	if eff["action"] != "spawn" {
+		t.Fatalf("effect = %v, want spawn", eff)
+	}
+	body, err := json.Marshal(eff["mount_plan"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	var plan PrivateDispatchMountPlan
+	if err := json.Unmarshal(body, &plan); err != nil {
+		t.Fatal(err)
+	}
+	if len(plan.Entries) != 0 || plan.TaskPrecreate == nil || plan.TaskPrecreate.TaskID != 9 {
+		t.Fatalf("committed first-run plan = %+v", plan)
+	}
+	if got := dfInt(t, db, `SELECT COUNT(*) FROM runs WHERE subject=9`); got != 1 {
+		t.Fatalf("post-claim effect has %d Run rows, want one", got)
+	}
+	var lockRunID string
+	if err := db.QueryRow(`SELECT run_id FROM lock WHERE id=1`).Scan(&lockRunID); err != nil {
+		t.Fatal(err)
+	}
+	if lockRunID == "" {
+		t.Fatal("post-claim effect returned without the Worker lease")
+	}
+	replayed := dfPrepare(t, db, dfRequestID)
+	if replayed.final == nil || replayed.candidate != nil {
+		t.Fatalf("lost-response retry = %+v, want final receipt replay", replayed)
+	}
+	firstBody, err := json.Marshal(eff)
+	if err != nil {
+		t.Fatal(err)
+	}
+	replayBody, err := json.Marshal(replayed.final)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(firstBody) != string(replayBody) {
+		t.Fatalf("task precreate replay drifted\n first: %s\nreplay: %s", firstBody, replayBody)
+	}
+	if got := dfInt(t, db, `SELECT COUNT(*) FROM runs WHERE subject=9`); got != 1 {
+		t.Fatalf("receipt replay wrote %d Run rows, want one", got)
+	}
+	if got := dfInt(t, db, `SELECT COUNT(*) FROM activity WHERE kind='dispatch.spawn'`); got != 1 {
+		t.Fatalf("receipt replay wrote %d dispatch.spawn rows, want one", got)
 	}
 }
