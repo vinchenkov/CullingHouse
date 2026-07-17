@@ -658,3 +658,73 @@ resident structured binds. Recheck host identity/trust immediately before
 Docker create and after create/before start; remove the unstarted container on
 drift. Keep production Git health-refused until its authoritative typed
 control/projection registry exists. Do not load launchd.
+
+## 2026-07-16 — takeover review lands partial on quota; carrier slice designed
+
+Claude session, resuming after the Codex range a1767cd..e423780. Per AGENTS.md
+§2 the range got an adversarial takeover review before any building-on: four
+spawned lenses (contract, fail-closed, test-honesty, regression) over the diff
+vs docs/phase3-contract.md, each finding then handed to a spawned skeptic.
+Three lenses returned 17 findings; the regression lens and all verifiers died
+on the session usage limit, so triage fell to the session agent by direct code
+reading. Full disposition in IMPLEMENTATION-NOTES.md (2026-07-16 takeover
+entry): five confirmed items fold into the carrier slice (vacuous
+structural-bounds test, untested commit-side mount drift fence, untested
+health stops, profile-less Worksource misclassified as candidate authority,
+assembly-stage MountError escaping D4), four confirmed items recorded for
+later slices (64 KiB post-commit result wedge, helper clock-skew intolerance,
+missing commit-side replay return, five coverage gaps), one alleged major
+refuted (the resident's fake/fake gate keeps the static bind out of every
+production route). No finding blocks the range.
+
+The authorization-carrier slice (the standing NEXT) is fully designed against
+ADR-016 D2/D5/D6 and ADR-017 D6; design pins for the implementing session:
+
+- Carrier: closed `PrivateDispatchMountPlan{version:1, entries[]}`, each entry
+  `{logical_id, source (canonical host path), destination (absolute container
+  path), kind dir|file, access ro|rw, device, inode (decimal strings — JS
+  number-safety), owner_uid, mode (perm bits)}`. Entries sorted by
+  destination; ≤256; destinations unique and non-overlapping; whole plan
+  byte-bounded at attest (health refusal if it could push the committed spawn
+  effect past the broker's 64 KiB result cap — never wedge post-commit).
+- Destinations per ADR-017 D6 class prefixes: artifact requests
+  `/workspace/artifacts/<target>[/<suffix>]`, reference requests
+  `/workspace/references/<target>[/<suffix>]`; collision checked on the final
+  absolute destination. The test-fake legacy workspace request (repo kind
+  under fake routing only) authorizes source=profile workspace_root through
+  the same allowlist/jurisdiction pipeline to `/workspace/source` RW.
+- attestCandidateMounts returns the plan (empty entries for subjectless or
+  empty-profile candidates); mountattest.go:306's runtime_unappliable stop is
+  deleted. Both repo-kind production stops stay. Profile-less selected
+  Worksource reclassifies to AuthorityDeployment (health). Assembly-stage
+  MountError adapts to health instead of erroring.
+- attestedDispatch and PrivateDispatchAttestation carry the plan; the
+  canonical private attestation includes it, so DispatchRecheckPrivate stales
+  on any evidence drift (chmod/chown/inode swap between attest and commit —
+  ADR-016 D5's before-commit repeat). validatePrivateAttestation: refusal XOR
+  (route+plan). canonicalAction gains plan_digest =
+  SHA256("MC-DISPATCH-PLAN-V1\0" || canonical_plan) (golden vectors updated
+  deliberately). applySpawn's effect gains mount_plan; the receipt replays it
+  byte-exact.
+- Resident: spawn validates the plan (absolute paths, no colons, access enum),
+  writes it host-side as `<mcHome>/runs/<run_id>.mounts.json` (0600 sibling of
+  the envelope, removed with it at reap; NEVER mounted into the container — the
+  agent-visible run.json keeps only mounts.session, which is all the runner
+  reads), then `mc __mount-recheck <plan-file>` → docker create (plan-derived
+  -v binds, no config.workspaceRoot) → recheck again → docker start; any drift
+  or refusal removes the unstarted container. Rechecks skip when entries are
+  empty. land() keeps config.workspaceRoot until the Git registry slice.
+- `mc __mount-recheck`: host-scope read-only private verb; trusts the plan
+  file (operator-owned 0600 non-symlink), re-resolves each source, requires
+  canonical-path equality and (device,inode,kind,owner,mode) evidence
+  equality. ACL-snapshot and containment rechecks at create/start are logged
+  residuals (need the jurisdiction carrier).
+- e2e obligations (Docker lane): f.home to 0700, mount-allowlist
+  `path=f.ws target="source" access="rw"` at 0600, `mc init --workspace-root`
+  becomes the host f.ws. Known lockstep TS updates: effects.test.ts exact
+  argv/run.json shape, tick-loop single-docker-call queue and failure wording,
+  split-brain RecordingDocker/LocalWorkerDocker seams keyed on `run -d`.
+
+Quota note: the session usage limit was hit mid-review (resets 2026-07-16
+20:40 PT). Per §8 this session banks the review + design at a green docs
+commit; implementation proceeds in micro-steps only while budget lasts.

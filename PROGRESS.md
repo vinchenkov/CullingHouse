@@ -171,6 +171,12 @@ kept below. Operator legs that remain open are under `## Parked`, not here.
         health until their authorization carrier replaces the fake resident
         bind. Four adversarial rounds closed five then two blockers; all five
         fast-lane legs pass
+  - [x] Cross-harness takeover review of the Codex range (a1767cd..e423780):
+        partial on quota (3 of 4 lenses; verifiers died) — 17 findings triaged
+        by direct code reading, none block the range; 5 confirmed items fold
+        into the carrier slice, 4 recorded for later slices, 1 alleged major
+        refuted. Disposition in IMPLEMENTATION-NOTES.md (2026-07-16); design
+        pins for the carrier slice in docs/ledger/phase-3.md (same date)
   - [ ] Carry the closed authorization plan through the private attestation,
         spawn effect, and resident as structured binds with identity rechecks;
         add the authoritative Git control/projection registry and typed plan
@@ -193,13 +199,21 @@ deleted, not struck through. History is in `docs/ledger/`.
   agent cannot sleep the machine it runs on). Instructions in
   `spikes/07-launchd-clock/RESULT.md`. All other S7 sub-tests passed.
 
-NEXT: Replace the valid-plan `mount.runtime_unappliable` stop in
-`mc/verbs/mountattest.go` red-first: define a bounded canonical authorization
-carrier (canonical source, deterministic destination, access, and host identity
-evidence), include it in the private attestation and committed spawn effect,
-and make the resident consume only that structured plan instead of its static
-`workspaceRoot`/`-v` bind. Re-run authorization identity/trust immediately
-before Docker create and after create/before start; any drift removes the
-unstarted container. Keep production Git candidates health-refused until the
-separate authoritative Git control/projection registry supplies their typed
-plan. Do not load launchd.
+QUOTA: the session usage limit was hit 2026-07-16 mid-takeover-review (resets
+20:40 PT). Spawned agents are unavailable until then; implement solo in small
+green-commit micro-steps or hand off.
+
+NEXT: Implement the authorization-carrier slice exactly as pinned in
+docs/ledger/phase-3.md (2026-07-16 design entry) — red-first, in this order:
+(1) `PrivateDispatchMountPlan` + `attestCandidateMounts` returns it, deleting
+the `mount.runtime_unappliable` stop at mountattest.go:306, with the five
+folded review fixes (vacuous structural-bounds test, commit-side mount-drift
+test, health-stop tests at enforcement points, profile-less Worksource →
+AuthorityDeployment, assembly MountError → health) and an attest-side plan
+byte bound; (2) plan through PrivateDispatchAttestation/canonical frame/
+plan_digest in canonicalAction (golden vectors updated deliberately) and the
+committed spawn effect; (3) `mc __mount-recheck` verb; (4) resident consumes
+only the plan via `<mcHome>/runs/<run_id>.mounts.json`, create→recheck→start,
+drift removes the unstarted container (lockstep TS test updates listed in the
+ledger entry); (5) e2e fixture obligations (Docker lane, phase completion).
+Keep production Git candidates health-refused. Do not load launchd.

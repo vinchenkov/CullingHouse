@@ -1975,3 +1975,54 @@ Entry template:
   filesystem observation replaces a racy heuristic.
 - Spec impact: none
 - Needs your decision: no
+
+## 2026-07-16 — takeover review of the Codex range a1767cd..e423780 (partial: quota)
+- Where: AGENTS.md §2 cross-harness review before the authorization-carrier
+  slice; four spawned review lenses over `git diff a1767cd..e423780` vs
+  docs/phase3-contract.md
+- Gap: three lenses (contract, fail-closed, test-honesty) returned 17
+  findings; the regression lens and every adversarial verifier died on the
+  session usage limit (resets 2026-07-16 20:40 PT), so verification fell to
+  the session agent. Findings triaged by direct code reading:
+  - CONFIRMED (fix in the carrier slice, whose seams they live in):
+    (1) `TestPrivateCandidateStructuralBounds` is vacuous — the base literal
+    carries no MountState, so every subtest rejects on "Worksources must be
+    explicit" before the validation it names (dispatchprivate_test.go:270);
+    (2) the commit-side mount-state drift fence (dispatchseam.go:635
+    DeepEqual) has no test — the token is rebuilt from the PREPARED mount
+    state so the DeepEqual is the only fence and a mutant skipping it stays
+    green; (3) the two ledger-claimed health stops (mountattest.go:306 valid
+    nonempty plan; :213/:267 production repo) are untested at any enforcement
+    point; (4) a profile-less selected Worksource is charged AuthorityCandidate
+    (mountattest.go:59) → permanent per-task confinement blocks, but an absent
+    profile is deployment config — contract §1.3 sends that to health/no-charge;
+    (5) an assembly-stage MountError (runtime_control_dir failing
+    ResolveDeclared, mountattest.go:124-128) escapes D4 classification and
+    hard-errors the dispatch command instead of recording health.
+  - CONFIRMED (recorded, separate micro-slices — not this slice's seams):
+    (6) spawn-effect results are unbounded (brief embeds unbounded task
+    descriptions) while the broker caps results at 64 KiB AFTER the helper
+    committed the claim — an oversized brief permanently wedges dispatch on
+    reap/retry; admission must bound description/brief inputs, and the new
+    mount plan must be byte-bounded at attest for the same reason;
+    (7) the private-helper absolute deadline compares Darwin and Linux-VM
+    clocks with zero skew tolerance (private_dispatch.go:49/:201) — post-sleep
+    VM drift >~1s makes every dispatch tick fail closed until resync;
+    (8) dispatchCommit never returns an existing same-key result (ADR-016 D2
+    pins commit-side replay); inert today, unimplemented pin;
+    (9) coverage gaps: composed-entrypoint host-file recheck wiring, the real
+    captureDispatchMountHostSnapshot (always stubbed), production
+    helper/spine scope (all lanes now build test_fake_routing), broker fd-3
+    CloseOnExec non-inheritance, capture-stage candidate-path attribution.
+  - REFUTED as major: "zero-request candidates spawn an unattested RW
+    workspace bind in production" — the resident refuses every
+    harness/binding except fake/fake (effects.ts:78), so no production route
+    reaches docker run; the fake-lane static bind is the sanctioned Phase-1
+    exception this slice removes.
+- Choice: no majors block building on the range (they are missing tests and
+  classification/robustness gaps, not committed-behavior invariant breaks).
+  Items (1)-(5) are folded into the carrier slice red-first; (6)-(9) are
+  recorded here for their owning slices. Conservative: the range stands,
+  every confirmed gap has a named owner, nothing is silently absorbed.
+- Spec impact: none
+- Needs your decision: no
