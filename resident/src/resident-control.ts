@@ -6,7 +6,10 @@ import { join } from "node:path";
 import type { Exec, ExecResult } from "./types";
 
 export const GATEWAY_CONTROL_VERSION = 1;
-export const SPINE_SCHEMA_VERSION = 4;
+// Keep this in lockstep with substrate.CurrentSchemaVersion. The resident is
+// intentionally a separate TypeScript artifact, so this value is duplicated
+// and its control-channel handshake test pins the deployed schema fence.
+export const SPINE_SCHEMA_VERSION = 5;
 export const CONFIG_SCHEMA_VERSION = 1;
 const MAX_FRAME_BYTES = 64 * 1024;
 const HELLO_TIMEOUT_MS = 2_000;

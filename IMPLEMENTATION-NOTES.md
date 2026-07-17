@@ -226,3 +226,10 @@ date/title; delete a line here when its slice lands.
   paragraph in `OPERATOR-INPUTS.md` (07-15); raise the Docker VM allocation
   (12 GiB recommended; parked in PROGRESS.md, 07-15); do not file
   initiatives until the parked wave-model decision resolves (07-13).
+
+## 2026-07-17 — takeover review of durable setup receipt slice
+- Where: Phase 3, `d2f3e68..c27616e`, resident control handshake and first-task setup receipt.
+- Gap: the new v5 receipt migration did not update the separately compiled resident handshake constant; receipt registration also trusted a caller-supplied owner UID.
+- Choice: pin the resident handshake to schema v5 and require the receipt/attested root owner to equal the current host operator UID. The alleged empty-skeleton launch gap was refuted: `resolveTaskLocalSkeleton` requires all fifteen populated rows, while the resident creates only `source/` and `git/`, so the next dispatch health-refuses before emitting a Worker plan.
+- Spec impact: none.
+- Needs your decision: no.

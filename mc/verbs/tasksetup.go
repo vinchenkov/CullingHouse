@@ -51,6 +51,9 @@ func RegisterFirstTaskSetup(db *sql.DB, receipt TaskSetupReceipt) (TaskSetupRece
 	if len(receipt.Root.Device) > 20 || len(receipt.Root.Inode) > 20 {
 		return TaskSetupReceipt{}, Domainf("task setup receipt identity exceeds its bound")
 	}
+	if receipt.Root.OwnerUID != os.Getuid() {
+		return TaskSetupReceipt{}, Domainf("task setup receipt root is not owned by the host operator")
+	}
 	var out TaskSetupReceipt
 	err := inTx(db, func(ctx context.Context, q Q) error {
 		var role, tier string
@@ -175,7 +178,8 @@ func AttestFirstTaskSetupRoot(db *sql.DB, runID, workspaceRoot string) (FirstTas
 	}
 	st, ok := info.Sys().(*syscall.Stat_t)
 	if !ok || strconv.FormatUint(uint64(st.Dev), 10) != receipt.Root.Device ||
-		strconv.FormatUint(st.Ino, 10) != receipt.Root.Inode || int(st.Uid) != receipt.Root.OwnerUID {
+		strconv.FormatUint(st.Ino, 10) != receipt.Root.Inode || int(st.Uid) != receipt.Root.OwnerUID ||
+		int(st.Uid) != os.Getuid() {
 		return FirstTaskSetupRoot{}, Domainf("task setup registered root identity changed")
 	}
 	resolved, err := boundary.ResolveSource(root)

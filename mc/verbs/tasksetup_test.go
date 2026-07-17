@@ -49,6 +49,18 @@ func TestRegisterFirstTaskSetupRejectsStaleOrWrongRunTask(t *testing.T) {
 	}
 }
 
+func TestRegisterFirstTaskSetupRejectsForeignOwner(t *testing.T) {
+	db := dvSpine(t)
+	dvInsertTask(t, db, dvTask(7, "task", "seeded", 2))
+	dvExec(t, db, `INSERT INTO runs (id, tier, role, worksource, subject) VALUES ('setup-run', 'pipeline', 'worker', 'ws-test', 7)`)
+	dvExec(t, db, `UPDATE lock SET run_id='setup-run', subject=7, owner='worker', acquired_at=datetime('now'), hard_deadline_at=datetime('now', '+1 hour') WHERE id=1`)
+	receipt := setupReceipt("setup-run", 7)
+	receipt.Root.OwnerUID = os.Getuid() + 1
+	if _, err := RegisterFirstTaskSetup(db, receipt); err == nil {
+		t.Fatal("foreign-owned task root receipt was accepted")
+	}
+}
+
 func TestReadFirstTaskSetupRequiresTheLiveRunTaskLeaseAndExactReceipt(t *testing.T) {
 	db := dvSpine(t)
 	dvInsertTask(t, db, dvTask(7, "task", "seeded", 2))
