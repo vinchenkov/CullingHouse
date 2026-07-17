@@ -86,8 +86,12 @@ function invalidMountPlanReason(plan: MountPlan | undefined): string | null {
     if (typeof entry.source !== "string" || !entry.source.startsWith("/") || entry.source.includes(":")) {
       return `mount source ${JSON.stringify(entry.source)} is not an absolute colon-free host path`;
     }
-    if (typeof entry.destination !== "string" || !entry.destination.startsWith("/workspace/") || entry.destination.includes(":")) {
-      return `mount destination ${JSON.stringify(entry.destination)} is outside the colon-free /workspace/ namespace`;
+    if (
+      typeof entry.destination !== "string" ||
+      !(entry.destination === "/workspace" || entry.destination.startsWith("/workspace/")) ||
+      entry.destination.includes(":")
+    ) {
+      return `mount destination ${JSON.stringify(entry.destination)} is outside the colon-free /workspace namespace`;
     }
     if (entry.access !== "ro" && entry.access !== "rw") {
       return `mount access ${JSON.stringify(entry.access)} is not ro|rw`;

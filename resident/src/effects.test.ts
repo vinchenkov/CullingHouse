@@ -211,6 +211,35 @@ describe("spawn effect", () => {
     expect(emptyRig.docker.calls[0]!.join(" ")).not.toContain("/workspace/source");
   });
 
+  test("the task-root row binds at exactly /workspace; a sibling-prefix destination is refused", async () => {
+    const rig = makeRig();
+    await applyEffect(
+      {
+        ...spawnEffect,
+        mount_plan: {
+          entries: [{ ...workspaceEntry, access: "ro", destination: "/workspace", logical_id: "task-root", source: "/host/task-root" }],
+          version: 1,
+        },
+      },
+      rig.deps,
+    );
+    expect(rig.docker.calls[0]!).toContain("/host/task-root:/workspace:ro");
+
+    const evilRig = makeRig();
+    await applyEffect(
+      {
+        ...spawnEffect,
+        mount_plan: {
+          entries: [{ ...workspaceEntry, destination: "/workspacex" }],
+          version: 1,
+        },
+      },
+      evilRig.deps,
+    );
+    expect(evilRig.docker.calls).toEqual([]);
+    expect(evilRig.logs.some((l) => l.includes("spawn refused") && l.includes("/workspace namespace"))).toBe(true);
+  });
+
   test("a spawn without a mount plan is refused before any effect (fail-closed)", async () => {
     const rig = makeRig();
     const { mount_plan: _dropped, ...withoutPlan } = spawnEffect as Effect & { mount_plan: unknown };
