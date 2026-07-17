@@ -60,11 +60,35 @@ export interface TickDeps {
   fs: {
     /** mkdir -p semantics. */
     mkdir(path: string): Promise<void>;
-    writeFile(path: string, data: string): Promise<void>;
+    /** opts.mode applies on creation (the plan sibling must be 0600: the
+     * recheck's trust seam refuses a group/other-readable plan file). */
+    writeFile(path: string, data: string, opts?: { mode?: number }): Promise<void>;
     /** rm -f semantics (missing file is not an error). */
     rm(path: string): Promise<void>;
   };
   config: ResidentConfig;
+}
+
+/** One authorized bind of the committed mount plan — mc's closed carrier
+ * (ADR-016 D5/D6). The resident consumes only source/destination/access;
+ * device/inode/kind/mode/owner are host evidence it carries opaquely to the
+ * `mc __mount-recheck` legs. Keys are alphabetical by contract. */
+export interface MountPlanEntry {
+  access: "ro" | "rw";
+  destination: string;
+  device: string;
+  inode: string;
+  kind: "dir" | "file";
+  logical_id: string;
+  mode: number;
+  owner_uid: number;
+  source: string;
+}
+
+/** The committed spawn effect's validated mount plan; explicit, never absent. */
+export interface MountPlan {
+  entries: MountPlanEntry[];
+  version: number;
 }
 
 /** `mc dispatch` effect JSON, mirroring dispatch.Action (contract §2). */
@@ -81,6 +105,8 @@ export type Effect =
       model_binding: string;
 	      /** Immutable opening input rendered inside the dispatch transaction. */
 	      brief: string;
+      /** The only mount authority the resident may effect (ADR-016 D5). */
+      mount_plan: MountPlan;
       session_path?: string;
       heartbeat_interval_s: number;
     }

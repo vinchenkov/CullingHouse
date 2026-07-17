@@ -8,6 +8,18 @@ import { applyEffect } from "./effects";
 import { fail, makeRig, ok, testConfig } from "./test-helpers";
 import type { Effect } from "./types";
 
+const workspaceEntry = {
+  access: "rw" as const,
+  destination: "/workspace/source",
+  device: "16777231",
+  inode: "424242",
+  kind: "dir" as const,
+  logical_id: "workspace:source",
+  mode: 448,
+  owner_uid: 501,
+  source: "/host/workspace",
+};
+
 const spawnEffect: Effect = {
   action: "spawn",
   run_id: "run-42-worker",
@@ -18,9 +30,12 @@ const spawnEffect: Effect = {
   harness: "fake",
   model_binding: "fake",
 	brief: "immutable claimed-state brief",
+  mount_plan: { entries: [workspaceEntry], version: 1 },
   session_path: "sessions/run-42-worker",
   heartbeat_interval_s: 1,
 };
+
+const PLAN_PATH = "/tmp/mc-home/runs/run-42-worker.mounts.json";
 
 describe("idle / reenter / unknown", () => {
   test("idle does nothing but log", async () => {
@@ -76,7 +91,13 @@ describe("spawn effect", () => {
       "mkdir:/tmp/mc-home/sessions/run-42-worker",
       "mkdir:/tmp/mc-home/runs",
       "write:/tmp/mc-home/runs/run-42-worker.json",
-      "docker:run",
+      "write:" + PLAN_PATH,
+      "docker:create",
+      "docker:start",
+    ]);
+    expect(rig.mc.calls).toEqual([
+      ["__mount-recheck", PLAN_PATH],
+      ["__mount-recheck", PLAN_PATH],
     ]);
   });
 
@@ -108,9 +129,14 @@ describe("spawn effect", () => {
       pool_ids: [42],
       heartbeat_interval_s: 1,
       harness_config: { behavior: "/mc/behaviors/worker.json" },
-      mounts: { session: "/mc/session", workspace: "/workspace/source" },
+      mounts: { session: "/mc/session" },
     });
 	    expect(runJson.brief).toBe(spawnEffect.brief);
+    // The agent-visible envelope never carries host source paths; they live
+    // only in the host-side plan sibling.
+    expect(written!.includes("/host/workspace")).toBe(false);
+    const plan = JSON.parse(rig.fakeFs.writes.get(PLAN_PATH)!);
+    expect(plan).toEqual({ entries: [workspaceEntry], version: 1 });
   });
 
   test("subjectless spawn (strategist) writes subject_id null", async () => {
@@ -121,6 +147,7 @@ describe("spawn effect", () => {
         subject_id: null, worksource: "ws-e2e", pool_ids: [],
         harness: "fake", model_binding: "fake",
 	        brief: "subjectless immutable brief",
+        mount_plan: { entries: [], version: 1 },
         heartbeat_interval_s: 1,
       },
       rig.deps,
@@ -133,13 +160,13 @@ describe("spawn effect", () => {
     expect(runJson.harness_config.behavior).toBe("/mc/behaviors/strategist.json");
   });
 
-  test("docker run argv: detached, --rm, --network none, exact name, labels, mounts, MC_SPINE", async () => {
+  test("docker create+start argv: --rm, --network none, exact name, labels, plan binds, MC_SPINE", async () => {
     const rig = makeRig();
-    rig.docker.enqueue(ok("container-id\n"));
+    rig.docker.enqueue(ok("container-id\n"), ok(""));
     await applyEffect(spawnEffect, rig.deps);
     expect(rig.docker.calls).toEqual([
       [
-        "run", "-d", "--rm",
+        "create", "--rm",
         "--network", "none",
         "--name", "mc-run-run-42-worker",
         "--label", "mc-managed",
@@ -154,6 +181,93 @@ describe("spawn effect", () => {
         "mc-fake-e2e:test",
         "bun", "/app/src/agent-runner/main.ts",
       ],
+      ["start", "mc-run-run-42-worker"],
+    ]);
+  });
+
+  test("an RO plan entry binds with the :ro flag; an empty plan skips the rechecks", async () => {
+    const rig = makeRig();
+    await applyEffect(
+      {
+        ...spawnEffect,
+        mount_plan: {
+          entries: [{ ...workspaceEntry, access: "ro", destination: "/workspace/references/ref", logical_id: "reference:ref", source: "/host/reference" }],
+          version: 1,
+        },
+      },
+      rig.deps,
+    );
+    const createArgv = rig.docker.calls[0]!;
+    expect(createArgv).toContain("/host/reference:/workspace/references/ref:ro");
+    expect(rig.mc.calls).toHaveLength(2);
+
+    const emptyRig = makeRig();
+    await applyEffect(
+      { ...spawnEffect, mount_plan: { entries: [], version: 1 } },
+      emptyRig.deps,
+    );
+    expect(emptyRig.mc.calls).toEqual([]);
+    expect(emptyRig.docker.calls.map((argv) => argv[0])).toEqual(["create", "start"]);
+    expect(emptyRig.docker.calls[0]!.join(" ")).not.toContain("/workspace/source");
+  });
+
+  test("a spawn without a mount plan is refused before any effect (fail-closed)", async () => {
+    const rig = makeRig();
+    const { mount_plan: _dropped, ...withoutPlan } = spawnEffect as Effect & { mount_plan: unknown };
+    await applyEffect(withoutPlan as Effect, rig.deps);
+    expect(rig.fakeFs.events).toEqual([]);
+    expect(rig.docker.calls).toEqual([]);
+    expect(rig.logs.some((l) => l.includes("spawn refused") && l.includes("no explicit mount plan"))).toBe(true);
+  });
+
+  test("a plan entry unsafe for -v grammar is refused before any effect", async () => {
+    const rig = makeRig();
+    await applyEffect(
+      {
+        ...spawnEffect,
+        mount_plan: { entries: [{ ...workspaceEntry, source: "/host/evil:path" }], version: 1 },
+      },
+      rig.deps,
+    );
+    expect(rig.docker.calls).toEqual([]);
+    expect(rig.logs.some((l) => l.includes("spawn refused") && l.includes("colon-free"))).toBe(true);
+  });
+
+  test("recheck drift before create: no container, launch files removed", async () => {
+    const rig = makeRig();
+    rig.mc.enqueue(fail(1, "mount recheck: entry 0 (workspace:source): source mode grant changed"));
+    await applyEffect(spawnEffect, rig.deps);
+    expect(rig.docker.calls).toEqual([]);
+    expect(rig.logs.some((l) => l.includes("mount recheck refused before create (exit 1)"))).toBe(true);
+    expect(rig.fakeFs.events.slice(-2)).toEqual([
+      "rm:/tmp/mc-home/runs/run-42-worker.json",
+      "rm:" + PLAN_PATH,
+    ]);
+  });
+
+  test("recheck drift after create removes the unstarted container (ADR-016 D5)", async () => {
+    const rig = makeRig();
+    rig.mc.enqueue(ok("{}"), fail(1, "source is a different filesystem object"));
+    rig.docker.enqueue(ok("container-id\n"), ok(""));
+    await applyEffect(spawnEffect, rig.deps);
+    expect(rig.docker.calls.map((argv) => argv[0])).toEqual(["create", "rm"]);
+    expect(rig.docker.calls[1]).toEqual(["rm", "mc-run-run-42-worker"]);
+    expect(rig.logs.some((l) => l.includes("mount recheck refused after create (exit 1)"))).toBe(true);
+    expect(rig.fakeFs.events.slice(-2)).toEqual([
+      "rm:/tmp/mc-home/runs/run-42-worker.json",
+      "rm:" + PLAN_PATH,
+    ]);
+  });
+
+  test("docker create failure removes the launch files and never starts", async () => {
+    const rig = makeRig();
+    rig.docker.enqueue(fail(125, "docker daemon down"));
+    await applyEffect(spawnEffect, rig.deps);
+    expect(rig.docker.calls.map((argv) => argv[0])).toEqual(["create"]);
+    expect(rig.logs.some((l) => l.includes("docker create failed (exit 125)"))).toBe(true);
+    expect(rig.fakeFs.events.slice(-2)).toEqual([
+      "rm:/tmp/mc-home/runs/run-42-worker.json",
+      "rm:" + PLAN_PATH,
     ]);
   });
 
@@ -243,7 +357,10 @@ describe("reap effect", () => {
 			rig.deps,
 		);
 		expect(rig.docker.calls).toEqual([["stop", "mc-run-run-42-worker"]]);
-		expect(rig.fakeFs.events).toEqual(["rm:/tmp/mc-home/runs/run-42-worker.json"]);
+		expect(rig.fakeFs.events).toEqual([
+			"rm:/tmp/mc-home/runs/run-42-worker.json",
+			"rm:/tmp/mc-home/runs/run-42-worker.mounts.json",
+		]);
 	});
 
   test("stops the exact-named container when stop_container is set", async () => {
@@ -253,11 +370,14 @@ describe("reap effect", () => {
     expect(rig.docker.calls).toEqual([["stop", "mc-run-run-42-worker"]]);
   });
 
-  test("removes the launch envelope with the container (§11.3)", async () => {
+  test("removes the launch envelope and plan sibling with the container (§11.3)", async () => {
     const rig = makeRig();
     rig.docker.enqueue(ok(""));
     await applyEffect({ action: "reap", run_id: "run-42-worker", stop_container: true }, rig.deps);
-    expect(rig.fakeFs.events).toEqual(["rm:/tmp/mc-home/runs/run-42-worker.json"]);
+    expect(rig.fakeFs.events).toEqual([
+      "rm:/tmp/mc-home/runs/run-42-worker.json",
+      "rm:/tmp/mc-home/runs/run-42-worker.mounts.json",
+    ]);
   });
 
   test("no docker call and no fs effect when stop_container is absent", async () => {
@@ -280,7 +400,10 @@ describe("reap effect", () => {
     rig.docker.enqueue(fail(1, "No such container"));
     await applyEffect({ action: "reap", run_id: "run-42-worker", stop_container: true }, rig.deps);
     expect(rig.logs.some((l) => l.includes("docker stop exited 1"))).toBe(true);
-    expect(rig.fakeFs.events).toEqual(["rm:/tmp/mc-home/runs/run-42-worker.json"]);
+    expect(rig.fakeFs.events).toEqual([
+      "rm:/tmp/mc-home/runs/run-42-worker.json",
+      "rm:/tmp/mc-home/runs/run-42-worker.mounts.json",
+    ]);
   });
 });
 

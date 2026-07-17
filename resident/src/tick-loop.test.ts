@@ -88,20 +88,21 @@ describe("fail-closed tick failures", () => {
     expect(rig.mc.calls.length).toBe(2);
   });
 
-  test("a failed effect never crashes the loop (docker run fails on spawn)", async () => {
+  test("a failed effect never crashes the loop (docker create fails on spawn)", async () => {
     const rig = makeRig();
     rig.mc.enqueue(
 	      effectJson({
 	        action: "spawn", run_id: "r1", role: "worker", subject_id: 1,
 	        worksource: "ws-e2e", pool_ids: [1], harness: "fake",
-	        model_binding: "fake", brief: "immutable brief", heartbeat_interval_s: 1,
+	        model_binding: "fake", brief: "immutable brief",
+	        mount_plan: { entries: [], version: 1 }, heartbeat_interval_s: 1,
 	      }),
       idle(),
     );
     rig.docker.enqueue(fail(125, "docker daemon down"));
     startTickLoop(rig.deps);
     await rig.timer.fire();
-    expect(rig.logs.some((l) => l.includes("docker run failed (exit 125)"))).toBe(true);
+    expect(rig.logs.some((l) => l.includes("docker create failed (exit 125)"))).toBe(true);
     await rig.timer.fire();
     expect(rig.mc.calls.length).toBe(2);
   });

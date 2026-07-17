@@ -80,7 +80,8 @@ async function main(): Promise<void> {
       mkdir: async (path) => {
         await mkdir(path, { recursive: true });
       },
-      writeFile: (path, data) => writeFile(path, data),
+      writeFile: (path, data, opts) =>
+        opts?.mode !== undefined ? writeFile(path, data, { mode: opts.mode }) : writeFile(path, data),
       rm: (path) => rm(path, { force: true }),
     },
     config,

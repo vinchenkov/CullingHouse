@@ -12,6 +12,7 @@ import {
   chmodSync,
   existsSync,
   mkdirSync,
+  realpathSync,
   mkdtempSync,
   readFileSync,
   readdirSync,
@@ -33,7 +34,7 @@ const mcSourceDir = join(repoRoot, "mc", "cmd", "mc");
 const agentRunnerMain = join(repoRoot, "runner", "agent-runner", "main.ts");
 const fakeHarnessCli = join(repoRoot, "runner", "fake-harness", "cli.ts");
 const mcLandScript = join(repoRoot, "runner", "image", "mc-land");
-const suiteRoot = mkdtempSync(join(tmpdir(), "mc-split-brain-suite-"));
+const suiteRoot = realpathSync(mkdtempSync(join(tmpdir(), "mc-split-brain-suite-")));
 const mcBin = join(suiteRoot, "mc");
 
 const fakeRouting = `# Mission Control routing
@@ -134,6 +135,7 @@ async function makeFixture(): Promise<Fixture> {
   const spine = join(root, "spine.db");
   const workspace = join(root, "workspace");
   mkdirSync(home);
+  chmodSync(home, 0o700); // TrustHomeDir: operator-only MC_HOME
   mkdirSync(workspace);
 
   const initialized = await mcJson(home, undefined, [
@@ -151,6 +153,13 @@ async function makeFixture(): Promise<Fixture> {
   }
   writeFileSync(join(home, "deployment.uuid"), `${deploymentUUID}\n`, { mode: 0o600 });
   writeFileSync(join(home, "routing.md"), fakeRouting, { mode: 0o600 });
+  // The test-fake workspace bind now rides the plan carrier: the allowlist
+  // authorizes the fixture workspace to exactly /workspace/source RW.
+  writeFileSync(
+    join(home, "mount-allowlist"),
+    `version = 1\n\n[[allow]]\npath = ${JSON.stringify(workspace)}\ntarget = "source"\naccess = "rw"\n`,
+    { mode: 0o600 },
+  );
   const added = await mcJson(home, spine, [
     "task", "add", "split-brain subject", "--worksource", "ws-test",
   ]);
@@ -182,13 +191,17 @@ function recordingFs(failBeforeFirstWrite = false): RecordingFs {
         events.push(`mkdir:${path}`);
         await mkdir(path, { recursive: true });
       },
-      writeFile: async (path, data) => {
+      writeFile: async (path, data, opts) => {
         events.push(`write:${path}`);
         if (shouldFail) {
           shouldFail = false;
           throw new Error("simulated resident death before run.json");
         }
-        await writeFile(path, data);
+        if (opts?.mode !== undefined) {
+          await writeFile(path, data, { mode: opts.mode });
+        } else {
+          await writeFile(path, data);
+        }
       },
       rm: async (path) => {
         events.push(`rm:${path}`);
@@ -228,19 +241,23 @@ type FirstRunMode = "ordinary" | "die-before-start" | "die-after-start";
 class RecordingDocker {
   calls: string[][] = [];
   live = new Set<string>();
-  private firstDetachedRun = true;
+  private firstStart = true;
 
   constructor(private readonly firstRunMode: FirstRunMode) {}
 
   exec: Exec = async (argv) => {
     this.calls.push([...argv]);
-    if (argv[0] === "run" && argv.includes("-d")) {
+    if (argv[0] === "create") {
       const nameAt = argv.indexOf("--name");
       const name = nameAt >= 0 ? argv[nameAt + 1] : undefined;
-      if (name === undefined) throw new Error("test Docker received a detached run without --name");
-
-      const isFirst = this.firstDetachedRun;
-      this.firstDetachedRun = false;
+      if (name === undefined) throw new Error("test Docker received a create without --name");
+      return ok(`${name}-container-id\n`);
+    }
+    if (argv[0] === "start") {
+      const name = argv[1];
+      if (name === undefined) throw new Error("test Docker received start without a name");
+      const isFirst = this.firstStart;
+      this.firstStart = false;
       if (isFirst && this.firstRunMode === "die-before-start") {
         throw new Error("simulated resident death before container start");
       }
@@ -248,7 +265,7 @@ class RecordingDocker {
       if (isFirst && this.firstRunMode === "die-after-start") {
         throw new Error("simulated resident death after container start");
       }
-      return ok(`${name}-container-id\n`);
+      return ok("");
     }
 
     if (argv[0] === "stop") {
@@ -578,17 +595,36 @@ class LocalWorkerDocker {
     for (const kill of this.runnerKills) kill();
   }
 
+  private pendingCreates = new Map<string, string[]>();
+
   exec: Exec = async (argv) => {
     this.calls.push([...argv]);
     if (argv[0] === "stop") return fail(1, "No such container");
-    if (argv[0] !== "run" || !argv.includes("-d")) {
+    if (argv[0] === "create") {
+      const nameAt = argv.indexOf("--name");
+      const name = nameAt >= 0 ? argv[nameAt + 1] : undefined;
+      if (name === undefined) throw new Error("local Worker Docker received a create without --name");
+      this.pendingCreates.set(name, [...argv]);
+      return ok(`${name}-container-id\n`);
+    }
+    if (argv[0] === "rm") {
+      if (!this.pendingCreates.delete(argv[1] ?? "")) {
+        throw new Error(`local Worker Docker received rm for an unknown container: ${JSON.stringify(argv)}`);
+      }
+      return ok("");
+    }
+    if (argv[0] !== "start") {
       throw new Error(`local Worker Docker received an unexpected command: ${JSON.stringify(argv)}`);
+    }
+    const createArgv = this.pendingCreates.get(argv[1] ?? "");
+    if (createArgv === undefined) {
+      throw new Error(`local Worker Docker received start for an uncreated container: ${JSON.stringify(argv)}`);
     }
 
     this.workerAttempt++;
     if (this.workerAttempt > 2) throw new Error("local Worker Docker received a third spawn");
-    const hostEnvelope = mountSource(argv, "/mc/run.json", true);
-    const hostSession = mountSource(argv, "/mc/session");
+    const hostEnvelope = mountSource(createArgv, "/mc/run.json", true);
+    const hostSession = mountSource(createArgv, "/mc/session");
     const envelope = JSON.parse(readFileSync(hostEnvelope, "utf8")) as JsonObject;
     if (envelope.role !== "worker" || typeof envelope.run_id !== "string") {
       throw new Error(`local Worker Docker received a non-Worker envelope: ${JSON.stringify(envelope)}`);
@@ -639,9 +675,9 @@ class LocalWorkerDocker {
     });
     this.runnerPromises.push(completion);
 
-    // `docker run -d` reports container creation, not the eventual runner
-    // exit. The test observes exit separately through this injected seam.
-    return ok(`local-container-${runId}\n`);
+    // `docker start` reports the start, not the eventual runner exit. The
+    // test observes exit separately through this injected seam.
+    return ok("");
   };
 }
 
@@ -879,13 +915,15 @@ describe("split-brain convergence: committed spawn before first heartbeat", () =
         const oldEnvelope = join(fixture.home, "runs", `${oldRun}.json`);
         const oldContainer = `mc-run-${oldRun}`;
 
-        const initialDockerCalls = boundary.oldEnvelopeExists ? 1 : 0;
+        const initialDockerCalls = boundary.oldEnvelopeExists ? 2 : 0;
         expect(docker.calls).toHaveLength(initialDockerCalls);
-        if (initialDockerCalls === 1) {
-          expect(docker.calls[0]![0]).toBe("run");
+        if (initialDockerCalls === 2) {
+          expect(docker.calls[0]![0]).toBe("create");
           expect(docker.calls[0]).toContain(oldContainer);
           expect(docker.calls[0]).toContain(`${oldSession}:/mc/session`);
           expect(docker.calls[0]).toContain(`${oldEnvelope}:/mc/run.json:ro`);
+          expect(docker.calls[0]).toContain(`${fixture.workspace}:/workspace/source`);
+          expect(docker.calls[1]).toEqual(["start", oldContainer]);
         }
         expect(docker.live.has(oldContainer)).toBe(boundary.oldContainerExists);
         expect(first.logs.some((line) => line.includes("simulated resident death"))).toBe(true);
@@ -1004,12 +1042,13 @@ describe("split-brain convergence: committed spawn before first heartbeat", () =
         expect(existsSync(oldSession)).toBe(boundary.oldFolderExists);
         if (boundary.oldFolderExists) expect(readdirSync(oldSession)).toEqual([]);
 
-        expect(docker.calls).toHaveLength(initialDockerCalls + 2);
-        const retryDocker = docker.calls.at(-1)!;
-        expect(retryDocker[0]).toBe("run");
+        expect(docker.calls).toHaveLength(initialDockerCalls + 3);
+        const retryDocker = docker.calls.at(-2)!;
+        expect(retryDocker[0]).toBe("create");
         expect(retryDocker).toContain(`mc-run-${newRun}`);
         expect(retryDocker).toContain(`${newSession}:/mc/session`);
         expect(retryDocker).toContain(`${newEnvelope}:/mc/run.json:ro`);
+        expect(docker.calls.at(-1)).toEqual(["start", `mc-run-${newRun}`]);
         expect([...docker.live]).toEqual([`mc-run-${newRun}`]);
         expect(await lock(fixture)).toMatchObject({
           run_id: newRun,
@@ -1043,7 +1082,7 @@ describe("split-brain convergence: committed spawn before first heartbeat", () =
         await recovered.timer.fire();
         expect(effects).toHaveLength(4);
         expect(effects[3]).toEqual({ action: "idle", reason: "lease-held" });
-        expect(docker.calls).toHaveLength(initialDockerCalls + 2);
+        expect(docker.calls).toHaveLength(initialDockerCalls + 3);
         expect(await runs(fixture)).toHaveLength(2);
         expect(await task(fixture)).toMatchObject({ dispatch_retries: 2 });
 
@@ -1113,7 +1152,9 @@ describe("split-brain convergence: standalone scripted Worker Git boundary", () 
         const oldRun = selected.run_id;
         const oldSession = join(fixture.home, "sessions", oldRun);
         const oldEnvelope = join(fixture.home, "runs", `${oldRun}.json`);
-        expect(localDocker.calls).toHaveLength(1);
+        expect(localDocker.calls).toHaveLength(2);
+        expect(localDocker.calls[0]![0]).toBe("create");
+        expect(localDocker.calls[1]).toEqual(["start", `mc-run-${oldRun}`]);
         expect(localDocker.calls[0]).toContain(`mc-run-${oldRun}`);
         expect(localDocker.calls[0]).toContain(`${oldSession}:/mc/session`);
         expect(localDocker.calls[0]).toContain(`${oldEnvelope}:/mc/run.json:ro`);
@@ -1134,7 +1175,7 @@ describe("split-brain convergence: standalone scripted Worker Git boundary", () 
           run_id: oldRun,
           role: "worker",
           harness_config: { behavior: "/mc/behaviors/worker.json" },
-          mounts: { session: "/mc/session", workspace: "/workspace/source" },
+          mounts: { session: "/mc/session" },
         });
         const oldTrace = join(oldSession, "native.jsonl");
         expect(existsSync(oldTrace)).toBe(true);
@@ -1262,11 +1303,13 @@ describe("split-brain convergence: standalone scripted Worker Git boundary", () 
         expect(newRun).not.toBe(oldRun);
         const newSession = join(fixture.home, "sessions", newRun);
         const newEnvelope = join(fixture.home, "runs", `${newRun}.json`);
-        const retryDocker = localDocker.calls.at(-1)!;
+        const retryDocker = localDocker.calls.at(-2)!;
+        expect(retryDocker[0]).toBe("create");
         expect(retryDocker).toContain(`mc-run-${newRun}`);
         expect(retryDocker).toContain(`${newSession}:/mc/session`);
         expect(retryDocker).toContain(`${newEnvelope}:/mc/run.json:ro`);
         expect(retryDocker).toContain(`${fixture.workspace}:/workspace/source`);
+        expect(localDocker.calls.at(-1)).toEqual(["start", `mc-run-${newRun}`]);
 
         const retryRunner = await localDocker.waitForRunner(1);
         await recoveredLoop.stop();

@@ -54,7 +54,7 @@ export class FakeFs {
     mkdir: async (path: string): Promise<void> => {
       this.events.push(`mkdir:${path}`);
     },
-    writeFile: async (path: string, data: string): Promise<void> => {
+    writeFile: async (path: string, data: string, _opts?: { mode?: number }): Promise<void> => {
       this.events.push(`write:${path}`);
       this.writes.set(path, data);
     },
