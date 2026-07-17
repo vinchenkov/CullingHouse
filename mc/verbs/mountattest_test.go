@@ -1,6 +1,7 @@
 package verbs
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -628,5 +629,53 @@ func TestAttestCandidateMountsRegistryProtectsRealGitControl(t *testing.T) {
 	}
 	if r.Code != boundary.CodeDeniedRoot {
 		t.Fatalf("control-intersecting artifact = %+v, want denied_root", r)
+	}
+}
+
+func TestDispatchRepoWorkerCommitsTaskLocalMountPlan(t *testing.T) {
+	ws, _ := tsBuild(t)
+	if err := os.Mkdir(filepath.Join(ws, ".git"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	db := dvSpine(t, func(a *InitArgs) { a.WorkspaceRoot = ws })
+	// dvSpine parks the Worksource on the registered non-repository arm; this
+	// test is exactly about the repo arm the registry slice opened.
+	dvExec(t, db, `UPDATE worksources SET kind='repo' WHERE id='ws-test'`)
+	dvInsertTask(t, db, dvTask(7, dispatch.ScopeTask, dispatch.StatusSeeded, 2))
+	if err := os.Chmod(os.Getenv("MC_HOME"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(os.Getenv("MC_HOME"), "mount-allowlist"), []byte("version = 1\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	prepared := dfPrepare(t, db, dfRequestID)
+	attested, err := dispatchAttest(os.Getenv("MC_HOME"), prepared)
+	if err != nil {
+		t.Fatalf("dispatchAttest: %v", err)
+	}
+	if attested.refusal != nil {
+		t.Fatalf("repo worker over an exact skeleton refused: %+v", attested.refusal)
+	}
+	eff := dfCommit(t, db, prepared, attested)
+	if eff["action"] != "spawn" {
+		t.Fatalf("effect = %v, want a spawn", eff)
+	}
+	body, err := json.Marshal(eff["mount_plan"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	var plan PrivateDispatchMountPlan
+	if err := json.Unmarshal(body, &plan); err != nil {
+		t.Fatalf("committed mount_plan does not decode as the carrier: %v", err)
+	}
+	if plan.Version != 1 || len(plan.Entries) != 15 {
+		t.Fatalf("committed plan = version %d with %d entries, want the 15 task-local rows", plan.Version, len(plan.Entries))
+	}
+	if plan.Entries[0].Destination != "/workspace" || plan.Entries[0].LogicalID != "task-root" {
+		t.Fatalf("committed first row = %+v", plan.Entries[0])
+	}
+	if n := dfInt(t, db, `SELECT COUNT(*) FROM activity WHERE kind='dispatch.spawn'`); n != 1 {
+		t.Fatalf("spawn wrote %d dispatch.spawn rows, want one", n)
 	}
 }
