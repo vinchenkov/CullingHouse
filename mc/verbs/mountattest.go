@@ -1,12 +1,16 @@
 package verbs
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"os"
 	"os/user"
 	"path/filepath"
+	"sort"
 	"strconv"
+	"syscall"
 
 	"mc/boundary"
 	"mc/refusal"
@@ -32,6 +36,117 @@ type dispatchMountHostSnapshot struct {
 type dispatchMountAssembly struct {
 	Requests     []mountRequest
 	Jurisdiction boundary.JurisdictionInput
+}
+
+type jurisdictionDigestMember struct {
+	Class     string `json:"class"`
+	Canonical string `json:"canonical"`
+	Device    string `json:"device"`
+	Inode     string `json:"inode"`
+	Kind      string `json:"kind"`
+	Present   bool   `json:"present"`
+}
+
+// jurisdictionInputDigest preserves ADR-021 D9/D11's distinction between
+// rerunning the predicate and rerunning the input. A protected-root identity
+// change must stale even when every requested source and final verdict remain
+// unchanged, so the authorized plan binds this canonical non-secret snapshot
+// in addition to its mount entries.
+func jurisdictionInputDigest(in boundary.JurisdictionInput, ownerUID int) (string, error) {
+	projection := struct {
+		DeniedPaths []string                   `json:"denied_paths"`
+		Home        string                     `json:"home"`
+		Members     []jurisdictionDigestMember `json:"members"`
+		OwnerUID    int                        `json:"owner_uid"`
+	}{DeniedPaths: append([]string(nil), in.DeniedPaths...), Home: in.Home, OwnerUID: ownerUID}
+	sort.Strings(projection.DeniedPaths)
+	add := func(class string, id boundary.ProtectedID) error {
+		member := jurisdictionDigestMember{Class: class, Canonical: id.Canonical, Present: id.Present()}
+		if id.Present() {
+			st, ok := id.Info.Sys().(*syscall.Stat_t)
+			if !ok {
+				return Domainf("protected root %q has no native identity evidence (ADR-021 D11)", id.Canonical)
+			}
+			member.Device = strconv.FormatUint(uint64(st.Dev), 10)
+			member.Inode = strconv.FormatUint(st.Ino, 10)
+			if id.IsDir {
+				member.Kind = "dir"
+			} else {
+				member.Kind = "file"
+			}
+		}
+		projection.Members = append(projection.Members, member)
+		return nil
+	}
+	addRoots := func(prefix string, roots boundary.WorksourceRoots) error {
+		for class, id := range map[string]boundary.ProtectedID{
+			"workspace": roots.Workspace, "worktree": roots.Worktree,
+			"state": roots.State, "cache": roots.Cache, "tool_home": roots.ToolHome,
+		} {
+			if err := add(prefix+"."+class, id); err != nil {
+				return err
+			}
+		}
+		for i, id := range roots.Artifacts {
+			if err := add(prefix+".artifact."+strconv.Itoa(i), id); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	if err := add("mc_home", in.MCHome); err != nil {
+		return "", err
+	}
+	if err := addRoots("own", in.OwnWorksource); err != nil {
+		return "", err
+	}
+	for i, roots := range in.OtherWorksources {
+		if err := addRoots("other."+strconv.Itoa(i), roots); err != nil {
+			return "", err
+		}
+	}
+	groups := []struct {
+		name string
+		ids  []boundary.ProtectedID
+	}{
+		{"home_class", in.HomeClassRoots}, {"gateway", in.GatewaySecrets},
+		{"runtime_control", in.RuntimeControls}, {"own_git", in.OwnGitControls},
+		{"other_git", in.OtherGitControls}, {"own_mc", in.OwnMissionControlRoots},
+		{"other_mc", in.OtherMissionControlRoots},
+	}
+	for _, group := range groups {
+		for i, id := range group.ids {
+			if err := add(group.name+"."+strconv.Itoa(i), id); err != nil {
+				return "", err
+			}
+		}
+	}
+	kinds := make([]int, 0, len(in.TypedRoots))
+	for kind := range in.TypedRoots {
+		kinds = append(kinds, int(kind))
+	}
+	sort.Ints(kinds)
+	for _, rawKind := range kinds {
+		kind := boundary.TypedKind(rawKind)
+		for i, id := range in.TypedRoots[kind] {
+			if err := add("typed."+kind.String()+"."+strconv.Itoa(i), id); err != nil {
+				return "", err
+			}
+		}
+	}
+	sort.Slice(projection.Members, func(i, j int) bool {
+		a, b := projection.Members[i], projection.Members[j]
+		if a.Class != b.Class {
+			return a.Class < b.Class
+		}
+		return a.Canonical < b.Canonical
+	})
+	body, err := json.Marshal(projection)
+	if err != nil {
+		return "", err
+	}
+	sum := sha256.Sum256(append([]byte("MC-JURISDICTION-SNAPSHOT-V1\x00"), body...))
+	return hex.EncodeToString(sum[:]), nil
 }
 
 func selectedDispatchWorksource(state PrivateDispatchMountState) (PrivateDispatchWorksource, error) {
@@ -386,6 +501,10 @@ func attestCandidateMounts(home string, cand *preparedCandidate, allowLegacyFake
 		r, aerr := adaptMountError(err, refusal.AuthorityDeployment, nil)
 		return nil, r, aerr
 	}
+	jurisdictionDigest, err := jurisdictionInputDigest(assembled.Jurisdiction, snapshot.OwnerUID)
+	if err != nil {
+		return nil, nil, err
+	}
 	j, err := boundary.ResolveJurisdiction(assembled.Jurisdiction, snapshot.OwnerUID)
 	if err != nil {
 		authority := refusal.AuthorityDeployment
@@ -406,7 +525,7 @@ func attestCandidateMounts(home string, cand *preparedCandidate, allowLegacyFake
 	if entries == nil {
 		entries = []PrivateDispatchMountEntry{}
 	}
-	plan := &PrivateDispatchMountPlan{Version: 1, Entries: entries}
+	plan := &PrivateDispatchMountPlan{Version: 1, Entries: entries, JurisdictionDigest: jurisdictionDigest}
 	body, err := json.Marshal(plan)
 	if err != nil {
 		return nil, nil, err

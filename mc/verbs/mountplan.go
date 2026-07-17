@@ -102,8 +102,9 @@ type PrivateDispatchMountEntry struct {
 // sorted by destination (the declared key of a semantically unordered set).
 // The alphabetical field order is load-bearing — see the entry type.
 type PrivateDispatchMountPlan struct {
-	Entries []PrivateDispatchMountEntry `json:"entries"`
-	Version int                         `json:"version"`
+	Entries            []PrivateDispatchMountEntry `json:"entries"`
+	JurisdictionDigest string                      `json:"jurisdiction_digest,omitempty"`
+	Version            int                         `json:"version"`
 }
 
 type mountPlanInputs struct {

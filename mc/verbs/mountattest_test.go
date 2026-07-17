@@ -671,6 +671,31 @@ func TestAttestCandidateMountsRegistryProtectsRealGitControl(t *testing.T) {
 	}
 }
 
+func TestAttestCandidateMountsCarriesProtectedSetIdentityDrift(t *testing.T) {
+	subject := int64(7)
+	mcHome, cand, ws := maRepoCandidate(t, dispatch.RoleWorker, &subject)
+	first, r, err := attestCandidateMounts(mcHome, cand, false)
+	if err != nil || r != nil {
+		t.Fatalf("first attest = refusal %+v err %v", r, err)
+	}
+
+	gitPath := filepath.Join(ws, ".git")
+	oldGit := filepath.Join(ws, ".git-old")
+	if err := os.Rename(gitPath, oldGit); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(gitPath, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	second, r, err := attestCandidateMounts(mcHome, cand, false)
+	if err != nil || r != nil {
+		t.Fatalf("second attest = refusal %+v err %v", r, err)
+	}
+	if reflect.DeepEqual(first, second) {
+		t.Fatal("protected Git-control identity drift disappeared behind an unchanged mount verdict (ADR-021 D9/D11)")
+	}
+}
+
 func TestDispatchRepoWorkerCommitsTaskLocalMountPlan(t *testing.T) {
 	ws, _ := tsBuild(t)
 	if err := os.Mkdir(filepath.Join(ws, ".git"), 0o700); err != nil {

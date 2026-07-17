@@ -308,6 +308,9 @@ func validatePrivateMountPlan(plan *PrivateDispatchMountPlan) error {
 	if plan == nil || plan.Version != 1 || plan.Entries == nil {
 		return Domainf("dispatch: private route attestation carries no explicit mount plan")
 	}
+	if plan.JurisdictionDigest != "" && !validLowercaseHex(plan.JurisdictionDigest, 64) {
+		return Domainf("dispatch: private mount plan jurisdiction digest is invalid")
+	}
 	if len(plan.Entries) > maxPlanMounts {
 		return Domainf("dispatch: private mount plan exceeds %d entries (ADR-016 D2)", maxPlanMounts)
 	}
