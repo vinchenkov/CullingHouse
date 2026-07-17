@@ -107,7 +107,7 @@ func TestAssembleDispatchMountInputsUsesSelectedProfileAndCompleteJurisdiction(t
 		},
 	}
 
-	requests, selected, r, err := deriveDispatchMountRequests(state, false)
+	requests, selected, r, err := deriveDispatchMountRequests(state, "worker", nil, false)
 	if err != nil || r != nil {
 		t.Fatalf("derive = refusal %+v err %v", r, err)
 	}
@@ -154,7 +154,7 @@ func TestDeriveDispatchMountRequestsRefusesDirectGitWorkspace(t *testing.T) {
 		ProfileID: "default", WorkspaceRoot: workspace,
 		ArtifactRoots: []string{}, ReadonlyMounts: []string{}, DeniedPaths: []string{},
 	}}}
-	requests, _, r, err := deriveDispatchMountRequests(state, false)
+	requests, _, r, err := deriveDispatchMountRequests(state, "worker", nil, false)
 	if err != nil || r == nil || len(requests) != 0 {
 		t.Fatalf("direct Git derivation = %+v refusal %+v err %v", requests, r, err)
 	}
@@ -189,7 +189,7 @@ func TestDispatchInvalidSelectedProfileMountNeverClaimsOrSpawns(t *testing.T) {
 		t.Fatal(err)
 	}
 	oldCapture := captureDispatchMountSnapshot
-	captureDispatchMountSnapshot = func(home string, state PrivateDispatchMountState, allowFake bool) (dispatchMountHostSnapshot, error) {
+	captureDispatchMountSnapshot = func(home string, state PrivateDispatchMountState, subjectTaskID *int64, allowFake bool) (dispatchMountHostSnapshot, error) {
 		return dispatchMountHostSnapshot{
 			OperatorHome: operatorHome, OwnerUID: os.Getuid(), MCHome: maID(t, home),
 			HomeClassRoots: []boundary.ProtectedID{}, GatewaySecrets: []boundary.ProtectedID{},
@@ -243,7 +243,7 @@ func TestDispatchInvalidDeniedPathWithoutRequestsNeverClaims(t *testing.T) {
 		t.Fatal(err)
 	}
 	oldCapture := captureDispatchMountSnapshot
-	captureDispatchMountSnapshot = func(home string, state PrivateDispatchMountState, allowFake bool) (dispatchMountHostSnapshot, error) {
+	captureDispatchMountSnapshot = func(home string, state PrivateDispatchMountState, subjectTaskID *int64, allowFake bool) (dispatchMountHostSnapshot, error) {
 		return dispatchMountHostSnapshot{
 			OperatorHome: operatorHome, OwnerUID: os.Getuid(), MCHome: maID(t, home),
 			HomeClassRoots: []boundary.ProtectedID{}, GatewaySecrets: []boundary.ProtectedID{},
@@ -306,7 +306,7 @@ func maStubSnapshot(t *testing.T, root string, wsIDs ...string) string {
 	t.Helper()
 	operatorHome := maMkdir(t, root, "operator-home")
 	oldCapture := captureDispatchMountSnapshot
-	captureDispatchMountSnapshot = func(home string, state PrivateDispatchMountState, allowFake bool) (dispatchMountHostSnapshot, error) {
+	captureDispatchMountSnapshot = func(home string, state PrivateDispatchMountState, subjectTaskID *int64, allowFake bool) (dispatchMountHostSnapshot, error) {
 		snapshot := dispatchMountHostSnapshot{
 			OperatorHome: operatorHome, OwnerUID: os.Getuid(), MCHome: maID(t, home),
 			HomeClassRoots: []boundary.ProtectedID{}, GatewaySecrets: []boundary.ProtectedID{},
@@ -371,7 +371,7 @@ func TestAttestCandidateMountsBuildsEvidencePlan(t *testing.T) {
 		ArtifactRoots: []string{artifact}, ReadonlyMounts: []string{reference}, DeniedPaths: []string{},
 	}}}
 
-	plan, r, err := attestCandidateMounts(mcHome, &preparedCandidate{mountState: state}, false)
+	plan, r, err := attestCandidateMounts(mcHome, &preparedCandidate{spawn: &dispatch.Spawn{Role: dispatch.RoleWorker}, mountState: state}, false)
 	if err != nil || r != nil {
 		t.Fatalf("attest = refusal %+v err %v, want a plan", r, err)
 	}
@@ -417,7 +417,7 @@ func TestAttestCandidateMountsFakeLegacyWorkspaceRidesTheCarrier(t *testing.T) {
 		ArtifactRoots: []string{}, ReadonlyMounts: []string{}, DeniedPaths: []string{},
 	}}}
 
-	plan, r, err := attestCandidateMounts(mcHome, &preparedCandidate{mountState: state}, true)
+	plan, r, err := attestCandidateMounts(mcHome, &preparedCandidate{spawn: &dispatch.Spawn{Role: dispatch.RoleWorker}, mountState: state}, true)
 	if err != nil || r != nil {
 		t.Fatalf("fake-lane attest = refusal %+v err %v, want a plan", r, err)
 	}
@@ -432,7 +432,7 @@ func TestAttestCandidateMountsFakeLegacyWorkspaceRidesTheCarrier(t *testing.T) {
 		t.Fatalf("workspace entry = %+v", entry)
 	}
 
-	plan, r, err = attestCandidateMounts(mcHome, &preparedCandidate{mountState: state}, false)
+	plan, r, err = attestCandidateMounts(mcHome, &preparedCandidate{spawn: &dispatch.Spawn{Role: dispatch.RoleWorker}, mountState: state}, false)
 	if err != nil || r == nil || plan != nil {
 		t.Fatalf("production repo attest = plan %+v refusal %+v err %v, want the health stop", plan, r, err)
 	}
@@ -451,7 +451,7 @@ func TestAttestCandidateMountsAbsentProfileIsDeploymentHealth(t *testing.T) {
 		WorksourceID: "ws-bare", Kind: "personal", Status: "active", ProfilePresent: false,
 		ArtifactRoots: []string{}, ReadonlyMounts: []string{}, DeniedPaths: []string{},
 	}}}
-	plan, r, err := attestCandidateMounts(mcHome, &preparedCandidate{mountState: state}, false)
+	plan, r, err := attestCandidateMounts(mcHome, &preparedCandidate{spawn: &dispatch.Spawn{Role: dispatch.RoleWorker}, mountState: state}, false)
 	if err != nil || r == nil || plan != nil {
 		t.Fatalf("absent-profile attest = plan %+v refusal %+v err %v", plan, r, err)
 	}
@@ -478,7 +478,7 @@ func TestAttestCandidateMountsAssemblyFailureIsDeploymentHealth(t *testing.T) {
 		{WorksourceID: "own", Kind: "personal", Status: "active", ProfilePresent: true,
 			ProfileID: "p1", ArtifactRoots: []string{artifact}, ReadonlyMounts: []string{}, DeniedPaths: []string{}},
 	}}
-	plan, r, err := attestCandidateMounts(mcHome, &preparedCandidate{mountState: state}, false)
+	plan, r, err := attestCandidateMounts(mcHome, &preparedCandidate{spawn: &dispatch.Spawn{Role: dispatch.RoleWorker}, mountState: state}, false)
 	if err != nil || r == nil || plan != nil {
 		t.Fatalf("assembly-failure attest = plan %+v refusal %+v err %v, want a health refusal", plan, r, err)
 	}
@@ -512,11 +512,121 @@ func TestAttestCandidateMountsOversizedPlanFailsHealth(t *testing.T) {
 		WorksourceID: "ws-bulk", Kind: "personal", Status: "active", ProfilePresent: true,
 		ProfileID: "p", ArtifactRoots: []string{}, ReadonlyMounts: sources, DeniedPaths: []string{},
 	}}}
-	plan, r, err := attestCandidateMounts(mcHome, &preparedCandidate{mountState: state}, false)
+	plan, r, err := attestCandidateMounts(mcHome, &preparedCandidate{spawn: &dispatch.Spawn{Role: dispatch.RoleWorker}, mountState: state}, false)
 	if err != nil || r == nil || plan != nil {
 		t.Fatalf("oversized attest = plan %+v refusal %+v err %v, want the byte-bound refusal", plan, r, err)
 	}
 	if r.Code != boundary.CodeRuntimeUnappliable || r.Authority != refusal.AuthorityDeployment {
 		t.Fatalf("oversized refusal = %+v", r)
+	}
+}
+
+// maRepoCandidate builds a production repo candidate over the exact task-7
+// skeleton from tsBuild plus a real .git control, and a trusted MC_HOME with
+// an empty allowlist. Nothing stubs the snapshot: these tests drive the real
+// captureDispatchMountHostSnapshot and the live Git registry.
+func maRepoCandidate(t *testing.T, role dispatch.Role, subject *int64) (string, *preparedCandidate, string) {
+	t.Helper()
+	ws, _ := tsBuild(t)
+	if err := os.Mkdir(filepath.Join(ws, ".git"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	mcHome := maMkdir(t, filepath.Dir(ws), "mc-home-"+string(role))
+	if err := os.Chmod(mcHome, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(mcHome, "mount-allowlist"), []byte("version = 1\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	state := PrivateDispatchMountState{SelectedWorksource: "repo-ws", Worksources: []PrivateDispatchWorksource{{
+		WorksourceID: "repo-ws", Kind: "repo", Status: "active", ProfilePresent: true,
+		ProfileID: "p", WorkspaceRoot: ws,
+		ArtifactRoots: []string{}, ReadonlyMounts: []string{}, DeniedPaths: []string{},
+	}}}
+	return mcHome, &preparedCandidate{spawn: &dispatch.Spawn{Role: role, SubjectID: subject}, mountState: state}, ws
+}
+
+func TestAttestCandidateMountsDerivesTaskLocalPlanThroughRealCapture(t *testing.T) {
+	subject := int64(7)
+	mcHome, cand, ws := maRepoCandidate(t, dispatch.RoleWorker, &subject)
+
+	plan, r, err := attestCandidateMounts(mcHome, cand, false)
+	if err != nil || r != nil {
+		t.Fatalf("attest = refusal %+v err %v", r, err)
+	}
+	if plan == nil || len(plan.Entries) != 15 {
+		t.Fatalf("plan = %+v, want the 15 task-local rows", plan)
+	}
+	if plan.Entries[0].Destination != "/workspace" || plan.Entries[0].Access != "ro" ||
+		plan.Entries[0].Mode != 0o555 {
+		t.Fatalf("task root entry = %+v", plan.Entries[0])
+	}
+	taskRoot := filepath.Join(ws, ".mission-control", "tasks", "task-7")
+	byDest := map[string]PrivateDispatchMountEntry{}
+	for _, e := range plan.Entries {
+		byDest[e.Destination] = e
+	}
+	if got := byDest["/workspace/git"]; got.Access != "rw" || got.Source != filepath.Join(taskRoot, "git") {
+		t.Fatalf("git entry = %+v", got)
+	}
+	if got := byDest["/workspace/git/worktrees/mc-task-7/gitdir"]; got.Access != "ro" || got.Kind != "file" {
+		t.Fatalf("worktree gitdir cover = %+v", got)
+	}
+}
+
+func TestAttestCandidateMountsAbsentSkeletonIsDeploymentHealth(t *testing.T) {
+	subject := int64(9) // no task-9 skeleton exists
+	mcHome, cand, _ := maRepoCandidate(t, dispatch.RoleWorker, &subject)
+
+	plan, r, err := attestCandidateMounts(mcHome, cand, false)
+	if err != nil || r == nil || plan != nil {
+		t.Fatalf("attest = plan %+v refusal %+v err %v, want the absent-skeleton refusal", plan, r, err)
+	}
+	if r.Code != boundary.CodeSourceMissing || r.Authority != refusal.AuthorityDeployment {
+		t.Fatalf("absent-skeleton refusal = %+v", r)
+	}
+	class, cerr := refusal.Classify(*r)
+	if cerr != nil || class != refusal.ClassHealth {
+		t.Fatalf("absent skeleton must record health, got %v (%v)", class, cerr)
+	}
+}
+
+func TestAttestCandidateMountsProjectionRolesStayHealthRefused(t *testing.T) {
+	subject := int64(7)
+	for _, role := range []dispatch.Role{"verifier", "packager", "refiner", "editor"} {
+		mcHome, cand, _ := maRepoCandidate(t, role, &subject)
+		plan, r, err := attestCandidateMounts(mcHome, cand, false)
+		if err != nil || r == nil || plan != nil {
+			t.Fatalf("%s attest = plan %+v refusal %+v err %v, want the unrealizable-arm refusal", role, plan, r, err)
+		}
+		if r.Code != boundary.CodeRuntimeUnappliable || r.Authority != refusal.AuthorityDeployment {
+			t.Fatalf("%s refusal = %+v", role, r)
+		}
+	}
+}
+
+func TestAttestCandidateMountsRegistryProtectsRealGitControl(t *testing.T) {
+	subject := int64(7)
+	mcHome, cand, ws := maRepoCandidate(t, dispatch.RoleWorker, &subject)
+	// An artifact root reaching inside the registered control refuses on
+	// jurisdiction even though the operator allowlisted it: the registry now
+	// feeds OwnGitControls, so the real object store can never ride an
+	// ordinary mount.
+	inside := filepath.Join(ws, ".git", "objects")
+	if err := os.MkdirAll(inside, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	allowlist := fmt.Sprintf("version = 1\n\n[[allow]]\npath = %q\ntarget = \"objects\"\naccess = \"rw\"\n", inside)
+	if err := os.WriteFile(filepath.Join(mcHome, "mount-allowlist"), []byte(allowlist), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cand.mountState.Worksources[0].ArtifactRoots = []string{inside}
+
+	plan, r, err := attestCandidateMounts(mcHome, cand, false)
+	if err != nil || r == nil || plan != nil {
+		t.Fatalf("attest = plan %+v refusal %+v err %v, want the jurisdiction refusal", plan, r, err)
+	}
+	if r.Code != boundary.CodeDeniedRoot {
+		t.Fatalf("control-intersecting artifact = %+v, want denied_root", r)
 	}
 }

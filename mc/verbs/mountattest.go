@@ -77,35 +77,55 @@ func selectedProfileMountRequests(state PrivateDispatchMountState) ([]mountReque
 }
 
 // deriveDispatchMountRequests is the single derivation point for a
-// candidate's ordinary mount requests: the selected profile's artifact RW and
-// reference RO sources, the production repo gate, and — under test-fake
-// routing only — the Phase-1 legacy workspace bind rerouted through the same
-// allowlist/jurisdiction authorization as every other request. A repo
-// Worksource categorically cannot use its real checkout as /workspace/source
-// in production: ADR-017 requires the task-local repository/projection typed
-// plane, which is not represented by an ordinary profile request.
-func deriveDispatchMountRequests(state PrivateDispatchMountState, allowLegacyFakeWorkspace bool) ([]mountRequest, PrivateDispatchWorksource, *refusal.Refusal, error) {
+// candidate's mount requests: the selected profile's artifact RW and
+// reference RO sources, the ADR-017 D6 task-local typed rows for a
+// production standalone-task Worker on a repo Worksource, and — under
+// test-fake routing only — the Phase-1 legacy workspace bind rerouted
+// through the same allowlist/jurisdiction authorization as every other
+// request. A repo Worksource categorically cannot use its real checkout as
+// /workspace/source in production; every repo arm whose materialization does
+// not exist yet (committed projections, the Verifier's disposable source,
+// the sealed views Packager/Refiner read) refuses health rather than being
+// guessed.
+func deriveDispatchMountRequests(state PrivateDispatchMountState, role string, subjectID *int64, allowLegacyFakeWorkspace bool) ([]mountRequest, PrivateDispatchWorksource, *refusal.Refusal, error) {
 	requests, selected, r, err := selectedProfileMountRequests(state)
 	if err != nil || r != nil {
 		return nil, selected, r, err
 	}
-	if selected.WorksourceID == "" {
+	if selected.WorksourceID == "" || selected.Kind != "repo" {
 		return requests, selected, nil, nil
 	}
-	if selected.Kind == "repo" {
-		if !allowLegacyFakeWorkspace {
-			r, err := refusalForMountError(&boundary.MountError{
-				Code: boundary.CodeRuntimeUnappliable,
-				Msg:  "a Git Worksource requires a task-local repository or committed projection; its real workspace is never an agent mount",
-			}, refusal.AuthorityDeployment, nil)
-			return nil, selected, &r, err
-		}
+	if allowLegacyFakeWorkspace {
 		if selected.WorkspaceRoot != "" {
 			requests = append(requests, mountRequest{
 				Source: selected.WorkspaceRoot, Access: boundary.AccessRW,
 				Authority: refusal.AuthorityCandidate, Class: classWorkspaceLegacy,
 			})
 		}
+		return requests, selected, nil, nil
+	}
+	if baseRole(role) != "worker" || subjectID == nil || selected.WorkspaceRoot == "" {
+		// The only realizable production repo arm today is the standalone-task
+		// Worker over an existing exact skeleton. A projection-consuming or
+		// seal-consuming role's mount source is materialized by later setup
+		// slices; until they exist the arm is deployment health, never a
+		// guessed bind and never a per-task confinement block.
+		r, err := refusalForMountError(&boundary.MountError{
+			Code: boundary.CodeRuntimeUnappliable,
+			Msg:  "no realizable Git mount arm for this role: task-local skeletons exist only for standalone-task Workers until the setup slices land",
+		}, refusal.AuthorityDeployment, nil)
+		return nil, selected, &r, err
+	}
+	root := filepath.Join(selected.WorkspaceRoot, ".mission-control", "tasks", "task-"+strconv.FormatInt(*subjectID, 10))
+	for _, row := range taskPlanRows(*subjectID) {
+		source := root
+		if row.Rel != "" {
+			source = filepath.Join(root, filepath.FromSlash(row.Rel))
+		}
+		requests = append(requests, mountRequest{
+			Source: source, Access: row.Access, Authority: refusal.AuthorityDeployment,
+			Kind: row.Kind, Destination: row.Dest,
+		})
 	}
 	return requests, selected, nil, nil
 }
@@ -196,7 +216,7 @@ func realOperatorHome(uid int) (string, error) {
 // disk root exists to register; inventing one would be false evidence.
 func resolveGatewaySecretRoots() []boundary.ProtectedID { return []boundary.ProtectedID{} }
 
-func captureDispatchMountHostSnapshot(home string, state PrivateDispatchMountState, allowLegacyFakeWorkspace bool) (dispatchMountHostSnapshot, error) {
+func captureDispatchMountHostSnapshot(home string, state PrivateDispatchMountState, subjectTaskID *int64, allowLegacyFakeWorkspace bool) (dispatchMountHostSnapshot, error) {
 	uid := os.Getuid()
 	if err := boundary.TrustHomeDir(home, uid); err != nil {
 		return dispatchMountHostSnapshot{}, err
@@ -236,12 +256,6 @@ func captureDispatchMountHostSnapshot(home string, state PrivateDispatchMountSta
 		snapshot.HomeClassRoots = append(snapshot.HomeClassRoots, id)
 	}
 	for _, ws := range state.Worksources {
-		if ws.Kind == "repo" && !allowLegacyFakeWorkspace {
-			return dispatchMountHostSnapshot{}, &boundary.MountError{
-				Code: boundary.CodeRuntimeUnappliable,
-				Msg:  "registered Git control identities are not yet available to host mount attest",
-			}
-		}
 		workspace, err := resolveDispatchProtected(ws.WorkspaceRoot, true)
 		if err != nil {
 			return dispatchMountHostSnapshot{}, err
@@ -268,9 +282,42 @@ func captureDispatchMountHostSnapshot(home string, state PrivateDispatchMountSta
 			Cache:     mustDispatchProtected(filepath.Join(stateHome, ".cache")),
 			ToolHome:  toolHome,
 		}
-		snapshot.GitControls[ws.WorksourceID] = []boundary.ProtectedID{}
-		snapshot.MissionControlRoots[ws.WorksourceID] = []boundary.ProtectedID{
-			mustDispatchProtected(filepath.Join(ws.WorkspaceRoot, ".mission-control")),
+		// The Git control registry resolves live per attest (ADR-021 D9/D11).
+		// The fake lane keeps the Phase-1 posture: registering even an
+		// absent-encoded own `.git` member would reject the sanctioned legacy
+		// workspace bind through D8's absent-member protection, so the
+		// registry activates only where that bind cannot exist.
+		if ws.Kind == "repo" && !allowLegacyFakeWorkspace {
+			controls, err := resolveWorksourceGitControls(ws.WorkspaceRoot)
+			if err != nil {
+				return dispatchMountHostSnapshot{}, err
+			}
+			snapshot.GitControls[ws.WorksourceID] = controls
+		} else {
+			snapshot.GitControls[ws.WorksourceID] = []boundary.ProtectedID{}
+		}
+		snapshot.MissionControlRoots[ws.WorksourceID] = []boundary.ProtectedID{}
+		if ws.WorkspaceRoot != "" {
+			mcRoot, err := resolveDispatchProtected(filepath.Join(ws.WorkspaceRoot, ".mission-control"), true)
+			if err != nil {
+				return dispatchMountHostSnapshot{}, err
+			}
+			snapshot.MissionControlRoots[ws.WorksourceID] = []boundary.ProtectedID{mcRoot}
+		}
+	}
+	if state.SelectedWorksource != "" && subjectTaskID != nil && !allowLegacyFakeWorkspace {
+		selected, err := selectedDispatchWorksource(state)
+		if err != nil {
+			return dispatchMountHostSnapshot{}, err
+		}
+		if selected.Kind == "repo" && selected.WorkspaceRoot != "" {
+			typed, err := resolveTaskLocalSkeleton(selected.WorkspaceRoot, *subjectTaskID, uid)
+			if err != nil {
+				return dispatchMountHostSnapshot{}, err
+			}
+			for kind, id := range typed {
+				snapshot.TypedRoots[kind] = []boundary.ProtectedID{id}
+			}
 		}
 	}
 	return snapshot, nil
@@ -300,7 +347,7 @@ const maxDispatchMountPlanBytes = 32 * 1024
 // explicit, never absent.
 func attestCandidateMounts(home string, cand *preparedCandidate, allowLegacyFakeWorkspace bool) (*PrivateDispatchMountPlan, *refusal.Refusal, error) {
 	empty := &PrivateDispatchMountPlan{Version: 1, Entries: []PrivateDispatchMountEntry{}}
-	requests, selected, r, err := deriveDispatchMountRequests(cand.mountState, allowLegacyFakeWorkspace)
+	requests, selected, r, err := deriveDispatchMountRequests(cand.mountState, string(cand.spawn.Role), cand.spawn.SubjectID, allowLegacyFakeWorkspace)
 	if err != nil || r != nil {
 		return nil, r, err
 	}
@@ -313,7 +360,7 @@ func attestCandidateMounts(home string, cand *preparedCandidate, allowLegacyFake
 	if len(requests) == 0 && len(selected.DeniedPaths) == 0 {
 		return empty, nil, nil
 	}
-	snapshot, err := captureDispatchMountSnapshot(home, cand.mountState, allowLegacyFakeWorkspace)
+	snapshot, err := captureDispatchMountSnapshot(home, cand.mountState, cand.spawn.SubjectID, allowLegacyFakeWorkspace)
 	if err != nil {
 		r, aerr := adaptMountError(err, refusal.AuthorityDeployment, nil)
 		return nil, r, aerr

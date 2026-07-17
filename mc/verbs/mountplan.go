@@ -59,11 +59,19 @@ var mountClassPrefixes = map[mountClass]string{
 // access, whose authority the request rides on (candidate-authored
 // profile/Worksource state vs deployment-shared configuration) — D4's sole
 // class discriminator for the mount codes — and the D6 destination class.
+//
+// A TYPED request (Kind != KindNone) instead claims one ADR-017 D6 typed
+// system row: it bypasses the external allowlist requirement only
+// (ADR-017:349-351), is checked against the jurisdiction's authorized typed
+// roots (ADR-021 D10), and lands at its fixed table Destination rather than
+// a class-derived one. Class is unused on a typed request.
 type mountRequest struct {
-	Source    string
-	Access    boundary.Access
-	Authority refusal.Authority
-	Class     mountClass
+	Source      string
+	Access      boundary.Access
+	Authority   refusal.Authority
+	Class       mountClass
+	Kind        boundary.TypedKind
+	Destination string
 }
 
 // PrivateDispatchMountEntry is one authorized bind of the closed plan carrier
@@ -158,19 +166,56 @@ func planMounts(requests []mountRequest, in mountPlanInputs) ([]PrivateDispatchM
 	entries := make([]PrivateDispatchMountEntry, 0, len(requests))
 	for i, req := range requests {
 		i := i
-		prefix, ok := mountClassPrefixes[req.Class]
-		if !ok {
-			return nil, nil, Domainf("mount request %d carries no destination class (ADR-017 D6)", i)
+		var dest, logicalID string
+		var identity boundary.SourceIdentity
+		access := req.Access
+		if req.Kind != boundary.KindNone {
+			// The typed arm: the destination is the row's fixed table cell,
+			// never derived, and an out-of-table cell is a confused planner —
+			// a protocol error, not a plannable row.
+			if !validTaskPlanDestination(req.Destination) {
+				return nil, nil, Domainf("typed mount request %d destination %q is outside the closed D6 task table", i, req.Destination)
+			}
+			id, err := boundary.ResolveSource(req.Source)
+			if err != nil {
+				r, aerr := adaptMountError(err, req.Authority, &i)
+				return nil, r, aerr
+			}
+			if in.Blocked.Rejects(id.RawClean, id.Canonical) {
+				r, aerr := adaptMountError(&boundary.MountError{
+					Code: boundary.CodeSourceBlocked,
+					Msg:  "typed source has a blocked address component",
+				}, req.Authority, &i)
+				return nil, r, aerr
+			}
+			if err := in.Jurisdiction.Rejects(id, boundary.TypedClaim{Kind: req.Kind}); err != nil {
+				r, aerr := adaptMountError(err, req.Authority, &i)
+				return nil, r, aerr
+			}
+			dest, logicalID, identity = req.Destination, req.Kind.String(), id
+		} else {
+			prefix, ok := mountClassPrefixes[req.Class]
+			if !ok {
+				return nil, nil, Domainf("mount request %d carries no destination class (ADR-017 D6)", i)
+			}
+			auth, err := resolved.Authorize(req.Source, req.Access, in.Blocked, in.Jurisdiction)
+			if err != nil {
+				r, aerr := adaptMountError(err, req.Authority, &i)
+				return nil, r, aerr
+			}
+			dest = "/" + path.Join(prefix, auth.Target, auth.Suffix)
+			logicalID = string(req.Class) + ":" + path.Join(auth.Target, auth.Suffix)
+			identity, access = auth.Source, auth.Access
 		}
-		auth, err := resolved.Authorize(req.Source, req.Access, in.Blocked, in.Jurisdiction)
-		if err != nil {
-			r, aerr := adaptMountError(err, req.Authority, &i)
-			return nil, r, aerr
-		}
-		dest := "/" + path.Join(prefix, auth.Target, auth.Suffix)
 		for _, prior := range entries {
-			if dest == prior.Destination || strings.HasPrefix(dest, prior.Destination+"/") ||
-				strings.HasPrefix(prior.Destination, dest+"/") {
+			overlap := dest == prior.Destination
+			if strings.HasPrefix(dest, prior.Destination+"/") && !mountOverlapPermitted(prior.Destination, dest) {
+				overlap = true
+			}
+			if strings.HasPrefix(prior.Destination, dest+"/") && !mountOverlapPermitted(dest, prior.Destination) {
+				overlap = true
+			}
+			if overlap {
 				r, rerr := refusalForMountError(&boundary.MountError{
 					Code: boundary.CodeTargetCollision,
 					Msg:  "destination " + dest + " collides with " + prior.Destination,
@@ -181,7 +226,7 @@ func planMounts(requests []mountRequest, in mountPlanInputs) ([]PrivateDispatchM
 				return nil, &r, nil
 			}
 		}
-		entry, err := planEntryFor(req.Class, dest, auth)
+		entry, err := planEntry(logicalID, dest, identity, access)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -191,28 +236,90 @@ func planMounts(requests []mountRequest, in mountPlanInputs) ([]PrivateDispatchM
 	return entries, nil, nil
 }
 
-// planEntryFor captures ADR-016 D5's host identity evidence for one
-// authorized source: the canonical resolved path plus the (device, inode,
-// kind, owner, mode) identity the pre-create and pre-start rechecks compare.
-func planEntryFor(class mountClass, dest string, auth boundary.Authorization) (PrivateDispatchMountEntry, error) {
-	st, ok := auth.Source.Info.Sys().(*syscall.Stat_t)
+// validTaskPlanDestination reports whether one destination is a cell of the
+// closed ADR-017 D6 standalone-task table. It is grammar-based (the worktree
+// segment embeds the task id) so the helper boundary can re-check a plan
+// without knowing which task produced it.
+func validTaskPlanDestination(dest string) bool {
+	switch dest {
+	case "/workspace", "/workspace/source", "/workspace/git",
+		"/workspace/source/.git", "/workspace/source/.mission-control",
+		"/workspace/git/config", "/workspace/git/hooks", "/workspace/git/info",
+		"/workspace/git/objects/info", "/workspace/git/objects/pack",
+		"/workspace/git/packed-refs", "/workspace/git/shallow":
+		return true
+	}
+	rest, ok := strings.CutPrefix(dest, "/workspace/git/worktrees/")
 	if !ok {
-		return PrivateDispatchMountEntry{}, Domainf("mount source %q has no native identity evidence (ADR-016 D5)", auth.Source.Canonical)
+		return false
+	}
+	name, leaf, ok := strings.Cut(rest, "/")
+	if !ok || !validTaskWorktreeName(name) {
+		return false
+	}
+	return leaf == "commondir" || leaf == "gitdir" || leaf == "config.worktree"
+}
+
+// validTaskWorktreeName accepts exactly `mc-task-<canonical positive
+// decimal>` — the pinned administrative worktree name of a task-local
+// repository.
+func validTaskWorktreeName(name string) bool {
+	id, ok := strings.CutPrefix(name, "mc-task-")
+	if !ok || id == "" || len(id) > 19 || id[0] == '0' {
+		return false
+	}
+	for _, r := range id {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+// mountOverlapPermitted reports whether a strictly-nested destination pair is
+// one of ADR-017 D6's named parent-before-child table edges. The task root
+// admits every separately-validated row beneath it; source and git admit
+// exactly their fixed cover children. "No other overlap is accepted."
+func mountOverlapPermitted(parent, child string) bool {
+	if !strings.HasPrefix(child, parent+"/") {
+		return false
+	}
+	switch parent {
+	case "/workspace":
+		// Every child entry is itself a validated closed destination (a D6
+		// task cell or a class-prefixed artifact/reference row), so the root
+		// edge only needs strict nesting.
+		return true
+	case "/workspace/source":
+		return child == "/workspace/source/.git" || child == "/workspace/source/.mission-control"
+	case "/workspace/git":
+		return validTaskPlanDestination(child)
+	}
+	return false
+}
+
+// planEntry captures ADR-016 D5's host identity evidence for one authorized
+// source: the canonical resolved path plus the (device, inode, kind, owner,
+// mode) identity the pre-create and pre-start rechecks compare.
+func planEntry(logicalID, dest string, source boundary.SourceIdentity, access boundary.Access) (PrivateDispatchMountEntry, error) {
+	st, ok := source.Info.Sys().(*syscall.Stat_t)
+	if !ok {
+		return PrivateDispatchMountEntry{}, Domainf("mount source %q has no native identity evidence (ADR-016 D5)", source.Canonical)
 	}
 	kind := "file"
-	if auth.Source.IsDir {
+	if source.IsDir {
 		kind = "dir"
 	}
 	return PrivateDispatchMountEntry{
-		LogicalID:   string(class) + ":" + path.Join(auth.Target, auth.Suffix),
-		Source:      auth.Source.Canonical,
+		LogicalID:   logicalID,
+		Source:      source.Canonical,
 		Destination: dest,
 		Kind:        kind,
-		Access:      string(auth.Access),
+		Access:      string(access),
 		Device:      strconv.FormatUint(uint64(st.Dev), 10),
 		Inode:       strconv.FormatUint(st.Ino, 10),
 		OwnerUID:    int(st.Uid),
-		Mode:        int(auth.Source.Info.Mode().Perm()),
+		Mode:        int(source.Info.Mode().Perm()),
 	}, nil
 }
 

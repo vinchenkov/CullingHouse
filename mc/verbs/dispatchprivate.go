@@ -331,10 +331,14 @@ func validatePrivateMountPlan(plan *PrivateDispatchMountPlan) error {
 			strings.Contains(e.Source, ":") || strings.Contains(e.Destination, ":") {
 			return Domainf("dispatch: private mount entry %d path shape is invalid", i)
 		}
-		// Ordinary plan destinations live only under the derived /workspace/
-		// namespace: the runtime/system planes (/mc, /app/src, /home/agent,
-		// /etc) are never plan-addressable, whatever the broker claims.
-		if !strings.HasPrefix(e.Destination, "/workspace/") {
+		// Plan destinations are a closed set: the derived artifact/reference
+		// class namespaces plus ADR-017 D6's task-table cells (which include
+		// the legacy fake /workspace/source and the /workspace task root).
+		// The runtime/system planes (/mc, /app/src, /home/agent, /etc) are
+		// never plan-addressable, whatever the broker claims.
+		if !strings.HasPrefix(e.Destination, "/workspace/artifacts/") &&
+			!strings.HasPrefix(e.Destination, "/workspace/references/") &&
+			!validTaskPlanDestination(e.Destination) {
 			return Domainf("dispatch: private mount entry %d destination is outside the ordinary namespace", i)
 		}
 		if e.Kind != "dir" && e.Kind != "file" {
@@ -349,7 +353,8 @@ func validatePrivateMountPlan(plan *PrivateDispatchMountPlan) error {
 		if e.OwnerUID < 0 || e.Mode < 0 || e.Mode > 0o777 {
 			return Domainf("dispatch: private mount entry %d owner/mode evidence is invalid", i)
 		}
-		if i > 0 && (e.Destination <= prior || strings.HasPrefix(e.Destination, prior+"/")) {
+		if i > 0 && (e.Destination <= prior ||
+			(strings.HasPrefix(e.Destination, prior+"/") && !mountOverlapPermitted(prior, e.Destination))) {
 			return Domainf("dispatch: private mount destinations are unsorted or overlapping")
 		}
 		prior = e.Destination
