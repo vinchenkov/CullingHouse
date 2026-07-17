@@ -2079,3 +2079,65 @@ Entry template:
   silent, and the fix point is the component that already owns it.
 - Spec impact: none
 - Needs your decision: no
+
+## 2026-07-17 — the Git registry resolves live; no spine table
+- Where: Phase 3, the authoritative Git control/projection registry
+  (ADR-017 D5's "registered real Git control directory"; the NEXT slice
+  after the authorization carrier)
+- Gap: no ADR pins where registration LIVES. "Registered" could mean a
+  durable spine table written at worksource-add, or live host-side
+  resolution against the registered workspace root at every attest.
+- Choice: live resolution (`mc/verbs/gitregistry.go`), per attest, chasing
+  the real `.git` layout (dir, or worktree pointer file → gitdir →
+  commondir) with bounded single-line reads and no host-Git invocation.
+  ADR-021 D9/D11 forbid caching jurisdiction inputs, so a table would be a
+  second source of truth re-verified on every use anyway — pure drift
+  surface. Conservative: no v5 migration, no new verbs, easiest to
+  reverse; absence stays an absent-encoded member (D8) while every
+  ambiguous shape (symlink, unparsable/oversized/dangling pointer) denies.
+  Consequence accepted: a nested independent repo the operator never
+  registered is NOT protected by the registry — protection follows
+  registration, matching ADR-017 D5's wording.
+- Spec impact: none
+- Needs your decision: no
+
+## 2026-07-17 — four pins inside the typed task-local plan class
+- Where: Phase 3, ADR-017 D6 task-local rows (`mc/verbs/taskskeleton.go`,
+  `mountplan.go`, `dispatchprivate.go`)
+- Gap: D6 leaves four cells open at this slice's tier: (1) the literal
+  `<mc-task-name>` worktree name; (2) `git/config` content ("generated
+  sanitized local config" — the sanitizer is the setup slice's); (3) which
+  repo arms are derivable before setup/seal materialization exists; (4)
+  how the helper boundary re-checks destinations it cannot derive.
+- Choice: (1) pinned `mc-task-<id>` (canonical decimal), consistent with
+  `refs/heads/mc/task-<id>` and the other managed-name grammars; grammar-
+  checked at three layers. (2) `git/config` must be an EMPTY regular file
+  until the setup slice lands its sanitized grammar — refuse what cannot
+  be validated yet, since a hostile config is code execution inside the
+  Worker's git. (3) only the standalone-task Worker WITH a subject derives
+  (15 rows over an existing exact skeleton); verifier/packager/refiner/
+  editor/projection arms refuse `runtime_unappliable` health with the
+  missing materialization named. (4) the helper validates a closed
+  destination set (artifact/reference prefixes + the D6 task cells by
+  grammar) and permits nesting only on D6's named edges — this tightens
+  the legacy fake workspace bind to target `source` exactly, a fail-closed
+  narrowing of a test-only lane. All four are deleted/relaxed by their
+  named later slices.
+- Spec impact: none
+- Needs your decision: no
+
+## 2026-07-17 — the fake lane keeps an empty Git-control registry
+- Where: Phase 3 registry slice; `captureDispatchMountHostSnapshot`
+- Gap: activating the registry under `test_fake_routing` would register at
+  least the absent-encoded own `.git` member, and ADR-021 D8's
+  absent-member protection then rejects the sanctioned Phase-1 legacy
+  workspace bind (the workspace root CONTAINS the would-be `.git`) — the
+  fake e2e lane dies.
+- Choice: the registry activates only where the legacy bind cannot exist
+  (`!allowLegacyFakeWorkspace`, i.e. every production route). The fake
+  lane keeps Phase-1's empty GitControls, unchanged posture, and the
+  production arm is proven by unstubbed real-capture tests instead. The
+  lane split is the same one the legacy bind already rides; both go away
+  together when the fake lane's task-local fixtures land.
+- Spec impact: none
+- Needs your decision: no

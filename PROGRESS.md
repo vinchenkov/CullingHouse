@@ -10,8 +10,16 @@ Access does NOT fix it — the failure precedes any policy lookup. Symptom:
 `stat` works, reads return `Operation not permitted`, git says
 `Unable to read current working directory`.
 
-LAST GREEN SHA: e6168c0 (local; the operator pushes manually — decided 2026-07-14. Agents: do not push.)
+LAST GREEN SHA: c24e319 (local; the operator pushes manually — decided 2026-07-14. Agents: do not push.)
+
+QUOTA: the session usage limit was hit 2026-07-17 (resets 01:50 PT) — it
+killed this slice's spawned review lenses. Per §8 the session banked at a
+green commit; the re-review is the incoming session's first act (see NEXT).
 PHASES PASSING: Phase 0 COMPLETE (S1–S8 all green, no fallback ADRs; only operator-leg deferrals remain); Phase 1 COMPLETE (1a substrate 172; 1b walking skeleton reviewed-and-fixed — fake-harness 43, agent-runner 13, runner/image 40, resident 42, dispatch + cmd/mc suites; Docker e2e PASS ×4 total); Phase 2 COMPLETE for every unparked acceptance line (domain/§18 surface, deterministic split-brain convergence, bounded honesty + five mutants, tagged dispatch/metamorphic/twin-spine lifecycle properties; the initiative-wave CLI is no longer isolated — ADR-020 landed 2026-07-14 and closed the last Phase 2 acceptance line)
+KNOWN-FLAKY: `TestPrivateHelperSelfDeadlineTerminatesContainerSideProcess`
+(mc/cmd/mc) can blow its 500ms wall-clock bound when the whole suite runs in
+parallel (fork/exec of the test binary under load); 5/5 green isolated. Not a
+regression signal unless it fails alone.
 KNOWN-FAILING: `TestOnboardConcurrentFreshHomeNeverDeletesTheWinner` (mc/verbs),
 INTERMITTENT — ~1 in 21 full-suite runs; 0/21 at HEAD, 15/15 and 60/60 green in a
 clean worktree, so the rate is chance and the race is pre-existing, NOT caused by
@@ -191,9 +199,21 @@ kept below. Operator legs that remain open are under `## Parked`, not here.
         production workspace RO row, launch-bind receipts). Docker-lane
         obligations at phase completion: e2e with the carrier fixtures + the
         D1 deployment-mirror check
-  - [ ] Add the authoritative Git control/projection registry and typed plan
-        (ADR-016 D5 Git shape; ADR-017 D6 task-local rows) so production repo
-        candidates stop health-refusing
+  - [x] The authoritative Git control/projection registry + typed task plan
+        class (6d07b79..c24e319): live per-attest resolution of repo
+        Worksource Git administrative identities (dir or worktree-pointer
+        chase; absence stays a D8 member; ambiguity denies) feeding
+        Own/OtherGitControls — no spine table (ADR-021 D9/D11). The closed
+        15-row ADR-017 D6 standalone-task table rides the carrier as typed
+        claims (allowlist bypassed, blocked floor kept, named-edge nesting
+        only), derived only for a production repo Worker with a subject
+        over an existing exact skeleton — proven through the real host
+        capture and full Dispatch; every other repo arm health-refuses
+        naming its missing materialization. Pins owed to later slices:
+        empty git/config until setup's sanitized grammar; worktree name
+        mc-task-<id>; fake lane keeps empty GitControls. Session
+        self-review fixed a pre-existing helper overlap gap (c24e319);
+        the spawned slice review died on quota and is owed (NEXT)
 - [ ] Phase 4 — E2E control loops (six scenario families)
 - [ ] Phase 5 — Real-subscription acceptance (operator-scheduled)
 - [ ] Release prep (after Phase 5): swap the repo's construction face for
@@ -213,13 +233,13 @@ deleted, not struck through. History is in `docs/ledger/`.
   agent cannot sleep the machine it runs on). Instructions in
   `spikes/07-launchd-clock/RESULT.md`. All other S7 sub-tests passed.
 
-NEXT: Build the authoritative Git control/projection registry and its typed
-plan class red-first, so production repo candidates stop health-refusing:
-register Git administrative identities per Worksource (the
-`registered Git control identities are not yet available` stop in
-`captureDispatchMountHostSnapshot`), derive the ADR-017 D6 task-local
-repository/projection rows through the same carrier, and keep every
-still-unrealizable arm health-refused rather than guessed. ADR-016 D5's Git
-shape (closure extraction, task-local skeleton) stays behind its own later
-slices — this one is the registry + typed plan derivation only. Do not load
-launchd.
+NEXT: First, re-run the adversarial review of the registry/typed-plan slice
+(`git diff 8799370..c24e319 -- mc resident` vs docs/phase3-contract.md §4 and
+ADR-017 D6 / ADR-016 D5 / ADR-021 D8-D11) with spawned lenses + verifiers —
+the 2026-07-17 session limit killed the spawned review and only the session
+agent's direct-reading pass has covered it; fold findings red-first. Then
+start the skeleton-materialization slice red-first: the resident's
+post-claim precreate of the identity-fenced empty `task-<id>/{source,git}`
+skeleton (ADR-017:437-441 — created as the host operator, children first,
+root fixed 0555, identity registered), leaving setup's closure fill, seals,
+and projections behind their own later slices. Do not load launchd.

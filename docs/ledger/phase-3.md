@@ -793,3 +793,67 @@ check.
 
 Outgoing NEXT (superseded): implement the authorization-carrier slice as
 pinned in the same-day design entry. Done as above.
+
+## 2026-07-17 — the Git control/projection registry and the typed task plan class
+
+Claude session, continuing the standing NEXT from the carrier slice. Five
+green commits (6d07b79..c24e319), the full five-leg fast lane passing at
+each boundary:
+
+- 6d07b79 — `mc/verbs/gitregistry.go`: live per-attest resolution of a repo
+  Worksource's Git administrative identities. A `.git` directory is one
+  control; a linked-worktree pointer file chases gitdir + commondir with
+  bounded single-line reads; an absent `.git` stays an absent-encoded
+  protected member (ADR-021 D8); symlinked/unparsable/oversized/dangling
+  shapes deny typed wrong-kind/missing. No spine table, deliberately:
+  D9/D11 forbid cached jurisdiction inputs, so registration is resolution
+  (IMPLEMENTATION-NOTES 2026-07-17).
+- dab9e5f — the typed plan class. `taskPlanRows` pins the closed 15-row
+  ADR-017 D6 standalone-task table (root RO at /workspace, source/git RW
+  for the Worker, twelve RO covers; worktree name pinned `mc-task-<id>`);
+  `resolveTaskLocalSkeleton` validates the exact skeleton (constructed
+  canonical paths, operator owner, 0555 root, fixed pointer bytes, empty
+  generated covers, `git/config` pinned EMPTY until setup owns the
+  sanitized grammar). planMounts gains the typed arm — claims checked
+  against jurisdiction typed roots, allowlist bypassed per ADR-017:349-351,
+  blocked floor kept, fixed destinations, nesting only on D6's named
+  edges. The derivation emits the row set only for a production repo
+  Worker WITH a subject; verifier/packager/refiner/editor and every
+  projection arm refuse `runtime_unappliable` deployment health naming the
+  missing materialization. `captureDispatchMountHostSnapshot` loses the
+  "registered Git control identities are not yet available" stop: registry
+  controls and the resolved `.mission-control` root feed jurisdiction, the
+  subject's skeleton resolves into TypedRoots, and the whole arm is proven
+  through the REAL capture (unstubbed) — including an allowlisted artifact
+  inside `.git` refusing denied_root. The helper boundary re-validates the
+  closed destination set and the same edges. The fake lane keeps empty
+  GitControls: registering even the absent `.git` member would kill the
+  sanctioned legacy workspace bind through D8 absent-member protection.
+- 4191618 — the resident's -v grammar admits exactly `/workspace` (the
+  task-root row) alongside `/workspace/` descendants.
+- 9575733 — end-to-end proof: full native Dispatch (prepare → attest →
+  commit) for a repo Worker over an exact task-7 skeleton commits one
+  spawn effect carrying the 15-row mount_plan, task root first.
+- c24e319 — session self-review fix: the helper's destination-overlap
+  check was adjacent-only after sorting, so a sibling interleaving between
+  an ancestor and its descendant ('-' < '/') hid a forbidden nesting from
+  a hostile broker. Pre-existing (predates the typed rows); proven red,
+  fixed by scanning every prior entry.
+
+Review honesty: the spawned adversarial review (three lenses + verifiers,
+run as a workflow) died entirely on the session usage limit (resets
+2026-07-17 01:50 PT) — zero lenses returned. Per the 2026-07-16 precedent
+verification fell to the session agent by direct code reading across five
+risk surfaces (blocked-floor interaction, capture→plan TOCTOU, the
+"/workspace" edge closure, helper bypasses, cover completeness vs D6);
+finding: the c24e319 gap above, everything else held. A spawned re-review
+of 6d07b79..c24e319 is the next session's first act.
+
+Still-open arms this slice deliberately did not touch: skeleton
+creation/population (resident precreate + setup closure extraction,
+ADR-016 D5), seal/disposable/projection materializations, preclaim
+guard/mount canaries, ACL/containment recheck halves, the production
+resident's structured binds, and the Docker-lane phase-completion run.
+
+Outgoing NEXT (superseded): build the authoritative Git control/projection
+registry and its typed plan class red-first. Done as above.
