@@ -1545,3 +1545,23 @@ the producer artifacts absent, and run the fixed rebuild executor.
 before any filesystem, `mc`, Docker, or verifier-agent effect. This closes the
 unsafe fall-through while the dedicated producer-absence and rebuild executor
 is implemented next. Full serial fast lane green.
+
+## 2026-07-18 — verifier accepted-seal plan binds the canonical task store
+
+`07615df` makes the verifier accepted-seal carrier attest the complete
+15-row task plan as read-only rather than guessing a host task-root path in
+the resident. That gives the later fixed setup executor the one canonical
+task-root source it may bind at `/repo/task`, while keeping the verifier launch
+fenced: its disposable RW source remains a separate D6 operation. The full
+serial fast lane was green.
+
+## 2026-07-18 — resident accepted completion-seal re-attestation foundation
+
+`5c4c2a8` validates every accepted-seal receipt field at the resident boundary
+and adds the real host recheck primitive. It derives only
+`MC_HOME/seals/<run-id>`, rejects a noncanonical/symlinked/different
+directory, and repeats the receipt device/inode/owner proof immediately before
+the future trusted setup bind; the in-container executor independently repeats
+that proof. The plan remains a no-effect launch fence until the same D6 slice
+can also materialize the verifier's disposable RW source and give the setup
+operation a durable replay/terminal fence. Full serial fast lane green.
