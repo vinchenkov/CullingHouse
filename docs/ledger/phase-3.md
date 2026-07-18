@@ -1354,3 +1354,14 @@ cut. The full five-leg fast suite is green.
 
 Outgoing NEXT (moved to PROGRESS.md): begin ADR-016 D6 accepted-seal rebuild
 with producer/lease/request cleanup fencing.
+
+## 2026-07-18 — completion-seal durable state foundation
+
+`4c04e7a` advances the spine to v7 with `completion_seals`. It pins a
+run/task-fenced completion request, object format, sealed SHA, closure digest,
+and exact seal filesystem identity. The state machine distinguishes
+`published`, `accepted`, cleanup-pending, and removed history; content is
+immutable, invalid transitions are refused, and rows are never deleted. Fresh
+and v1-migrated spines are structurally equivalent and the full fast suite is
+green. The next slice must make Worker completion write the published receipt
+and atomically accept it with the terminal consequence.

@@ -10,7 +10,7 @@ Access does NOT fix it — the failure precedes any policy lookup. Symptom:
 `stat` works, reads return `Operation not permitted`, git says
 `Unable to read current working directory`.
 
-LAST GREEN SHA: 92b7047 (local; the operator pushes manually — decided 2026-07-14. Agents: do not push.)
+LAST GREEN SHA: 4c04e7a (local; the operator pushes manually — decided 2026-07-14. Agents: do not push.)
 
 PHASES PASSING: Phase 0 COMPLETE (S1–S8 all green, no fallback ADRs; only operator-leg deferrals remain); Phase 1 COMPLETE (1a substrate 172; 1b walking skeleton reviewed-and-fixed — fake-harness 43, agent-runner 13, runner/image 40, resident 42, dispatch + cmd/mc suites; Docker e2e PASS ×4 total); Phase 2 COMPLETE for every unparked acceptance line (domain/§18 surface, deterministic split-brain convergence, bounded honesty + five mutants, tagged dispatch/metamorphic/twin-spine lifecycle properties; the initiative-wave CLI is no longer isolated — ADR-020 landed 2026-07-14 and closed the last Phase 2 acceptance line)
 KNOWN-FAILING: `TestOnboardConcurrentFreshHomeNeverDeletesTheWinner` (mc/verbs),
@@ -44,7 +44,7 @@ immediate-exit shape is test-only. Repro (under load):
 suite runs. Owner: whoever next touches the resident control crossing — not a
 Phase 3 blocker.
 
-Note the spine is now schema v6 (substrate.CurrentSchemaVersion): `mc onboard home` migrates older spines in place (v1→…→v6); scratch MC_HOME spines need no action. v4 closed the D2 BLOB hole; v5 is the task_setup_receipts table; v6 is the task-keyed immutable `task_assignments` table (first-task closure assignment: base/target SHA, object format, sole branch, path-free task-root key, local repo UUID, closure digest — a retry reuses it, never rebases; ADR-016 D5).
+Note the spine is now schema v7 (substrate.CurrentSchemaVersion): `mc onboard home` migrates older spines in place (v1→…→v7); scratch MC_HOME spines need no action. v4 closed the D2 BLOB hole; v5 is the task_setup_receipts table; v6 is the task-keyed immutable `task_assignments` table (first-task closure assignment: base/target SHA, object format, sole branch, path-free task-root key, local repo UUID, closure digest — a retry reuses it, never rebases; ADR-016 D5). v7 is the immutable run-keyed completion-seal state record: published is not authority; only accepted can rebuild the canonical task store, while cleanup is durable history.
 Note the mc fast lane now shells to host `git` (git 2.50 on this machine): the first-task setup extraction/materialize/record/envelope tests build real temp repos. Production runs the identical Go inside the network=none setup container against the pinned image git; the host never invokes it.
 FAST SUITE: mc/check.sh (gofmt + vet on the untagged build AND on the nightly/docker_e2e/test_fake_routing tagged builds — they must compile every commit, added 2026-07-14 after a tagged suite rotted invisibly — + go test ./...; includes substrate + promoted dispatch) + runner/fake-harness/check.sh + runner/agent-runner/check.sh + runner/image/check.sh + resident/check.sh. Docker e2e (phase-completion lane): cd mc && mise exec -- go test -tags docker_e2e -timeout 15m ./e2e/...
 
