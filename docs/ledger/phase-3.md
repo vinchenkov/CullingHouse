@@ -1465,3 +1465,16 @@ executor maps only the frozen receipt to the already-tested manifest verifier;
 it is not resident-reachable yet, because committed setup-plan attestation and
 confirmed producer absence are the next distinct D6 boundary. The full
 five-leg fast lane is green serially.
+
+## 2026-07-18 — fenced completion-seal publication
+
+`45c2aba` adds `PublishCompletionSeal`, the durable precursor to acceptance.
+It admits a path-free run/task/request receipt only while the exact seeded
+pipeline Worker owns the lease, and validates the object format, sealed SHA,
+closure/manifest digests, and decimal filesystem identity before inserting the
+immutable `published` row. A duplicate with byte-identical facts is an inert
+lost-response replay—even after acceptance has completed the Worker and freed
+its lease—while any changed fact refuses. Wrong role, stage, or lease makes no
+row. The privileged filesystem publisher and resident producer-absence/setup
+plan integration remain later D6 slices. The full five-leg fast lane is green
+serially.
