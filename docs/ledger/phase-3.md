@@ -1365,3 +1365,25 @@ immutable, invalid transitions are refused, and rows are never deleted. Fresh
 and v1-migrated spines are structurally equivalent and the full fast suite is
 green. The next slice must make Worker completion write the published receipt
 and atomically accept it with the terminal consequence.
+
+## 2026-07-18 — completion-seal acceptance transaction
+
+Codex resumed from the durable v7 foundation. `AcceptCompletionSeal` now makes
+the small authority transition explicit: it requires an existing pipeline
+Worker with a task subject, an exact published run/request receipt, and the
+same live singleton lease subject. In one `BEGIN IMMEDIATE` transaction it
+advances the task `seeded → worked`, transitions only that immutable receipt to
+`accepted`, records the Worker's ordinary `completed` terminal, and releases
+the lease. The exact accepted run/request pair is a lost-response replay only
+after it proves the matching durable terminal; it never attempts to reacquire
+or reuse the released lease. A wrong request or non-Worker producer rolls back
+without changing the task, seal, run, or lock.
+
+Red-first tests cover the joined acceptance/terminal/release fact, exact replay,
+and wrong producer/request inertness. The five-leg fast lane is green when run
+sequentially; parallel execution reproduced the ledger's pre-existing
+load-sensitive image/resident timeouts, then both passed serially.
+
+NEXT (moved to PROGRESS.md): implement the accepted-seal canonical-store
+rebuild consumer red-first, with exact accepted identity/manifest and producer
+absence fences.
