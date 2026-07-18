@@ -320,6 +320,77 @@ func generatedTaskGitConfig(objectFormat, uuid string) []byte {
 	return []byte(b.String())
 }
 
+const maxTaskGitConfigBytes = 4096
+
+var taskConfigAllowed = map[string]bool{
+	"core.repositoryformatversion": true,
+	"core.bare":                    true,
+	"extensions.relativeworktrees": true,
+	"extensions.objectformat":      true,
+	"mc.localrepouuid":             true,
+}
+
+// validateTaskGitConfig is the closed-grammar check the spine-free
+// dispatch-attest resolver uses on git/config: it admits only the exact key set
+// generatedTaskGitConfig writes and rejects any other section or key (so no
+// remote/credential/hook/alternate/filter can ride in), plus the format-
+// critical values. The exact object_format/uuid match against the recorded
+// assignment is the spine-present RecordFirstTaskSetupClosure's job, not this
+// resolver's.
+func validateTaskGitConfig(body []byte) error {
+	if len(body) > maxTaskGitConfigBytes {
+		return Domainf("task git config exceeds its content bound")
+	}
+	section := ""
+	seen := map[string]string{}
+	for _, raw := range strings.Split(string(body), "\n") {
+		line := strings.TrimSpace(raw)
+		if line == "" || strings.HasPrefix(line, "#") || strings.HasPrefix(line, ";") {
+			continue
+		}
+		if strings.HasPrefix(line, "[") {
+			if !strings.HasSuffix(line, "]") {
+				return Domainf("task git config has a malformed section header")
+			}
+			inner := strings.TrimSpace(line[1 : len(line)-1])
+			if inner == "" || strings.ContainsAny(inner, " \t\"'") {
+				return Domainf("task git config uses a subsection, which the closed grammar forbids")
+			}
+			section = strings.ToLower(inner)
+			continue
+		}
+		if section == "" {
+			return Domainf("task git config has a key outside any section")
+		}
+		key := line
+		if i := strings.IndexByte(line, '='); i >= 0 {
+			key = strings.TrimSpace(line[:i])
+			seen[section+"."+strings.ToLower(key)] = strings.TrimSpace(line[i+1:])
+		} else {
+			seen[section+"."+strings.ToLower(key)] = ""
+		}
+		if !taskConfigAllowed[section+"."+strings.ToLower(key)] {
+			return Domainf("task git config carries %q, outside the closed grammar", section+"."+strings.ToLower(key))
+		}
+	}
+	if seen["core.repositoryformatversion"] != "1" {
+		return Domainf("task git config repositoryformatversion is not 1")
+	}
+	if strings.ToLower(seen["core.bare"]) != "true" {
+		return Domainf("task git config is not marked bare")
+	}
+	if strings.ToLower(seen["extensions.relativeworktrees"]) != "true" {
+		return Domainf("task git config does not enable relative worktrees")
+	}
+	if v, ok := seen["extensions.objectformat"]; ok && v != "sha256" {
+		return Domainf("task git config object format is not sha256")
+	}
+	if uuid, ok := seen["mc.localrepouuid"]; !ok || !assignmentUUID.MatchString(uuid) {
+		return Domainf("task git config carries no valid MC identity")
+	}
+	return nil
+}
+
 func requireEmptyChild(path string) error {
 	info, err := os.Lstat(path)
 	if err != nil {

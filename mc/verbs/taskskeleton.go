@@ -42,6 +42,11 @@ type taskPlanRow struct {
 	WantBytes []byte
 	// MustBeEmptyDir pins a generated empty directory cover.
 	MustBeEmptyDir bool
+	// ConfigGrammar validates a regular file against generatedTaskGitConfig's
+	// closed grammar instead of pinning fixed bytes: the generated git/config
+	// carries a per-task object format and repository UUID, so it has no fixed
+	// content, but its key set is closed (ADR-017:463-467).
+	ConfigGrammar bool
 }
 
 func taskWorktreeName(taskID int64) string {
@@ -61,7 +66,7 @@ func taskPlanRows(taskID int64) []taskPlanRow {
 		{Kind: boundary.KindWorkspaceSourceGitCover, Rel: "source/.git", Dest: "/workspace/source/.git", Access: boundary.AccessRO, WantBytes: pointer},
 		{Kind: boundary.KindWorkspaceSourceMissionControlCover, Rel: "source/.mission-control", Dest: "/workspace/source/.mission-control", Access: boundary.AccessRO, IsDir: true, MustBeEmptyDir: true},
 		{Kind: boundary.KindTaskGit, Rel: "git", Dest: "/workspace/git", Access: boundary.AccessRW, IsDir: true},
-		{Kind: boundary.KindTaskGitConfigCover, Rel: "git/config", Dest: "/workspace/git/config", Access: boundary.AccessRO, WantBytes: empty},
+		{Kind: boundary.KindTaskGitConfigCover, Rel: "git/config", Dest: "/workspace/git/config", Access: boundary.AccessRO, ConfigGrammar: true},
 		{Kind: boundary.KindTaskGitHooksCover, Rel: "git/hooks", Dest: "/workspace/git/hooks", Access: boundary.AccessRO, IsDir: true, MustBeEmptyDir: true},
 		{Kind: boundary.KindTaskGitInfoCover, Rel: "git/info", Dest: "/workspace/git/info", Access: boundary.AccessRO, IsDir: true, MustBeEmptyDir: true},
 		{Kind: boundary.KindTaskGitObjectsInfoCover, Rel: "git/objects/info", Dest: "/workspace/git/objects/info", Access: boundary.AccessRO, IsDir: true, MustBeEmptyDir: true},
@@ -190,6 +195,24 @@ func checkTaskRowTrust(row taskPlanRow, path string, info fs.FileInfo, ownerUID 
 		if len(entries) != 0 {
 			return &boundary.MountError{
 				Code: boundary.CodeRuntimeUnappliable, Msg: name + " must be a generated empty directory cover",
+			}
+		}
+	}
+	if row.ConfigGrammar {
+		if info.Size() > maxTaskGitConfigBytes {
+			return &boundary.MountError{
+				Code: boundary.CodeRuntimeUnappliable, Msg: name + " exceeds its content bound",
+			}
+		}
+		body, err := os.ReadFile(path)
+		if err != nil {
+			return &boundary.MountError{
+				Code: boundary.CodeRuntimeUnappliable, Msg: name + " is unreadable: " + err.Error(),
+			}
+		}
+		if err := validateTaskGitConfig(body); err != nil {
+			return &boundary.MountError{
+				Code: boundary.CodeRuntimeUnappliable, Msg: name + " is not a valid generated task config: " + err.Error(),
 			}
 		}
 	}

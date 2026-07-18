@@ -302,3 +302,25 @@ func TestMaterializeFirstTaskStoreRefusesResidueInAChild(t *testing.T) {
 		t.Fatal("a store was materialized over residue in the git child")
 	}
 }
+
+func TestValidateTaskGitConfigClosedGrammar(t *testing.T) {
+	uuid := "0a1b2c3d-4e5f-6071-8293-a4b5c6d7e8f9"
+	if err := validateTaskGitConfig(generatedTaskGitConfig("sha1", uuid)); err != nil {
+		t.Fatalf("generated sha1 config rejected: %v", err)
+	}
+	if err := validateTaskGitConfig(generatedTaskGitConfig("sha256", uuid)); err != nil {
+		t.Fatalf("generated sha256 config rejected: %v", err)
+	}
+	bad := []string{
+		"", // no required keys
+		"[core]\n\trepositoryformatversion = 1\n\thooksPath = /tmp\n", // foreign key
+		"[remote \"origin\"]\n\turl = http://x\n",                     // foreign section + subsection
+		"[core]\n\trepositoryformatversion = 0\n\tbare = true\n[extensions]\n\trelativeWorktrees = true\n[mc]\n\tlocalRepoUuid = " + uuid + "\n",                        // v0 hides extensions
+		"[core]\n\trepositoryformatversion = 1\n\tbare = true\n[extensions]\n\trelativeWorktrees = true\n\tobjectFormat = sha3\n[mc]\n\tlocalRepoUuid = " + uuid + "\n", // bad format
+	}
+	for i, cfg := range bad {
+		if err := validateTaskGitConfig([]byte(cfg)); err == nil {
+			t.Fatalf("bad config %d was accepted:\n%s", i, cfg)
+		}
+	}
+}

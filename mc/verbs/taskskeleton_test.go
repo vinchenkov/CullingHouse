@@ -34,7 +34,7 @@ func tsBuildAt(t *testing.T, ws string) string {
 	}
 	files := map[string]string{
 		"source/.git":                             "gitdir: ../git/worktrees/mc-task-7\n",
-		"git/config":                              "",
+		"git/config":                              string(generatedTaskGitConfig("sha1", "0a1b2c3d-4e5f-6071-8293-a4b5c6d7e8f9")),
 		"git/packed-refs":                         "",
 		"git/shallow":                             "",
 		"git/worktrees/mc-task-7/commondir":       "../..\n",

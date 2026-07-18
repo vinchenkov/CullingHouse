@@ -289,6 +289,15 @@ func deriveDispatchMountRequests(state PrivateDispatchMountState, role string, s
 		if row.WantBytes != nil {
 			sum := sha256.Sum256(row.WantBytes)
 			request.ContentSHA256 = hex.EncodeToString(sum[:])
+		} else if row.ConfigGrammar {
+			// The generated git/config has no fixed bytes (per-task object
+			// format + UUID), so pin the exact bytes setup landed; the resolver
+			// separately proves they satisfy the closed grammar, and the recheck
+			// fence re-verifies this digest before bind.
+			if body, err := os.ReadFile(source); err == nil && len(body) <= maxTaskGitConfigBytes {
+				sum := sha256.Sum256(body)
+				request.ContentSHA256 = hex.EncodeToString(sum[:])
+			}
 		}
 		requests = append(requests, request)
 	}

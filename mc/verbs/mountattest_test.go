@@ -627,9 +627,9 @@ func TestAttestCandidateMountsDerivesTaskLocalPlanThroughRealCapture(t *testing.
 	if got := byDest["/workspace/git/worktrees/mc-task-7/gitdir"]; got.Access != "ro" || got.Kind != "file" {
 		t.Fatalf("worktree gitdir cover = %+v", got)
 	}
-	emptyDigest := fmt.Sprintf("%x", sha256.Sum256(nil))
-	if got := byDest["/workspace/git/config"]; got.ContentSHA256 != emptyDigest || got.RequireEmptyDir {
-		t.Fatalf("config cover evidence = %+v, want fixed empty-file digest", got)
+	wantConfigDigest := fmt.Sprintf("%x", sha256.Sum256(generatedTaskGitConfig("sha1", "0a1b2c3d-4e5f-6071-8293-a4b5c6d7e8f9")))
+	if got := byDest["/workspace/git/config"]; got.ContentSHA256 != wantConfigDigest || got.RequireEmptyDir {
+		t.Fatalf("config cover evidence = %+v, want the generated-config digest", got)
 	}
 	if got := byDest["/workspace/git/hooks"]; !got.RequireEmptyDir || got.ContentSHA256 != "" {
 		t.Fatalf("hooks cover evidence = %+v, want generated-empty-directory fence", got)
