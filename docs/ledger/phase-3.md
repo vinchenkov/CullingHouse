@@ -1334,3 +1334,23 @@ resident effect tests were updated to prove the two exact stops. The full
 five-leg fast suite is green. Remaining D6 work is an explicit timeline test
 that joins reaping, recovery dispatch, fresh record, and the later 15-row
 agent plan across crash/lost-response cuts.
+
+## 2026-07-18 — D6 recovery timeline acceptance
+
+`92b7047` closes the stated recovery acceptance seam with a full host-side
+timeline test. A failed pre-record setup run is reaped under the ordinary
+lock-domain consequence (one retry charge), then the next dispatch produces
+only the zero-row receipt-vouched recovery plan. The descriptor helper removes
+all partial children and recreates the fixed empty `source`/`git` pair before
+the fresh materializer runs; the root inode is preserved and re-registered.
+
+The same test models a lost `setup-record` response after the closure and its
+immutable assignment have already committed. Dispatch remains `idle(lease-
+held)`, so it cannot launch an agent from the zero-row setup plan. If that
+setup run later reaps, the frozen assignment bypasses recovery/scrub entirely
+and the subsequent claim attests the ordinary 15-row Worker plan. The two
+reaps spend exactly two retry charges; no duplicate run is opened at either
+cut. The full five-leg fast suite is green.
+
+Outgoing NEXT (moved to PROGRESS.md): begin ADR-016 D6 accepted-seal rebuild
+with producer/lease/request cleanup fencing.

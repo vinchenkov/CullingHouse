@@ -10,7 +10,7 @@ Access does NOT fix it — the failure precedes any policy lookup. Symptom:
 `stat` works, reads return `Operation not permitted`, git says
 `Unable to read current working directory`.
 
-LAST GREEN SHA: dec529d (local; the operator pushes manually — decided 2026-07-14. Agents: do not push.)
+LAST GREEN SHA: 92b7047 (local; the operator pushes manually — decided 2026-07-14. Agents: do not push.)
 
 PHASES PASSING: Phase 0 COMPLETE (S1–S8 all green, no fallback ADRs; only operator-leg deferrals remain); Phase 1 COMPLETE (1a substrate 172; 1b walking skeleton reviewed-and-fixed — fake-harness 43, agent-runner 13, runner/image 40, resident 42, dispatch + cmd/mc suites; Docker e2e PASS ×4 total); Phase 2 COMPLETE for every unparked acceptance line (domain/§18 surface, deterministic split-brain convergence, bounded honesty + five mutants, tagged dispatch/metamorphic/twin-spine lifecycle properties; the initiative-wave CLI is no longer isolated — ADR-020 landed 2026-07-14 and closed the last Phase 2 acceptance line)
 KNOWN-FAILING: `TestOnboardConcurrentFreshHomeNeverDeletesTheWinner` (mc/verbs),
@@ -322,8 +322,8 @@ kept below. Operator legs that remain open are under `## Parked`, not here.
         the envelope on refusal. The next normal dispatch then produces a
         second, newly attested 15-row Worker plan (never an agent launch from
         the zero-row precreate plan). The failed/interrupted setup recovery
-        path is now implemented below; full failure-timeline/crash-cut tests
-        remain the live D6 acceptance work.
+        path and its end-to-end failure/lost-response timeline are completed
+        below.
   - [x] Failed/interrupted first-task recovery carrier and host cleanup
         (ADR-016 D6): an existing root with no immutable assignment may spawn
         only when its exact identity is frozen in a prior setup receipt. The
@@ -335,8 +335,12 @@ kept below. Operator legs that remain open are under `## Parked`, not here.
         host-scope helper, re-registers the returned identity, then performs a
         fresh setup/record/continue handoff. Setup containers have the exact
         `mc-setup-<run>` name; the reaper stops it before the ordinary agent
-        name, so no stale writer races recovery cleanup. Host/resident focused
-        tests plus the five-leg fast lane are green.
+        name, so no stale writer races recovery cleanup. The full timeline
+        proves failed setup reaping/one retry charge → zero-row recovery →
+        fresh record; a lost `setup-record` response stays lease-held, then
+        reaping it leads directly to the authoritative 15-row plan without a
+        second scrub. Host/resident focused tests plus the five-leg fast lane
+        are green.
 - [ ] Phase 4 — E2E control loops (six scenario families)
 - [ ] Phase 5 — Real-subscription acceptance (operator-scheduled)
 - [ ] Release prep (after Phase 5): swap the repo's construction face for
@@ -356,13 +360,11 @@ deleted, not struck through. History is in `docs/ledger/`.
   agent cannot sleep the machine it runs on). Instructions in
   `spikes/07-launchd-clock/RESULT.md`. All other S7 sub-tests passed.
 
-NEXT: Complete ADR-016 D6 recovery acceptance red-first with an end-to-end
-failure timeline: named setup container → reaper stop and retry charge →
-receipt-vouched descriptor cleanup → replacement fresh setup → authoritative
-15-row Worker plan. Prove the crash cuts and lost `setup-record` response
-separately, including that a recorded assignment bypasses cleanup and never
-launches from a zero-row plan. Keep accepted-seal rebuild, Verifier
-disposable-source / committed-tree projections, structured Engine-API binds,
-and launchd in their named later slices.
+NEXT: Begin ADR-016 D6 accepted-seal rebuild red-first: define the precise
+producer/lease/request fence for a failed or reaped Worker whose accepted seal
+must rebuild the canonical task-local store, then prove no unaccepted residue
+or different identity can be consumed. Keep Verifier disposable-source /
+committed-tree projections, structured Engine-API binds, and launchd in their
+named later slices.
 Docker-lane obligations at phase completion: the real setup container run,
 closure e2e fixtures, and the D1 deployment-mirror check.
