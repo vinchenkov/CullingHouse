@@ -1,10 +1,71 @@
 package verbs
 
 import (
+	"database/sql"
 	"mc/dispatch"
 	"strings"
 	"testing"
 )
+
+func TestPublishCompletionSealFencesAndMakesExactReplayInert(t *testing.T) {
+	db := dvSpine(t)
+	dvInsertTask(t, db, dvTask(7, dispatch.ScopeTask, dispatch.StatusSeeded, 2))
+	dvExec(t, db, `INSERT INTO runs (id,tier,role,worksource,subject) VALUES ('worker','pipeline','worker','ws-test',7)`)
+	dvExec(t, db, `UPDATE lock SET run_id='worker',subject=7,owner='worker',acquired_at=datetime('now'),hard_deadline_at=datetime('now','+1 hour') WHERE id=1`)
+	p := CompletionSealPublication{RunID: "worker", TaskID: 7, CompletionRequest: "0011223344556677", ObjectFormat: "sha1", SealedSHA: strings.Repeat("a", 40), ClosureDigest: strings.Repeat("b", 64), ManifestDigest: strings.Repeat("c", 64), Device: "1", Inode: "2", OwnerUID: 501}
+	if err := PublishCompletionSeal(db, p); err != nil {
+		t.Fatal(err)
+	}
+	if got := dfStr(t, db, `SELECT state FROM completion_seals WHERE run_id='worker'`); got != "published" {
+		t.Fatalf("state=%q, want published", got)
+	}
+	if err := PublishCompletionSeal(db, p); err != nil {
+		t.Fatalf("exact replay: %v", err)
+	}
+	if err := AcceptCompletionSeal(db, p.RunID, p.CompletionRequest); err != nil {
+		t.Fatalf("accept: %v", err)
+	}
+	if err := PublishCompletionSeal(db, p); err != nil {
+		t.Fatalf("post-terminal exact replay: %v", err)
+	}
+	p.ManifestDigest = strings.Repeat("d", 64)
+	if err := PublishCompletionSeal(db, p); err == nil {
+		t.Fatal("conflicting replay rewrote an immutable receipt")
+	}
+	if got := dfInt(t, db, `SELECT COUNT(*) FROM completion_seals WHERE run_id='worker'`); got != 1 {
+		t.Fatalf("publication count=%d, want one", got)
+	}
+	if got := dfStr(t, db, `SELECT status FROM tasks WHERE id=7`); got != "worked" {
+		t.Fatalf("publication replay changed the accepted task to %q", got)
+	}
+}
+
+func TestPublishCompletionSealRefusesWrongProducerOrLease(t *testing.T) {
+	base := func(t *testing.T) (*sql.DB, CompletionSealPublication) {
+		t.Helper()
+		db := dvSpine(t)
+		dvInsertTask(t, db, dvTask(7, dispatch.ScopeTask, dispatch.StatusSeeded, 2))
+		dvExec(t, db, `INSERT INTO runs (id,tier,role,worksource,subject) VALUES ('worker','pipeline','worker','ws-test',7)`)
+		dvExec(t, db, `UPDATE lock SET run_id='worker',subject=7,owner='worker',acquired_at=datetime('now'),hard_deadline_at=datetime('now','+1 hour') WHERE id=1`)
+		return db, CompletionSealPublication{RunID: "worker", TaskID: 7, CompletionRequest: "0011223344556677", ObjectFormat: "sha1", SealedSHA: strings.Repeat("a", 40), ClosureDigest: strings.Repeat("b", 64), ManifestDigest: strings.Repeat("c", 64), Device: "1", Inode: "2", OwnerUID: 501}
+	}
+	for name, mutate := range map[string]func(*sql.DB){
+		"wrong-role":  func(db *sql.DB) { dvExec(t, db, `UPDATE runs SET role='verifier' WHERE id='worker'`) },
+		"lost-lease":  func(db *sql.DB) { dvExec(t, db, `UPDATE lock SET run_id='other',subject=7 WHERE id=1`) },
+		"wrong-stage": func(db *sql.DB) { dvExec(t, db, `UPDATE tasks SET status='worked' WHERE id=7`) },
+	} {
+		t.Run(name, func(t *testing.T) {
+			db, p := base(t)
+			mutate(db)
+			if err := PublishCompletionSeal(db, p); err == nil {
+				t.Fatal("invalid publication was accepted")
+			}
+			if got := dfInt(t, db, `SELECT COUNT(*) FROM completion_seals`); got != 0 {
+				t.Fatalf("invalid publication wrote %d rows", got)
+			}
+		})
+	}
+}
 
 func TestAcceptCompletionSealRequiresLiveMatchingPublishedReceipt(t *testing.T) {
 	db := dvSpine(t)
