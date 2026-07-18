@@ -61,7 +61,7 @@ func RebuildAcceptedCompletionSeal(sealDir, taskRoot string, seal AcceptedComple
 	if m.Version != 1 || m.RunID != seal.RunID || m.TaskID != seal.TaskID || m.CompletionRequest != seal.CompletionRequest || m.ObjectFormat != seal.ObjectFormat || m.SealedSHA != seal.SealedSHA || m.ClosureDigest != seal.ClosureDigest || !assignmentUUID.MatchString(m.LocalRepoUUID) {
 		return SetupResult{}, Domainf("accepted seal manifest does not reproduce its immutable receipt")
 	}
-	if len(m.Files) < 2 {
+	if len(m.Files) != 2 {
 		return SetupResult{}, Domainf("accepted seal manifest has no complete pack/index pair")
 	}
 	tmp, err := os.MkdirTemp("", "mc-accepted-seal-")
@@ -74,11 +74,39 @@ func RebuildAcceptedCompletionSeal(sealDir, taskRoot string, seal AcceptedComple
 		return SetupResult{}, Domainf("create sealed importer: %v", err)
 	}
 	seen := map[string]bool{}
+	pairStem := ""
+	hasPack, hasIndex := false, false
 	for _, f := range m.Files {
-		if seen[f.Name] || !(strings.HasPrefix(f.Name, "pack-") && (strings.HasSuffix(f.Name, ".pack") || strings.HasSuffix(f.Name, ".idx"))) || len(f.Digest) != 64 || !assignmentHex.MatchString(f.Digest) {
+		if seen[f.Name] || len(f.Digest) != 64 || !assignmentHex.MatchString(f.Digest) {
 			return SetupResult{}, Domainf("accepted seal manifest has an invalid pack entry")
 		}
 		seen[f.Name] = true
+		var stem string
+		switch {
+		case strings.HasPrefix(f.Name, "pack-") && strings.HasSuffix(f.Name, ".pack"):
+			stem = strings.TrimSuffix(f.Name, ".pack")
+			if hasPack {
+				return SetupResult{}, Domainf("accepted seal manifest has an invalid pack entry")
+			}
+			hasPack = true
+		case strings.HasPrefix(f.Name, "pack-") && strings.HasSuffix(f.Name, ".idx"):
+			stem = strings.TrimSuffix(f.Name, ".idx")
+			if hasIndex {
+				return SetupResult{}, Domainf("accepted seal manifest has an invalid pack entry")
+			}
+			hasIndex = true
+		default:
+			return SetupResult{}, Domainf("accepted seal manifest has an invalid pack entry")
+		}
+		if stem == "pack-" || (pairStem != "" && pairStem != stem) {
+			return SetupResult{}, Domainf("accepted seal manifest has an invalid pack entry")
+		}
+		pairStem = stem
+	}
+	if !hasPack || !hasIndex {
+		return SetupResult{}, Domainf("accepted seal manifest has no complete pack/index pair")
+	}
+	for _, f := range m.Files {
 		b, err := os.ReadFile(filepath.Join(sealDir, f.Name))
 		if err != nil {
 			return SetupResult{}, Domainf("accepted seal pack entry is unreadable: %v", err)

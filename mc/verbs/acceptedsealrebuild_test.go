@@ -60,6 +60,33 @@ func TestRebuildAcceptedCompletionSealUsesOnlyManifestVerifiedPack(t *testing.T)
 	if got.BaseSHA != seeded.BaseSHA || got.ClosureDigest != seeded.ClosureDigest {
 		t.Fatalf("rebuild=%+v seed=%+v", got, seeded)
 	}
+	// A complete receipt has one matching .pack/.idx basename, not merely two
+	// pack-looking files. This fails before an attacker-controlled filename is
+	// opened from the seal directory.
+	mismatched := m
+	mismatched.Files = append([]CompletionSealFile(nil), m.Files...)
+	changedIndex := false
+	for i := range mismatched.Files {
+		if strings.HasSuffix(mismatched.Files[i].Name, ".idx") {
+			mismatched.Files[i].Name = strings.TrimSuffix(mismatched.Files[i].Name, ".idx") + "-mismatch.idx"
+			changedIndex = true
+		}
+	}
+	if !changedIndex {
+		t.Fatal("test fixture did not contain an index")
+	}
+	mismatchedBody, err := json.Marshal(mismatched)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mismatchedDigest := sha256.Sum256(mismatchedBody)
+	if err := os.WriteFile(filepath.Join(sealDir, "manifest.json"), mismatchedBody, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, err = RebuildAcceptedCompletionSeal(sealDir, mkTaskChildren(t), AcceptedCompletionSeal{RunID: "worker", TaskID: 7, CompletionRequest: "0011223344556677", ObjectFormat: format, SealedSHA: seeded.BaseSHA, ClosureDigest: seeded.ClosureDigest, ManifestDigest: hex.EncodeToString(mismatchedDigest[:]), Device: strconv.FormatUint(uint64(st.Dev), 10), Inode: strconv.FormatUint(st.Ino, 10), OwnerUID: int64(st.Uid)})
+	if err == nil || !strings.Contains(err.Error(), "invalid pack entry") {
+		t.Fatalf("mismatched pack pair error = %v", err)
+	}
 	// A second document must not be silently ignored after a valid first one.
 	multi := append(append([]byte(nil), body...), []byte("\n{}")...)
 	multiDigest := sha256.Sum256(multi)
