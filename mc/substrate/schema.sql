@@ -822,6 +822,39 @@ CREATE TABLE completion_seals (
 CREATE TRIGGER completion_seals_transition_only BEFORE UPDATE ON completion_seals WHEN NEW.run_id IS NOT OLD.run_id OR NEW.task_id IS NOT OLD.task_id OR NEW.completion_request_id IS NOT OLD.completion_request_id OR NEW.object_format IS NOT OLD.object_format OR NEW.sealed_sha IS NOT OLD.sealed_sha OR NEW.closure_digest IS NOT OLD.closure_digest OR NEW.manifest_digest IS NOT OLD.manifest_digest OR NEW.seal_device IS NOT OLD.seal_device OR NEW.seal_inode IS NOT OLD.seal_inode OR NEW.seal_owner_uid IS NOT OLD.seal_owner_uid OR NEW.published_at IS NOT OLD.published_at OR NOT ((OLD.state='published' AND NEW.state IN ('accepted','cleanup_pending')) OR (OLD.state='cleanup_pending' AND NEW.state='removed')) BEGIN SELECT RAISE(ABORT, 'completion seal content is immutable and state transitions are fenced (ADR-016 D6)'); END;
 CREATE TRIGGER completion_seals_no_delete BEFORE DELETE ON completion_seals BEGIN SELECT RAISE(ABORT, 'completion seal history is durable (ADR-016 D6)'); END;
 
+-- The durable outcome of a closed post-Worker seal reconstruction. It names
+-- no host path: its root identity is joined to an earlier setup receipt.
+CREATE TABLE accepted_seal_rebuild_receipts (
+    run_id TEXT PRIMARY KEY REFERENCES runs(id), task_id INTEGER NOT NULL REFERENCES tasks(id),
+    completion_run_id TEXT NOT NULL REFERENCES runs(id),
+    completion_request_id TEXT NOT NULL CHECK (typeof(completion_request_id)='text' AND length(completion_request_id)=16 AND completion_request_id GLOB '[0-9a-f]*' AND completion_request_id NOT GLOB '*[^0-9a-f]*'),
+    object_format TEXT NOT NULL CHECK (typeof(object_format)='text' AND object_format IN ('sha1','sha256')),
+    sealed_sha TEXT NOT NULL CHECK (typeof(sealed_sha)='text' AND sealed_sha GLOB '[0-9a-f]*' AND sealed_sha NOT GLOB '*[^0-9a-f]*' AND ((object_format='sha1' AND length(sealed_sha)=40) OR (object_format='sha256' AND length(sealed_sha)=64))),
+    closure_digest TEXT NOT NULL CHECK (typeof(closure_digest)='text' AND length(closure_digest)=64 AND closure_digest GLOB '[0-9a-f]*' AND closure_digest NOT GLOB '*[^0-9a-f]*'),
+    manifest_digest TEXT NOT NULL CHECK (typeof(manifest_digest)='text' AND length(manifest_digest)=64 AND manifest_digest GLOB '[0-9a-f]*' AND manifest_digest NOT GLOB '*[^0-9a-f]*'),
+    root_device TEXT NOT NULL CHECK (typeof(root_device)='text' AND root_device GLOB '[0-9]*' AND root_device NOT GLOB '*[^0-9]*' AND length(root_device)<=20),
+    root_inode TEXT NOT NULL CHECK (typeof(root_inode)='text' AND root_inode GLOB '[0-9]*' AND root_inode NOT GLOB '*[^0-9]*' AND length(root_inode)<=20),
+    root_owner_uid INTEGER NOT NULL CHECK (typeof(root_owner_uid)='integer' AND root_owner_uid>=0),
+    local_repo_uuid TEXT NOT NULL CHECK (typeof(local_repo_uuid)='text' AND length(local_repo_uuid)=36 AND local_repo_uuid GLOB '[0-9a-f]*-[0-9a-f]*-[0-9a-f]*-[0-9a-f]*-[0-9a-f]*' AND local_repo_uuid NOT GLOB '*[^0-9a-f-]*'),
+    object_count INTEGER NOT NULL CHECK (typeof(object_count)='integer' AND object_count>=1),
+    fsck_clean INTEGER NOT NULL CHECK (typeof(fsck_clean)='integer' AND fsck_clean=1),
+    rebuilt_at TEXT NOT NULL DEFAULT (datetime('now')), CHECK (run_id <> completion_run_id)
+);
+CREATE TRIGGER accepted_seal_rebuild_receipts_fenced_insert BEFORE INSERT ON accepted_seal_rebuild_receipts
+WHEN NOT EXISTS (
+    SELECT 1 FROM completion_seals s JOIN tasks t ON t.id=s.task_id JOIN runs r ON r.id=NEW.run_id JOIN lock l ON l.id=1
+    WHERE s.run_id=NEW.completion_run_id AND s.completion_request_id=NEW.completion_request_id AND s.task_id=NEW.task_id AND s.state='accepted'
+      AND s.object_format=NEW.object_format AND s.sealed_sha=NEW.sealed_sha AND s.closure_digest=NEW.closure_digest AND s.manifest_digest=NEW.manifest_digest
+      AND t.status='worked' AND t.accepted_completion_run_id=NEW.completion_run_id AND t.accepted_completion_request_id=NEW.completion_request_id
+      AND r.tier='pipeline' AND r.role='verifier' AND r.subject=NEW.task_id AND r.ended_at IS NULL AND l.run_id=NEW.run_id AND l.subject=NEW.task_id
+      AND EXISTS (SELECT 1 FROM task_setup_receipts tr WHERE tr.task_id=NEW.task_id AND tr.root_device=NEW.root_device AND tr.root_inode=NEW.root_inode AND tr.root_owner_uid=NEW.root_owner_uid)
+)
+BEGIN SELECT RAISE(ABORT, 'accepted seal rebuild receipt is not fenced to the live verifier, accepted seal, and registered task root (ADR-016 D6)'); END;
+CREATE TRIGGER accepted_seal_rebuild_receipts_immutable BEFORE UPDATE ON accepted_seal_rebuild_receipts
+BEGIN SELECT RAISE(ABORT, 'accepted seal rebuild receipt is immutable durable recovery evidence (ADR-016 D6)'); END;
+CREATE TRIGGER accepted_seal_rebuild_receipts_no_delete BEFORE DELETE ON accepted_seal_rebuild_receipts
+BEGIN SELECT RAISE(ABORT, 'accepted seal rebuild receipts are durable recovery evidence (ADR-016 D6)'); END;
+
 CREATE TRIGGER tasks_accepted_completion_pair
 BEFORE UPDATE ON tasks
 WHEN (NEW.accepted_completion_run_id IS NULL) != (NEW.accepted_completion_request_id IS NULL)
