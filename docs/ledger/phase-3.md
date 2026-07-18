@@ -1566,3 +1566,18 @@ that proof. The plan remains a no-effect launch fence until the dedicated
 accepted-seal setup operation gains its durable replay/terminal fence; the
 Verifier disposable RW source remains the separately named later D6 arm.
 Full serial fast lane green.
+
+## 2026-07-18 — accepted-seal producer-absence fence
+
+`c54188d` makes the resident’s accepted-seal fence inspect the exact prior
+Worker agent and setup container names before it can even retain the setup
+carrier. Only Docker’s exact absent result for both succeeds; a live,
+exited-but-not-removed, malformed, mislabeled, or inspect-unavailable object
+refuses. The producer identity requires a full 64-hex Docker ID, exact name,
+and `mc-managed=true`, pipeline-tier, and run-id labels; ordinary agent and
+first-task setup containers now receive those labels. On confirmed absence the
+resident re-attests the derived run-keyed seal identity, then remains an
+intentional no-create fence until the closed setup executor has a durable
+response-loss/lease continuation. Network guards are not present until the
+separately named ADR-018 runtime slice and will join this inventory there.
+The full serial fast lane is green.
