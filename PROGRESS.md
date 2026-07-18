@@ -10,7 +10,7 @@ Access does NOT fix it — the failure precedes any policy lookup. Symptom:
 `stat` works, reads return `Operation not permitted`, git says
 `Unable to read current working directory`.
 
-LAST GREEN SHA: 243497d (local; the operator pushes manually — decided 2026-07-14. Agents: do not push.)
+LAST GREEN SHA: bd478f0 (local; the operator pushes manually — decided 2026-07-14. Agents: do not push.)
 
 PHASES PASSING: Phase 0 COMPLETE (S1–S8 all green, no fallback ADRs; only operator-leg deferrals remain); Phase 1 COMPLETE (1a substrate 172; 1b walking skeleton reviewed-and-fixed — fake-harness 43, agent-runner 13, runner/image 40, resident 42, dispatch + cmd/mc suites; Docker e2e PASS ×4 total); Phase 2 COMPLETE for every unparked acceptance line (domain/§18 surface, deterministic split-brain convergence, bounded honesty + five mutants, tagged dispatch/metamorphic/twin-spine lifecycle properties; the initiative-wave CLI is no longer isolated — ADR-020 landed 2026-07-14 and closed the last Phase 2 acceptance line)
 KNOWN-FAILING: `TestOnboardConcurrentFreshHomeNeverDeletesTheWinner` (mc/verbs),
@@ -44,7 +44,8 @@ immediate-exit shape is test-only. Repro (under load):
 suite runs. Owner: whoever next touches the resident control crossing — not a
 Phase 3 blocker.
 
-Note the spine is now schema v4 (substrate.CurrentSchemaVersion): `mc onboard home` migrates older spines in place (v1→v2→v3→v4); scratch MC_HOME spines need no action. v4 is the typeof fence-trigger pair closing the D2 BLOB hole on activity/outbox replay keys.
+Note the spine is now schema v6 (substrate.CurrentSchemaVersion): `mc onboard home` migrates older spines in place (v1→…→v6); scratch MC_HOME spines need no action. v4 closed the D2 BLOB hole; v5 is the task_setup_receipts table; v6 is the task-keyed immutable `task_assignments` table (first-task closure assignment: base/target SHA, object format, sole branch, path-free task-root key, local repo UUID, closure digest — a retry reuses it, never rebases; ADR-016 D5).
+Note the mc fast lane now shells to host `git` (git 2.50 on this machine): the first-task setup extraction/materialize/record/envelope tests build real temp repos. Production runs the identical Go inside the network=none setup container against the pinned image git; the host never invokes it.
 FAST SUITE: mc/check.sh (gofmt + vet on the untagged build AND on the nightly/docker_e2e/test_fake_routing tagged builds — they must compile every commit, added 2026-07-14 after a tagged suite rotted invisibly — + go test ./...; includes substrate + promoted dispatch) + runner/fake-harness/check.sh + runner/agent-runner/check.sh + runner/image/check.sh + resident/check.sh. Docker e2e (phase-completion lane): cd mc && mise exec -- go test -tags docker_e2e -timeout 15m ./e2e/...
 
 ## Phases
@@ -286,6 +287,29 @@ kept below. Operator legs that remain open are under `## Parked`, not here.
         Rides the existing token/DeepEqual/plan_digest fences; helper-boundary
         validator mirrors the receipt CHECKs. No unlocked spine read added to
         attest
+  - [~] First-task setup-container closure extraction — the closure writer's
+        production caller (a3c0bf2..bd478f0). GO CORE COMPLETE and green;
+        resident wiring is the one remaining piece (see NEXT). Landed: the
+        task-keyed immutable `task_assignments` pin table (v5→v6);
+        `extractClosurePack` (synthetic config/ref-free git context reads the
+        real object dir, streams the reachable-closure pack, proves object-set
+        equality, refuses alternates/grafts/replace/shallow/promisor);
+        `MaterializeFirstTaskStore` (full in-place store: pack, generated
+        closed-grammar config, HEAD, sole ref at the pinned SHA, relative
+        worktree, index, materialized tree, fsck-clean); the git/config
+        empty→closed-grammar flip at the dispatch-attest resolver with the
+        config cover content-pinned to the landed bytes; the host
+        `RecordFirstTaskSetupClosure` superseding `WriteFirstTaskSetupClosure`
+        (re-attest receipt, cross-check landed store vs SetupResult, record
+        assignment, inspect); the `/mc/setup.json` SetupEnvelope +
+        `mc __setup-first-task` executor (host-scope, spineless, bypasses helper
+        delegation) + `mc task setup-record`; and D5 exact retry-residue
+        acceptance (`verifyLandedStoreMatches`). Two verified-git deviations
+        logged (2026-07-17): `extensions.relativeWorktrees` is the real
+        relative-worktree key (not ADR-017:466's `worktree.useRelativePaths`),
+        and the empty git/shallow cover makes git report is-shallow=true
+        (harmless for a complete store; the object-set proof is the completeness
+        guard). Docker-lane owed: the real container run + closure e2e fixtures.
 - [ ] Phase 4 — E2E control loops (six scenario families)
 - [ ] Phase 5 — Real-subscription acceptance (operator-scheduled)
 - [ ] Release prep (after Phase 5): swap the repo's construction face for
@@ -305,18 +329,35 @@ deleted, not struck through. History is in `docs/ledger/`.
   agent cannot sleep the machine it runs on). Instructions in
   `spikes/07-launchd-clock/RESULT.md`. All other S7 sub-tests passed.
 
-NEXT: Implement the first-task setup-container extraction slice red-first —
-the closure writer's (`WriteFirstTaskSetupClosure`) first production caller.
-The resident's post-claim setup step must run the sanitized closure
-extraction (pinned base/target SHA reachable-object closure only, no
-local-clone hardlink/alternate/real object db) inside a short-lived
-`network=none` setup container, then register the durable receipt and hand
-the digest to the writer — replacing the CALLER-SUPPLIED pin with the Run's
-recorded pins (`plan_digest`/store identity/UUID/branch/base-SHA columns,
-ADR-016 D5/D6). That closes the production loop the dispatch gate now
-requires: today the arm refuses every real first task because nothing
-materializes a receipt-backed skeleton. Keep accepted-seal rebuild,
-Worker-retry reconciliation, Verifier disposable-source / committed-tree
-projections, structured Engine-API binds, and launchd in their named later
-slices; the D5 exact retry-residue acceptance lands with this slice's proof
-set.
+NEXT: Wire the resident's post-claim setup step — the last mile that makes the
+dispatch gate's required loop actually run in production. The whole Go closure
+core is done and green (a3c0bf2..bd478f0): extraction, materialize, host
+`RecordFirstTaskSetupClosure`, `task_assignments` v6, git/config grammar,
+`/mc/setup.json` + `mc __setup-first-task`, `mc task setup-record`, D5
+retry-residue. Today `resident/src/effects.ts`'s `task_precreate` branch still
+stops at "setup pending" (`effects.ts:170`) right after `registerTaskRoot`.
+
+The resident must, after registration: write `/mc/setup.json`, spawn a
+short-lived `network=none` setup container running `mc __setup-first-task
+/mc/setup.json` (real Worksource source RO, the task root with ONLY source/git
+children RW, setup.json RO; no spine/session/HOME/control/runner/credential/
+runtime-socket; ADR-019 finite class envelope), then on exit 0 invoke host
+`mc task setup-record --run <id> --workspace <root> --result <SetupResult JSON>`.
+Fast-lane proof is effects.test.ts asserting the setup argv + mounts + the
+record call via the fake docker seam; the real container run is Docker-lane.
+
+**Blocker to resolve first (this is why it's a fresh step, not a trailing
+edit):** the resident cannot derive the envelope's `mode`/`target_ref`/
+`object_format` — it does not read the spine. The dispatch plan must carry a
+setup step. Extend the `task_precreate` step (or add a sibling) in
+`mountattest.go`/`captureTaskPrecreate`: `target_ref` from `tasks`,
+`object_format` probed from the repo at attest, `branch`/`worktree_name` from
+the task id, `mode` fresh unless a `task_assignments` row already exists →
+`retry` carrying its pins. That is a change to the frozen plan/`plan_digest`
+and the private-frame validator (`dispatchprivate.go`), so it rides the
+existing token/DeepEqual fences and needs red-first tests through full Dispatch.
+Keep accepted-seal rebuild, Worker-retry reconciliation, Verifier disposable-
+source / committed-tree projections, structured Engine-API binds, and launchd
+in their named later slices. Docker-lane obligations at phase completion: the
+real setup container run, the closure e2e fixtures, and the D1
+deployment-mirror check.

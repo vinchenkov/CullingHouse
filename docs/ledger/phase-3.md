@@ -1168,3 +1168,69 @@ running the sanitized pinned-SHA reachable-closure extraction in a short-lived
 network=none setup container, registering the durable receipt, and replacing
 the caller-supplied digest pin with the Run's recorded pins (D5/D6). That
 closes the production loop the dispatch gate now requires.
+
+## 2026-07-17/18 — first-task setup-container closure extraction (Go core)
+
+Claude session, resuming at 7cf86ed (phase 3 dispatch setup-receipt gate). The
+standing NEXT was the first-task setup-container extraction slice — the closure
+writer's first production caller.
+
+Design was locked before code via a decorrelated 3-proposal + judge
+deliberation (a dynamic workflow). Plan of record: the sanitized extraction AND
+the full-store materialization run IN the spineless network=none setup
+container writing the store in place into the mounted-RW source/git children
+(ADR-017:437-478); the HOST, holding the spine, re-attests the receipt-fenced
+root, re-verifies the landed store, records the assignment, and inspects. The
+staging-plane alternative (borrowing the completion-seal idiom for setup) was
+rejected — ADR-017 uses staging for completion (:500), not setup. The judge
+also caught that NEXT's parenthetical "plan_digest columns" is superseded by
+ADR-016 D6:733-747 (launch columns are a later slice); this slice records the
+closure/assignment identity in a new TASK-keyed table, no launch columns.
+Architecture-of-record and both interpretation calls are in IMPLEMENTATION-NOTES
+(2026-07-17).
+
+The exact git store recipe was established empirically (a spawned agent built
+real stores and iterated git plumbing to green), which corrected two of my
+assumptions: git's relative-worktree mechanism is `extensions.relativeWorktrees`
+(v1), NOT ADR-017:466's `worktree.useRelativePaths` (only a `git worktree add`
+trigger git rewrites into the extension); and an empty `git/shallow` cover makes
+git report is-shallow=true. The committed 15-row mount table pins empty
+shallow/packed-refs covers, so is-shallow=true is kept as a documented harmless
+consequence (fsck rc 0 for a complete store; the object-set==closure proof, not
+fsck leniency, is the completeness guard). Both deviations logged.
+
+Landed red-first, ten commits, fast lane green at each (a3c0bf2..bd478f0):
+- `task_assignments` (v5→v6), task-keyed immutable (a retry reuses it, never
+  rebases a moved target — D5:620); typeof-fenced hex columns; base_sha length
+  checked against the row's own object_format. `Register/ReadFirstTaskAssignment`
+  under the shared live-Worker+lease fence.
+- `extractClosurePack`: synthetic `env -i`/GIT_DIR/GIT_OBJECT_DIRECTORY/
+  GIT_NO_REPLACE_OBJECTS context over the real object dir; verify-pack proves
+  object-set == reachable closure; refuses alternates/grafts/replace/shallow/
+  partial-clone (each OR'd for promisor).
+- `MaterializeFirstTaskStore`: full in-place store + fsck-clean self-check;
+  fresh resolves the target ref, retry reuses the exact pinned OID.
+- git/config empty→closed-grammar (`generatedTaskGitConfig`/
+  `validateTaskGitConfig`); dispatch-attest resolver does grammar-only (spine-
+  free), the config cover's mount evidence is pinned to the actual landed bytes.
+- `RecordFirstTaskSetupClosure` supersedes `WriteFirstTaskSetupClosure` (removed
+  with its caller-supplied `FirstTaskClosure` pin); `firstTaskClosureDigest` /
+  `FirstTaskClosureFile` kept, shared with the materializer.
+- `/mc/setup.json` SetupEnvelope + `mc __setup-first-task` (host-scope,
+  spineless, delegation-bypassed) + `mc task setup-record` host verb.
+- D5 exact retry-residue acceptance (`verifyLandedStoreMatches`).
+
+The mc fast lane now shells to host git (git 2.50) for these tests; production
+runs the identical Go inside the setup container against the pinned image git.
+
+NOT DONE — the resident wiring is the one remaining piece and its blocker is
+the dispatch plan carrying a setup step (the resident cannot derive mode/
+target_ref/object_format without reading the spine). Deferred to a fresh
+red-first step because it changes the frozen plan/plan_digest and the private-
+frame validator; details in PROGRESS.md NEXT. Checkpointed here at a green
+five-leg boundary rather than rushing a security-critical attest-path change.
+
+NEXT (moved to PROGRESS.md): wire the resident's post-claim setup step — write
+/mc/setup.json, spawn the network=none setup container, invoke `mc task
+setup-record` on success — after first extending the dispatch plan to carry the
+setup step (mode/target_ref/object_format/pins).
