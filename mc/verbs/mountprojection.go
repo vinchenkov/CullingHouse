@@ -13,9 +13,13 @@ import (
 // compares it before commit, so profile or Worksource drift is stale.
 type PrivateDispatchMountState = substrate.DispatchMountState
 type PrivateDispatchWorksource = substrate.DispatchWorksource
+type PrivateDispatchTaskSetupIdentity = substrate.DispatchTaskSetupIdentity
 
 func loadDispatchMountState(ctx context.Context, q Q, sp *dispatch.Spawn, rec dispatch.Records) (PrivateDispatchMountState, error) {
-	state := PrivateDispatchMountState{Worksources: []PrivateDispatchWorksource{}}
+	state := PrivateDispatchMountState{
+		Worksources:           []PrivateDispatchWorksource{},
+		SubjectTaskSetupRoots: []PrivateDispatchTaskSetupIdentity{},
+	}
 	if sp.SubjectID != nil {
 		for _, task := range rec.Tasks {
 			if task.ID == *sp.SubjectID {
@@ -30,6 +34,15 @@ func loadDispatchMountState(ctx context.Context, q Q, sp *dispatch.Spawn, rec di
 		if state.SelectedWorksource == "" {
 			return state, Domainf("dispatch: selected subject %d has no Worksource projection", *sp.SubjectID)
 		}
+		// Freeze the durable first-task setup receipt identities for the subject
+		// task under the token. The host mount attest admits the on-disk task
+		// skeleton into an agent plan only when the resolved root matches one of
+		// these (ADR-016 D5); an unattested skeleton is never trusted.
+		roots, err := substrate.LoadSubjectTaskSetupRoots(ctx, q, *sp.SubjectID)
+		if err != nil {
+			return state, err
+		}
+		state.SubjectTaskSetupRoots = roots
 	}
 
 	rows, err := substrate.LoadDispatchWorksourceProjection(ctx, q)

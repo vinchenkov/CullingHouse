@@ -18,7 +18,31 @@ type DispatchMountState struct {
 	SelectedWorksource  string               `json:"selected_worksource"`
 	SubjectInitiativeID *int64               `json:"subject_initiative_id"`
 	Worksources         []DispatchWorksource `json:"worksources"`
+	// SubjectTaskSetupRoots freezes, under the preparation token, the durable
+	// first-task setup receipt identities registered for the spawn subject's
+	// task (ADR-016 D5). The host mount attest resolves the on-disk task
+	// skeleton and only admits it into an agent plan when the resolved root
+	// identity is a member of this frozen set: a materialized skeleton with no
+	// receipt is never trusted (the run-keyed InspectFirstTaskSetup fence is
+	// unsatisfiable at spawn dispatch-attest, so the identity travels here and
+	// rides the commit-time DeepEqual/token/plan_digest fences).
+	SubjectTaskSetupRoots []DispatchTaskSetupIdentity `json:"subject_task_setup_roots"`
 }
+
+// DispatchTaskSetupIdentity is the path-free durable identity of a
+// resident-created first-task setup root, projected from task_setup_receipts.
+// Device/Inode are the canonical decimal encodings the resident registered.
+type DispatchTaskSetupIdentity struct {
+	Device   string `json:"device"`
+	Inode    string `json:"inode"`
+	OwnerUID int    `json:"owner_uid"`
+}
+
+// MaxDispatchTaskSetupRoots bounds the frozen receipt-identity set. Every
+// retry run registers its own durable row (all reusing the same reused task
+// root), so the distinct set is normally a single element; the cap is a
+// fail-closed backstop against a pathological row count bloating the token.
+const MaxDispatchTaskSetupRoots = 64
 
 type DispatchWorksource struct {
 	WorksourceID      string   `json:"worksource_id"`
@@ -91,6 +115,36 @@ func LoadDispatchWorksourceProjection(ctx context.Context, q dispatchProjectionQ
 			return nil, fmt.Errorf("Worksource %q carries a scalar outside ADR-016 D2 bounds", ws.WorksourceID)
 		}
 		out = append(out, ws)
+	}
+	return out, rows.Err()
+}
+
+// LoadSubjectTaskSetupRoots returns the distinct durable setup-receipt root
+// identities registered for one task, sorted for canonical determinism. It
+// deliberately omits the live run/lock-lease fence of the run-keyed reader:
+// this is a projection consumed at dispatch prepare (frozen into the token,
+// re-derived and DeepEqual'd at commit), not the resident's post-claim setup
+// consumer. An empty result is normal — a first task whose skeleton has not
+// been set up yet has no receipt, and its dispatch arm falls to precreate.
+func LoadSubjectTaskSetupRoots(ctx context.Context, q dispatchProjectionQuerier, taskID int64) ([]DispatchTaskSetupIdentity, error) {
+	rows, err := q.QueryContext(ctx, `
+		SELECT DISTINCT root_device, root_inode, root_owner_uid
+		FROM task_setup_receipts WHERE task_id = ?
+		ORDER BY root_device, root_inode, root_owner_uid`, taskID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []DispatchTaskSetupIdentity{}
+	for rows.Next() {
+		var id DispatchTaskSetupIdentity
+		if err := rows.Scan(&id.Device, &id.Inode, &id.OwnerUID); err != nil {
+			return nil, err
+		}
+		if len(out) >= MaxDispatchTaskSetupRoots {
+			return nil, fmt.Errorf("task %d carries more than %d distinct setup-receipt identities", taskID, MaxDispatchTaskSetupRoots)
+		}
+		out = append(out, id)
 	}
 	return out, rows.Err()
 }

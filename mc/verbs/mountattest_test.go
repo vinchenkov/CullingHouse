@@ -584,6 +584,20 @@ func maRepoCandidate(t *testing.T, role dispatch.Role, subject *int64) (string, 
 		ProfileID: "p", WorkspaceRoot: ws,
 		ArtifactRoots: []string{}, ReadonlyMounts: []string{}, DeniedPaths: []string{},
 	}}}
+	// A materialized skeleton normally carries a durable setup receipt; freeze
+	// the subject task root's identity so the receipt gate admits it. Tests of
+	// the no-receipt/mismatch paths clear or override this.
+	if subject != nil {
+		taskRoot := filepath.Join(ws, ".mission-control", "tasks", "task-"+strconv.FormatInt(*subject, 10))
+		if info, err := os.Lstat(taskRoot); err == nil {
+			st := info.Sys().(*syscall.Stat_t)
+			state.SubjectTaskSetupRoots = []PrivateDispatchTaskSetupIdentity{{
+				Device:   strconv.FormatUint(uint64(st.Dev), 10),
+				Inode:    strconv.FormatUint(st.Ino, 10),
+				OwnerUID: int(st.Uid),
+			}}
+		}
+	}
 	return mcHome, &preparedCandidate{spawn: &dispatch.Spawn{Role: role, SubjectID: subject}, mountState: state}, ws
 }
 
@@ -619,6 +633,45 @@ func TestAttestCandidateMountsDerivesTaskLocalPlanThroughRealCapture(t *testing.
 	}
 	if got := byDest["/workspace/git/hooks"]; !got.RequireEmptyDir || got.ContentSHA256 != "" {
 		t.Fatalf("hooks cover evidence = %+v, want generated-empty-directory fence", got)
+	}
+}
+
+func TestAttestCandidateMountsRefusesSkeletonWithoutSetupReceipt(t *testing.T) {
+	subject := int64(7)
+	mcHome, cand, _ := maRepoCandidate(t, dispatch.RoleWorker, &subject)
+	// The task-7 skeleton is fully materialized on disk, but no first-task
+	// setup receipt vouches for it. A materialized-but-unattested skeleton
+	// (e.g. an attacker-planted well-formed tree at the expected path) must
+	// never become an agent workspace: the arm health-refuses instead of
+	// resolving the 15 rows.
+	cand.mountState.SubjectTaskSetupRoots = nil
+	plan, r, err := attestCandidateMounts(mcHome, cand, false)
+	if err != nil {
+		t.Fatalf("attest err: %v", err)
+	}
+	if plan != nil || r == nil {
+		t.Fatalf("skeleton without a setup receipt = plan %+v refusal %+v, want a deployment-health refusal", plan, r)
+	}
+	if r.Code != boundary.CodeRuntimeUnappliable || r.Authority != refusal.AuthorityDeployment {
+		t.Fatalf("refusal = %+v, want deployment-health runtime_unappliable", r)
+	}
+}
+
+func TestAttestCandidateMountsRejectsReceiptForADifferentRoot(t *testing.T) {
+	subject := int64(7)
+	mcHome, cand, _ := maRepoCandidate(t, dispatch.RoleWorker, &subject)
+	// A receipt whose identity does not match the resolved task root is not a
+	// vouch for this skeleton: the frozen set must contain the exact device/
+	// inode/owner the resolver observes, mirroring inspectFirstTaskTable.
+	cand.mountState.SubjectTaskSetupRoots = []PrivateDispatchTaskSetupIdentity{
+		{Device: "1", Inode: "1", OwnerUID: os.Getuid()},
+	}
+	plan, r, err := attestCandidateMounts(mcHome, cand, false)
+	if err != nil {
+		t.Fatalf("attest err: %v", err)
+	}
+	if plan != nil || r == nil || r.Code != boundary.CodeRuntimeUnappliable {
+		t.Fatalf("mismatched receipt = plan %+v refusal %+v, want runtime_unappliable", plan, r)
 	}
 }
 
@@ -826,6 +879,13 @@ func TestDispatchRepoWorkerCommitsTaskLocalMountPlan(t *testing.T) {
 	// test is exactly about the repo arm the registry slice opened.
 	dvExec(t, db, `UPDATE worksources SET kind='repo' WHERE id='ws-test'`)
 	dvInsertTask(t, db, dvTask(7, dispatch.ScopeTask, dispatch.StatusSeeded, 2))
+	// A prior setup run materialized this skeleton and left a durable receipt;
+	// prepare freezes its identity so the attest arm admits the resolved root.
+	device, inode, uid, _ := maEvidence(t, filepath.Join(ws, ".mission-control", "tasks", "task-7"))
+	dvExec(t, db, `INSERT INTO runs (id, tier, role, worksource, subject, ended_at)
+		VALUES ('setup-run', 'pipeline', 'worker', 'ws-test', 7, datetime('now'))`)
+	dvExec(t, db, `INSERT INTO task_setup_receipts (run_id, task_id, root_device, root_inode, root_owner_uid)
+		VALUES ('setup-run', 7, ?, ?, ?)`, device, inode, uid)
 	if err := os.Chmod(os.Getenv("MC_HOME"), 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -861,6 +921,41 @@ func TestDispatchRepoWorkerCommitsTaskLocalMountPlan(t *testing.T) {
 	}
 	if n := dfInt(t, db, `SELECT COUNT(*) FROM activity WHERE kind='dispatch.spawn'`); n != 1 {
 		t.Fatalf("spawn wrote %d dispatch.spawn rows, want one", n)
+	}
+}
+
+func TestDispatchRepoWorkerRefusesSkeletonWithoutSetupReceipt(t *testing.T) {
+	ws, _ := tsBuild(t)
+	if err := os.Mkdir(filepath.Join(ws, ".git"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	db := dvSpine(t, func(a *InitArgs) { a.WorkspaceRoot = ws })
+	dvExec(t, db, `UPDATE worksources SET kind='repo' WHERE id='ws-test'`)
+	dvInsertTask(t, db, dvTask(7, dispatch.ScopeTask, dispatch.StatusSeeded, 2))
+	// The skeleton is fully materialized on disk, but no durable setup receipt
+	// vouches for it, so prepare freezes an empty set. The spawn attest arm
+	// health-refuses end-to-end rather than binding an unattested workspace,
+	// and the commit is inert: no Run, free lock, one dispatch.health row.
+	if err := os.Chmod(os.Getenv("MC_HOME"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(os.Getenv("MC_HOME"), "mount-allowlist"), []byte("version = 1\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	prepared := dfPrepare(t, db, dfRequestID)
+	attested, err := dispatchAttest(os.Getenv("MC_HOME"), prepared)
+	if err != nil {
+		t.Fatalf("dispatchAttest: %v", err)
+	}
+	if attested.refusal == nil || attested.refusal.Code != boundary.CodeRuntimeUnappliable ||
+		attested.refusal.Authority != refusal.AuthorityDeployment {
+		t.Fatalf("unattested skeleton = %+v, want a deployment-health refusal", attested.refusal)
+	}
+	eff := dfCommit(t, db, prepared, attested)
+	dfAssertInert(t, db, eff)
+	if n := dfInt(t, db, `SELECT COUNT(*) FROM activity WHERE kind='dispatch.health'`); n != 1 {
+		t.Fatalf("refusal wrote %d dispatch.health rows, want one", n)
 	}
 }
 

@@ -552,7 +552,41 @@ func validatePrivateMountState(state PrivateDispatchMountState) error {
 	if !foundSelected {
 		return Domainf("dispatch: selected Worksource is absent from the private projection")
 	}
+	if err := validatePrivateTaskSetupRoots(state.SubjectTaskSetupRoots); err != nil {
+		return err
+	}
 	return nil
+}
+
+// validatePrivateTaskSetupRoots keeps the helper boundary strict about the
+// frozen setup-receipt identities: they mirror the task_setup_receipts CHECK
+// constraints (canonical decimal device/inode within 20 bytes, non-negative
+// owner uid), are bounded, and arrive sorted+deduped so a hostile frame cannot
+// smuggle an unordered or oversized set past the token.
+func validatePrivateTaskSetupRoots(roots []PrivateDispatchTaskSetupIdentity) error {
+	if len(roots) > substrate.MaxDispatchTaskSetupRoots {
+		return Domainf("dispatch: private task setup roots exceed their bound")
+	}
+	for i, id := range roots {
+		if !decimalIdentity.MatchString(id.Device) || !decimalIdentity.MatchString(id.Inode) ||
+			len(id.Device) > 20 || len(id.Inode) > 20 || id.OwnerUID < 0 {
+			return Domainf("dispatch: private task setup root identity is malformed")
+		}
+		if i > 0 && !taskSetupIdentityLess(roots[i-1], id) {
+			return Domainf("dispatch: private task setup roots are unsorted or duplicated")
+		}
+	}
+	return nil
+}
+
+func taskSetupIdentityLess(a, b PrivateDispatchTaskSetupIdentity) bool {
+	if a.Device != b.Device {
+		return a.Device < b.Device
+	}
+	if a.Inode != b.Inode {
+		return a.Inode < b.Inode
+	}
+	return a.OwnerUID < b.OwnerUID
 }
 
 func strictStructuralTexts(values []string) bool {

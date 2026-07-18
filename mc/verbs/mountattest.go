@@ -490,6 +490,17 @@ func captureDispatchMountHostSnapshot(home string, state PrivateDispatchMountSta
 				if err != nil {
 					return dispatchMountHostSnapshot{}, err
 				}
+				// The resolver proves the skeleton's shape, ownership, and
+				// content, but not that Mission Control's own resident set it up.
+				// A well-formed tree planted at the exact task path would
+				// otherwise become an agent workspace. Admit it only when its
+				// resolved root identity matches a durable first-task setup
+				// receipt frozen under the token (ADR-016 D5); the run-keyed
+				// InspectFirstTaskSetup fence is unsatisfiable here (spawn attest
+				// holds no lease), so the identity travels in the mount state.
+				if err := requireTaskSetupReceiptVouch(typed[boundary.KindTaskRoot], state.SubjectTaskSetupRoots); err != nil {
+					return dispatchMountHostSnapshot{}, err
+				}
 				for kind, id := range typed {
 					snapshot.TypedRoots[kind] = []boundary.ProtectedID{id}
 				}
@@ -497,6 +508,38 @@ func captureDispatchMountHostSnapshot(home string, state PrivateDispatchMountSta
 		}
 	}
 	return snapshot, nil
+}
+
+// requireTaskSetupReceiptVouch admits a resolved first-task skeleton root into
+// the agent plan only when its exact device/inode/owner identity is a member
+// of the frozen setup-receipt set. It reuses inspectFirstTaskTable's tuple
+// encoding so a materialized-but-unattested skeleton (or one swapped to a
+// different identity than any receipt recorded) health-refuses rather than
+// being trusted.
+func requireTaskSetupReceiptVouch(root boundary.ProtectedID, frozen []PrivateDispatchTaskSetupIdentity) error {
+	if root.Info == nil {
+		return &boundary.MountError{
+			Code: boundary.CodeRuntimeUnappliable, Msg: "task skeleton root carries no identity evidence",
+		}
+	}
+	st, ok := root.Info.Sys().(*syscall.Stat_t)
+	if !ok {
+		return &boundary.MountError{
+			Code: boundary.CodeRuntimeUnappliable, Msg: "task skeleton root exposes no stat identity",
+		}
+	}
+	device := strconv.FormatUint(uint64(st.Dev), 10)
+	inode := strconv.FormatUint(st.Ino, 10)
+	uid := int(st.Uid)
+	for _, id := range frozen {
+		if id.Device == device && id.Inode == inode && id.OwnerUID == uid {
+			return nil
+		}
+	}
+	return &boundary.MountError{
+		Code: boundary.CodeRuntimeUnappliable,
+		Msg:  "task skeleton has no durable first-task setup receipt (ADR-016 D5); a materialized-but-unattested skeleton never becomes an agent workspace",
+	}
 }
 
 func captureTaskPrecreate(workspaceRoot string, taskID int64, ownerUID int) (PrivateDispatchTaskPrecreate, error) {
