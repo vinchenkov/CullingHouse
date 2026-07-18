@@ -160,12 +160,13 @@ describe("spawn effect", () => {
     ]);
     expect(rig.docker.calls).toEqual([setupRunArgv]);
     // The SetupResult travels byte-exactly from container stdout to the host
-    // verb; the resident never reinterprets evidence.
+    // verb; the resident never reinterprets evidence or normalizes its
+    // trailing newline.
     expect(rig.mc.calls).toEqual([[
       "task", "setup-record",
       "--run", "run-42-worker",
       "--workspace", "/host/workspace",
-      "--result", setupResultJson,
+      "--result", setupResultJson + "\n",
     ]]);
     expect(rig.logs.some((line) => line.includes("first-task setup recorded"))).toBe(true);
   });

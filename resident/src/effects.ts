@@ -376,8 +376,12 @@ async function runFirstTaskSetup(
 	if (run.exitCode !== 0) {
 		throw new Error(`first-task setup container exited ${run.exitCode}: ${run.stderr.trim()}`);
 	}
-	const result = run.stdout.trim();
-	if (result === "") {
+	// Preserve the executor's exact result bytes when crossing back to the
+	// host. `trim` is only a presence check: JSON permits its encoder's
+	// terminal newline, and normalizing it would contradict this handoff's
+	// byte-exact contract.
+	const result = run.stdout;
+	if (result.trim() === "") {
 		throw new Error("first-task setup container returned no SetupResult");
 	}
 	// The SetupResult passes through byte-exactly: the resident never
