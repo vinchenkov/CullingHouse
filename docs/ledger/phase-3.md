@@ -1445,6 +1445,24 @@ its receipt digest to name a mismatched index; reconstruction refuses before
 that attacker-named file can be read. The full five-leg fast lane is green
 serially.
 
+## 2026-07-18 — atomic completion-seal filesystem publisher
+
+`d6f3729` adds the privileged completion publisher's pure filesystem half. It
+requires a clean task worktree, its exact sole managed branch, closed generated
+Git config/UUID, no alternates, fsck-clean objects, and stable HEAD/tree across
+packing. It creates one synthetic-context verified reachable-closure pack and
+index in an exclusive staging directory, binds their digests plus SHA, tree,
+object count, and local UUID into the manifest, fsyncs all files/directories,
+atomically renames the run-keyed seal, and freezes the root and leaves read-only.
+The returned receipt is path-free and feeds `PublishCompletionSeal`.
+
+The accepted rebuilder now rejects a manifest without canonical tree/count and
+proves both against the sealed commit and reconstructed closure. Publisher →
+accepted-rebuild is covered with real Git stores; dirty worktree, replacement,
+manifest-tree, and manifest-count attacks refuse. The full five-leg fast lane
+is green serially. The trusted completion wrapper and resident plan/confirmed-
+producer-absence integration are the remaining D6 crosses.
+
 ## 2026-07-18 — strict setup-envelope framing
 
 `c533534` makes the shared setup-envelope reader consume exactly one JSON
