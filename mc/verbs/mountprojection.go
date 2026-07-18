@@ -15,6 +15,7 @@ type PrivateDispatchMountState = substrate.DispatchMountState
 type PrivateDispatchWorksource = substrate.DispatchWorksource
 type PrivateDispatchTaskSetupIdentity = substrate.DispatchTaskSetupIdentity
 type PrivateDispatchTaskAssignment = substrate.DispatchTaskAssignment
+type PrivateDispatchAcceptedCompletionSeal = substrate.DispatchAcceptedCompletionSeal
 
 func loadDispatchMountState(ctx context.Context, q Q, sp *dispatch.Spawn, rec dispatch.Records) (PrivateDispatchMountState, error) {
 	state := PrivateDispatchMountState{
@@ -55,6 +56,11 @@ func loadDispatchMountState(ctx context.Context, q Q, sp *dispatch.Spawn, rec di
 			return state, err
 		}
 		state.SubjectTaskAssignment = assignment
+		seal, err := substrate.LoadSubjectAcceptedCompletionSeal(ctx, q, *sp.SubjectID)
+		if err != nil {
+			return state, err
+		}
+		state.SubjectAcceptedCompletionSeal = seal
 	}
 
 	rows, err := substrate.LoadDispatchWorksourceProjection(ctx, q)

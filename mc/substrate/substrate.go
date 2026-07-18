@@ -75,7 +75,7 @@ func Init(db *sql.DB) error {
 // Version 4 adds the typeof fence triggers over ADR-016 Decision 2's
 // activity/outbox replay-key columns, whose v2 hex CHECKs hold only for TEXT.
 // Version 5 adds the durable run/task-fenced first-task setup receipt.
-const CurrentSchemaVersion = 8
+const CurrentSchemaVersion = 9
 
 // migrationV1ToV2 is ADR-016 Decision 2's storage step, frozen as history.
 //
@@ -391,6 +391,26 @@ WHEN NEW.manifest_digest IS NOT OLD.manifest_digest
 BEGIN SELECT RAISE(ABORT, 'completion seal manifest digest is immutable (ADR-016 D6)'); END;
 `
 
+// migrationV8ToV9 records the exact accepted Worker completion receipt on its
+// task. A task can cycle through seeded/worked more than once, so selecting a
+// seal by timestamp would be ambiguous; the acceptance transaction advances
+// this pair atomically with the stage transition instead.
+const migrationV8ToV9 = `
+ALTER TABLE tasks ADD COLUMN accepted_completion_run_id TEXT;
+ALTER TABLE tasks ADD COLUMN accepted_completion_request_id TEXT;
+CREATE TRIGGER tasks_accepted_completion_pair BEFORE UPDATE ON tasks
+WHEN (NEW.accepted_completion_run_id IS NULL) != (NEW.accepted_completion_request_id IS NULL)
+BEGIN SELECT RAISE(ABORT, 'task accepted completion identity must be paired (ADR-016 D6)'); END;
+CREATE TRIGGER tasks_accepted_completion_fenced BEFORE UPDATE ON tasks
+WHEN NEW.accepted_completion_run_id IS NOT OLD.accepted_completion_run_id
+  AND (NEW.status != 'worked' OR NOT EXISTS (
+    SELECT 1 FROM completion_seals s
+    WHERE s.run_id=NEW.accepted_completion_run_id
+      AND s.completion_request_id=NEW.accepted_completion_request_id
+      AND s.task_id=NEW.id AND s.state='accepted'))
+BEGIN SELECT RAISE(ABORT, 'task accepted completion identity must name its accepted worked seal (ADR-016 D6)'); END;
+`
+
 // Migrate brings an existing spine up to CurrentSchemaVersion, reporting
 // whether it changed anything. It is the "present with an older schema →
 // migrate" arm of §16.4; the caller owns the "absent on a non-empty volume →
@@ -416,7 +436,7 @@ func Migrate(db *sql.DB) (bool, error) {
 		return false, err
 	}
 
-	steps := map[int]string{1: migrationV1ToV2, 2: migrationV2ToV3, 3: migrationV3ToV4, 4: migrationV4ToV5, 5: migrationV5ToV6, 6: migrationV6ToV7, 7: migrationV7ToV8}
+	steps := map[int]string{1: migrationV1ToV2, 2: migrationV2ToV3, 3: migrationV3ToV4, 4: migrationV4ToV5, 5: migrationV5ToV6, 6: migrationV6ToV7, 7: migrationV7ToV8, 8: migrationV8ToV9}
 	changed := false
 	for version < CurrentSchemaVersion {
 		step, ok := steps[version]

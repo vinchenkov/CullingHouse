@@ -83,3 +83,27 @@ func TestLoadSubjectTaskAssignmentProjectsRetryPins(t *testing.T) {
 		t.Fatalf("no-assignment task = (%+v, %v), want nil", absent, err)
 	}
 }
+
+func TestLoadSubjectAcceptedCompletionSealUsesTheTaskAcceptancePointer(t *testing.T) {
+	db := openSpine(t)
+	taskID := mkTask(t, db, "task", "worked")
+	mustExec(t, db, `INSERT INTO runs (id,tier,role,worksource,subject,ended_at,outcome)
+		VALUES ('worker','pipeline','worker','ws',?,datetime('now'),'completed')`, taskID)
+	mustExec(t, db, `INSERT INTO completion_seals
+		(run_id,task_id,completion_request_id,object_format,sealed_sha,closure_digest,manifest_digest,seal_device,seal_inode,seal_owner_uid,state,accepted_at)
+		VALUES ('worker',?,'0011223344556677','sha1',?,?,?,?,?,501,'accepted',datetime('now'))`,
+		taskID, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+		"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc", "1", "2")
+	mustExec(t, db, `UPDATE tasks SET accepted_completion_run_id='worker', accepted_completion_request_id='0011223344556677' WHERE id=?`, taskID)
+	got, err := substrate.LoadSubjectAcceptedCompletionSeal(context.Background(), db, taskID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got == nil || got.RunID != "worker" || got.CompletionRequest != "0011223344556677" || got.ManifestDigest != "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc" {
+		t.Fatalf("accepted projection=%+v", got)
+	}
+	if absent, err := substrate.LoadSubjectAcceptedCompletionSeal(context.Background(), db, taskID+999); err != nil || absent != nil {
+		t.Fatalf("absent accepted projection=(%+v,%v), want nil,nil", absent, err)
+	}
+}

@@ -113,6 +113,11 @@ CREATE TABLE tasks (
     branch           TEXT,
     verified_sha     TEXT,
     target_ref       TEXT,
+    -- D6's exact downstream authority: the currently accepted Worker seal
+    -- for this task. It is advanced only by the receipt acceptance
+    -- transaction, never inferred from an unordered historical seal set.
+    accepted_completion_run_id TEXT,
+    accepted_completion_request_id TEXT,
 
     -- NOTE(P2.3): the carried notes of §7 ("Revise → … notes carried into
     -- the next run brief") and §8's Refiner deepening scope. Written by the
@@ -145,6 +150,7 @@ CREATE TABLE tasks (
     -- "unreviewed". This is what gives the value 1 exactly one meaning
     -- anywhere in the spine: a wave child whose plan the Editor passed.
     CHECK (initiative_id IS NOT NULL OR plan_reviewed = 0),
+    CHECK ((accepted_completion_run_id IS NULL) = (accepted_completion_request_id IS NULL)),
     -- Blocked requires a reason (§4).
     CHECK (blocked = 0 OR blocked_reason IS NOT NULL),
     -- No archive without a decision (§4).
@@ -815,6 +821,21 @@ CREATE TABLE completion_seals (
 );
 CREATE TRIGGER completion_seals_transition_only BEFORE UPDATE ON completion_seals WHEN NEW.run_id IS NOT OLD.run_id OR NEW.task_id IS NOT OLD.task_id OR NEW.completion_request_id IS NOT OLD.completion_request_id OR NEW.object_format IS NOT OLD.object_format OR NEW.sealed_sha IS NOT OLD.sealed_sha OR NEW.closure_digest IS NOT OLD.closure_digest OR NEW.manifest_digest IS NOT OLD.manifest_digest OR NEW.seal_device IS NOT OLD.seal_device OR NEW.seal_inode IS NOT OLD.seal_inode OR NEW.seal_owner_uid IS NOT OLD.seal_owner_uid OR NEW.published_at IS NOT OLD.published_at OR NOT ((OLD.state='published' AND NEW.state IN ('accepted','cleanup_pending')) OR (OLD.state='cleanup_pending' AND NEW.state='removed')) BEGIN SELECT RAISE(ABORT, 'completion seal content is immutable and state transitions are fenced (ADR-016 D6)'); END;
 CREATE TRIGGER completion_seals_no_delete BEFORE DELETE ON completion_seals BEGIN SELECT RAISE(ABORT, 'completion seal history is durable (ADR-016 D6)'); END;
+
+CREATE TRIGGER tasks_accepted_completion_pair
+BEFORE UPDATE ON tasks
+WHEN (NEW.accepted_completion_run_id IS NULL) != (NEW.accepted_completion_request_id IS NULL)
+BEGIN SELECT RAISE(ABORT, 'task accepted completion identity must be paired (ADR-016 D6)'); END;
+
+CREATE TRIGGER tasks_accepted_completion_fenced
+BEFORE UPDATE ON tasks
+WHEN NEW.accepted_completion_run_id IS NOT OLD.accepted_completion_run_id
+  AND (NEW.status != 'worked' OR NOT EXISTS (
+    SELECT 1 FROM completion_seals s
+    WHERE s.run_id=NEW.accepted_completion_run_id
+      AND s.completion_request_id=NEW.accepted_completion_request_id
+      AND s.task_id=NEW.id AND s.state='accepted'))
+BEGIN SELECT RAISE(ABORT, 'task accepted completion identity must name its accepted worked seal (ADR-016 D6)'); END;
 
 ------------------------------------------------------------------------------
 -- activity — the append-only log (Inv. 7). actor is the logical originator;

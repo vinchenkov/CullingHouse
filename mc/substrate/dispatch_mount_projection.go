@@ -34,6 +34,10 @@ type DispatchMountState struct {
 	// fresh-mode first run. omitempty keeps every pre-existing state's
 	// canonical bytes (and its preparation token) unchanged.
 	SubjectTaskAssignment *DispatchTaskAssignment `json:"subject_task_assignment,omitempty"`
+	// SubjectAcceptedCompletionSeal freezes the exact completed Worker receipt
+	// for a downstream D6 setup. It is task-pointed at acceptance rather than
+	// selected from historical completion_seals rows by time or run ordering.
+	SubjectAcceptedCompletionSeal *DispatchAcceptedCompletionSeal `json:"subject_accepted_completion_seal,omitempty"`
 	// SubjectTaskTargetRef freezes the subject task's target ref under the
 	// token so the spine-free attest leg can pin a fresh-mode first-task
 	// closure without re-reading the spine.
@@ -49,6 +53,18 @@ type DispatchTaskAssignment struct {
 	ClosureDigest string `json:"closure_digest"`
 	LocalRepoUUID string `json:"local_repo_uuid"`
 	ObjectFormat  string `json:"object_format"`
+}
+
+type DispatchAcceptedCompletionSeal struct {
+	RunID             string `json:"run_id"`
+	CompletionRequest string `json:"completion_request_id"`
+	ObjectFormat      string `json:"object_format"`
+	SealedSHA         string `json:"sealed_sha"`
+	ClosureDigest     string `json:"closure_digest"`
+	ManifestDigest    string `json:"manifest_digest"`
+	Device            string `json:"device"`
+	Inode             string `json:"inode"`
+	OwnerUID          int    `json:"owner_uid"`
 }
 
 // DispatchTaskSetupIdentity is the path-free durable identity of a
@@ -194,6 +210,36 @@ func LoadSubjectTaskAssignment(ctx context.Context, q dispatchProjectionQuerier,
 		return nil, err
 	}
 	return &a, rows.Err()
+}
+
+// LoadSubjectAcceptedCompletionSeal projects only the receipt explicitly
+// pointed to by the task's D6 acceptance transaction. Older schema history
+// has no pointer and remains deliberately non-consumable.
+func LoadSubjectAcceptedCompletionSeal(ctx context.Context, q dispatchProjectionQuerier, taskID int64) (*DispatchAcceptedCompletionSeal, error) {
+	rows, err := q.QueryContext(ctx, `
+		SELECT s.run_id,s.completion_request_id,s.object_format,s.sealed_sha,
+		       s.closure_digest,s.manifest_digest,s.seal_device,s.seal_inode,s.seal_owner_uid
+		FROM tasks t JOIN completion_seals s
+		  ON s.run_id=t.accepted_completion_run_id
+		 AND s.completion_request_id=t.accepted_completion_request_id
+		WHERE t.id=? AND t.accepted_completion_run_id IS NOT NULL
+		  AND s.state='accepted'`, taskID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	if !rows.Next() {
+		return nil, rows.Err()
+	}
+	var out DispatchAcceptedCompletionSeal
+	if err := rows.Scan(&out.RunID, &out.CompletionRequest, &out.ObjectFormat, &out.SealedSHA,
+		&out.ClosureDigest, &out.ManifestDigest, &out.Device, &out.Inode, &out.OwnerUID); err != nil {
+		return nil, err
+	}
+	if rows.Next() {
+		return nil, fmt.Errorf("task %d accepted completion projection is ambiguous", taskID)
+	}
+	return &out, rows.Err()
 }
 
 func ValidateDispatchMountProjection(ctx context.Context, q dispatchProjectionQuerier) error {

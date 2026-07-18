@@ -88,6 +88,9 @@ func TestAcceptCompletionSealRequiresLiveMatchingPublishedReceipt(t *testing.T) 
 	if got := dfStr(t, db, `SELECT COALESCE(run_id, '<free>') FROM lock WHERE id=1`); got != "<free>" {
 		t.Fatalf("accepted completion left lease=%q", got)
 	}
+	if got := dfStr(t, db, `SELECT accepted_completion_run_id || '/' || accepted_completion_request_id FROM tasks WHERE id=7`); got != "worker/0011223344556677" {
+		t.Fatalf("task accepted completion pointer=%q", got)
+	}
 
 	// A lost response observes the same durable terminal, rather than trying to
 	// fence a lease that was correctly released by the accepted completion.

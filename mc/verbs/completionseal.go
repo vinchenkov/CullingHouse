@@ -144,6 +144,15 @@ func AcceptCompletionSeal(db *sql.DB, runID, requestID string) error {
 		if n, err := result.RowsAffected(); err != nil || n != 1 {
 			return Domainf("completion seal acceptance lost its published receipt fence")
 		}
+		result, err = q.ExecContext(ctx, `UPDATE tasks
+			SET accepted_completion_run_id=?, accepted_completion_request_id=?
+			WHERE id=? AND status='worked'`, runID, requestID, taskID)
+		if err != nil {
+			return err
+		}
+		if n, err := result.RowsAffected(); err != nil || n != 1 {
+			return Domainf("completion seal acceptance lost its task receipt fence")
+		}
 		if err := endRun(ctx, q, runID, "completed"); err != nil {
 			return err
 		}
