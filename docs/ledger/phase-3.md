@@ -1562,6 +1562,7 @@ and adds the real host recheck primitive. It derives only
 `MC_HOME/seals/<run-id>`, rejects a noncanonical/symlinked/different
 directory, and repeats the receipt device/inode/owner proof immediately before
 the future trusted setup bind; the in-container executor independently repeats
-that proof. The plan remains a no-effect launch fence until the same D6 slice
-can also materialize the verifier's disposable RW source and give the setup
-operation a durable replay/terminal fence. Full serial fast lane green.
+that proof. The plan remains a no-effect launch fence until the dedicated
+accepted-seal setup operation gains its durable replay/terminal fence; the
+Verifier disposable RW source remains the separately named later D6 arm.
+Full serial fast lane green.

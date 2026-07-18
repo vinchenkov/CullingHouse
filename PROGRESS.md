@@ -405,10 +405,11 @@ deleted, not struck through. History is in `docs/ledger/`.
   agent cannot sleep the machine it runs on). Instructions in
   `spikes/07-launchd-clock/RESULT.md`. All other S7 sub-tests passed.
 
-NEXT: Implement ADR-016 D6 accepted-seal setup transaction with the verifier disposable-source arm
-red-first: prove exact former Worker producer absence, re-attest its run-keyed seal,
-then run only the fixed rebuild and disposable-source setup operations before a verifier
-can be created; persist/replay their terminal fence without a partial canonical-store launch.
-Keep committed-tree projections, structured Engine-API binds, and launchd in their named later slices.
+NEXT: Implement ADR-016 D6 resident-side accepted-seal setup planning
+red-first: freeze the exact accepted Worker run/request/identity/digest in the
+downstream setup step, require confirmed producer container/guard/runner
+absence before that setup executes, and make a refusal leave the downstream
+create unprepared. Keep Verifier disposable-source / committed-tree projections,
+structured Engine-API binds, and launchd in their named later slices.
 Docker-lane obligations at phase completion: the real setup container run,
 closure e2e fixtures, and the D1 deployment-mirror check.
