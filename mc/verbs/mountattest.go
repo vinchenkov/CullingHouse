@@ -263,13 +263,8 @@ func deriveDispatchMountRequests(state PrivateDispatchMountState, role string, s
 		}
 		return requests, selected, nil, nil
 	}
-	if baseRole(role) == "verifier" && subjectID != nil && state.SubjectAcceptedCompletionSeal != nil {
-		// The resident consumes the closed accepted-seal setup instruction
-		// before any verifier container exists. No task-store bind is granted
-		// to this pre-setup plan.
-		return requests, selected, nil, nil
-	}
-	if baseRole(role) != "worker" || subjectID == nil || selected.WorkspaceRoot == "" {
+	sealConsumer := baseRole(role) == "verifier" && subjectID != nil && state.SubjectAcceptedCompletionSeal != nil
+	if !sealConsumer && (baseRole(role) != "worker" || subjectID == nil || selected.WorkspaceRoot == "") {
 		// The only realizable production repo arm today is the standalone-task
 		// Worker over an existing exact skeleton. A projection-consuming or
 		// seal-consuming role's mount source is materialized by later setup
@@ -291,6 +286,12 @@ func deriveDispatchMountRequests(state PrivateDispatchMountState, role string, s
 			Source: source, Access: row.Access, Authority: refusal.AuthorityDeployment,
 			Kind: row.Kind, Destination: row.Dest,
 			RequireEmptyDir: row.MustBeEmptyDir,
+		}
+		if sealConsumer {
+			// The pre-verifier rebuild owns the same canonical store and may
+			// change it only inside trusted setup. The eventual verifier gets
+			// every task row RO; its disposable source is a later D6 setup arm.
+			request.Access = boundary.AccessRO
 		}
 		if row.WantBytes != nil {
 			sum := sha256.Sum256(row.WantBytes)
