@@ -37,6 +37,58 @@ const spawnEffect: Effect = {
 
 const PLAN_PATH = "/tmp/mc-home/runs/run-42-worker.mounts.json";
 
+/** The committed precreate step, setup instruction included: the resident is
+ * spine-blind, so mode/target/format arrive only inside the plan. */
+const taskPrecreateStep = {
+  child_mode: 0o700,
+  setup: {
+    mode: "fresh" as const,
+    object_format: "sha1",
+    target_ref: "main",
+  },
+  task_id: 42,
+  tasks_parent: {
+    canonical: "/host/workspace/.mission-control/tasks",
+    device: "8",
+    inode: "88",
+    owner_uid: 501,
+  },
+  workspace_root: "/host/workspace",
+};
+
+const setupResultJson =
+  '{"base_sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","object_format":"sha1",' +
+  '"local_repo_uuid":"0a1b2c3d-4e5f-6071-8293-a4b5c6d7e8f9",' +
+  '"closure_digest":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",' +
+  '"object_count":3,"fsck_clean":true}';
+
+const SETUP_JSON_PATH = "/tmp/mc-home/runs/run-42-worker.setup.json";
+const SETUP_COVER_DIR = "/tmp/mc-home/runs/run-42-worker.setup-cover";
+
+/** The exact one-shot setup-container argv: ADR-017's setup mount table
+ * (source RO under an empty .mission-control cover, task root RO with only
+ * its source/git children RW, envelope RO) inside ADR-019's setup-class
+ * resource/security envelope. */
+const setupRunArgv = [
+  "run", "--rm",
+  "--network", "none",
+  "--label", "mc-managed",
+  "--user", "10002:10002",
+  "--cap-drop", "ALL",
+  "--security-opt", "no-new-privileges=true",
+  "--cpus", "1",
+  "--memory", "1024m",
+  "--pids-limit", "128",
+  "-v", "/host/workspace:/repo/source:ro",
+  "-v", `${SETUP_COVER_DIR}:/repo/source/.mission-control:ro`,
+  "-v", "/host/workspace/.mission-control/tasks/task-42:/repo/task:ro",
+  "-v", "/host/workspace/.mission-control/tasks/task-42/source:/repo/task/source",
+  "-v", "/host/workspace/.mission-control/tasks/task-42/git:/repo/task/git",
+  "-v", `${SETUP_JSON_PATH}:/mc/setup.json:ro`,
+  "mc-fake-e2e:test",
+  "mc", "__setup-first-task", "/mc/setup.json",
+];
+
 describe("idle / reenter / unknown", () => {
   test("idle does nothing but log", async () => {
     const rig = makeRig();
@@ -66,7 +118,7 @@ describe("idle / reenter / unknown", () => {
 
 describe("spawn effect", () => {
 
-  test("post-claim task precreate registers the returned identity before setup or launch", async () => {
+  test("post-claim task precreate registers, then runs the setup container and records its result", async () => {
     const events: string[] = [];
     const registered = {
       canonical: "/host/workspace/.mission-control/tasks/task-42",
@@ -88,28 +140,182 @@ describe("spawn effect", () => {
         expect(identity).toBe(registered);
       },
     });
+    rig.docker.enqueue(ok(setupResultJson + "\n"));
+    await applyEffect({
+      ...spawnEffect,
+      mount_plan: {
+        entries: [],
+        task_precreate: taskPrecreateStep,
+        version: 1,
+      },
+    }, rig.deps);
+	expect(events).toEqual(["recheck:42", "precreate:42", "register:run-42-worker"]);
+    // Envelope materialized under runs/ beside the launch files, then removed
+    // once the result is durably recorded; the cover dir masks other tasks.
+    expect(rig.fakeFs.events).toEqual([
+      "mkdir:/tmp/mc-home/runs",
+      `mkdir:${SETUP_COVER_DIR}`,
+      `write:${SETUP_JSON_PATH}`,
+      `rm:${SETUP_JSON_PATH}`,
+    ]);
+    expect(rig.docker.calls).toEqual([setupRunArgv]);
+    // The SetupResult travels byte-exactly from container stdout to the host
+    // verb; the resident never reinterprets evidence.
+    expect(rig.mc.calls).toEqual([[
+      "task", "setup-record",
+      "--run", "run-42-worker",
+      "--workspace", "/host/workspace",
+      "--result", setupResultJson,
+    ]]);
+    expect(rig.logs.some((line) => line.includes("first-task setup recorded"))).toBe(true);
+  });
+
+  test("the setup envelope restates exactly the committed fresh instruction", async () => {
+    // The envelope is rm'd on success, so capture its bytes at the write.
+    const rig = makeRig();
+    let envelope = "";
+    const realWrite = rig.deps.fs.writeFile;
+    rig.deps.fs.writeFile = async (path, data, opts) => {
+      if (path === SETUP_JSON_PATH) envelope = data;
+      return realWrite(path, data, opts);
+    };
+    rig.docker.enqueue(ok(setupResultJson + "\n"));
+    await applyEffect({
+      ...spawnEffect,
+      mount_plan: { entries: [], task_precreate: taskPrecreateStep, version: 1 },
+    }, rig.deps);
+    expect(JSON.parse(envelope)).toEqual({
+      schema_version: 1,
+      operation: "first-task-closure-extraction",
+      run_id: "run-42-worker",
+      task_id: 42,
+      mode: "fresh",
+      object_format: "sha1",
+      target_ref: "main",
+      branch: "mc/task-42",
+      worktree_name: "mc-task-42",
+      source_repo: "/repo/source",
+      task_root: "/repo/task",
+    });
+  });
+
+  test("a retry instruction produces a pinned envelope and never a target ref", async () => {
+    const rig = makeRig();
+    let envelope = "";
+    const realWrite = rig.deps.fs.writeFile;
+    rig.deps.fs.writeFile = async (path, data, opts) => {
+      if (path === SETUP_JSON_PATH) envelope = data;
+      return realWrite(path, data, opts);
+    };
+    rig.docker.enqueue(ok(setupResultJson + "\n"));
     await applyEffect({
       ...spawnEffect,
       mount_plan: {
         entries: [],
         task_precreate: {
-          child_mode: 0o700,
-          task_id: 42,
-          tasks_parent: {
-            canonical: "/host/workspace/.mission-control/tasks",
-            device: "8",
-            inode: "88",
-            owner_uid: 501,
+          ...taskPrecreateStep,
+          setup: {
+            mode: "retry" as const,
+            object_format: "sha1",
+            pinned_base_sha: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            pinned_closure_digest: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            pinned_local_repo_uuid: "0a1b2c3d-4e5f-6071-8293-a4b5c6d7e8f9",
           },
-          workspace_root: "/host/workspace",
         },
         version: 1,
       },
     }, rig.deps);
-	expect(events).toEqual(["recheck:42", "precreate:42", "register:run-42-worker"]);
-    expect(rig.fakeFs.events).toEqual([]);
-    expect(rig.docker.calls).toEqual([]);
-    expect(rig.logs.some((line) => line.includes("task root registered") && line.includes("setup pending"))).toBe(true);
+    expect(JSON.parse(envelope)).toEqual({
+      schema_version: 1,
+      operation: "first-task-closure-extraction",
+      run_id: "run-42-worker",
+      task_id: 42,
+      mode: "retry",
+      object_format: "sha1",
+      pinned_base_sha: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      pinned_closure_digest: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      pinned_local_repo_uuid: "0a1b2c3d-4e5f-6071-8293-a4b5c6d7e8f9",
+      branch: "mc/task-42",
+      worktree_name: "mc-task-42",
+      source_repo: "/repo/source",
+      task_root: "/repo/task",
+    });
+    expect(rig.docker.calls).toEqual([setupRunArgv]);
+  });
+
+  test("a failed setup container throws, keeps the envelope, and records nothing", async () => {
+    const rig = makeRig();
+    rig.docker.enqueue(fail(1, "fsck: missing blob"));
+    await expect(applyEffect({
+      ...spawnEffect,
+      mount_plan: { entries: [], task_precreate: taskPrecreateStep, version: 1 },
+    }, rig.deps)).rejects.toThrow("first-task setup container exited 1");
+    expect(rig.mc.calls).toEqual([]);
+    // The envelope stays on disk as failure evidence: no rm event.
+    expect(rig.fakeFs.events).toEqual([
+      "mkdir:/tmp/mc-home/runs",
+      `mkdir:${SETUP_COVER_DIR}`,
+      `write:${SETUP_JSON_PATH}`,
+    ]);
+  });
+
+  test("a refused setup-record throws and keeps the envelope", async () => {
+    const rig = makeRig();
+    rig.docker.enqueue(ok(setupResultJson + "\n"));
+    rig.mc.enqueue(fail(1, "retry diverges from the recorded assignment"));
+    await expect(applyEffect({
+      ...spawnEffect,
+      mount_plan: { entries: [], task_precreate: taskPrecreateStep, version: 1 },
+    }, rig.deps)).rejects.toThrow("first-task setup record refused (exit 1)");
+    expect(rig.fakeFs.events).toEqual([
+      "mkdir:/tmp/mc-home/runs",
+      `mkdir:${SETUP_COVER_DIR}`,
+      `write:${SETUP_JSON_PATH}`,
+    ]);
+  });
+
+  test("a malformed setup instruction is refused before any effect", async () => {
+    for (const setup of [
+      undefined,
+      { mode: "rebase", object_format: "sha1", target_ref: "main" },
+      { mode: "fresh", object_format: "sha512", target_ref: "main" },
+      { mode: "fresh", object_format: "sha1", target_ref: "" },
+      { mode: "fresh", object_format: "sha1", target_ref: "main", pinned_base_sha: "aa" },
+      { mode: "retry", object_format: "sha1", pinned_base_sha: "aa" },
+      {
+        mode: "retry", object_format: "sha1", target_ref: "main",
+        pinned_base_sha: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        pinned_closure_digest: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        pinned_local_repo_uuid: "0a1b2c3d-4e5f-6071-8293-a4b5c6d7e8f9",
+      },
+    ]) {
+      let touched = false;
+      const rig = makeRig({
+        recheckTaskParent: async () => {
+          touched = true;
+        },
+        precreateTaskSkeleton: async () => {
+          touched = true;
+          return taskPrecreateStep.tasks_parent;
+        },
+      });
+      await applyEffect({
+        ...spawnEffect,
+        mount_plan: {
+          entries: [],
+          task_precreate: {
+            ...taskPrecreateStep,
+            setup: setup as never,
+          },
+          version: 1,
+        },
+      }, rig.deps);
+      expect(touched).toBe(false);
+      expect(rig.docker.calls).toEqual([]);
+      expect(rig.mc.calls).toEqual([]);
+      expect(rig.fakeFs.events).toEqual([]);
+      expect(rig.logs.some((line) => line.includes("spawn refused"))).toBe(true);
+    }
   });
 
   test("task precreate failure performs no later effect", async () => {
@@ -122,17 +328,7 @@ describe("spawn effect", () => {
       ...spawnEffect,
       mount_plan: {
         entries: [],
-        task_precreate: {
-          child_mode: 0o700,
-          task_id: 42,
-          tasks_parent: {
-            canonical: "/host/workspace/.mission-control/tasks",
-            device: "8",
-            inode: "88",
-            owner_uid: 501,
-          },
-          workspace_root: "/host/workspace",
-        },
+        task_precreate: taskPrecreateStep,
         version: 1,
       },
     }, rig.deps)).rejects.toThrow("parent identity changed");
@@ -155,14 +351,7 @@ describe("spawn effect", () => {
 		...spawnEffect,
 		mount_plan: {
 			entries: [],
-			task_precreate: {
-				child_mode: 0o700, task_id: 42,
-				tasks_parent: {
-					canonical: "/host/workspace/.mission-control/tasks",
-					device: "8", inode: "88", owner_uid: 501,
-				},
-				workspace_root: "/host/workspace",
-			},
+			task_precreate: taskPrecreateStep,
 			version: 1,
 		},
 	}, rig.deps)).rejects.toThrow("ACL grants non-owner access");
@@ -190,14 +379,7 @@ describe("spawn effect", () => {
       ...spawnEffect,
       mount_plan: {
         entries: [],
-        task_precreate: {
-          child_mode: 0o700, task_id: 42,
-          tasks_parent: {
-            canonical: "/host/workspace/.mission-control/tasks",
-            device: "8", inode: "88", owner_uid: 501,
-          },
-          workspace_root: "/host/workspace",
-        },
+        task_precreate: taskPrecreateStep,
         version: 1,
       },
     }, rig.deps)).rejects.toThrow("registration fence failed");
@@ -221,14 +403,7 @@ describe("spawn effect", () => {
       ...spawnEffect,
       mount_plan: {
         entries: [],
-        task_precreate: {
-          child_mode: 0o700, task_id: 42,
-          tasks_parent: {
-            canonical: "/host/workspace/.mission-control/tasks",
-            device: "8", inode: "88", owner_uid: 501,
-          },
-          workspace_root: "/host/workspace",
-        },
+        task_precreate: taskPrecreateStep,
         version: 1,
       },
     }, rig.deps)).rejects.toThrow("invalid registration evidence");
@@ -249,14 +424,7 @@ describe("spawn effect", () => {
       ...spawnEffect,
       mount_plan: {
         entries: [],
-        task_precreate: {
-          child_mode: 0o777, task_id: 42,
-          tasks_parent: {
-            canonical: "/host/workspace/.mission-control/tasks",
-            device: "8", inode: "88", owner_uid: 501,
-          },
-          workspace_root: "/host/workspace",
-        },
+        task_precreate: { ...taskPrecreateStep, child_mode: 0o777 },
         version: 1,
       },
     }, rig.deps);

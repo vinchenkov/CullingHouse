@@ -13,11 +13,26 @@ export interface PathIdentity {
   owner_uid: number;
 }
 
+/** The plan's first-task setup instruction (ADR-016 D5): everything the
+ * spine-blind resident may know when it writes /mc/setup.json. Fresh mode
+ * carries the frozen target ref and no pins; retry mode carries the recorded
+ * assignment pins and no target. */
+export interface TaskSetupInstruction {
+  mode: "fresh" | "retry";
+  object_format: string;
+  pinned_base_sha?: string;
+  pinned_closure_digest?: string;
+  pinned_local_repo_uuid?: string;
+  target_ref?: string;
+}
+
 export interface TaskSkeletonRequest {
   workspace_root: string;
   task_id: number;
   /** Final host mode selected by the mandatory final-uid canary. */
   child_mode: number;
+  /** The committed setup instruction the envelope restates. */
+  setup: TaskSetupInstruction;
   /** Exact `.mission-control/tasks` identity attested before claim. */
   tasks_parent: PathIdentity;
 }

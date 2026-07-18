@@ -116,8 +116,46 @@ function invalidMountPlanReason(plan: MountPlan | undefined): string | null {
 			!Number.isSafeInteger(step.tasks_parent.owner_uid) || step.tasks_parent.owner_uid < 0) {
 			return "task precreate descriptor is malformed";
 		}
+		const invalidSetup = invalidTaskSetupReason(step.setup);
+		if (invalidSetup !== null) return invalidSetup;
 	}
   return null;
+}
+
+/** Mirrors mc's validatePrivateTaskSetup fail-closed: a closed mode pair, a
+ * closed object-format set, fresh = target and no pins, retry = pins shaped
+ * as the task_assignments CHECKs demand and no target. */
+function invalidTaskSetupReason(setup: unknown): string | null {
+	if (setup === null || typeof setup !== "object") {
+		return "task setup instruction is malformed";
+	}
+	const s = setup as Record<string, unknown>;
+	if (s.object_format !== "sha1" && s.object_format !== "sha256") {
+		return "task setup object format is outside the closed set";
+	}
+	if (s.mode === "fresh") {
+		if (typeof s.target_ref !== "string" || s.target_ref.length === 0 ||
+			s.pinned_base_sha !== undefined || s.pinned_closure_digest !== undefined ||
+			s.pinned_local_repo_uuid !== undefined) {
+			return "task setup fresh instruction is malformed";
+		}
+		return null;
+	}
+	if (s.mode === "retry") {
+		const shaLen = s.object_format === "sha1" ? 40 : 64;
+		const hex = /^[0-9a-f]+$/;
+		const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+		if (s.target_ref !== undefined ||
+			typeof s.pinned_base_sha !== "string" || s.pinned_base_sha.length !== shaLen ||
+			!hex.test(s.pinned_base_sha) ||
+			typeof s.pinned_closure_digest !== "string" || s.pinned_closure_digest.length !== 64 ||
+			!hex.test(s.pinned_closure_digest) ||
+			typeof s.pinned_local_repo_uuid !== "string" || !uuid.test(s.pinned_local_repo_uuid)) {
+			return "task setup retry instruction is malformed";
+		}
+		return null;
+	}
+	return "task setup mode is outside the closed pair";
 }
 
 type SpawnEffect = Extract<Effect, { action: "spawn" }>;
@@ -163,10 +201,11 @@ async function spawn(effect: SpawnEffect, deps: TickDeps): Promise<void> {
 			throw new Error("precreated task root returned invalid registration evidence");
 		}
 		await deps.registerTaskRoot(run_id, step.task_id, registered);
-		log(`spawn ${run_id}: task root registered; setup pending`);
-		// The setup-fill slice will consume this exact registered identity and
-		// only then produce the task mount rows. Starting without those rows
-		// would expose an empty or reconstructed workspace.
+		log(`spawn ${run_id}: task root registered; running first-task setup`);
+		await runFirstTaskSetup(run_id, step, registered.canonical, deps);
+		// The agent launch stays gated on the setup receipt: the NEXT dispatch
+		// resolves the now-materialized skeleton into the 15-row task plan.
+		// Starting here, without those rows, would expose an empty workspace.
 		return;
 	}
 	if (effect.harness !== "fake" || effect.model_binding !== "fake") {
@@ -266,6 +305,94 @@ async function spawn(effect: SpawnEffect, deps: TickDeps): Promise<void> {
   if (started.exitCode !== 0) {
     log(`spawn ${run_id}: docker start failed (exit ${started.exitCode}): ${started.stderr.trim()}`);
   }
+}
+
+/** Post-registration first-task setup (ADR-016 D5): materialize the frozen
+ * envelope, run the one-shot network=none setup container over ADR-017's
+ * setup mount table inside ADR-019's setup-class envelope, and on success
+ * hand the SetupResult byte-exactly to host `mc task setup-record`. Failures
+ * throw (the tick loop logs them; the lease machinery is the recovery path)
+ * and keep the envelope on disk as evidence. */
+async function runFirstTaskSetup(
+	run_id: string,
+	step: NonNullable<MountPlan["task_precreate"]>,
+	taskRoot: string,
+	deps: TickDeps,
+): Promise<void> {
+	const { config, log } = deps;
+	const setup = step.setup;
+	// The envelope is credential-free and host-path-free by construction:
+	// source_repo/task_root are the container destinations, branch and
+	// worktree name are pure derivations of the task id (the executor refuses
+	// anything else), and the pins restate the committed instruction.
+	const envelope = {
+		schema_version: 1,
+		operation: "first-task-closure-extraction",
+		run_id,
+		task_id: step.task_id,
+		mode: setup.mode,
+		object_format: setup.object_format,
+		...(setup.mode === "fresh"
+			? { target_ref: setup.target_ref }
+			: {
+					pinned_base_sha: setup.pinned_base_sha,
+					pinned_closure_digest: setup.pinned_closure_digest,
+					pinned_local_repo_uuid: setup.pinned_local_repo_uuid,
+				}),
+		branch: `mc/task-${step.task_id}`,
+		worktree_name: `mc-task-${step.task_id}`,
+		source_repo: "/repo/source",
+		task_root: "/repo/task",
+	};
+	const setupJsonPath = `${runsDir(config.mcHome)}/${run_id}.setup.json`;
+	const coverDir = `${runsDir(config.mcHome)}/${run_id}.setup-cover`;
+	await deps.fs.mkdir(runsDir(config.mcHome));
+	// ADR-017: an empty RO cover masks every task/projection root whenever
+	// /repo/source is present — the setup container reads the real Worksource
+	// but never another task's bytes through it.
+	await deps.fs.mkdir(coverDir);
+	// 0644, not 0600: the envelope is mounted RO into a uid-10002 container
+	// and carries no secret by construction.
+	await deps.fs.writeFile(setupJsonPath, JSON.stringify(envelope, null, 2) + "\n", { mode: 0o644 });
+	const run = await deps.docker([
+		"run", "--rm",
+		"--network", "none",
+		"--label", "mc-managed",
+		"--user", "10002:10002",
+		"--cap-drop", "ALL",
+		"--security-opt", "no-new-privileges=true",
+		"--cpus", "1",
+		"--memory", "1024m",
+		"--pids-limit", "128",
+		"-v", `${step.workspace_root}:/repo/source:ro`,
+		"-v", `${coverDir}:/repo/source/.mission-control:ro`,
+		"-v", `${taskRoot}:/repo/task:ro`,
+		"-v", `${taskRoot}/source:/repo/task/source`,
+		"-v", `${taskRoot}/git:/repo/task/git`,
+		"-v", `${setupJsonPath}:/mc/setup.json:ro`,
+		config.image,
+		"mc", "__setup-first-task", "/mc/setup.json",
+	]);
+	if (run.exitCode !== 0) {
+		throw new Error(`first-task setup container exited ${run.exitCode}: ${run.stderr.trim()}`);
+	}
+	const result = run.stdout.trim();
+	if (result === "") {
+		throw new Error("first-task setup container returned no SetupResult");
+	}
+	// The SetupResult passes through byte-exactly: the resident never
+	// reinterprets evidence, and the host verb re-verifies the landed store.
+	const recorded = await deps.runMc([
+		"task", "setup-record",
+		"--run", run_id,
+		"--workspace", step.workspace_root,
+		"--result", result,
+	]);
+	if (recorded.exitCode !== 0) {
+		throw new Error(`first-task setup record refused (exit ${recorded.exitCode}): ${recorded.stderr.trim()}`);
+	}
+	await deps.fs.rm(setupJsonPath);
+	log(`spawn ${run_id}: first-task setup recorded for task ${step.task_id}`);
 }
 
 /** §7 Landing: run the baked mc-land script, then report its exit code.

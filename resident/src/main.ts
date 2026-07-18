@@ -89,6 +89,16 @@ async function main(): Promise<void> {
 		recheckTaskParent: async (step) => {
 			const frame = JSON.stringify({
 				child_mode: step.child_mode,
+				// JSON.stringify drops undefined members, matching the Go
+				// struct's omitempty: fresh carries no pins, retry no target.
+				setup: {
+					mode: step.setup.mode,
+					object_format: step.setup.object_format,
+					pinned_base_sha: step.setup.pinned_base_sha,
+					pinned_closure_digest: step.setup.pinned_closure_digest,
+					pinned_local_repo_uuid: step.setup.pinned_local_repo_uuid,
+					target_ref: step.setup.target_ref,
+				},
 				task_id: step.task_id,
 				tasks_parent: {
 					canonical: step.tasks_parent.canonical,
