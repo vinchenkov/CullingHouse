@@ -183,3 +183,122 @@ func hashStdin(t *testing.T, body string) string {
 	}
 	return strings.TrimSpace(string(out))
 }
+
+func mkTaskChildren(t *testing.T) string {
+	t.Helper()
+	root := t.TempDir()
+	for _, c := range []string{"source", "git"} {
+		if err := os.Mkdir(filepath.Join(root, c), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return root
+}
+
+func TestMaterializeFirstTaskStoreBuildsAFsckCleanOperableStore(t *testing.T) {
+	src, base, objfmt := buildSourceRepo(t)
+	root := mkTaskChildren(t)
+	uuid := "0a1b2c3d-4e5f-6071-8293-a4b5c6d7e8f9"
+	spec := FirstTaskSetupSpec{TaskID: 7, Mode: "fresh", TargetRef: "HEAD", ObjectFormat: objfmt, LocalRepoUUID: uuid}
+
+	res, err := MaterializeFirstTaskStore(src, root, spec)
+	if err != nil {
+		t.Fatalf("materialize: %v", err)
+	}
+	if res.BaseSHA != base || res.ObjectFormat != objfmt || res.LocalRepoUUID != uuid || !res.FsckClean {
+		t.Fatalf("result = %+v, want base %s / %s / uuid %s / fsck clean", res, base, objfmt, uuid)
+	}
+	if res.ObjectCount < 5 || len(res.ClosureDigest) != 64 || !assignmentHex.MatchString(res.ClosureDigest) {
+		t.Fatalf("result closure = count %d digest %q", res.ObjectCount, res.ClosureDigest)
+	}
+
+	// The sole ref exists at base and HEAD resolves through the worktree to it.
+	refBytes, err := os.ReadFile(filepath.Join(root, "git", "refs", "heads", "mc", "task-7"))
+	if err != nil || strings.TrimSpace(string(refBytes)) != base {
+		t.Fatalf("refs/heads/mc/task-7 = %q (%v), want %s", refBytes, err, base)
+	}
+	source := filepath.Join(root, "source")
+	if got := srcGit(t, source, "rev-parse", "HEAD"); got != base {
+		t.Fatalf("worktree HEAD = %s, want %s", got, base)
+	}
+	if got := srcGit(t, source, "status", "--porcelain"); got != "" {
+		t.Fatalf("materialized worktree is dirty:\n%s", got)
+	}
+	// The empty git/shallow cover (ADR-017:467) makes git report is-shallow=true;
+	// harmless for a complete store (status/commit/fsck all pass), and the
+	// object-set==closure proof, not is-shallow, is the completeness guard
+	// (deviation 2026-07-17). Pinned so a future cover change is noticed.
+	if got := srcGit(t, source, "rev-parse", "--is-shallow-repository"); got != "true" {
+		t.Fatalf("expected is-shallow=true from the empty shallow cover, got %s", got)
+	}
+	// The materialized tree matches the base tree (executable + symlink preserved).
+	if got := srcGit(t, source, "cat-file", "-p", "HEAD:run.sh"); !strings.Contains(got, "echo hi") {
+		t.Fatalf("run.sh content = %q", got)
+	}
+	if _, err := os.Lstat(filepath.Join(root, "git", "objects", "info", "alternates")); !os.IsNotExist(err) {
+		t.Fatal("the task store carries a persistent alternate")
+	}
+	// No loose objects: everything is in the one pack.
+	fanout, _ := filepath.Glob(filepath.Join(root, "git", "objects", "[0-9a-f][0-9a-f]"))
+	if len(fanout) != 0 {
+		t.Fatalf("the task store holds loose objects: %v", fanout)
+	}
+	// The generated config carries exactly the closed key set.
+	cfg, _ := os.ReadFile(filepath.Join(root, "git", "config"))
+	for _, want := range []string{"repositoryformatversion = 1", "relativeWorktrees = true", "localRepoUuid = " + uuid} {
+		if !strings.Contains(string(cfg), want) {
+			t.Fatalf("generated config missing %q:\n%s", want, cfg)
+		}
+	}
+	if strings.Contains(string(cfg), "hooksPath") || strings.Contains(string(cfg), "[remote") {
+		t.Fatalf("generated config carries a forbidden key:\n%s", cfg)
+	}
+}
+
+func TestMaterializeFirstTaskStoreRetryPinsTheExactBaseSHA(t *testing.T) {
+	src, head, objfmt := buildSourceRepo(t)
+	older := srcGit(t, src, "rev-parse", "HEAD~1")
+	if older == head {
+		t.Fatal("fixture needs two commits")
+	}
+	root := mkTaskChildren(t)
+	spec := FirstTaskSetupSpec{TaskID: 7, Mode: "retry", TargetRef: "HEAD", PinnedBaseSHA: older,
+		ObjectFormat: objfmt, LocalRepoUUID: "0a1b2c3d-4e5f-6071-8293-a4b5c6d7e8f9"}
+
+	res, err := MaterializeFirstTaskStore(src, root, spec)
+	if err != nil {
+		t.Fatalf("retry materialize: %v", err)
+	}
+	// Retry pins the recorded OID, never rebasing to the moved HEAD (D5).
+	if res.BaseSHA != older {
+		t.Fatalf("retry base = %s, want the pinned %s (not HEAD %s)", res.BaseSHA, older, head)
+	}
+	if got := srcGit(t, filepath.Join(root, "source"), "rev-parse", "HEAD"); got != older {
+		t.Fatalf("retry worktree HEAD = %s, want pinned %s", got, older)
+	}
+}
+
+func TestMaterializeFirstTaskStoreRefusesObjectFormatMismatch(t *testing.T) {
+	src, _, objfmt := buildSourceRepo(t)
+	other := "sha256"
+	if objfmt == "sha256" {
+		other = "sha1"
+	}
+	root := mkTaskChildren(t)
+	spec := FirstTaskSetupSpec{TaskID: 7, Mode: "fresh", TargetRef: "HEAD", ObjectFormat: other,
+		LocalRepoUUID: "0a1b2c3d-4e5f-6071-8293-a4b5c6d7e8f9"}
+	if _, err := MaterializeFirstTaskStore(src, root, spec); err == nil {
+		t.Fatal("a store was materialized with a mismatched object format")
+	}
+}
+
+func TestMaterializeFirstTaskStoreRefusesResidueInAChild(t *testing.T) {
+	src, _, objfmt := buildSourceRepo(t)
+	root := mkTaskChildren(t)
+	writeFile(t, filepath.Join(root, "git", "residue"), "x\n")
+	spec := FirstTaskSetupSpec{TaskID: 7, Mode: "fresh", TargetRef: "HEAD", ObjectFormat: objfmt,
+		LocalRepoUUID: "0a1b2c3d-4e5f-6071-8293-a4b5c6d7e8f9"}
+	if _, err := MaterializeFirstTaskStore(src, root, spec); err == nil {
+		t.Fatal("a store was materialized over residue in the git child")
+	}
+}
