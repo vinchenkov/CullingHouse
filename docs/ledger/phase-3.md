@@ -1452,3 +1452,16 @@ document. A second document now fails closed rather than being overlooked by
 the decoder's array-only `More` predicate. The full five-leg fast lane is
 green serially. This is the framing prerequisite for D6's accepted-seal setup
 operation.
+
+## 2026-07-18 — accepted-seal setup executor
+
+`3305595` adds the accepted-seal arm to D6's closed `/mc/setup.json` union and
+the host-scope `mc __setup-accepted-seal` entrypoint. Its required facts are
+exactly the accepted Worker run/request, task, object format, sealed SHA,
+closure and manifest digests, seal device/inode/owner, and fixed in-container
+`/repo/seal` and `/repo/task` paths. It rejects first-task fields (including a
+source path) and the first-task arm rejects sealed authority in return. The
+executor maps only the frozen receipt to the already-tested manifest verifier;
+it is not resident-reachable yet, because committed setup-plan attestation and
+confirmed producer absence are the next distinct D6 boundary. The full
+five-leg fast lane is green serially.
