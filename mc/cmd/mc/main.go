@@ -41,7 +41,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	}
 	// The launch-time identity recheck reads HOST files by definition: it must
 	// run locally even when every ordinary verb self-delegates into the helper.
-	if args[0] == "__mount-recheck" || args[0] == "__task-parent-recheck" {
+	if args[0] == "__mount-recheck" || args[0] == "__task-parent-recheck" || args[0] == "__setup-first-task" {
 		return runLocal(args, stdin, stdout, stderr)
 	}
 
@@ -162,6 +162,22 @@ func dispatchVerb(args []string, stdin io.Reader) (any, error) {
 			return nil, err
 		}
 		return verbs.MountRecheck(rest[0])
+	case "__setup-first-task":
+		if len(rest) != 1 {
+			return nil, verbs.Usagef("usage: mc __setup-first-task <envelope-file>")
+		}
+		id, err := verbs.LoadIdentity()
+		if err != nil {
+			return nil, err
+		}
+		if err := verbs.RequireHostScope(id, "mc __setup-first-task"); err != nil {
+			return nil, err
+		}
+		env, err := verbs.ReadSetupEnvelope(rest[0])
+		if err != nil {
+			return nil, err
+		}
+		return verbs.RunFirstTaskSetup(env)
 	case "onboard":
 		return cmdOnboard(rest)
 	case "init":

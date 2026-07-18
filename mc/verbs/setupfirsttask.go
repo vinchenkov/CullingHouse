@@ -291,15 +291,16 @@ type FirstTaskSetupSpec struct {
 	LocalRepoUUID string
 }
 
-// SetupResult is the git-derived evidence the host records as the task
-// assignment and cross-checks against the landed store.
+// SetupResult is the git-derived evidence the in-container executor emits and
+// the host records as the task assignment and cross-checks against the landed
+// store. Its JSON is /mc/setup-result.json's contract.
 type SetupResult struct {
-	BaseSHA       string
-	ObjectFormat  string
-	LocalRepoUUID string
-	ClosureDigest string
-	ObjectCount   int
-	FsckClean     bool
+	BaseSHA       string `json:"base_sha"`
+	ObjectFormat  string `json:"object_format"`
+	LocalRepoUUID string `json:"local_repo_uuid"`
+	ClosureDigest string `json:"closure_digest"`
+	ObjectCount   int    `json:"object_count"`
+	FsckClean     bool   `json:"fsck_clean"`
 }
 
 // generatedTaskGitConfig is the closed-key-set RO config of a task-local store
