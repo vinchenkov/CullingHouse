@@ -757,6 +757,52 @@ BEGIN
 END;
 
 ------------------------------------------------------------------------------
+-- task_assignments — the first-task closure assignment (ADR-016 D5).  Keyed by
+-- task, not run: a retry reuses this recorded assignment rather than rebasing
+-- to a moved target, and a retry is a new run.  Durable retry evidence, so it
+-- is immutable and undeletable; base_sha's length is checked against the row's
+-- own object_format, and every hex identity column is typeof-fenced so a BLOB
+-- forgery cannot slip past the GLOBs (the same D2 hazard).
+------------------------------------------------------------------------------
+
+CREATE TABLE task_assignments (
+    task_id          INTEGER PRIMARY KEY REFERENCES tasks(id),
+    target_ref       TEXT NOT NULL
+                     CHECK (typeof(target_ref) = 'text' AND length(target_ref) BETWEEN 1 AND 512),
+    branch           TEXT NOT NULL
+                     CHECK (typeof(branch) = 'text' AND length(branch) BETWEEN 1 AND 512),
+    task_root_key    TEXT NOT NULL
+                     CHECK (typeof(task_root_key) = 'text' AND length(task_root_key) BETWEEN 1 AND 512),
+    object_format    TEXT NOT NULL
+                     CHECK (typeof(object_format) = 'text' AND object_format IN ('sha1', 'sha256')),
+    base_sha         TEXT NOT NULL
+                     CHECK (typeof(base_sha) = 'text' AND
+                            base_sha GLOB '[0-9a-f]*' AND base_sha NOT GLOB '*[^0-9a-f]*' AND
+                            ((object_format = 'sha1' AND length(base_sha) = 40) OR
+                             (object_format = 'sha256' AND length(base_sha) = 64))),
+    local_repo_uuid  TEXT NOT NULL
+                     CHECK (typeof(local_repo_uuid) = 'text' AND
+                            local_repo_uuid GLOB '[0-9a-f-]*' AND local_repo_uuid NOT GLOB '*[^0-9a-f-]*' AND
+                            length(local_repo_uuid) BETWEEN 1 AND 64),
+    closure_digest   TEXT NOT NULL
+                     CHECK (typeof(closure_digest) = 'text' AND length(closure_digest) = 64 AND
+                            closure_digest GLOB '[0-9a-f]*' AND closure_digest NOT GLOB '*[^0-9a-f]*'),
+    assigned_at      TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TRIGGER task_assignments_immutable
+BEFORE UPDATE ON task_assignments
+BEGIN
+    SELECT RAISE(ABORT, 'task assignment is immutable; a first-task retry reuses its recorded assignment, never rebases (ADR-016 D5)');
+END;
+
+CREATE TRIGGER task_assignments_no_delete
+BEFORE DELETE ON task_assignments
+BEGIN
+    SELECT RAISE(ABORT, 'task assignments are durable retry evidence (ADR-016 D5)');
+END;
+
+------------------------------------------------------------------------------
 -- activity — the append-only log (Inv. 7). actor is the logical originator;
 -- the physical writer is always mc.
 ------------------------------------------------------------------------------

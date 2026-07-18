@@ -75,7 +75,7 @@ func Init(db *sql.DB) error {
 // Version 4 adds the typeof fence triggers over ADR-016 Decision 2's
 // activity/outbox replay-key columns, whose v2 hex CHECKs hold only for TEXT.
 // Version 5 adds the durable run/task-fenced first-task setup receipt.
-const CurrentSchemaVersion = 5
+const CurrentSchemaVersion = 6
 
 // migrationV1ToV2 is ADR-016 Decision 2's storage step, frozen as history.
 //
@@ -296,6 +296,58 @@ BEGIN
 END;
 `
 
+// migrationV5ToV6 records the first-task closure assignment (ADR-016 D5): the
+// pinned base/target SHA, object format, sole branch, deterministic path-free
+// task-root key, local repository UUID, and closure digest. It is keyed by
+// task, not run, because D5's operative invariant is that a *retry reuses that
+// assignment rather than rebasing to a moved target* — and a retry is a new
+// run id, so keying by the entity that outlives the run (the task) structurally
+// forbids the rebase. The row is durable retry evidence: immutable and
+// undeletable, with the same typeof fences the D2 replay keys use so a BLOB
+// forgery cannot bypass the hex/format GLOBs. base_sha's length is checked
+// against the row's own object_format so a sha1/sha256 mismatch fails closed.
+//
+// This text is frozen. A later step is a new constant, never an edit to this
+// one.
+const migrationV5ToV6 = `
+CREATE TABLE task_assignments (
+    task_id          INTEGER PRIMARY KEY REFERENCES tasks(id),
+    target_ref       TEXT NOT NULL
+                     CHECK (typeof(target_ref) = 'text' AND length(target_ref) BETWEEN 1 AND 512),
+    branch           TEXT NOT NULL
+                     CHECK (typeof(branch) = 'text' AND length(branch) BETWEEN 1 AND 512),
+    task_root_key    TEXT NOT NULL
+                     CHECK (typeof(task_root_key) = 'text' AND length(task_root_key) BETWEEN 1 AND 512),
+    object_format    TEXT NOT NULL
+                     CHECK (typeof(object_format) = 'text' AND object_format IN ('sha1', 'sha256')),
+    base_sha         TEXT NOT NULL
+                     CHECK (typeof(base_sha) = 'text' AND
+                            base_sha GLOB '[0-9a-f]*' AND base_sha NOT GLOB '*[^0-9a-f]*' AND
+                            ((object_format = 'sha1' AND length(base_sha) = 40) OR
+                             (object_format = 'sha256' AND length(base_sha) = 64))),
+    local_repo_uuid  TEXT NOT NULL
+                     CHECK (typeof(local_repo_uuid) = 'text' AND
+                            local_repo_uuid GLOB '[0-9a-f-]*' AND local_repo_uuid NOT GLOB '*[^0-9a-f-]*' AND
+                            length(local_repo_uuid) BETWEEN 1 AND 64),
+    closure_digest   TEXT NOT NULL
+                     CHECK (typeof(closure_digest) = 'text' AND length(closure_digest) = 64 AND
+                            closure_digest GLOB '[0-9a-f]*' AND closure_digest NOT GLOB '*[^0-9a-f]*'),
+    assigned_at      TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TRIGGER task_assignments_immutable
+BEFORE UPDATE ON task_assignments
+BEGIN
+    SELECT RAISE(ABORT, 'task assignment is immutable; a first-task retry reuses its recorded assignment, never rebases (ADR-016 D5)');
+END;
+
+CREATE TRIGGER task_assignments_no_delete
+BEFORE DELETE ON task_assignments
+BEGIN
+    SELECT RAISE(ABORT, 'task assignments are durable retry evidence (ADR-016 D5)');
+END;
+`
+
 // Migrate brings an existing spine up to CurrentSchemaVersion, reporting
 // whether it changed anything. It is the "present with an older schema →
 // migrate" arm of §16.4; the caller owns the "absent on a non-empty volume →
@@ -321,7 +373,7 @@ func Migrate(db *sql.DB) (bool, error) {
 		return false, err
 	}
 
-	steps := map[int]string{1: migrationV1ToV2, 2: migrationV2ToV3, 3: migrationV3ToV4, 4: migrationV4ToV5}
+	steps := map[int]string{1: migrationV1ToV2, 2: migrationV2ToV3, 3: migrationV3ToV4, 4: migrationV4ToV5, 5: migrationV5ToV6}
 	changed := false
 	for version < CurrentSchemaVersion {
 		step, ok := steps[version]
