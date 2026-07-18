@@ -75,7 +75,7 @@ func Init(db *sql.DB) error {
 // Version 4 adds the typeof fence triggers over ADR-016 Decision 2's
 // activity/outbox replay-key columns, whose v2 hex CHECKs hold only for TEXT.
 // Version 5 adds the durable run/task-fenced first-task setup receipt.
-const CurrentSchemaVersion = 7
+const CurrentSchemaVersion = 8
 
 // migrationV1ToV2 is ADR-016 Decision 2's storage step, frozen as history.
 //
@@ -376,6 +376,21 @@ BEGIN SELECT RAISE(ABORT, 'completion seal content is immutable and state transi
 CREATE TRIGGER completion_seals_no_delete BEFORE DELETE ON completion_seals BEGIN SELECT RAISE(ABORT, 'completion seal history is durable (ADR-016 D6)'); END;
 `
 
+// migrationV7ToV8 adds the digest of the immutable completion manifest.  A
+// v7 row legitimately has no such evidence, so additive SQLite migration leaves
+// historical rows NULL; the new INSERT trigger makes the field mandatory for
+// every v8 publication and consumers refuse legacy NULL rows rather than
+// guessing a manifest from mutable filesystem bytes.
+const migrationV7ToV8 = `
+ALTER TABLE completion_seals ADD COLUMN manifest_digest TEXT;
+CREATE TRIGGER completion_seals_manifest_required BEFORE INSERT ON completion_seals
+WHEN typeof(NEW.manifest_digest) != 'text' OR length(NEW.manifest_digest) != 64 OR NEW.manifest_digest GLOB '*[^0-9a-f]*'
+BEGIN SELECT RAISE(ABORT, 'completion seal manifest digest must be canonical TEXT sha256 (ADR-016 D6)'); END;
+CREATE TRIGGER completion_seals_manifest_immutable BEFORE UPDATE ON completion_seals
+WHEN NEW.manifest_digest IS NOT OLD.manifest_digest
+BEGIN SELECT RAISE(ABORT, 'completion seal manifest digest is immutable (ADR-016 D6)'); END;
+`
+
 // Migrate brings an existing spine up to CurrentSchemaVersion, reporting
 // whether it changed anything. It is the "present with an older schema →
 // migrate" arm of §16.4; the caller owns the "absent on a non-empty volume →
@@ -401,7 +416,7 @@ func Migrate(db *sql.DB) (bool, error) {
 		return false, err
 	}
 
-	steps := map[int]string{1: migrationV1ToV2, 2: migrationV2ToV3, 3: migrationV3ToV4, 4: migrationV4ToV5, 5: migrationV5ToV6, 6: migrationV6ToV7}
+	steps := map[int]string{1: migrationV1ToV2, 2: migrationV2ToV3, 3: migrationV3ToV4, 4: migrationV4ToV5, 5: migrationV5ToV6, 6: migrationV6ToV7, 7: migrationV7ToV8}
 	changed := false
 	for version < CurrentSchemaVersion {
 		step, ok := steps[version]

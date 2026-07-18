@@ -11,7 +11,7 @@ func TestAcceptCompletionSealRequiresLiveMatchingPublishedReceipt(t *testing.T) 
 	dvInsertTask(t, db, dvTask(7, dispatch.ScopeTask, dispatch.StatusSeeded, 2))
 	dvExec(t, db, `INSERT INTO runs (id,tier,role,worksource,subject) VALUES ('worker','pipeline','worker','ws-test',7)`)
 	dvExec(t, db, `UPDATE lock SET run_id='worker',subject=7,owner='worker',acquired_at=datetime('now'),hard_deadline_at=datetime('now','+1 hour') WHERE id=1`)
-	dvExec(t, db, `INSERT INTO completion_seals (run_id,task_id,completion_request_id,object_format,sealed_sha,closure_digest,seal_device,seal_inode,seal_owner_uid) VALUES ('worker',7,'0011223344556677','sha1',?,?, '1','2',501)`, strings.Repeat("a", 40), strings.Repeat("b", 64))
+	dvExec(t, db, `INSERT INTO completion_seals (run_id,task_id,completion_request_id,object_format,sealed_sha,closure_digest,manifest_digest,seal_device,seal_inode,seal_owner_uid) VALUES ('worker',7,'0011223344556677','sha1',?,?,?,'1','2',501)`, strings.Repeat("a", 40), strings.Repeat("b", 64), strings.Repeat("c", 64))
 	if err := AcceptCompletionSeal(db, "worker", "0011223344556677"); err != nil {
 		t.Fatal(err)
 	}
@@ -43,7 +43,7 @@ func TestAcceptCompletionSealRefusesWrongProducerOrRequestWithoutTerminalMutatio
 	dvInsertTask(t, db, dvTask(7, dispatch.ScopeTask, dispatch.StatusSeeded, 2))
 	dvExec(t, db, `INSERT INTO runs (id,tier,role,worksource,subject) VALUES ('worker','pipeline','worker','ws-test',7)`)
 	dvExec(t, db, `UPDATE lock SET run_id='worker',subject=7,owner='worker',acquired_at=datetime('now'),hard_deadline_at=datetime('now','+1 hour') WHERE id=1`)
-	dvExec(t, db, `INSERT INTO completion_seals (run_id,task_id,completion_request_id,object_format,sealed_sha,closure_digest,seal_device,seal_inode,seal_owner_uid) VALUES ('worker',7,'0011223344556677','sha1',?,?, '1','2',501)`, strings.Repeat("a", 40), strings.Repeat("b", 64))
+	dvExec(t, db, `INSERT INTO completion_seals (run_id,task_id,completion_request_id,object_format,sealed_sha,closure_digest,manifest_digest,seal_device,seal_inode,seal_owner_uid) VALUES ('worker',7,'0011223344556677','sha1',?,?,?,'1','2',501)`, strings.Repeat("a", 40), strings.Repeat("b", 64), strings.Repeat("c", 64))
 
 	if err := AcceptCompletionSeal(db, "worker", "0011223344556678"); err == nil {
 		t.Fatal("different request accepted")
