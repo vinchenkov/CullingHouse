@@ -1272,7 +1272,8 @@ continuation / retry-reconciliation state machine red-first.
 
 ## 2026-07-18 — successful first-task setup continuation
 
-Codex resumed the D6 state-machine seam at `3793fee`. The accepted design is
+Codex resumed the D6 state-machine seam at `3793fee`; `5861175` is the green
+checkpoint. The accepted design is
 a distinct setup-only terminal rather than mutating the immutable zero-row
 precreate plan: `mc task setup-continue --run` checks the exact standalone
 Worker run, lease, durable root receipt, and immutable task assignment in one
