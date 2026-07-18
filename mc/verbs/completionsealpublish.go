@@ -20,16 +20,25 @@ func SealTaskCompletion(taskRoot, sealDir, runID, requestID string, taskID int64
 	if taskID < 1 || runID == "" || len(requestID) != 16 || !assignmentHex.MatchString(requestID) {
 		return CompletionSealPublication{}, Domainf("completion seal identity is malformed")
 	}
+	// Docker binds the exact run-keyed host directory at the fixed private
+	// destination. A mount point cannot be atomically replaced, so an existing
+	// empty directory uses the manifest-as-commit-marker form below. The model
+	// cannot traverse /mc/private, and no consumer is admitted before the
+	// resulting receipt is accepted, so partial staging is never an authority.
+	if info, err := os.Lstat(sealDir); err == nil {
+		if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+			return CompletionSealPublication{}, Domainf("completion seal destination is not an empty directory")
+		}
+		entries, err := os.ReadDir(sealDir)
+		if err != nil || len(entries) != 0 {
+			return CompletionSealPublication{}, Domainf("completion seal destination is not empty")
+		}
+		return sealMountedTaskCompletion(taskRoot, sealDir, runID, requestID, taskID)
+	} else if !os.IsNotExist(err) {
+		return CompletionSealPublication{}, Domainf("completion seal destination is unreadable")
+	}
 	if filepath.Base(sealDir) != runID {
 		return CompletionSealPublication{}, Domainf("completion seal path does not use the producer run key")
-	}
-	if _, err := os.Lstat(sealDir); err == nil || !os.IsNotExist(err) {
-		return CompletionSealPublication{}, Domainf("completion seal destination already exists or is unreadable")
-	}
-	source, gitDir := filepath.Join(taskRoot, "source"), filepath.Join(taskRoot, "git")
-	format, uuid, head, tree, err := inspectCompletableTaskStore(source, gitDir, taskID)
-	if err != nil {
-		return CompletionSealPublication{}, err
 	}
 	parent := filepath.Dir(sealDir)
 	staging, err := os.MkdirTemp(parent, ".mc-seal-")
@@ -40,38 +49,8 @@ func SealTaskCompletion(taskRoot, sealDir, runID, requestID string, taskID int64
 	if err := os.Chmod(staging, 0o700); err != nil {
 		return CompletionSealPublication{}, Domainf("secure completion seal staging: %v", err)
 	}
-	count, err := extractTaskClosurePack(gitDir, head, format, staging)
+	publication, err := buildCompletionSealStaging(taskRoot, staging, runID, requestID, taskID)
 	if err != nil {
-		return CompletionSealPublication{}, err
-	}
-	// The tree and ref must remain stable across packing; the model cannot race
-	// a seal that names a different mutable checkout observation.
-	afterHead, afterTree, err := taskHeadAndTree(source, taskID, format)
-	if err != nil || afterHead != head || afterTree != tree {
-		return CompletionSealPublication{}, Domainf("completion seal task branch changed during packing")
-	}
-	files, err := sealFiles(staging)
-	if err != nil {
-		return CompletionSealPublication{}, err
-	}
-	closure, err := digestLandedPack(staging)
-	if err != nil {
-		return CompletionSealPublication{}, err
-	}
-	manifest := CompletionSealManifest{
-		Version: 1, RunID: runID, TaskID: taskID, CompletionRequest: requestID,
-		ObjectFormat: format, SealedSHA: head, Tree: tree, ObjectCount: count,
-		ClosureDigest: closure, LocalRepoUUID: uuid, Files: files,
-	}
-	body, err := json.Marshal(manifest)
-	if err != nil {
-		return CompletionSealPublication{}, Domainf("encode completion seal manifest: %v", err)
-	}
-	manifestDigest := sha256.Sum256(body)
-	if err := writeSealFile(filepath.Join(staging, "manifest.json"), body); err != nil {
-		return CompletionSealPublication{}, err
-	}
-	if err := syncSealFiles(staging); err != nil {
 		return CompletionSealPublication{}, err
 	}
 	if err := syncDir(staging); err != nil {
@@ -106,10 +85,108 @@ func SealTaskCompletion(taskRoot, sealDir, runID, requestID string, taskID int64
 	if !ok {
 		return CompletionSealPublication{}, Domainf("published completion seal lacks filesystem identity")
 	}
+	publication.Device, publication.Inode, publication.OwnerUID = strconv.FormatUint(uint64(stat.Dev), 10), strconv.FormatUint(stat.Ino, 10), int64(stat.Uid)
+	return publication, nil
+}
+
+// sealMountedTaskCompletion publishes into a pre-existing empty bind root.
+// Pack/index files become durable before manifest.json, which is the sole
+// visibility marker; only an accepted spine receipt permits a later setup
+// consumer to inspect this root.
+func sealMountedTaskCompletion(taskRoot, sealRoot, runID, requestID string, taskID int64) (CompletionSealPublication, error) {
+	staging, err := os.MkdirTemp(sealRoot, ".mc-seal-")
+	if err != nil {
+		return CompletionSealPublication{}, Domainf("create completion seal staging: %v", err)
+	}
+	defer os.RemoveAll(staging)
+	if err := os.Chmod(staging, 0o700); err != nil {
+		return CompletionSealPublication{}, Domainf("secure completion seal staging: %v", err)
+	}
+	publication, err := buildCompletionSealStaging(taskRoot, staging, runID, requestID, taskID)
+	if err != nil {
+		return CompletionSealPublication{}, err
+	}
+	files, err := stagedSealPackNames(staging)
+	if err != nil {
+		return CompletionSealPublication{}, err
+	}
+	for _, name := range files {
+		if err := os.Chmod(filepath.Join(staging, name), 0o444); err != nil {
+			return CompletionSealPublication{}, Domainf("make completion seal immutable: %v", err)
+		}
+	}
+	if err := os.Chmod(filepath.Join(staging, "manifest.json"), 0o444); err != nil {
+		return CompletionSealPublication{}, Domainf("make completion seal immutable: %v", err)
+	}
+	if err := syncSealFiles(staging); err != nil {
+		return CompletionSealPublication{}, err
+	}
+	for _, name := range files {
+		if err := os.Rename(filepath.Join(staging, name), filepath.Join(sealRoot, name)); err != nil {
+			return CompletionSealPublication{}, Domainf("publish completion seal entry: %v", err)
+		}
+	}
+	if err := syncDir(sealRoot); err != nil {
+		return CompletionSealPublication{}, err
+	}
+	// The manifest binds every preceding immutable entry. It moves last, so a
+	// crashed publisher leaves no consumable completion seal.
+	if err := os.Rename(filepath.Join(staging, "manifest.json"), filepath.Join(sealRoot, "manifest.json")); err != nil {
+		return CompletionSealPublication{}, Domainf("publish completion seal manifest: %v", err)
+	}
+	if err := os.Chmod(sealRoot, 0o555); err != nil {
+		return CompletionSealPublication{}, Domainf("make completion seal immutable: %v", err)
+	}
+	if err := syncDir(sealRoot); err != nil {
+		return CompletionSealPublication{}, err
+	}
+	info, err := os.Lstat(sealRoot)
+	if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+		return CompletionSealPublication{}, Domainf("published completion seal is not a directory")
+	}
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if !ok {
+		return CompletionSealPublication{}, Domainf("published completion seal lacks filesystem identity")
+	}
+	publication.Device, publication.Inode, publication.OwnerUID = strconv.FormatUint(uint64(stat.Dev), 10), strconv.FormatUint(stat.Ino, 10), int64(stat.Uid)
+	return publication, nil
+}
+
+func buildCompletionSealStaging(taskRoot, staging, runID, requestID string, taskID int64) (CompletionSealPublication, error) {
+	source, gitDir := filepath.Join(taskRoot, "source"), filepath.Join(taskRoot, "git")
+	format, uuid, head, tree, err := inspectCompletableTaskStore(source, gitDir, taskID)
+	if err != nil {
+		return CompletionSealPublication{}, err
+	}
+	count, err := extractTaskClosurePack(gitDir, head, format, staging)
+	if err != nil {
+		return CompletionSealPublication{}, err
+	}
+	if afterHead, afterTree, err := taskHeadAndTree(source, taskID, format); err != nil || afterHead != head || afterTree != tree {
+		return CompletionSealPublication{}, Domainf("completion seal task branch changed during packing")
+	}
+	files, err := sealFiles(staging)
+	if err != nil {
+		return CompletionSealPublication{}, err
+	}
+	closure, err := digestLandedPack(staging)
+	if err != nil {
+		return CompletionSealPublication{}, err
+	}
+	body, err := json.Marshal(CompletionSealManifest{Version: 1, RunID: runID, TaskID: taskID, CompletionRequest: requestID,
+		ObjectFormat: format, SealedSHA: head, Tree: tree, ObjectCount: count, ClosureDigest: closure, LocalRepoUUID: uuid, Files: files})
+	if err != nil {
+		return CompletionSealPublication{}, Domainf("encode completion seal manifest: %v", err)
+	}
+	digest := sha256.Sum256(body)
+	if err := writeSealFile(filepath.Join(staging, "manifest.json"), body); err != nil {
+		return CompletionSealPublication{}, err
+	}
+	if err := syncSealFiles(staging); err != nil {
+		return CompletionSealPublication{}, err
+	}
 	return CompletionSealPublication{RunID: runID, TaskID: taskID, CompletionRequest: requestID,
-		ObjectFormat: format, SealedSHA: head, ClosureDigest: closure,
-		ManifestDigest: hex.EncodeToString(manifestDigest[:]),
-		Device:         strconv.FormatUint(uint64(stat.Dev), 10), Inode: strconv.FormatUint(stat.Ino, 10), OwnerUID: int64(stat.Uid)}, nil
+		ObjectFormat: format, SealedSHA: head, ClosureDigest: closure, ManifestDigest: hex.EncodeToString(digest[:])}, nil
 }
 
 func inspectCompletableTaskStore(source, gitDir string, taskID int64) (format, uuid, head, tree string, err error) {
@@ -223,6 +300,28 @@ func sealFiles(dir string) ([]CompletionSealFile, error) {
 		return nil, Domainf("completion seal pack does not contain one matching pair")
 	}
 	return files, nil
+}
+
+func stagedSealPackNames(dir string) ([]string, error) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, Domainf("read completion seal pack: %v", err)
+	}
+	names := make([]string, 0, 2)
+	for _, entry := range entries {
+		if entry.Name() == "manifest.json" {
+			continue
+		}
+		if !entry.Type().IsRegular() || !strings.HasPrefix(entry.Name(), "pack-") || (!strings.HasSuffix(entry.Name(), ".pack") && !strings.HasSuffix(entry.Name(), ".idx")) {
+			return nil, Domainf("completion seal pack has an unexpected entry")
+		}
+		names = append(names, entry.Name())
+	}
+	sort.Strings(names)
+	if len(names) != 2 || strings.TrimSuffix(names[0], ".idx") != strings.TrimSuffix(names[1], ".pack") {
+		return nil, Domainf("completion seal pack does not contain one matching pair")
+	}
+	return names, nil
 }
 
 func writeSealFile(path string, body []byte) error {

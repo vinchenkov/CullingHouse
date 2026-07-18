@@ -26,6 +26,11 @@ import (
 	"mc/verbs"
 )
 
+const (
+	completionTaskRoot = "/workspace"
+	completionSealRoot = "/mc/private/completion-seal"
+)
+
 func main() {
 	os.Exit(run(os.Args[1:], os.Stdin, os.Stdout, os.Stderr))
 }
@@ -743,6 +748,7 @@ func cmdComplete(args []string) (any, error) {
 	reason := fs.String("reason", "", "terminal reason")
 	needsOperator := fs.Bool("needs-operator", false, "block for an operator decision")
 	infra := fs.Bool("infra", false, "charge the dispatch-infrastructure budget")
+	sealRequest := fs.String("seal-request", "", "16 lowercase hex completion receipt; publishes the fixed Worker seal")
 	correctionCount := fs.Int("correction-count", -1, "reserved; verifier verdict owns correction arithmetic")
 	if err := parse(fs, rest); err != nil {
 		return nil, err
@@ -759,6 +765,19 @@ func cmdComplete(args []string) (any, error) {
 	id, err := verbs.LoadIdentity()
 	if err != nil {
 		return nil, err
+	}
+	if *sealRequest != "" {
+		if a.Status != "" || a.Branch != "" || a.Outputs != "" || a.Reason != "" || a.NeedsOperator || a.Infra {
+			return nil, verbs.Usagef("mc complete --seal-request is its own Worker terminal and accepts no other terminal flags")
+		}
+		if err := verbs.RequireSealedWorkerIdentity(id, a.Run); err != nil {
+			return nil, err
+		}
+		publication, err := verbs.SealTaskCompletion(completionTaskRoot, completionSealRoot, a.Run, *sealRequest, task)
+		if err != nil {
+			return nil, err
+		}
+		return withSpine(func(db *sql.DB) (any, error) { return verbs.CompleteSealedWorker(db, id, publication) })
 	}
 	return withSpine(func(db *sql.DB) (any, error) { return verbs.Complete(db, id, a) })
 }

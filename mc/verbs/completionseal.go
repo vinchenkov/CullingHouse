@@ -150,3 +150,32 @@ func AcceptCompletionSeal(db *sql.DB, runID, requestID string) error {
 		return releaseLease(ctx, q, runID)
 	})
 }
+
+// CompleteSealedWorker is the privileged wrapper's terminal half. Filesystem
+// publication happens before this call; this method binds that immutable,
+// path-free receipt to the caller's exact Worker identity and performs the
+// one allowed seeded -> worked terminal transition through acceptance.
+func CompleteSealedWorker(db *sql.DB, id *RunIdentity, p CompletionSealPublication) (map[string]any, error) {
+	if err := validateCompletionSealPublication(p); err != nil {
+		return nil, err
+	}
+	if err := RequireSealedWorkerIdentity(id, p.RunID); err != nil {
+		return nil, err
+	}
+	if err := PublishCompletionSeal(db, p); err != nil {
+		return nil, err
+	}
+	if err := AcceptCompletionSeal(db, p.RunID, p.CompletionRequest); err != nil {
+		return nil, err
+	}
+	return map[string]any{"task_id": p.TaskID, "status": "worked", "completion_request_id": p.CompletionRequest}, nil
+}
+
+// RequireSealedWorkerIdentity rejects an unprivileged or stale caller before
+// the wrapper performs any filesystem publication into its gated seal root.
+func RequireSealedWorkerIdentity(id *RunIdentity, runID string) error {
+	if err := requireExactRole(id, "worker"); err != nil {
+		return err
+	}
+	return requireOwnRun(id, runID)
+}

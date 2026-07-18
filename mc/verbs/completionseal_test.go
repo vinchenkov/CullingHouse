@@ -124,3 +124,47 @@ func TestAcceptCompletionSealRefusesWrongProducerOrRequestWithoutTerminalMutatio
 		t.Fatalf("wrong producer changed seal state to %q", got)
 	}
 }
+
+func TestCompleteSealedWorkerBindsCallerAndRejectsTheUnsealedAssignedBypass(t *testing.T) {
+	publication := func() CompletionSealPublication {
+		return CompletionSealPublication{RunID: "worker", TaskID: 7, CompletionRequest: "0011223344556677", ObjectFormat: "sha1", SealedSHA: strings.Repeat("a", 40), ClosureDigest: strings.Repeat("b", 64), ManifestDigest: strings.Repeat("c", 64), Device: "1", Inode: "2", OwnerUID: 501}
+	}
+	seed := func(t *testing.T) *sql.DB {
+		t.Helper()
+		db := dvSpine(t)
+		dvInsertTask(t, db, dvTask(7, dispatch.ScopeTask, dispatch.StatusSeeded, 2))
+		dvExec(t, db, `INSERT INTO runs (id,tier,role,worksource,subject) VALUES ('worker','pipeline','worker','ws-test',7)`)
+		dvExec(t, db, `UPDATE lock SET run_id='worker',subject=7,owner='worker',acquired_at=datetime('now'),hard_deadline_at=datetime('now','+1 hour') WHERE id=1`)
+		return db
+	}
+
+	t.Run("sealed terminal", func(t *testing.T) {
+		db := seed(t)
+		got, err := CompleteSealedWorker(db, &RunIdentity{RunID: "worker", Tier: "pipeline", Role: "worker"}, publication())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got["status"] != "worked" || got["completion_request_id"] != "0011223344556677" {
+			t.Fatalf("completion result=%v", got)
+		}
+		if state := dfStr(t, db, `SELECT state FROM completion_seals WHERE run_id='worker'`); state != "accepted" {
+			t.Fatalf("seal state=%q, want accepted", state)
+		}
+	})
+
+	t.Run("ordinary terminal cannot bypass an assigned task seal", func(t *testing.T) {
+		db := seed(t)
+		dvExec(t, db, `INSERT INTO task_assignments (task_id,target_ref,branch,task_root_key,object_format,base_sha,local_repo_uuid,closure_digest)
+			VALUES (7,'main','mc/task-7','.mission-control/tasks/task-7','sha1',?,?,?)`, strings.Repeat("a", 40), "0a1b2c3d-4e5f-6071-8293-a4b5c6d7e8f9", strings.Repeat("b", 64))
+		_, err := Complete(db, &RunIdentity{RunID: "worker", Tier: "pipeline", Role: "worker"}, CompleteArgs{Task: 7, Run: "worker", Status: "worked"})
+		if err == nil || !strings.Contains(err.Error(), "sealed completion receipt") {
+			t.Fatalf("unsealed assigned completion error=%v", err)
+		}
+		if status := dfStr(t, db, `SELECT status FROM tasks WHERE id=7`); status != "seeded" {
+			t.Fatalf("bypass advanced task to %q", status)
+		}
+		if holder := dfStr(t, db, `SELECT run_id FROM lock WHERE id=1`); holder != "worker" {
+			t.Fatalf("bypass released lease to %q", holder)
+		}
+	})
+}

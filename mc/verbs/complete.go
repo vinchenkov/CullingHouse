@@ -121,6 +121,18 @@ func Complete(db *sql.DB, id *RunIdentity, a CompleteArgs) (any, error) {
 				if baseRole(id.Role) != "worker" {
 					return roleMismatch(id, "worker")
 				}
+				// An assigned standalone task has the D5 task-local store and
+				// therefore must cross D6's sealed Worker terminal. Legacy
+				// phase-2 task rows have no assignment and retain their original
+				// terminal so historical and non-repository work is not invented
+				// into the mutable-store path.
+				var assigned int
+				if err := q.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM task_assignments WHERE task_id=?)`, a.Task).Scan(&assigned); err != nil {
+					return err
+				}
+				if assigned != 0 {
+					return Domainf("assigned standalone Worker completion requires a sealed completion receipt (ADR-016 D6)")
+				}
 				if a.Branch != "" {
 					if !initiativeID.Valid {
 						expected := fmt.Sprintf("mc/task-%d", a.Task)

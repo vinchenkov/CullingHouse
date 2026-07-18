@@ -81,3 +81,39 @@ func TestSealTaskCompletionRefusesDirtyTaskStore(t *testing.T) {
 		t.Fatalf("dirty task seal error=%v", err)
 	}
 }
+
+func TestSealTaskCompletionPublishesIntoAnExistingMountedRunRoot(t *testing.T) {
+	src, _, format := buildSourceRepo(t)
+	root := mkTaskChildren(t)
+	if _, err := MaterializeFirstTaskStore(src, root, FirstTaskSetupSpec{
+		TaskID: 7, Mode: "fresh", TargetRef: "HEAD", ObjectFormat: format,
+		LocalRepoUUID: "0a1b2c3d-4e5f-6071-8293-a4b5c6d7e8f9",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// The production mount source is pre-created by the resident. It is a
+	// mount point, so the publisher must not require a parent-visible rename.
+	sealRoot := t.TempDir()
+	publication, err := SealTaskCompletion(root, sealRoot, "worker", "0011223344556677", 7)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = os.Chmod(sealRoot, 0o700)
+		entries, _ := os.ReadDir(sealRoot)
+		for _, entry := range entries {
+			_ = os.Chmod(filepath.Join(sealRoot, entry.Name()), 0o600)
+		}
+	})
+	if info, err := os.Stat(sealRoot); err != nil || info.Mode().Perm() != 0o555 {
+		t.Fatalf("mounted seal root mode=%v err=%v, want 0555", info.Mode(), err)
+	}
+	if _, err := RebuildAcceptedCompletionSeal(sealRoot, mkTaskChildren(t), AcceptedCompletionSeal{
+		RunID: publication.RunID, TaskID: publication.TaskID, CompletionRequest: publication.CompletionRequest,
+		ObjectFormat: publication.ObjectFormat, SealedSHA: publication.SealedSHA,
+		ClosureDigest: publication.ClosureDigest, ManifestDigest: publication.ManifestDigest,
+		Device: publication.Device, Inode: publication.Inode, OwnerUID: publication.OwnerUID,
+	}); err != nil {
+		t.Fatalf("mounted seal did not rebuild: %v", err)
+	}
+}
