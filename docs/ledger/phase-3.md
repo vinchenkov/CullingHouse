@@ -1411,3 +1411,13 @@ Worker receipt and carries a canonical immutable manifest digest. It returns
 only logical and filesystem identity facts—never a host path. Published or
 wrong-terminal receipts are inert. The next slice consumes this authority to
 open/re-attest the seal and reconstruct the task-local store.
+
+## 2026-07-18 — manifest-verified sealed-pack reconstruction
+
+`11c867f` adds the pure setup executor core. It hashes and strict-decodes the
+accepted manifest, matches every logical field to the accepted receipt, hashes
+each named pack/index byte stream, and forms a throwaway bare Git source only
+from those verified bytes. The established materializer then builds and fsck
+checks the canonical task-local store. A real Git fixture proves no original
+Worksource read is needed after seal creation. Resident filesystem identity and
+producer-absence rechecks remain the next integration seam.
