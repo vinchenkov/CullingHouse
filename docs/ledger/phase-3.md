@@ -1428,3 +1428,6 @@ producer-absence rechecks remain the next integration seam.
 root before opening any manifest or pack bytes and requires a real directory
 with the accepted receipt's decimal device/inode/operator uid. A swapped path,
 symlink, ownership drift, or object-type change refuses before reconstruction.
+
+`17d8ab7` adds the hostile-order proof: a mismatched receipt identity rejects
+before the consumer attempts to parse even malformed manifest bytes.
