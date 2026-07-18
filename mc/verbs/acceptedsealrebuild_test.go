@@ -7,6 +7,8 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
+	"syscall"
 	"testing"
 )
 
@@ -45,7 +47,12 @@ func TestRebuildAcceptedCompletionSealUsesOnlyManifestVerifiedPack(t *testing.T)
 	if err := os.WriteFile(filepath.Join(sealDir, "manifest.json"), body, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	got, err := RebuildAcceptedCompletionSeal(sealDir, mkTaskChildren(t), AcceptedCompletionSeal{RunID: "worker", TaskID: 7, CompletionRequest: "0011223344556677", ObjectFormat: format, SealedSHA: seeded.BaseSHA, ClosureDigest: seeded.ClosureDigest, ManifestDigest: hex.EncodeToString(d[:])})
+	info, err := os.Lstat(sealDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	st := info.Sys().(*syscall.Stat_t)
+	got, err := RebuildAcceptedCompletionSeal(sealDir, mkTaskChildren(t), AcceptedCompletionSeal{RunID: "worker", TaskID: 7, CompletionRequest: "0011223344556677", ObjectFormat: format, SealedSHA: seeded.BaseSHA, ClosureDigest: seeded.ClosureDigest, ManifestDigest: hex.EncodeToString(d[:]), Device: strconv.FormatUint(uint64(st.Dev), 10), Inode: strconv.FormatUint(st.Ino, 10), OwnerUID: int64(st.Uid)})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 )
 
 // CompletionSealManifest is the immutable sealed-input contract. Its SHA-256
@@ -35,6 +36,9 @@ type CompletionSealFile struct {
 // this pure executor verifies its immutable manifest and files before forming a
 // throwaway bare source used by the existing closure materializer.
 func RebuildAcceptedCompletionSeal(sealDir, taskRoot string, seal AcceptedCompletionSeal) (SetupResult, error) {
+	if err := verifyAcceptedSealIdentity(sealDir, seal); err != nil {
+		return SetupResult{}, err
+	}
 	body, err := os.ReadFile(filepath.Join(sealDir, "manifest.json"))
 	if err != nil {
 		return SetupResult{}, Domainf("accepted seal manifest is unreadable: %v", err)
@@ -96,4 +100,17 @@ func RebuildAcceptedCompletionSeal(sealDir, taskRoot string, seal AcceptedComple
 		return SetupResult{}, err
 	}
 	return MaterializeFirstTaskStore(tmp, taskRoot, FirstTaskSetupSpec{TaskID: m.TaskID, Mode: "retry", PinnedBaseSHA: m.SealedSHA, ObjectFormat: m.ObjectFormat, LocalRepoUUID: m.LocalRepoUUID})
+}
+
+func verifyAcceptedSealIdentity(path string, seal AcceptedCompletionSeal) error {
+	info, err := os.Lstat(path)
+	if err != nil || info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+		return Domainf("accepted seal root is not a non-symlink directory")
+	}
+	st, ok := info.Sys().(*syscall.Stat_t)
+	if !ok || strconv.FormatUint(uint64(st.Dev), 10) != seal.Device ||
+		strconv.FormatUint(st.Ino, 10) != seal.Inode || int64(st.Uid) != seal.OwnerUID {
+		return Domainf("accepted seal root is a different filesystem object than its receipt")
+	}
+	return nil
 }
