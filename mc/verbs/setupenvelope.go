@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 )
@@ -99,7 +100,8 @@ func ReadSetupEnvelope(path string) (SetupEnvelope, error) {
 	if err := dec.Decode(&env); err != nil {
 		return SetupEnvelope{}, Domainf("setup envelope is malformed: %v", err)
 	}
-	if dec.More() {
+	var extra any
+	if err := dec.Decode(&extra); err != io.EOF {
 		return SetupEnvelope{}, Domainf("setup envelope carries trailing data")
 	}
 	return env, nil

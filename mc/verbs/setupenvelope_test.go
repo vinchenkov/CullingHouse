@@ -115,6 +115,12 @@ func TestReadSetupEnvelopeStrictRoundTrip(t *testing.T) {
 	if _, err := ReadSetupEnvelope(path); err == nil {
 		t.Fatal("an envelope with an unknown field was accepted")
 	}
+	if err := os.WriteFile(path, append(body, []byte("\n{}")...), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ReadSetupEnvelope(path); err == nil {
+		t.Fatal("an envelope with a trailing document was accepted")
+	}
 }
 
 func retryEnvelope(src, taskRoot, objfmt string, fresh SetupResult) SetupEnvelope {
