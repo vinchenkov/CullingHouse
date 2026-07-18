@@ -10,7 +10,7 @@ Access does NOT fix it — the failure precedes any policy lookup. Symptom:
 `stat` works, reads return `Operation not permitted`, git says
 `Unable to read current working directory`.
 
-LAST GREEN SHA: d6f3729 (local; the operator pushes manually — decided 2026-07-14. Agents: do not push.)
+LAST GREEN SHA: fa097b8 (local; the operator pushes manually — decided 2026-07-14. Agents: do not push.)
 
 PHASES PASSING: Phase 0 COMPLETE (S1–S8 all green, no fallback ADRs; only operator-leg deferrals remain); Phase 1 COMPLETE (1a substrate 172; 1b walking skeleton reviewed-and-fixed — fake-harness 43, agent-runner 13, runner/image 40, resident 42, dispatch + cmd/mc suites; Docker e2e PASS ×4 total); Phase 2 COMPLETE for every unparked acceptance line (domain/§18 surface, deterministic split-brain convergence, bounded honesty + five mutants, tagged dispatch/metamorphic/twin-spine lifecycle properties; the initiative-wave CLI is no longer isolated — ADR-020 landed 2026-07-14 and closed the last Phase 2 acceptance line)
 KNOWN-FAILING: `TestOnboardConcurrentFreshHomeNeverDeletesTheWinner` (mc/verbs),
@@ -372,6 +372,15 @@ kept below. Operator legs that remain open are under `## Parked`, not here.
         bad config; a complete closure pack/index and manifest are fsynced,
         atomically renamed to the run-keyed seal, frozen read-only, and carry
         SHA/tree/count/closure identity. Rebuild verifies all of those facts.
+  - [x] D6 trusted Worker completion terminal: `mc complete <task> --run
+        <run> --seal-request <16-hex>` first publishes only through the fixed
+        `/workspace` and gated `/mc/private/completion-seal` paths, then binds
+        the path-free receipt to the exact Worker identity and accepts it.
+        Assigned standalone tasks refuse the old unsealed `--status worked`
+        bypass; legacy/unassigned Phase-2 rows retain their original terminal.
+        The mounted exact seal root uses a manifest-last publication marker
+        because Docker cannot rename a bind mount; its scoped D6 deviation is
+        logged in IMPLEMENTATION-NOTES.md (2026-07-18).
 - [ ] Phase 4 — E2E control loops (six scenario families)
 - [ ] Phase 5 — Real-subscription acceptance (operator-scheduled)
 - [ ] Release prep (after Phase 5): swap the repo's construction face for
@@ -391,11 +400,11 @@ deleted, not struck through. History is in `docs/ledger/`.
   agent cannot sleep the machine it runs on). Instructions in
   `spikes/07-launchd-clock/RESULT.md`. All other S7 sub-tests passed.
 
-NEXT: Implement ADR-016 D6 accepted-seal canonical-store rebuild red-first:
-the setup consumer must require the exact accepted Worker seal/identity and
-manifest to rebuild the task-local store, refusing unaccepted residue, a
-different identity, or a still-present producer. Keep Verifier disposable-source
-/ committed-tree projections, structured Engine-API binds, and launchd in their
-named later slices.
+NEXT: Implement ADR-016 D6 resident-side accepted-seal setup planning
+red-first: freeze the exact accepted Worker run/request/identity/digest in the
+downstream setup step, require confirmed producer container/guard/runner
+absence before that setup executes, and make a refusal leave the downstream
+create unprepared. Keep Verifier disposable-source / committed-tree projections,
+structured Engine-API binds, and launchd in their named later slices.
 Docker-lane obligations at phase completion: the real setup container run,
 closure e2e fixtures, and the D1 deployment-mirror check.

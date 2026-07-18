@@ -1496,3 +1496,23 @@ its lease—while any changed fact refuses. Wrong role, stage, or lease makes no
 row. The privileged filesystem publisher and resident producer-absence/setup
 plan integration remain later D6 slices. The full five-leg fast lane is green
 serially.
+
+## 2026-07-18 — sealed Worker terminal and mounted seal root
+
+`fa097b8` wires the trusted `mc complete` wrapper to the D6 filesystem and
+spine halves. `mc complete <task> --run <run> --seal-request <16-hex>` admits
+only the exact pipeline Worker identity before it touches the gated fixed
+`/workspace` and `/mc/private/completion-seal` paths, publishes the immutable
+receipt, then calls the receipt-bound acceptance transaction. An assigned
+standalone task now refuses the older generic `--status worked` arm, closing
+the model-visible bypass; legacy unassigned Phase-2 tasks retain that arm.
+
+The actual Docker source is the already-mounted exact run seal directory, so
+it cannot be replaced with the ordinary atomic directory rename. The mounted
+form stages privately under that root, fsyncs/freeze-checks the pack pair,
+moves it first, and moves `manifest.json` last as the consumer-visibility
+marker before root fsync/read-only. The private gate plus accepted-receipt
+fence make an interrupted root non-authoritative; the bounded textual
+deviation is in IMPLEMENTATION-NOTES.md. Focused and complete serial five-leg
+fast lanes are green. Resident plan construction and confirmed producer
+absence remain the next D6 boundary.
