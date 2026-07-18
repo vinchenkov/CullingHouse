@@ -79,11 +79,12 @@ func recheckRecoveryRoot(root string, expected PrivateDispatchPathIdentity) erro
 	return nil
 }
 
-// RecoverTaskSkeleton exact-empties a receipt-vouched root without ever
-// resolving a child through a mutable path. The directory descriptors keep
-// deletion beneath the attested parent/root pair; a raced symlink is refused
-// by O_NOFOLLOW and a raced mount/undeletable entry leaves the recovery run
-// failed rather than broadening cleanup authority.
+// RecoverTaskSkeleton exact-empties a receipt-vouched root's prior contents,
+// then recreates only its fixed empty source/git pair without ever resolving a
+// child through a mutable path. The directory descriptors keep deletion beneath
+// the attested parent/root pair; a raced symlink is refused by O_NOFOLLOW and a
+// raced mount/undeletable entry leaves the recovery run failed rather than
+// broadening cleanup authority.
 func RecoverTaskSkeleton(step PrivateDispatchTaskPrecreate) (PrivateDispatchPathIdentity, error) {
 	if step.RecoverRoot == nil {
 		return PrivateDispatchPathIdentity{}, Domainf("task recovery has no recovery root evidence")
@@ -116,6 +117,26 @@ func RecoverTaskSkeleton(step PrivateDispatchTaskPrecreate) (PrivateDispatchPath
 	}
 	if err := clearDirectoryFD(rootFD); err != nil {
 		return PrivateDispatchPathIdentity{}, Domainf("task recovery could not exact-empty root: %v", err)
+	}
+	// The setup mount table needs its fixed writable children, but no prior
+	// bytes. Recreate only this closed pair while the attested root remains
+	// private; the root inode itself is never replaced.
+	for _, child := range []string{"source", "git"} {
+		if err := unix.Mkdirat(rootFD, child, taskSkeletonChildMode); err != nil {
+			return PrivateDispatchPathIdentity{}, Domainf("task recovery cannot recreate %s child: %v", child, err)
+		}
+		childFD, err := unix.Openat(rootFD, child, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW, 0)
+		if err != nil {
+			return PrivateDispatchPathIdentity{}, Domainf("task recovery cannot reopen %s child: %v", child, err)
+		}
+		var childStat unix.Stat_t
+		statErr := unix.Fstat(childFD, &childStat)
+		chmodErr := unix.Fchmod(childFD, taskSkeletonChildMode)
+		closeErr := unix.Close(childFD)
+		if statErr != nil || childStat.Mode&unix.S_IFMT != unix.S_IFDIR || int(childStat.Uid) != os.Getuid() ||
+			chmodErr != nil || closeErr != nil {
+			return PrivateDispatchPathIdentity{}, Domainf("task recovery recreated %s child with invalid identity/mode", child)
+		}
 	}
 	if err := recoveryRootFDMatches(rootFD, *step.RecoverRoot); err != nil {
 		return PrivateDispatchPathIdentity{}, err

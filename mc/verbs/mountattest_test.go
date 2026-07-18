@@ -1237,6 +1237,116 @@ func TestDispatchRepoWorkerRecoversReceiptBackedSkeletonWithoutClosureAssignment
 	}
 }
 
+func TestFailedFirstTaskSetupReapRecoversThenLostRecordResponseSpawnsOnlyFullPlan(t *testing.T) {
+	ws, root := tsBuild(t)
+	if err := os.Mkdir(filepath.Join(ws, ".git"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	db := dvSpine(t, func(a *InitArgs) { a.WorkspaceRoot = ws })
+	dvExec(t, db, `UPDATE worksources SET kind='repo' WHERE id='ws-test'`)
+	dvInsertTask(t, db, dvTask(7, dispatch.ScopeTask, dispatch.StatusSeeded, 2))
+	device, inode, uid, _ := maEvidence(t, root)
+	// A setup writer died after registering its root but before it could record
+	// the closure. The ordinary lock-domain reap spends exactly one retry and
+	// frees the singleton lease before recovery can be selected.
+	dvExec(t, db, `INSERT INTO runs (id, tier, role, worksource, subject) VALUES ('failed-setup', 'pipeline', 'worker', 'ws-test', 7)`)
+	dvExec(t, db, `INSERT INTO task_setup_receipts (run_id, task_id, root_device, root_inode, root_owner_uid)
+		VALUES ('failed-setup', 7, ?, ?, ?)`, device, inode, uid)
+	dvExec(t, db, `UPDATE lock SET run_id='failed-setup', worksource='ws-test', subject=7, owner='worker',
+		acquired_at=?, last_heartbeat_at=NULL, hard_deadline_at=? WHERE id=1`, dvOld.Format(spineTime), dvFuture.Format(spineTime))
+	if prepared := dfPrepare(t, db, "0011223344556601"); prepared.final == nil || prepared.final["action"] != "reap" {
+		t.Fatalf("failed setup reap = %+v, want terminal reap", prepared)
+	}
+	if got := dfInt(t, db, `SELECT dispatch_retries FROM tasks WHERE id=7`); got != 2 {
+		t.Fatalf("failed setup reap retries = %d, want exactly one charge", got)
+	}
+	if err := os.Chmod(os.Getenv("MC_HOME"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(os.Getenv("MC_HOME"), "mount-allowlist"), []byte("version = 1\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	prepared := dfPrepare(t, db, "0011223344556602")
+	attested, err := dispatchAttest(os.Getenv("MC_HOME"), prepared)
+	if err != nil || attested.refusal != nil {
+		t.Fatalf("recovery attest = (refusal %+v, err %v)", attested.refusal, err)
+	}
+	effect := dfCommit(t, db, prepared, attested)
+	if effect["action"] != "spawn" {
+		t.Fatalf("recovery effect = %v, want spawn", effect)
+	}
+	body, err := json.Marshal(effect["mount_plan"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	var recoveryPlan PrivateDispatchMountPlan
+	if err := json.Unmarshal(body, &recoveryPlan); err != nil {
+		t.Fatal(err)
+	}
+	if recoveryPlan.TaskPrecreate == nil || recoveryPlan.TaskPrecreate.RecoverRoot == nil || len(recoveryPlan.Entries) != 0 {
+		t.Fatalf("recovery plan = %+v, want zero-row receipt-vouched cleanup", recoveryPlan)
+	}
+	recoveryRun, ok := effect["run_id"].(string)
+	if !ok || recoveryRun == "" {
+		t.Fatalf("recovery effect run_id = %v", effect["run_id"])
+	}
+	registered, err := RecoverTaskSkeleton(*recoveryPlan.TaskPrecreate)
+	if err != nil {
+		t.Fatalf("recover task skeleton: %v", err)
+	}
+	if _, err := RegisterFirstTaskSetup(db, TaskSetupReceipt{RunID: recoveryRun, TaskID: 7,
+		Root: TaskSetupIdentity{Device: registered.Device, Inode: registered.Inode, OwnerUID: registered.OwnerUID}}); err != nil {
+		t.Fatalf("register recovered root: %v", err)
+	}
+	source, _, objectFormat := buildSourceRepo(t)
+	result, err := MaterializeFirstTaskStore(source, root, FirstTaskSetupSpec{
+		TaskID: 7, Mode: "fresh", TargetRef: "HEAD", ObjectFormat: objectFormat,
+		LocalRepoUUID: "0a1b2c3d-4e5f-6071-8293-a4b5c6d7e8f9",
+	})
+	if err != nil {
+		t.Fatalf("fresh setup after recovery: %v", err)
+	}
+	if _, _, err := RecordFirstTaskSetupClosure(db, recoveryRun, ws, result); err != nil {
+		t.Fatalf("record recovered closure: %v", err)
+	}
+	// Simulate loss of setup-record's response before setup-continue: the
+	// assignment is already durable, but its live zero-row setup lease cannot
+	// launch an agent or be replaced early.
+	if held := dfPrepare(t, db, "0011223344556603"); held.final == nil || held.final["action"] != "idle" {
+		t.Fatalf("lost setup-record response = %+v, want lease-held idle", held)
+	}
+	if got := dfInt(t, db, `SELECT COUNT(*) FROM runs WHERE subject=7`); got != 2 {
+		t.Fatalf("lost response created %d runs, want failed plus setup", got)
+	}
+	// If that live setup run later reaps, its durable assignment admits the
+	// ordinary 15-row Worker plan directly: it must not scrub/re-run setup.
+	dvExec(t, db, `UPDATE lock SET acquired_at=?, last_heartbeat_at=NULL, hard_deadline_at=? WHERE id=1`, dvOld.Format(spineTime), dvFuture.Format(spineTime))
+	if reaped := dfPrepare(t, db, "0011223344556604"); reaped.final == nil || reaped.final["action"] != "reap" {
+		t.Fatalf("lost-response reap = %+v, want reap", reaped)
+	}
+	prepared = dfPrepare(t, db, "0011223344556605")
+	attested, err = dispatchAttest(os.Getenv("MC_HOME"), prepared)
+	if err != nil || attested.refusal != nil {
+		t.Fatalf("post-record retry attest = (refusal %+v, err %v)", attested.refusal, err)
+	}
+	effect = dfCommit(t, db, prepared, attested)
+	body, err = json.Marshal(effect["mount_plan"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	var agentPlan PrivateDispatchMountPlan
+	if err := json.Unmarshal(body, &agentPlan); err != nil {
+		t.Fatal(err)
+	}
+	if effect["action"] != "spawn" || agentPlan.TaskPrecreate != nil || len(agentPlan.Entries) != len(taskPlanRows(7)) {
+		t.Fatalf("post-record retry = effect %v plan %+v, want authoritative 15-row Worker plan", effect, agentPlan)
+	}
+	if got := dfInt(t, db, `SELECT dispatch_retries FROM tasks WHERE id=7`); got != 1 {
+		t.Fatalf("two reaps charged retries=%d, want one charge each", got)
+	}
+}
+
 func TestDispatchRepoWorkerClaimsBeforeReturningTaskPrecreate(t *testing.T) {
 	ws, _ := tsBuild(t) // task-7 exists; task-9 is the proved-absent first-run path.
 	if err := os.Mkdir(filepath.Join(ws, ".git"), 0o700); err != nil {

@@ -137,6 +137,7 @@ func TestTaskParentRecheckRepeatsTrustIdentityAndAbsence(t *testing.T) {
 func TestRecoverTaskSkeletonExactEmptiesOnlyTheReceiptVouchedRoot(t *testing.T) {
 	step := mrTaskPrecreate(t)
 	root := filepath.Join(step.TasksParent.Canonical, "task-7")
+	t.Cleanup(func() { _ = os.Chmod(root, 0o700) })
 	if err := os.MkdirAll(filepath.Join(root, "source", "nested"), 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -159,8 +160,18 @@ func TestRecoverTaskSkeletonExactEmptiesOnlyTheReceiptVouchedRoot(t *testing.T) 
 		t.Fatalf("recovery identity = %+v, want %+v", got, *step.RecoverRoot)
 	}
 	entries, err := os.ReadDir(root)
-	if err != nil || len(entries) != 0 {
-		t.Fatalf("recovery left root entries %v, err %v", entries, err)
+	if err != nil || len(entries) != 2 || entries[0].Name() != "git" || entries[1].Name() != "source" {
+		t.Fatalf("recovery root entries %v, err %v, want empty git/source pair", entries, err)
+	}
+	for _, child := range []string{"source", "git"} {
+		info, err := os.Lstat(filepath.Join(root, child))
+		if err != nil || !info.IsDir() || info.Mode().Perm() != taskSkeletonChildMode {
+			t.Fatalf("recovery child %s = (%v, %v), want empty mode-0700 directory", child, info, err)
+		}
+		contents, err := os.ReadDir(filepath.Join(root, child))
+		if err != nil || len(contents) != 0 {
+			t.Fatalf("recovery child %s contents = %v, err %v", child, contents, err)
+		}
 	}
 	info, err := os.Lstat(root)
 	if err != nil || info.Mode().Perm() != 0o555 {
