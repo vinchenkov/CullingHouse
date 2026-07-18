@@ -1,0 +1,99 @@
+package verbs
+
+import (
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"strconv"
+	"strings"
+)
+
+// CompletionSealManifest is the immutable sealed-input contract. Its SHA-256
+// is stored in completion_seals.manifest_digest; pack bytes are individually
+// named and digested so the temporary importer never consults mutable task or
+// Worksource objects.
+type CompletionSealManifest struct {
+	Version           int                  `json:"version"`
+	RunID             string               `json:"run_id"`
+	TaskID            int64                `json:"task_id"`
+	CompletionRequest string               `json:"completion_request_id"`
+	ObjectFormat      string               `json:"object_format"`
+	SealedSHA         string               `json:"sealed_sha"`
+	ClosureDigest     string               `json:"closure_digest"`
+	LocalRepoUUID     string               `json:"local_repo_uuid"`
+	Files             []CompletionSealFile `json:"files"`
+}
+type CompletionSealFile struct {
+	Name   string `json:"name"`
+	Digest string `json:"digest"`
+}
+
+// RebuildAcceptedCompletionSeal reconstructs a task store from only an exact
+// accepted seal. The seal root is supplied by the resident's re-attested mount;
+// this pure executor verifies its immutable manifest and files before forming a
+// throwaway bare source used by the existing closure materializer.
+func RebuildAcceptedCompletionSeal(sealDir, taskRoot string, seal AcceptedCompletionSeal) (SetupResult, error) {
+	body, err := os.ReadFile(filepath.Join(sealDir, "manifest.json"))
+	if err != nil {
+		return SetupResult{}, Domainf("accepted seal manifest is unreadable: %v", err)
+	}
+	h := sha256.Sum256(body)
+	if hex.EncodeToString(h[:]) != seal.ManifestDigest {
+		return SetupResult{}, Domainf("accepted seal manifest digest does not match the accepted receipt")
+	}
+	var m CompletionSealManifest
+	dec := json.NewDecoder(strings.NewReader(string(body)))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&m); err != nil || dec.More() {
+		return SetupResult{}, Domainf("accepted seal manifest is malformed")
+	}
+	if m.Version != 1 || m.RunID != seal.RunID || m.TaskID != seal.TaskID || m.CompletionRequest != seal.CompletionRequest || m.ObjectFormat != seal.ObjectFormat || m.SealedSHA != seal.SealedSHA || m.ClosureDigest != seal.ClosureDigest || !assignmentUUID.MatchString(m.LocalRepoUUID) {
+		return SetupResult{}, Domainf("accepted seal manifest does not reproduce its immutable receipt")
+	}
+	if len(m.Files) < 2 {
+		return SetupResult{}, Domainf("accepted seal manifest has no complete pack/index pair")
+	}
+	tmp, err := os.MkdirTemp("", "mc-accepted-seal-")
+	if err != nil {
+		return SetupResult{}, Domainf("create sealed importer: %v", err)
+	}
+	defer os.RemoveAll(tmp)
+	packDir := filepath.Join(tmp, "objects", "pack")
+	if err := os.MkdirAll(packDir, 0o700); err != nil {
+		return SetupResult{}, Domainf("create sealed importer: %v", err)
+	}
+	seen := map[string]bool{}
+	for _, f := range m.Files {
+		if seen[f.Name] || !(strings.HasPrefix(f.Name, "pack-") && (strings.HasSuffix(f.Name, ".pack") || strings.HasSuffix(f.Name, ".idx"))) || len(f.Digest) != 64 || !assignmentHex.MatchString(f.Digest) {
+			return SetupResult{}, Domainf("accepted seal manifest has an invalid pack entry")
+		}
+		seen[f.Name] = true
+		b, err := os.ReadFile(filepath.Join(sealDir, f.Name))
+		if err != nil {
+			return SetupResult{}, Domainf("accepted seal pack entry is unreadable: %v", err)
+		}
+		d := sha256.Sum256(b)
+		if hex.EncodeToString(d[:]) != f.Digest {
+			return SetupResult{}, Domainf("accepted seal pack entry digest mismatch")
+		}
+		if err := os.WriteFile(filepath.Join(packDir, f.Name), b, 0o600); err != nil {
+			return SetupResult{}, Domainf("write sealed importer: %v", err)
+		}
+	}
+	if err := os.MkdirAll(filepath.Join(tmp, "refs", "heads", "mc"), 0o700); err != nil {
+		return SetupResult{}, Domainf("create sealed importer refs: %v", err)
+	}
+	branch := taskAssignmentBranch(m.TaskID)
+	if err := os.WriteFile(filepath.Join(tmp, "config"), generatedTaskGitConfig(m.ObjectFormat, m.LocalRepoUUID), 0o600); err != nil {
+		return SetupResult{}, err
+	}
+	if err := os.WriteFile(filepath.Join(tmp, "HEAD"), []byte("ref: refs/heads/"+branch+"\n"), 0o600); err != nil {
+		return SetupResult{}, err
+	}
+	if err := os.WriteFile(filepath.Join(tmp, "refs", "heads", "mc", "task-"+strconv.FormatInt(m.TaskID, 10)), []byte(m.SealedSHA+"\n"), 0o600); err != nil {
+		return SetupResult{}, err
+	}
+	return MaterializeFirstTaskStore(tmp, taskRoot, FirstTaskSetupSpec{TaskID: m.TaskID, Mode: "retry", PinnedBaseSHA: m.SealedSHA, ObjectFormat: m.ObjectFormat, LocalRepoUUID: m.LocalRepoUUID})
+}

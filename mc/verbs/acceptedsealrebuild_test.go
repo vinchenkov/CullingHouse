@@ -1,0 +1,55 @@
+package verbs
+
+import (
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"sort"
+	"testing"
+)
+
+func TestRebuildAcceptedCompletionSealUsesOnlyManifestVerifiedPack(t *testing.T) {
+	src, _, format := buildSourceRepo(t)
+	seed := mkTaskChildren(t)
+	uuid := "0a1b2c3d-4e5f-6071-8293-a4b5c6d7e8f9"
+	seeded, err := MaterializeFirstTaskStore(src, seed, FirstTaskSetupSpec{TaskID: 7, Mode: "fresh", TargetRef: "HEAD", ObjectFormat: format, LocalRepoUUID: uuid})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sealDir := t.TempDir()
+	entries, err := os.ReadDir(filepath.Join(seed, "git", "objects", "pack"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	files := make([]CompletionSealFile, 0, len(entries))
+	for _, e := range entries {
+		b, err := os.ReadFile(filepath.Join(seed, "git", "objects", "pack", e.Name()))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(sealDir, e.Name()), b, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		d := sha256.Sum256(b)
+		files = append(files, CompletionSealFile{Name: e.Name(), Digest: hex.EncodeToString(d[:])})
+	}
+	sort.Slice(files, func(i, j int) bool { return files[i].Name < files[j].Name })
+	m := CompletionSealManifest{Version: 1, RunID: "worker", TaskID: 7, CompletionRequest: "0011223344556677", ObjectFormat: format, SealedSHA: seeded.BaseSHA, ClosureDigest: seeded.ClosureDigest, LocalRepoUUID: uuid, Files: files}
+	body, err := json.Marshal(m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	d := sha256.Sum256(body)
+	if err := os.WriteFile(filepath.Join(sealDir, "manifest.json"), body, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got, err := RebuildAcceptedCompletionSeal(sealDir, mkTaskChildren(t), AcceptedCompletionSeal{RunID: "worker", TaskID: 7, CompletionRequest: "0011223344556677", ObjectFormat: format, SealedSHA: seeded.BaseSHA, ClosureDigest: seeded.ClosureDigest, ManifestDigest: hex.EncodeToString(d[:])})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.BaseSHA != seeded.BaseSHA || got.ClosureDigest != seeded.ClosureDigest {
+		t.Fatalf("rebuild=%+v seed=%+v", got, seeded)
+	}
+}
