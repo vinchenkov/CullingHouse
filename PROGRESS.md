@@ -10,7 +10,7 @@ Access does NOT fix it — the failure precedes any policy lookup. Symptom:
 `stat` works, reads return `Operation not permitted`, git says
 `Unable to read current working directory`.
 
-LAST GREEN SHA: d2ef90d (local; the operator pushes manually — decided 2026-07-14. Agents: do not push.)
+LAST GREEN SHA: dec529d (local; the operator pushes manually — decided 2026-07-14. Agents: do not push.)
 
 PHASES PASSING: Phase 0 COMPLETE (S1–S8 all green, no fallback ADRs; only operator-leg deferrals remain); Phase 1 COMPLETE (1a substrate 172; 1b walking skeleton reviewed-and-fixed — fake-harness 43, agent-runner 13, runner/image 40, resident 42, dispatch + cmd/mc suites; Docker e2e PASS ×4 total); Phase 2 COMPLETE for every unparked acceptance line (domain/§18 surface, deterministic split-brain convergence, bounded honesty + five mutants, tagged dispatch/metamorphic/twin-spine lifecycle properties; the initiative-wave CLI is no longer isolated — ADR-020 landed 2026-07-14 and closed the last Phase 2 acceptance line)
 KNOWN-FAILING: `TestOnboardConcurrentFreshHomeNeverDeletesTheWinner` (mc/verbs),
@@ -321,10 +321,22 @@ kept below. Operator legs that remain open are under `## Parked`, not here.
         The resident calls it only after successful `setup-record`, retaining
         the envelope on refusal. The next normal dispatch then produces a
         second, newly attested 15-row Worker plan (never an agent launch from
-        the zero-row precreate plan); a receipt-backed skeleton without its
-        closure assignment health-refuses. Focused lifecycle test and complete
-        five-leg fast lane green. The failed/interrupted setup recovery path is
-        intentionally still open below.
+        the zero-row precreate plan). The failed/interrupted setup recovery
+        path is now implemented below; full failure-timeline/crash-cut tests
+        remain the live D6 acceptance work.
+  - [x] Failed/interrupted first-task recovery carrier and host cleanup
+        (ADR-016 D6): an existing root with no immutable assignment may spawn
+        only when its exact identity is frozen in a prior setup receipt. The
+        immutable plan carries that root as `recover_root`; the host helper
+        descriptor-opens the attested parent/root, exact-empties only that root
+        without following child paths, restores its 0555 mode, and returns the
+        same identity for the replacement Worker receipt. The resident cannot
+        route this plan through ordinary precreate; it invokes only the
+        host-scope helper, re-registers the returned identity, then performs a
+        fresh setup/record/continue handoff. Setup containers have the exact
+        `mc-setup-<run>` name; the reaper stops it before the ordinary agent
+        name, so no stale writer races recovery cleanup. Host/resident focused
+        tests plus the five-leg fast lane are green.
 - [ ] Phase 4 — E2E control loops (six scenario families)
 - [ ] Phase 5 — Real-subscription acceptance (operator-scheduled)
 - [ ] Release prep (after Phase 5): swap the repo's construction face for
@@ -344,16 +356,13 @@ deleted, not struck through. History is in `docs/ledger/`.
   agent cannot sleep the machine it runs on). Instructions in
   `spikes/07-launchd-clock/RESULT.md`. All other S7 sub-tests passed.
 
-NEXT: Complete the remaining ADR-016 D6 Worker-retry reconciliation failure
-half red-first. A successful first-task setup now transitions safely, but a
-failed/interrupted setup container leaves a live precreate run and a durable
-receipt/root with no immutable assignment; after the ordinary reaper it must
-converge through exact observed-residue cleanup and a retry pinned to the
-recorded closure where one exists, never health-wedging that task indefinitely
-or launching from partial bytes. Specify the cleanup authority/fences and
-prove crash cuts, lost `setup-record` response, retry charging/blocking, and
-the no-agent-before-authoritative-plan rule against ADR-016 Decision 6. Keep
-accepted-seal rebuild, Verifier disposable-source / committed-tree projections,
-structured Engine-API binds, and launchd in their named later slices.
+NEXT: Complete ADR-016 D6 recovery acceptance red-first with an end-to-end
+failure timeline: named setup container → reaper stop and retry charge →
+receipt-vouched descriptor cleanup → replacement fresh setup → authoritative
+15-row Worker plan. Prove the crash cuts and lost `setup-record` response
+separately, including that a recorded assignment bypasses cleanup and never
+launches from a zero-row plan. Keep accepted-seal rebuild, Verifier
+disposable-source / committed-tree projections, structured Engine-API binds,
+and launchd in their named later slices.
 Docker-lane obligations at phase completion: the real setup container run,
 closure e2e fixtures, and the D1 deployment-mirror check.

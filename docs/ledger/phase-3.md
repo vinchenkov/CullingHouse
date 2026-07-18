@@ -1307,3 +1307,30 @@ non-decimal identities, and ordinary precreate frames remain refused. This is
 only the carrier foundation: host capture, predecessor setup-container
 reconciliation, and inode-preserving child scrub remain required before any
 recovery plan is emitted. The full Go fast lane is green.
+
+## 2026-07-18 — D6 receipt-vouched failed-setup recovery
+
+The recovery carrier is now consumed end-to-end at the host/resident seam.
+When an existing task root has no immutable closure assignment, host attest
+accepts it only if its exact device/inode/owner tuple occurs in the frozen
+durable setup-receipt projection. It emits a zero-row recovery setup plan with
+the same root identity; any unvouched or swapped root remains a deployment
+health refusal. The private commit boundary independently confirms the tuple
+against the candidate's frozen receipt set.
+
+The resident uses a separate recovery primitive rather than weakening ordinary
+precreate. `mc __task-skeleton-recover` repeats parent/root evidence checks,
+opens parent and root with `O_NOFOLLOW`, recursively unlinks through directory
+descriptors, rechecks the original root inode, restores 0555, and returns only
+that original identity. It then registers the replacement Worker receipt and
+runs the existing fresh setup → record → continue handoff. Its tests cover a
+nested partial tree and a symlink entry, both removed without following the
+link; the ordinary precreate primitive still rejects an existing root.
+
+The setup container now has the deterministic `mc-setup-<run>` name. Reap
+stops it before attempting `mc-run-<run>`, so a lease reaper serializes a
+stale writer before the next tick can dispatch recovery. Split-brain and
+resident effect tests were updated to prove the two exact stops. The full
+five-leg fast suite is green. Remaining D6 work is an explicit timeline test
+that joins reaping, recovery dispatch, fresh record, and the later 15-row
+agent plan across crash/lost-response cuts.
