@@ -95,6 +95,37 @@ func TestValidateSetupEnvelopeRejectsMalformed(t *testing.T) {
 	}
 }
 
+func TestValidateAcceptedSealSetupEnvelopeIsAClosedReceipt(t *testing.T) {
+	base := SetupEnvelope{
+		SchemaVersion: 1, Operation: SetupOperationAcceptedSealRebuild,
+		RunID: "worker", TaskID: 7, ObjectFormat: "sha1",
+		CompletionRequest: "0011223344556677", SealedSHA: strings.Repeat("a", 40),
+		ClosureDigest: strings.Repeat("b", 64), ManifestDigest: strings.Repeat("c", 64),
+		SealRoot: "/repo/seal", TaskRoot: "/repo/task", SealDevice: "1", SealInode: "2", SealOwnerUID: 501,
+	}
+	if err := validateSetupEnvelope(base); err != nil {
+		t.Fatalf("valid accepted-seal envelope: %v", err)
+	}
+	bad := map[string]func(*SetupEnvelope){
+		"host-path":         func(e *SetupEnvelope) { e.SealRoot = "/private/seal" },
+		"request":           func(e *SetupEnvelope) { e.CompletionRequest = "not-a-request" },
+		"sha":               func(e *SetupEnvelope) { e.SealedSHA = "bad" },
+		"digest":            func(e *SetupEnvelope) { e.ManifestDigest = "bad" },
+		"identity":          func(e *SetupEnvelope) { e.SealInode = "01" },
+		"first-task-source": func(e *SetupEnvelope) { e.SourceRepo = "/host/source" },
+	}
+	for name, mutate := range bad {
+		env := base
+		mutate(&env)
+		if err := validateSetupEnvelope(env); err == nil {
+			t.Fatalf("%s: malformed accepted-seal envelope was accepted", name)
+		}
+	}
+	if _, err := RunFirstTaskSetup(base); err == nil {
+		t.Fatal("first-task executor accepted an accepted-seal operation")
+	}
+}
+
 func TestReadSetupEnvelopeStrictRoundTrip(t *testing.T) {
 	env := freshEnvelope("/src", "/task", "sha1")
 	body, err := json.Marshal(env)

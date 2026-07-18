@@ -11,9 +11,12 @@ import (
 	"path/filepath"
 )
 
-// SetupOperationFirstTaskClosure is the sole closed-union operation this
-// executor performs (ADR-016 D6:724). Any other value fails closed.
-const SetupOperationFirstTaskClosure = "first-task-closure-extraction"
+// Setup operations are a closed union (ADR-016 D6:724). Each arm carries only
+// the authority it consumes; arbitrary container commands are never admitted.
+const (
+	SetupOperationFirstTaskClosure    = "first-task-closure-extraction"
+	SetupOperationAcceptedSealRebuild = "accepted-seal-rebuild"
+)
 
 // SetupEnvelope is /mc/setup.json: the frozen, credential-free, host-path-free
 // (container-destination) instruction the resident writes RO and the in-
@@ -34,14 +37,19 @@ type SetupEnvelope struct {
 	WorktreeName        string `json:"worktree_name"`
 	SourceRepo          string `json:"source_repo"`
 	TaskRoot            string `json:"task_root"`
+	CompletionRequest   string `json:"completion_request_id,omitempty"`
+	SealedSHA           string `json:"sealed_sha,omitempty"`
+	ClosureDigest       string `json:"closure_digest,omitempty"`
+	ManifestDigest      string `json:"manifest_digest,omitempty"`
+	SealRoot            string `json:"seal_root,omitempty"`
+	SealDevice          string `json:"seal_device,omitempty"`
+	SealInode           string `json:"seal_inode,omitempty"`
+	SealOwnerUID        int64  `json:"seal_owner_uid,omitempty"`
 }
 
 func validateSetupEnvelope(env SetupEnvelope) error {
 	if env.SchemaVersion != 1 {
 		return Domainf("setup envelope schema version %d is unsupported", env.SchemaVersion)
-	}
-	if env.Operation != SetupOperationFirstTaskClosure {
-		return Domainf("setup envelope operation %q is outside the closed union", env.Operation)
 	}
 	if env.RunID == "" || env.TaskID < 1 {
 		return Domainf("setup envelope names no live run/task")
@@ -49,29 +57,55 @@ func validateSetupEnvelope(env SetupEnvelope) error {
 	if err := validateSetupObjectFormat(env.ObjectFormat); err != nil {
 		return err
 	}
-	if env.Branch != taskAssignmentBranch(env.TaskID) || env.WorktreeName != taskWorktreeName(env.TaskID) {
-		return Domainf("setup envelope branch/worktree name does not match the task id")
-	}
-	if env.SourceRepo == "" || env.TaskRoot == "" {
-		return Domainf("setup envelope carries no source/task paths")
-	}
-	switch env.Mode {
-	case "fresh":
-		if env.TargetRef == "" {
-			return Domainf("setup envelope fresh mode has no target ref")
+	switch env.Operation {
+	case SetupOperationFirstTaskClosure:
+		if env.CompletionRequest != "" || env.SealedSHA != "" || env.ClosureDigest != "" ||
+			env.ManifestDigest != "" || env.SealRoot != "" || env.SealDevice != "" ||
+			env.SealInode != "" || env.SealOwnerUID != 0 {
+			return Domainf("first-task setup envelope carries accepted-seal authority")
 		}
-	case "retry":
-		if len(env.PinnedBaseSHA) != oidLen(env.ObjectFormat) || !assignmentHex.MatchString(env.PinnedBaseSHA) {
-			return Domainf("setup envelope retry base SHA is malformed")
+		if env.Branch != taskAssignmentBranch(env.TaskID) || env.WorktreeName != taskWorktreeName(env.TaskID) {
+			return Domainf("setup envelope branch/worktree name does not match the task id")
 		}
-		if len(env.PinnedClosureDigest) != 64 || !assignmentHex.MatchString(env.PinnedClosureDigest) {
-			return Domainf("setup envelope retry closure digest is malformed")
+		if env.SourceRepo == "" || env.TaskRoot == "" {
+			return Domainf("setup envelope carries no source/task paths")
 		}
-		if !assignmentUUID.MatchString(env.PinnedLocalRepoUUID) {
-			return Domainf("setup envelope retry local repository UUID is malformed")
+		switch env.Mode {
+		case "fresh":
+			if env.TargetRef == "" {
+				return Domainf("setup envelope fresh mode has no target ref")
+			}
+		case "retry":
+			if len(env.PinnedBaseSHA) != oidLen(env.ObjectFormat) || !assignmentHex.MatchString(env.PinnedBaseSHA) {
+				return Domainf("setup envelope retry base SHA is malformed")
+			}
+			if len(env.PinnedClosureDigest) != 64 || !assignmentHex.MatchString(env.PinnedClosureDigest) {
+				return Domainf("setup envelope retry closure digest is malformed")
+			}
+			if !assignmentUUID.MatchString(env.PinnedLocalRepoUUID) {
+				return Domainf("setup envelope retry local repository UUID is malformed")
+			}
+		default:
+			return Domainf("setup envelope mode %q is neither fresh nor retry", env.Mode)
+		}
+	case SetupOperationAcceptedSealRebuild:
+		if env.Mode != "" || env.TargetRef != "" || env.PinnedBaseSHA != "" ||
+			env.PinnedClosureDigest != "" || env.PinnedLocalRepoUUID != "" ||
+			env.Branch != "" || env.WorktreeName != "" || env.SourceRepo != "" {
+			return Domainf("accepted-seal setup envelope carries first-task authority")
+		}
+		if env.TaskRoot != "/repo/task" || env.SealRoot != "/repo/seal" {
+			return Domainf("accepted-seal setup envelope carries paths outside its fixed container destinations")
+		}
+		if len(env.CompletionRequest) != 16 || !assignmentHex.MatchString(env.CompletionRequest) ||
+			len(env.SealedSHA) != oidLen(env.ObjectFormat) || !assignmentHex.MatchString(env.SealedSHA) ||
+			len(env.ClosureDigest) != 64 || !assignmentHex.MatchString(env.ClosureDigest) ||
+			len(env.ManifestDigest) != 64 || !assignmentHex.MatchString(env.ManifestDigest) ||
+			!decimalIdentity.MatchString(env.SealDevice) || !decimalIdentity.MatchString(env.SealInode) || env.SealOwnerUID < 0 {
+			return Domainf("accepted-seal setup envelope does not reproduce an immutable accepted receipt")
 		}
 	default:
-		return Domainf("setup envelope mode %q is neither fresh nor retry", env.Mode)
+		return Domainf("setup envelope operation %q is outside the closed union", env.Operation)
 	}
 	return nil
 }
@@ -114,6 +148,9 @@ func RunFirstTaskSetup(env SetupEnvelope) (SetupResult, error) {
 	if err := validateSetupEnvelope(env); err != nil {
 		return SetupResult{}, err
 	}
+	if env.Operation != SetupOperationFirstTaskClosure {
+		return SetupResult{}, Domainf("setup envelope is not a first-task closure operation")
+	}
 	if env.Mode == "retry" {
 		// A prior attempt may have already landed the store before its receipt
 		// or assignment was recorded. Accept an exact-matching residue
@@ -142,4 +179,23 @@ func RunFirstTaskSetup(env SetupEnvelope) (SetupResult, error) {
 		return SetupResult{}, Domainf("first-task retry did not reproduce the pinned closure assignment")
 	}
 	return result, nil
+}
+
+// RunAcceptedSealSetup is the in-container D6 executor arm. Its envelope
+// contains only the immutable accepted receipt and fixed container paths; the
+// resident is responsible for the separate producer-absence and mount-plan
+// attestations before this executor can become reachable.
+func RunAcceptedSealSetup(env SetupEnvelope) (SetupResult, error) {
+	if err := validateSetupEnvelope(env); err != nil {
+		return SetupResult{}, err
+	}
+	if env.Operation != SetupOperationAcceptedSealRebuild {
+		return SetupResult{}, Domainf("setup envelope is not an accepted-seal rebuild operation")
+	}
+	return RebuildAcceptedCompletionSeal(env.SealRoot, env.TaskRoot, AcceptedCompletionSeal{
+		RunID: env.RunID, TaskID: env.TaskID, CompletionRequest: env.CompletionRequest,
+		ObjectFormat: env.ObjectFormat, SealedSHA: env.SealedSHA,
+		ClosureDigest: env.ClosureDigest, ManifestDigest: env.ManifestDigest,
+		Device: env.SealDevice, Inode: env.SealInode, OwnerUID: env.SealOwnerUID,
+	})
 }
