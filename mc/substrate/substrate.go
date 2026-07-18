@@ -75,7 +75,7 @@ func Init(db *sql.DB) error {
 // Version 4 adds the typeof fence triggers over ADR-016 Decision 2's
 // activity/outbox replay-key columns, whose v2 hex CHECKs hold only for TEXT.
 // Version 5 adds the durable run/task-fenced first-task setup receipt.
-const CurrentSchemaVersion = 6
+const CurrentSchemaVersion = 7
 
 // migrationV1ToV2 is ADR-016 Decision 2's storage step, frozen as history.
 //
@@ -348,6 +348,34 @@ BEGIN
 END;
 `
 
+// migrationV6ToV7 establishes the durable state machine for a Worker
+// completion seal. Published is not authority: only accepted may rebuild a
+// canonical task store. Cleanup is a recorded terminal instead of a delete so
+// response loss cannot make a prior seal indistinguishable from no seal.
+const migrationV6ToV7 = `
+CREATE TABLE completion_seals (
+    run_id                TEXT PRIMARY KEY REFERENCES runs(id),
+    task_id               INTEGER NOT NULL REFERENCES tasks(id),
+    completion_request_id TEXT NOT NULL UNIQUE CHECK (typeof(completion_request_id)='text' AND length(completion_request_id)=16 AND completion_request_id GLOB '[0-9a-f]*' AND completion_request_id NOT GLOB '*[^0-9a-f]*'),
+    object_format         TEXT NOT NULL CHECK (typeof(object_format)='text' AND object_format IN ('sha1','sha256')),
+    sealed_sha            TEXT NOT NULL CHECK (typeof(sealed_sha)='text' AND sealed_sha GLOB '[0-9a-f]*' AND sealed_sha NOT GLOB '*[^0-9a-f]*' AND ((object_format='sha1' AND length(sealed_sha)=40) OR (object_format='sha256' AND length(sealed_sha)=64))),
+    closure_digest        TEXT NOT NULL CHECK (typeof(closure_digest)='text' AND length(closure_digest)=64 AND closure_digest GLOB '[0-9a-f]*' AND closure_digest NOT GLOB '*[^0-9a-f]*'),
+    seal_device           TEXT NOT NULL CHECK (typeof(seal_device)='text' AND seal_device GLOB '[0-9]*' AND seal_device NOT GLOB '*[^0-9]*'),
+    seal_inode            TEXT NOT NULL CHECK (typeof(seal_inode)='text' AND seal_inode GLOB '[0-9]*' AND seal_inode NOT GLOB '*[^0-9]*'),
+    seal_owner_uid        INTEGER NOT NULL CHECK (typeof(seal_owner_uid)='integer' AND seal_owner_uid>=0),
+    state                 TEXT NOT NULL DEFAULT 'published' CHECK (state IN ('published','accepted','cleanup_pending','removed')),
+    published_at          TEXT NOT NULL DEFAULT (datetime('now')),
+    accepted_at           TEXT,
+    removed_at            TEXT,
+    CHECK ((state='published' AND accepted_at IS NULL AND removed_at IS NULL) OR (state='accepted' AND accepted_at IS NOT NULL AND removed_at IS NULL) OR (state='cleanup_pending' AND accepted_at IS NULL AND removed_at IS NULL) OR (state='removed' AND accepted_at IS NULL AND removed_at IS NOT NULL)),
+    CHECK (length(seal_device)<=20 AND length(seal_inode)<=20)
+);
+CREATE TRIGGER completion_seals_transition_only BEFORE UPDATE ON completion_seals
+WHEN NEW.run_id IS NOT OLD.run_id OR NEW.task_id IS NOT OLD.task_id OR NEW.completion_request_id IS NOT OLD.completion_request_id OR NEW.object_format IS NOT OLD.object_format OR NEW.sealed_sha IS NOT OLD.sealed_sha OR NEW.closure_digest IS NOT OLD.closure_digest OR NEW.seal_device IS NOT OLD.seal_device OR NEW.seal_inode IS NOT OLD.seal_inode OR NEW.seal_owner_uid IS NOT OLD.seal_owner_uid OR NEW.published_at IS NOT OLD.published_at OR NOT ((OLD.state='published' AND NEW.state IN ('accepted','cleanup_pending')) OR (OLD.state='cleanup_pending' AND NEW.state='removed'))
+BEGIN SELECT RAISE(ABORT, 'completion seal content is immutable and state transitions are fenced (ADR-016 D6)'); END;
+CREATE TRIGGER completion_seals_no_delete BEFORE DELETE ON completion_seals BEGIN SELECT RAISE(ABORT, 'completion seal history is durable (ADR-016 D6)'); END;
+`
+
 // Migrate brings an existing spine up to CurrentSchemaVersion, reporting
 // whether it changed anything. It is the "present with an older schema →
 // migrate" arm of §16.4; the caller owns the "absent on a non-empty volume →
@@ -373,7 +401,7 @@ func Migrate(db *sql.DB) (bool, error) {
 		return false, err
 	}
 
-	steps := map[int]string{1: migrationV1ToV2, 2: migrationV2ToV3, 3: migrationV3ToV4, 4: migrationV4ToV5, 5: migrationV5ToV6}
+	steps := map[int]string{1: migrationV1ToV2, 2: migrationV2ToV3, 3: migrationV3ToV4, 4: migrationV4ToV5, 5: migrationV5ToV6, 6: migrationV6ToV7}
 	changed := false
 	for version < CurrentSchemaVersion {
 		step, ok := steps[version]
