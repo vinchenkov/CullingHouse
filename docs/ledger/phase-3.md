@@ -1431,3 +1431,6 @@ symlink, ownership drift, or object-type change refuses before reconstruction.
 
 `17d8ab7` adds the hostile-order proof: a mismatched receipt identity rejects
 before the consumer attempts to parse even malformed manifest bytes.
+
+`21e84df` closes the strict-decoding gap: a manifest with a valid first JSON
+document plus any second document now refuses after digest verification.
