@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"io"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -50,7 +51,11 @@ func RebuildAcceptedCompletionSeal(sealDir, taskRoot string, seal AcceptedComple
 	var m CompletionSealManifest
 	dec := json.NewDecoder(strings.NewReader(string(body)))
 	dec.DisallowUnknownFields()
-	if err := dec.Decode(&m); err != nil || dec.More() {
+	if err := dec.Decode(&m); err != nil {
+		return SetupResult{}, Domainf("accepted seal manifest is malformed")
+	}
+	var extra any
+	if err := dec.Decode(&extra); err != io.EOF {
 		return SetupResult{}, Domainf("accepted seal manifest is malformed")
 	}
 	if m.Version != 1 || m.RunID != seal.RunID || m.TaskID != seal.TaskID || m.CompletionRequest != seal.CompletionRequest || m.ObjectFormat != seal.ObjectFormat || m.SealedSHA != seal.SealedSHA || m.ClosureDigest != seal.ClosureDigest || !assignmentUUID.MatchString(m.LocalRepoUUID) {

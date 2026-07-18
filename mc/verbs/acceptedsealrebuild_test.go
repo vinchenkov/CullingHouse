@@ -60,6 +60,16 @@ func TestRebuildAcceptedCompletionSealUsesOnlyManifestVerifiedPack(t *testing.T)
 	if got.BaseSHA != seeded.BaseSHA || got.ClosureDigest != seeded.ClosureDigest {
 		t.Fatalf("rebuild=%+v seed=%+v", got, seeded)
 	}
+	// A second document must not be silently ignored after a valid first one.
+	multi := append(append([]byte(nil), body...), []byte("\n{}")...)
+	multiDigest := sha256.Sum256(multi)
+	if err := os.WriteFile(filepath.Join(sealDir, "manifest.json"), multi, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, err = RebuildAcceptedCompletionSeal(sealDir, mkTaskChildren(t), AcceptedCompletionSeal{RunID: "worker", TaskID: 7, CompletionRequest: "0011223344556677", ObjectFormat: format, SealedSHA: seeded.BaseSHA, ClosureDigest: seeded.ClosureDigest, ManifestDigest: hex.EncodeToString(multiDigest[:]), Device: strconv.FormatUint(uint64(st.Dev), 10), Inode: strconv.FormatUint(st.Ino, 10), OwnerUID: int64(st.Uid)})
+	if err == nil || !strings.Contains(err.Error(), "manifest is malformed") {
+		t.Fatalf("multiple manifest documents error = %v", err)
+	}
 }
 
 func TestRebuildAcceptedCompletionSealRejectsWrongRootIdentityBeforeManifestRead(t *testing.T) {
