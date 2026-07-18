@@ -1538,3 +1538,10 @@ the exact run/request, object format, SHA, both digests, and seal filesystem
 identity; the helper repeats the full grammar. It grants no inferred task bind
 before setup. The resident must next re-attest `MC_HOME/seals/<run>`, require
 the producer artifacts absent, and run the fixed rebuild executor.
+
+## 2026-07-18 — resident accepted-seal launch fence
+
+`3add3d3` makes the resident recognize an accepted-seal rebuild plan and stop
+before any filesystem, `mc`, Docker, or verifier-agent effect. This closes the
+unsafe fall-through while the dedicated producer-absence and rebuild executor
+is implemented next. Full serial fast lane green.
