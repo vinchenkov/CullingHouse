@@ -1516,3 +1516,16 @@ fence make an interrupted root non-authoritative; the bounded textual
 deviation is in IMPLEMENTATION-NOTES.md. Focused and complete serial five-leg
 fast lanes are green. Resident plan construction and confirmed producer
 absence remain the next D6 boundary.
+
+## 2026-07-18 — task-pointed accepted seal authority
+
+`b2e6aff` makes D6's named completion activity unambiguous across task
+re-entry. Schema v9 adds a paired task pointer to the exact Worker run and
+completion request. `AcceptCompletionSeal` writes it in the same transaction
+as `seeded → worked`, accepted state, terminal receipt, and lease release;
+the task trigger allows only a pointer that names that task's accepted seal in
+worked state. Dispatch's frozen mount-state projection reads the pointer and
+all receipt facts, rather than selecting a historical seal by time or run-id.
+Focused and full serial fast lanes are green. The next slice turns this
+path-free authority into an attested resident setup instruction and proves the
+producer absent before execution.
