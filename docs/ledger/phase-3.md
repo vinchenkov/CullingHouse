@@ -1581,3 +1581,16 @@ intentional no-create fence until the closed setup executor has a durable
 response-loss/lease continuation. Network guards are not present until the
 separately named ADR-018 runtime slice and will join this inventory there.
 The full serial fast lane is green.
+
+## 2026-07-18 — durable accepted-seal rebuild receipt
+
+`b204ace` raises the spine to schema v10 with
+`accepted_seal_rebuild_receipts`. A row is immutable/undeletable and repeats
+the exact accepted Worker run/request, SHA, closure and manifest digests, the
+registered task-root identity, and the rebuilt local-store result. Its insert
+trigger independently joins the currently live verifier run/lease, worked
+task pointer, accepted seal contents, and a prior task-root receipt; all other
+shaped rows refuse. Fresh-versus-v1-migrated schema parity and live/tampered
+receipt cases are covered. The host record and run-continuation verbs are next;
+the resident remains unable to run the rebuild until they exist. Full serial
+fast lane green.
