@@ -483,6 +483,60 @@ func fsckClean(gitDir string) error {
 	return nil
 }
 
+// landedObjectCount counts the objects in an already-materialized task-local
+// store by reading its own object database (the store's config declares the
+// object format).
+func landedObjectCount(gitDir string) (int, error) {
+	out, err := gitOutput(gitDir, sourceGitEnv(), nil,
+		"cat-file", "--batch-all-objects", "--batch-check=%(objectname)", "--unordered")
+	if err != nil {
+		return 0, Domainf("first-task retry residue store is unreadable: %v", err)
+	}
+	n := 0
+	for _, line := range strings.Split(string(out), "\n") {
+		if strings.TrimSpace(line) != "" {
+			n++
+		}
+	}
+	return n, nil
+}
+
+// verifyLandedStoreMatches is ADR-016 D5's exact retry-residue acceptance: it
+// proves an already-materialized store under taskRoot exactly reproduces the
+// pinned closure assignment (sole ref at the base SHA, config reproducing the
+// object format + UUID, pack reproducing the closure digest) and is fsck-clean,
+// so a retry that finds its own prior output is idempotent rather than a
+// refusal. Any divergence refuses without overwriting.
+func verifyLandedStoreMatches(taskRoot string, taskID int64, objectFormat, baseSHA, uuid, closureDigest string) (SetupResult, error) {
+	gitDir := filepath.Join(taskRoot, "git")
+	refBytes, err := os.ReadFile(filepath.Join(gitDir, "refs", "heads", "mc", "task-"+strconv.FormatInt(taskID, 10)))
+	if err != nil || strings.TrimSpace(string(refBytes)) != baseSHA {
+		return SetupResult{}, Domainf("first-task retry residue ref does not match the pinned base SHA")
+	}
+	cfg, err := os.ReadFile(filepath.Join(gitDir, "config"))
+	if err != nil || !bytes.Equal(cfg, generatedTaskGitConfig(objectFormat, uuid)) {
+		return SetupResult{}, Domainf("first-task retry residue config does not match the pinned identity")
+	}
+	digest, err := digestLandedPack(filepath.Join(gitDir, "objects", "pack"))
+	if err != nil {
+		return SetupResult{}, err
+	}
+	if digest != closureDigest {
+		return SetupResult{}, Domainf("first-task retry residue pack does not match the pinned closure digest")
+	}
+	if err := fsckClean(gitDir); err != nil {
+		return SetupResult{}, err
+	}
+	count, err := landedObjectCount(gitDir)
+	if err != nil {
+		return SetupResult{}, err
+	}
+	return SetupResult{
+		BaseSHA: baseSHA, ObjectFormat: objectFormat, LocalRepoUUID: uuid,
+		ClosureDigest: closureDigest, ObjectCount: count, FsckClean: true,
+	}, nil
+}
+
 // MaterializeFirstTaskStore builds the complete task-local store in place under
 // taskRoot's empty source/ and git/ children (ADR-017:437-478). It runs inside
 // the network=none setup container with no spine: the durable assignment is

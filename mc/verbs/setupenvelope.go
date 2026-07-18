@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 )
 
 // SetupOperationFirstTaskClosure is the sole closed-union operation this
@@ -110,6 +111,15 @@ func ReadSetupEnvelope(path string) (SetupEnvelope, error) {
 func RunFirstTaskSetup(env SetupEnvelope) (SetupResult, error) {
 	if err := validateSetupEnvelope(env); err != nil {
 		return SetupResult{}, err
+	}
+	if env.Mode == "retry" {
+		// A prior attempt may have already landed the store before its receipt
+		// or assignment was recorded. Accept an exact-matching residue
+		// idempotently (D5); a divergent one refuses without overwriting.
+		if entries, err := os.ReadDir(filepath.Join(env.TaskRoot, "git")); err == nil && len(entries) > 0 {
+			return verifyLandedStoreMatches(env.TaskRoot, env.TaskID, env.ObjectFormat,
+				env.PinnedBaseSHA, env.PinnedLocalRepoUUID, env.PinnedClosureDigest)
+		}
 	}
 	uuid := env.PinnedLocalRepoUUID
 	if env.Mode == "fresh" {

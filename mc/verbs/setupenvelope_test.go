@@ -116,3 +116,48 @@ func TestReadSetupEnvelopeStrictRoundTrip(t *testing.T) {
 		t.Fatal("an envelope with an unknown field was accepted")
 	}
 }
+
+func retryEnvelope(src, taskRoot, objfmt string, fresh SetupResult) SetupEnvelope {
+	return SetupEnvelope{
+		SchemaVersion: 1, Operation: SetupOperationFirstTaskClosure,
+		RunID: "setup-run", TaskID: 7, Mode: "retry", ObjectFormat: objfmt,
+		PinnedBaseSHA: fresh.BaseSHA, PinnedClosureDigest: fresh.ClosureDigest,
+		PinnedLocalRepoUUID: fresh.LocalRepoUUID,
+		Branch:              "mc/task-7", WorktreeName: "mc-task-7",
+		SourceRepo: src, TaskRoot: taskRoot,
+	}
+}
+
+func TestRunFirstTaskSetupRetryAcceptsExactResidueIdempotently(t *testing.T) {
+	src, _, objfmt := buildSourceRepo(t)
+	root := mkTaskChildren(t)
+	fresh, err := RunFirstTaskSetup(freshEnvelope(src, root, objfmt))
+	if err != nil {
+		t.Fatalf("seed fresh: %v", err)
+	}
+	// Retry over the same, now-materialized root: D5 exact residue is idempotent.
+	res, err := RunFirstTaskSetup(retryEnvelope(src, root, objfmt, fresh))
+	if err != nil {
+		t.Fatalf("retry over exact residue refused: %v", err)
+	}
+	if res.BaseSHA != fresh.BaseSHA || res.ClosureDigest != fresh.ClosureDigest ||
+		res.LocalRepoUUID != fresh.LocalRepoUUID || !res.FsckClean || res.ObjectCount < 1 {
+		t.Fatalf("idempotent retry result %+v does not reproduce fresh %+v", res, fresh)
+	}
+}
+
+func TestRunFirstTaskSetupRetryRefusesDivergentResidue(t *testing.T) {
+	src, _, objfmt := buildSourceRepo(t)
+	root := mkTaskChildren(t)
+	fresh, err := RunFirstTaskSetup(freshEnvelope(src, root, objfmt))
+	if err != nil {
+		t.Fatalf("seed fresh: %v", err)
+	}
+	refPath := filepath.Join(root, "git", "refs", "heads", "mc", "task-7")
+	if err := os.WriteFile(refPath, []byte(strings.Repeat("d", len(fresh.BaseSHA))+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := RunFirstTaskSetup(retryEnvelope(src, root, objfmt, fresh)); err == nil {
+		t.Fatal("a divergent residue was accepted on retry")
+	}
+}
