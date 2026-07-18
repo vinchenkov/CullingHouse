@@ -128,6 +128,25 @@ function invalidMountPlanReason(plan: MountPlan | undefined): string | null {
 		if (invalidSetup !== null) return invalidSetup;
 	}
 	if (plan.accepted_seal_rebuild !== undefined) {
+		const step = plan.accepted_seal_rebuild;
+		const hex = /^[0-9a-f]+$/;
+		const oidLength = step.object_format === "sha1" ? 40 : step.object_format === "sha256" ? 64 : 0;
+		if (step === null || typeof step !== "object" ||
+			!Number.isSafeInteger(step.task_id) || step.task_id < 1 ||
+			typeof step.run_id !== "string" || !SAFE_ID.test(step.run_id) ||
+			typeof step.completion_request_id !== "string" || !/^[0-9a-f]{16}$/.test(step.completion_request_id) ||
+			(step.object_format !== "sha1" && step.object_format !== "sha256") ||
+			typeof step.sealed_sha !== "string" || step.sealed_sha.length !== oidLength || !hex.test(step.sealed_sha) ||
+			typeof step.closure_digest !== "string" || step.closure_digest.length !== 64 || !hex.test(step.closure_digest) ||
+			typeof step.manifest_digest !== "string" || step.manifest_digest.length !== 64 || !hex.test(step.manifest_digest) ||
+			typeof step.device !== "string" || !/^(0|[1-9][0-9]*)$/.test(step.device) ||
+			typeof step.inode !== "string" || !/^(0|[1-9][0-9]*)$/.test(step.inode) ||
+			!Number.isSafeInteger(step.owner_uid) || step.owner_uid < 0) {
+			return "accepted seal rebuild descriptor is malformed";
+		}
+		if (plan.task_precreate !== undefined) {
+			return "accepted seal rebuild cannot share a first-task setup plan";
+		}
 		// The D6 setup executor is intentionally a separate resident effect:
 		// it must first prove the former Worker agent/guard/runner absent and
 		// re-attest MC_HOME/seals/<run>. Never fall through to agent creation

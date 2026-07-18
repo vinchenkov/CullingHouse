@@ -2,7 +2,7 @@ import { chmod, lstat, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, describe, expect, test } from "bun:test";
-import { precreateTaskSkeleton, type PathIdentity } from "./task-skeleton";
+import { precreateTaskSkeleton, recheckAcceptedSeal, type PathIdentity } from "./task-skeleton";
 
 const homes: string[] = [];
 
@@ -129,4 +129,19 @@ describe("resident task-skeleton precreate (ADR-017:437-441)", () => {
 		tasks_parent: f.identity,
 	})).rejects.toThrow("child_mode");
   });
+});
+
+describe("resident accepted completion seal recheck", () => {
+	test("derives only MC_HOME/seals/<run> and repeats the receipt identity", async () => {
+		const f = await fixture();
+		const seal = join(f.workspace, "seals", "run-7-worker");
+		await mkdir(seal, { recursive: true, mode: 0o700 });
+		const stat = await lstat(seal, { bigint: true });
+		await expect(recheckAcceptedSeal(f.workspace, {
+			run_id: "run-7-worker", device: stat.dev.toString(10), inode: stat.ino.toString(10), owner_uid: Number(stat.uid),
+		})).resolves.toBe(seal);
+		await expect(recheckAcceptedSeal(f.workspace, {
+			run_id: "run-7-worker", device: stat.dev.toString(10), inode: (stat.ino + 1n).toString(10), owner_uid: Number(stat.uid),
+		})).rejects.toThrow("different filesystem object");
+	});
 });

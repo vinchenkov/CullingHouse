@@ -16,7 +16,7 @@ import { mkdir, rm, writeFile } from "node:fs/promises";
 import { startTickLoop } from "./tick-loop";
 import type { Exec, ResidentConfig, TickDeps } from "./types";
 import { CONFIG_SCHEMA_VERSION, execMcVia } from "./resident-control";
-import { precreateTaskSkeleton } from "./task-skeleton";
+import { precreateTaskSkeleton, recheckAcceptedSeal } from "./task-skeleton";
 
 interface MainConfig extends ResidentConfig {
   mcPath: string;
@@ -121,6 +121,7 @@ async function main(): Promise<void> {
 				throw new Error(`task parent recheck refused (exit ${result.exitCode}): ${result.stderr.trim()}`);
 			}
 		},
+		recheckAcceptedSeal: async (seal) => recheckAcceptedSeal(config.mcHome, seal),
 		recoverTaskSkeleton: async (step) => {
 			const result = await runMc(["__task-skeleton-recover", JSON.stringify({
 				child_mode: step.child_mode,

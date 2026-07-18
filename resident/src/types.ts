@@ -5,7 +5,7 @@
 // (folder + run.json writes, §10 effect order); both are injectable so
 // `bun test` never touches the real filesystem or Docker.
 
-import type { PathIdentity, TaskSkeletonRequest } from "./task-skeleton";
+import type { AcceptedSealIdentity, PathIdentity, TaskSkeletonRequest } from "./task-skeleton";
 
 /** Result of running an external command (mc or docker). */
 export interface ExecResult {
@@ -74,6 +74,8 @@ export interface TickDeps {
 	recoverTaskSkeleton(request: TaskSkeletonRequest): Promise<PathIdentity>;
 	/** Repeats parent identity, owner-only mode, and native ACL trust. */
 	recheckTaskParent(request: TaskSkeletonRequest): Promise<void>;
+	/** Repeats the exact accepted seal root identity before trusted setup binds it. */
+	recheckAcceptedSeal(seal: AcceptedSealIdentity): Promise<string>;
 	/** Durably registers the exact returned identity before any setup consumer runs. */
 	registerTaskRoot(runId: string, taskId: number, identity: PathIdentity): Promise<void>;
   config: ResidentConfig;

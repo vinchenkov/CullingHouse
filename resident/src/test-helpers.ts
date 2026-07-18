@@ -130,6 +130,7 @@ export function makeRig(overrides: Partial<TickDeps> = {}): TestRig {
 			return request.recover_root;
 		},
 		recheckTaskParent: async () => {},
+		recheckAcceptedSeal: async (seal) => `${testConfig.mcHome}/seals/${seal.run_id}`,
 		registerTaskRoot: async () => {},
     config: testConfig,
     ...overrides,

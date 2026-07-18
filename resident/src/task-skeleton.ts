@@ -7,10 +7,20 @@ import { chmod, lstat, mkdir, readdir, realpath } from "node:fs/promises";
 import { isAbsolute, join, normalize } from "node:path";
 
 export interface PathIdentity {
-  canonical: string;
-  device: string;
-  inode: string;
-  owner_uid: number;
+	canonical: string;
+	device: string;
+	inode: string;
+	owner_uid: number;
+}
+
+/** The immutable host-object portion of a completion receipt.  The resident
+ * repeats this check immediately before a trusted setup container receives
+ * the seal bind; the setup executor repeats it again inside that container. */
+export interface AcceptedSealIdentity {
+	device: string;
+	inode: string;
+	owner_uid: number;
+	run_id: string;
 }
 
 /** The plan's first-task setup instruction (ADR-016 D5): everything the
@@ -64,6 +74,32 @@ async function registeredIdentity(path: string): Promise<PathIdentity> {
     inode: decimal(stat.ino),
     owner_uid: Number(stat.uid),
   };
+}
+
+/** Re-attest the exact run-keyed completion seal before it can be bound into
+ * accepted-seal setup.  `MC_HOME/seals/<run>` is derived locally rather than
+ * supplied by dispatch, so a hostile effect cannot choose another host path. */
+export async function recheckAcceptedSeal(
+	mcHome: string,
+	seal: AcceptedSealIdentity,
+): Promise<string> {
+	if (!isAbsolute(mcHome) || normalize(mcHome) !== mcHome ||
+		!(/^[a-zA-Z0-9][a-zA-Z0-9_.-]*$/).test(seal.run_id) ||
+		!validDecimal(seal.device) || !validDecimal(seal.inode) ||
+		!Number.isSafeInteger(seal.owner_uid) || seal.owner_uid < 0) {
+		throw new Error("accepted seal receipt identity is malformed");
+	}
+	const root = join(mcHome, "seals", seal.run_id);
+	if (await realpath(root) !== root) {
+		throw new Error("accepted seal root is not its exact canonical run path");
+	}
+	const stat = await lstat(root, { bigint: true });
+	if (!stat.isDirectory() || stat.isSymbolicLink() ||
+		decimal(stat.dev) !== seal.device || decimal(stat.ino) !== seal.inode ||
+		Number(stat.uid) !== seal.owner_uid) {
+		throw new Error("accepted seal root is a different filesystem object than its receipt");
+	}
+	return root;
 }
 
 async function requireAbsent(path: string): Promise<void> {

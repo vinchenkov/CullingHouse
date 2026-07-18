@@ -376,6 +376,28 @@ describe("spawn effect", () => {
     expect(rig.logs.some((line) => line.includes("accepted-seal rebuild"))).toBe(true);
   });
 
+  test("a malformed accepted-seal receipt is refused before the setup fence", async () => {
+    const rig = makeRig();
+    await applyEffect({
+      ...spawnEffect,
+      role: "verifier",
+      mount_plan: {
+        entries: [], version: 1,
+        accepted_seal_rebuild: {
+          task_id: 42, run_id: "run-42-worker", completion_request_id: "not-a-request",
+          object_format: "sha1", sealed_sha: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          closure_digest: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          manifest_digest: "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+          device: "1", inode: "2", owner_uid: 501,
+        },
+      },
+    }, rig.deps);
+    expect(rig.docker.calls).toEqual([]);
+    expect(rig.mc.calls).toEqual([]);
+    expect(rig.fakeFs.events).toEqual([]);
+    expect(rig.logs.some((line) => line.includes("accepted seal rebuild descriptor is malformed"))).toBe(true);
+  });
+
   test("task precreate failure performs no later effect", async () => {
     const rig = makeRig({
       precreateTaskSkeleton: async () => {
