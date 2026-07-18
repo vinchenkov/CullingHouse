@@ -1297,3 +1297,13 @@ failure/crash residue cleanup and pinned retry remain the next D6 half.
 Outgoing NEXT (moved to PROGRESS.md): implement failure-side Worker-retry
 reconciliation for interrupted setup containers and partial receipt/root
 residue, red-first.
+
+## 2026-07-18 — recovery carrier foundation
+
+`d2ef90d` adds the digest-covered closed `recover_root` field to the immutable
+task-precreate carrier. The private helper validates that it is the exact
+derived task-root spelling with canonical identity evidence; hostile roots,
+non-decimal identities, and ordinary precreate frames remain refused. This is
+only the carrier foundation: host capture, predecessor setup-container
+reconciliation, and inode-preserving child scrub remain required before any
+recovery plan is emitted. The full Go fast lane is green.
