@@ -1387,3 +1387,18 @@ load-sensitive image/resident timeouts, then both passed serially.
 NEXT (moved to PROGRESS.md): implement the accepted-seal canonical-store
 rebuild consumer red-first, with exact accepted identity/manifest and producer
 absence fences.
+
+## 2026-07-18 — completion-seal manifest identity
+
+The accepted-seal rebuild requires an explicit manifest digest; v7 retained
+only the closure digest, which is insufficient to identify the manifest D6
+requires a setup plan to name. `a906f9c` advances the spine to v8. Fresh
+completion rows require a canonical TEXT sha256 `manifest_digest`, and the
+normal immutable transition trigger freezes it. The additive v7→v8 migration
+leaves historical rows NULL (it never fabricates evidence) while a new-insert
+trigger makes every v8 publication non-null and typed. Consumers will refuse
+that NULL legacy state rather than infer a manifest from mutable seal bytes.
+
+Focused schema/verb tests, then the full five-leg fast lane, are green; the
+parallel resident-control flake recurred once and passed on the mandated idle
+rerun. The canonical-store rebuild consumer remains NEXT.
