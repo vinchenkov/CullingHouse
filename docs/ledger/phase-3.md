@@ -1234,3 +1234,38 @@ NEXT (moved to PROGRESS.md): wire the resident's post-claim setup step — write
 /mc/setup.json, spawn the network=none setup container, invoke `mc task
 setup-record` on success — after first extending the dispatch plan to carry the
 setup step (mode/target_ref/object_format/pins).
+
+## 2026-07-18 — resident setup effect and result-handoff correction
+
+Codex session, resuming at `8faf1a8` with the outgoing NEXT already present in
+the committed resident implementation. The five-leg fast suite was rerun; its
+first `mc` attempt hit the documented pre-existing concurrent-onboard race, and
+the immediate retry plus every other lane passed.
+
+The resident carries the frozen fresh/retry setup instruction in the
+`task_precreate` plan, writes the credential-free `/mc/setup.json`, masks the
+source `.mission-control` tree with an empty RO cover, and runs the exact
+network-none, uid-10002, finite-resource setup container with only the source
+and git task children writable. On a zero exit it invokes host `mc task
+setup-record`, whose existing host-side fence re-attests and validates the
+landed store before recording the immutable assignment. The fake Docker seam
+proves argv, mount table, envelope shapes, success/failure retention, and the
+record invocation.
+
+Read-only fan-out found an inconsistency in that handoff: `effects.ts` called
+`trim()` on setup stdout while claiming byte-exact transport. The red test
+requires the `--result` argv value to retain the executor's trailing newline;
+`3793fee` preserves all stdout bytes, using trim only to reject
+whitespace-only output. The complete fast lane is green at `3793fee`.
+
+The session also found the still-open next state-machine seam. A setup-bearing
+plan intentionally contains no task mount rows, so it cannot launch an agent.
+After successful recording the claimed setup run remains held; ordinary lease
+reconciliation can only idle a fresh lease or reap an unhealthy no-container
+lease. The next named D6 slice is therefore Worker-retry reconciliation: define
+and prove the fenced handoff to a newly attested 15-row Worker plan without a
+spurious retry charge/block or premature agent start. No attempt was made to
+invent that transition here.
+
+Outgoing NEXT (moved to PROGRESS.md): resolve the D6 post-setup Worker
+continuation / retry-reconciliation state machine red-first.

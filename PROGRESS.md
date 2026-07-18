@@ -10,7 +10,7 @@ Access does NOT fix it — the failure precedes any policy lookup. Symptom:
 `stat` works, reads return `Operation not permitted`, git says
 `Unable to read current working directory`.
 
-LAST GREEN SHA: bd478f0 (local; the operator pushes manually — decided 2026-07-14. Agents: do not push.)
+LAST GREEN SHA: 3793fee (local; the operator pushes manually — decided 2026-07-14. Agents: do not push.)
 
 PHASES PASSING: Phase 0 COMPLETE (S1–S8 all green, no fallback ADRs; only operator-leg deferrals remain); Phase 1 COMPLETE (1a substrate 172; 1b walking skeleton reviewed-and-fixed — fake-harness 43, agent-runner 13, runner/image 40, resident 42, dispatch + cmd/mc suites; Docker e2e PASS ×4 total); Phase 2 COMPLETE for every unparked acceptance line (domain/§18 surface, deterministic split-brain convergence, bounded honesty + five mutants, tagged dispatch/metamorphic/twin-spine lifecycle properties; the initiative-wave CLI is no longer isolated — ADR-020 landed 2026-07-14 and closed the last Phase 2 acceptance line)
 KNOWN-FAILING: `TestOnboardConcurrentFreshHomeNeverDeletesTheWinner` (mc/verbs),
@@ -287,9 +287,11 @@ kept below. Operator legs that remain open are under `## Parked`, not here.
         Rides the existing token/DeepEqual/plan_digest fences; helper-boundary
         validator mirrors the receipt CHECKs. No unlocked spine read added to
         attest
-  - [~] First-task setup-container closure extraction — the closure writer's
-        production caller (a3c0bf2..bd478f0). GO CORE COMPLETE and green;
-        resident wiring is the one remaining piece (see NEXT). Landed: the
+  - [x] First-task setup-container closure extraction — the closure writer's
+        production caller (a3c0bf2..3793fee). The resident now writes the
+        credential-free envelope, runs the bounded network=none setup class,
+        records the host-verified result, and preserves the executor result
+        bytes exactly across that handoff (8faf1a8, 3793fee). Landed: the
         task-keyed immutable `task_assignments` pin table (v5→v6);
         `extractClosurePack` (synthetic config/ref-free git context reads the
         real object dir, streams the reachable-closure pack, proves object-set
@@ -329,35 +331,18 @@ deleted, not struck through. History is in `docs/ledger/`.
   agent cannot sleep the machine it runs on). Instructions in
   `spikes/07-launchd-clock/RESULT.md`. All other S7 sub-tests passed.
 
-NEXT: Wire the resident's post-claim setup step — the last mile that makes the
-dispatch gate's required loop actually run in production. The whole Go closure
-core is done and green (a3c0bf2..bd478f0): extraction, materialize, host
-`RecordFirstTaskSetupClosure`, `task_assignments` v6, git/config grammar,
-`/mc/setup.json` + `mc __setup-first-task`, `mc task setup-record`, D5
-retry-residue. Today `resident/src/effects.ts`'s `task_precreate` branch still
-stops at "setup pending" (`effects.ts:170`) right after `registerTaskRoot`.
-
-The resident must, after registration: write `/mc/setup.json`, spawn a
-short-lived `network=none` setup container running `mc __setup-first-task
-/mc/setup.json` (real Worksource source RO, the task root with ONLY source/git
-children RW, setup.json RO; no spine/session/HOME/control/runner/credential/
-runtime-socket; ADR-019 finite class envelope), then on exit 0 invoke host
-`mc task setup-record --run <id> --workspace <root> --result <SetupResult JSON>`.
-Fast-lane proof is effects.test.ts asserting the setup argv + mounts + the
-record call via the fake docker seam; the real container run is Docker-lane.
-
-**Blocker to resolve first (this is why it's a fresh step, not a trailing
-edit):** the resident cannot derive the envelope's `mode`/`target_ref`/
-`object_format` — it does not read the spine. The dispatch plan must carry a
-setup step. Extend the `task_precreate` step (or add a sibling) in
-`mountattest.go`/`captureTaskPrecreate`: `target_ref` from `tasks`,
-`object_format` probed from the repo at attest, `branch`/`worktree_name` from
-the task id, `mode` fresh unless a `task_assignments` row already exists →
-`retry` carrying its pins. That is a change to the frozen plan/`plan_digest`
-and the private-frame validator (`dispatchprivate.go`), so it rides the
-existing token/DeepEqual fences and needs red-first tests through full Dispatch.
-Keep accepted-seal rebuild, Worker-retry reconciliation, Verifier disposable-
-source / committed-tree projections, structured Engine-API binds, and launchd
-in their named later slices. Docker-lane obligations at phase completion: the
-real setup container run, the closure e2e fixtures, and the D1
-deployment-mirror check.
+NEXT: Resolve the post-setup Worker continuation before treating this as a
+production-complete loop. The successful `task_precreate` effect now creates,
+materializes, and records the task store, but its immutable precreate plan has
+no agent task rows; it must never launch an agent from that plan. The original
+claimed lease otherwise remains held, while ordinary reconciliation only knows
+how to idle a fresh lease or reap a no-container lease. Implement the named
+ADR-016 D6 Worker-retry reconciliation slice red-first: specify and prove the
+fenced transition from successful setup to a newly attested 15-row Worker plan
+(or the ADR-prescribed equivalent), including exact retry/reap behavior, no
+spurious retry charge/block, and no agent start before the task rows and launch
+receipts are authoritative. Consult ADR-016 Decision 6 before changing the
+state machine. Keep accepted-seal rebuild, Verifier disposable-source /
+committed-tree projections, structured Engine-API binds, and launchd in their
+named later slices. Docker-lane obligations at phase completion: the real setup
+container run, closure e2e fixtures, and the D1 deployment-mirror check.
