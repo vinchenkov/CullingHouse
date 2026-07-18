@@ -46,3 +46,40 @@ func TestLoadSubjectTaskSetupRootsDistinctSortedBounded(t *testing.T) {
 		t.Fatalf("no-receipt task = (%+v, %v), want empty non-nil", empty, err)
 	}
 }
+
+// LoadSubjectTaskAssignment projects the immutable first-task closure
+// assignment for one task (ADR-016 D5), with no live run/lease fence: it is
+// consumed at dispatch prepare, frozen into the token, and re-derived at
+// commit. Presence flips the plan's setup instruction to retry mode carrying
+// these exact pins; absence is the normal fresh-mode first run.
+func TestLoadSubjectTaskAssignmentProjectsRetryPins(t *testing.T) {
+	db := openSpine(t)
+	taskID := mkTask(t, db, "task", "seeded")
+	mustExec(t, db, `INSERT INTO task_assignments
+		(task_id, target_ref, branch, task_root_key, object_format, base_sha, local_repo_uuid, closure_digest)
+		VALUES (?, 'main', 'mc/task-1', '.mission-control/tasks/task-1', 'sha1', ?, ?, ?)`,
+		taskID,
+		"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		"0a1b2c3d-4e5f-6071-8293-a4b5c6d7e8f9",
+		"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")
+
+	got, err := substrate.LoadSubjectTaskAssignment(context.Background(), db, taskID)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	want := &substrate.DispatchTaskAssignment{
+		BaseSHA:       "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		ClosureDigest: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+		LocalRepoUUID: "0a1b2c3d-4e5f-6071-8293-a4b5c6d7e8f9",
+		ObjectFormat:  "sha1",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %+v, want %+v", got, want)
+	}
+
+	// No assignment row means fresh mode: an explicit nil, not an error.
+	absent, err := substrate.LoadSubjectTaskAssignment(context.Background(), db, taskID+999)
+	if err != nil || absent != nil {
+		t.Fatalf("no-assignment task = (%+v, %v), want nil", absent, err)
+	}
+}

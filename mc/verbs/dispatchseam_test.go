@@ -240,11 +240,25 @@ func TestDispatchSeamMountPlanDigestDerivation(t *testing.T) {
 		Entries: []PrivateDispatchMountEntry{},
 		TaskPrecreate: &PrivateDispatchTaskPrecreate{
 			ChildMode: 0o700, TaskID: 7, WorkspaceRoot: "/srv/repo",
+			Setup: &PrivateDispatchTaskSetup{Mode: "fresh", ObjectFormat: "sha1", TargetRef: "main"},
 			TasksParent: PrivateDispatchPathIdentity{
 				Canonical: "/srv/repo/.mission-control/tasks", Device: "8", Inode: "9", OwnerUID: 501,
 			},
 		},
 		Version: 1,
+	}
+	// The precreate step's canonical bytes are pinned too: the setup
+	// instruction rides the same alphabetical D2 replay path.
+	wantPrecreateJSON := `{"entries":[],"task_precreate":{"child_mode":448,` +
+		`"setup":{"mode":"fresh","object_format":"sha1","target_ref":"main"},` +
+		`"task_id":7,"tasks_parent":{"canonical":"/srv/repo/.mission-control/tasks",` +
+		`"device":"8","inode":"9","owner_uid":501},"workspace_root":"/srv/repo"},"version":1}`
+	gotPrecreateJSON, err := json.Marshal(withPrecreate)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(gotPrecreateJSON) != wantPrecreateJSON {
+		t.Fatalf("canonical precreate plan bytes drifted\n got: %s\nwant: %s", gotPrecreateJSON, wantPrecreateJSON)
 	}
 	first, err := mountPlanDigest(withPrecreate)
 	if err != nil {
@@ -257,6 +271,15 @@ func TestDispatchSeamMountPlanDigestDerivation(t *testing.T) {
 	}
 	if first == second {
 		t.Fatal("task-parent identity drift did not change the digest-covered plan")
+	}
+	withPrecreate.TaskPrecreate.TasksParent.Inode = "9"
+	withPrecreate.TaskPrecreate.Setup.TargetRef = "other"
+	third, err := mountPlanDigest(withPrecreate)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if third == first {
+		t.Fatal("setup instruction drift did not change the digest-covered plan")
 	}
 }
 

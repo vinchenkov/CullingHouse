@@ -27,6 +27,28 @@ type DispatchMountState struct {
 	// unsatisfiable at spawn dispatch-attest, so the identity travels here and
 	// rides the commit-time DeepEqual/token/plan_digest fences).
 	SubjectTaskSetupRoots []DispatchTaskSetupIdentity `json:"subject_task_setup_roots"`
+	// SubjectTaskAssignment freezes the subject task's immutable first-task
+	// closure assignment when one exists (ADR-016 D5). Its presence flips the
+	// plan's setup instruction to retry mode carrying these exact pins — a
+	// retry reuses the recorded closure, never rebases. Absence is the normal
+	// fresh-mode first run. omitempty keeps every pre-existing state's
+	// canonical bytes (and its preparation token) unchanged.
+	SubjectTaskAssignment *DispatchTaskAssignment `json:"subject_task_assignment,omitempty"`
+	// SubjectTaskTargetRef freezes the subject task's target ref under the
+	// token so the spine-free attest leg can pin a fresh-mode first-task
+	// closure without re-reading the spine.
+	SubjectTaskTargetRef string `json:"subject_task_target_ref,omitempty"`
+}
+
+// DispatchTaskAssignment is the git-derived half of a task_assignments row,
+// projected at dispatch prepare for the plan's retry-mode setup instruction.
+// The logical half (target ref, branch, root key) is derived from the task id
+// and never travels: the envelope grammar recomputes it.
+type DispatchTaskAssignment struct {
+	BaseSHA       string `json:"base_sha"`
+	ClosureDigest string `json:"closure_digest"`
+	LocalRepoUUID string `json:"local_repo_uuid"`
+	ObjectFormat  string `json:"object_format"`
 }
 
 // DispatchTaskSetupIdentity is the path-free durable identity of a
@@ -147,6 +169,31 @@ func LoadSubjectTaskSetupRoots(ctx context.Context, q dispatchProjectionQuerier,
 		out = append(out, id)
 	}
 	return out, rows.Err()
+}
+
+// LoadSubjectTaskAssignment returns the immutable first-task closure
+// assignment recorded for one task, or nil when none exists. Like
+// LoadSubjectTaskSetupRoots it deliberately omits the live run/lock-lease
+// fence: it is a projection consumed at dispatch prepare (frozen into the
+// token, re-derived and DeepEqual'd at commit), not the post-claim fenced
+// reader. A nil result is normal — the first run of a task has no
+// assignment and its setup instruction is fresh mode.
+func LoadSubjectTaskAssignment(ctx context.Context, q dispatchProjectionQuerier, taskID int64) (*DispatchTaskAssignment, error) {
+	rows, err := q.QueryContext(ctx, `
+		SELECT base_sha, closure_digest, local_repo_uuid, object_format
+		FROM task_assignments WHERE task_id = ?`, taskID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	if !rows.Next() {
+		return nil, rows.Err()
+	}
+	var a DispatchTaskAssignment
+	if err := rows.Scan(&a.BaseSHA, &a.ClosureDigest, &a.LocalRepoUUID, &a.ObjectFormat); err != nil {
+		return nil, err
+	}
+	return &a, rows.Err()
 }
 
 func ValidateDispatchMountProjection(ctx context.Context, q dispatchProjectionQuerier) error {

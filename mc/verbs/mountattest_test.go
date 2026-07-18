@@ -583,7 +583,7 @@ func maRepoCandidate(t *testing.T, role dispatch.Role, subject *int64) (string, 
 		WorksourceID: "repo-ws", Kind: "repo", Status: "active", ProfilePresent: true,
 		ProfileID: "p", WorkspaceRoot: ws,
 		ArtifactRoots: []string{}, ReadonlyMounts: []string{}, DeniedPaths: []string{},
-	}}}
+	}}, SubjectTaskTargetRef: "main"}
 	// A materialized skeleton normally carries a durable setup receipt; freeze
 	// the subject task root's identity so the receipt gate admits it. Tests of
 	// the no-receipt/mismatch paths clear or override this.
@@ -697,6 +697,172 @@ func TestAttestCandidateMountsAbsentSkeletonCarriesPostClaimPrecreate(t *testing
 		step.TasksParent.Inode != inode || step.TasksParent.OwnerUID != uid {
 		t.Fatalf("task precreate = %+v, want exact parent identity under %q", step, ws)
 	}
+	// The resident cannot read the spine: the step must carry the whole setup
+	// instruction. No assignment row is frozen, so this is fresh mode pinned to
+	// the frozen target ref, with the object format probed from the repo's
+	// administrative files (an empty .git dir has no config: sha1).
+	if step.Setup == nil || step.Setup.Mode != "fresh" || step.Setup.ObjectFormat != "sha1" ||
+		step.Setup.TargetRef != "main" || step.Setup.PinnedBaseSHA != "" ||
+		step.Setup.PinnedClosureDigest != "" || step.Setup.PinnedLocalRepoUUID != "" {
+		t.Fatalf("task setup instruction = %+v, want fresh/sha1/main with no pins", step.Setup)
+	}
+}
+
+func TestAttestCandidateMountsAbsentSkeletonRetryReusesAssignmentPins(t *testing.T) {
+	subject := int64(9)
+	mcHome, cand, _ := maRepoCandidate(t, dispatch.RoleWorker, &subject)
+	// A frozen assignment row means an earlier setup completed and was
+	// recorded: the instruction must be retry mode carrying those exact pins
+	// and no target ref (ADR-016 D5 — a retry reuses, never rebases).
+	cand.mountState.SubjectTaskAssignment = &PrivateDispatchTaskAssignment{
+		BaseSHA:       strings.Repeat("a", 40),
+		ClosureDigest: strings.Repeat("b", 64),
+		LocalRepoUUID: "0a1b2c3d-4e5f-6071-8293-a4b5c6d7e8f9",
+		ObjectFormat:  "sha1",
+	}
+	plan, r, err := attestCandidateMounts(mcHome, cand, false)
+	if err != nil || r != nil || plan == nil || plan.TaskPrecreate == nil {
+		t.Fatalf("attest = plan %+v refusal %+v err %v", plan, r, err)
+	}
+	setup := plan.TaskPrecreate.Setup
+	if setup == nil || setup.Mode != "retry" || setup.ObjectFormat != "sha1" ||
+		setup.TargetRef != "" ||
+		setup.PinnedBaseSHA != strings.Repeat("a", 40) ||
+		setup.PinnedClosureDigest != strings.Repeat("b", 64) ||
+		setup.PinnedLocalRepoUUID != "0a1b2c3d-4e5f-6071-8293-a4b5c6d7e8f9" {
+		t.Fatalf("retry setup instruction = %+v, want the exact frozen pins", setup)
+	}
+}
+
+func TestAttestCandidateMountsAbsentSkeletonRefusesWithoutTargetRef(t *testing.T) {
+	subject := int64(9)
+	mcHome, cand, _ := maRepoCandidate(t, dispatch.RoleWorker, &subject)
+	// Fresh mode needs a target ref to pin the closure; a task without one is
+	// deployment-owned configuration debt, refused inert before any claim.
+	cand.mountState.SubjectTaskTargetRef = ""
+	plan, r, err := attestCandidateMounts(mcHome, cand, false)
+	if err != nil {
+		t.Fatalf("attest err: %v", err)
+	}
+	if plan != nil || r == nil || r.Code != boundary.CodeRuntimeUnappliable || r.Authority != refusal.AuthorityDeployment {
+		t.Fatalf("no-target-ref attest = plan %+v refusal %+v, want deployment-health runtime_unappliable", plan, r)
+	}
+}
+
+func TestAttestCandidateMountsAbsentSkeletonRefusesObjectFormatDrift(t *testing.T) {
+	subject := int64(9)
+	mcHome, cand, _ := maRepoCandidate(t, dispatch.RoleWorker, &subject)
+	// The repo probes sha1 (empty .git dir) but the recorded assignment pinned
+	// sha256: the source repository changed identity under the assignment.
+	// Rebasing the retry onto it would violate D5, so the arm health-refuses.
+	cand.mountState.SubjectTaskAssignment = &PrivateDispatchTaskAssignment{
+		BaseSHA:       strings.Repeat("a", 64),
+		ClosureDigest: strings.Repeat("b", 64),
+		LocalRepoUUID: "0a1b2c3d-4e5f-6071-8293-a4b5c6d7e8f9",
+		ObjectFormat:  "sha256",
+	}
+	plan, r, err := attestCandidateMounts(mcHome, cand, false)
+	if err != nil {
+		t.Fatalf("attest err: %v", err)
+	}
+	if plan != nil || r == nil || r.Code != boundary.CodeRuntimeUnappliable || r.Authority != refusal.AuthorityDeployment {
+		t.Fatalf("format-drift attest = plan %+v refusal %+v, want deployment-health runtime_unappliable", plan, r)
+	}
+}
+
+// probeRepoObjectFormat reads the object format from the repository's
+// administrative files only — the host never executes operator-installed git
+// (the in-container executor re-verifies against the pinned image's git).
+func TestProbeRepoObjectFormat(t *testing.T) {
+	mkRepo := func(t *testing.T, config string) string {
+		ws := t.TempDir()
+		if err := os.Mkdir(filepath.Join(ws, ".git"), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if config != "" {
+			if err := os.WriteFile(filepath.Join(ws, ".git", "config"), []byte(config), 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}
+		return ws
+	}
+	t.Run("no_config_is_sha1", func(t *testing.T) {
+		got, err := probeRepoObjectFormat(mkRepo(t, ""))
+		if err != nil || got != "sha1" {
+			t.Fatalf("= (%q, %v), want sha1", got, err)
+		}
+	})
+	t.Run("config_without_extensions_is_sha1", func(t *testing.T) {
+		got, err := probeRepoObjectFormat(mkRepo(t, "[core]\n\tbare = false\n"))
+		if err != nil || got != "sha1" {
+			t.Fatalf("= (%q, %v), want sha1", got, err)
+		}
+	})
+	t.Run("extensions_sha256", func(t *testing.T) {
+		got, err := probeRepoObjectFormat(mkRepo(t, "[core]\n\trepositoryformatversion = 1\n[extensions]\n\tobjectFormat = sha256\n"))
+		if err != nil || got != "sha256" {
+			t.Fatalf("= (%q, %v), want sha256", got, err)
+		}
+	})
+	t.Run("section_and_key_are_case_insensitive", func(t *testing.T) {
+		got, err := probeRepoObjectFormat(mkRepo(t, "[EXTENSIONS]\n\tObjectFormat = sha256\n"))
+		if err != nil || got != "sha256" {
+			t.Fatalf("= (%q, %v), want sha256", got, err)
+		}
+	})
+	t.Run("unknown_format_refuses", func(t *testing.T) {
+		if _, err := probeRepoObjectFormat(mkRepo(t, "[extensions]\n\tobjectFormat = sha512\n")); err == nil {
+			t.Fatal("an unrecognized object format was accepted")
+		}
+	})
+	t.Run("no_repo_refuses", func(t *testing.T) {
+		if _, err := probeRepoObjectFormat(t.TempDir()); err == nil {
+			t.Fatal("a workspace with no Git administrative directory was accepted")
+		}
+	})
+	t.Run("oversized_config_refuses", func(t *testing.T) {
+		if _, err := probeRepoObjectFormat(mkRepo(t, strings.Repeat("#\n", 64*1024))); err == nil {
+			t.Fatal("an oversized administrative config was accepted")
+		}
+	})
+	t.Run("symlinked_config_refuses", func(t *testing.T) {
+		ws := mkRepo(t, "")
+		target := filepath.Join(ws, "aliased-config")
+		if err := os.WriteFile(target, []byte("[extensions]\n\tobjectFormat = sha256\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(target, filepath.Join(ws, ".git", "config")); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := probeRepoObjectFormat(ws); err == nil {
+			t.Fatal("a symlinked administrative config was accepted")
+		}
+	})
+	t.Run("worktree_pointer_chases_to_common_config", func(t *testing.T) {
+		base := t.TempDir()
+		common := filepath.Join(base, "common")
+		admin := filepath.Join(common, "worktrees", "wt")
+		if err := os.MkdirAll(admin, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(common, "config"), []byte("[extensions]\n\tobjectFormat = sha256\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(admin, "commondir"), []byte("../..\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		ws := filepath.Join(base, "ws")
+		if err := os.Mkdir(ws, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(ws, ".git"), []byte("gitdir: "+admin+"\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		got, err := probeRepoObjectFormat(ws)
+		if err != nil || got != "sha256" {
+			t.Fatalf("= (%q, %v), want sha256 via the commondir chase", got, err)
+		}
+	})
 }
 
 func TestAttestCandidateMountsAbsentSkeletonRejectsWrongModeParent(t *testing.T) {
@@ -994,6 +1160,15 @@ func TestDispatchRepoWorkerClaimsBeforeReturningTaskPrecreate(t *testing.T) {
 	if len(plan.Entries) != 0 || plan.TaskPrecreate == nil || plan.TaskPrecreate.TaskID != 9 {
 		t.Fatalf("committed first-run plan = %+v", plan)
 	}
+	// The committed step carries the whole setup instruction: fresh mode (no
+	// assignment row exists), the target ref frozen at prepare from the task
+	// row, and the probed object format. This is everything the spine-blind
+	// resident may know when it writes /mc/setup.json.
+	setup := plan.TaskPrecreate.Setup
+	if setup == nil || setup.Mode != "fresh" || setup.TargetRef != "main" || setup.ObjectFormat != "sha1" ||
+		setup.PinnedBaseSHA != "" || setup.PinnedClosureDigest != "" || setup.PinnedLocalRepoUUID != "" {
+		t.Fatalf("committed setup instruction = %+v, want fresh/main/sha1", setup)
+	}
 	if got := dfInt(t, db, `SELECT COUNT(*) FROM runs WHERE subject=9`); got != 1 {
 		t.Fatalf("post-claim effect has %d Run rows, want one", got)
 	}
@@ -1024,5 +1199,57 @@ func TestDispatchRepoWorkerClaimsBeforeReturningTaskPrecreate(t *testing.T) {
 	}
 	if got := dfInt(t, db, `SELECT COUNT(*) FROM activity WHERE kind='dispatch.spawn'`); got != 1 {
 		t.Fatalf("receipt replay wrote %d dispatch.spawn rows, want one", got)
+	}
+}
+
+func TestDispatchRepoWorkerRetryPrecreateReusesRecordedAssignment(t *testing.T) {
+	ws, _ := tsBuild(t) // task-9's root is absent: the retry re-materializes it.
+	if err := os.Mkdir(filepath.Join(ws, ".git"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	db := dvSpine(t, func(a *InitArgs) { a.WorkspaceRoot = ws })
+	dvExec(t, db, `UPDATE worksources SET kind='repo' WHERE id='ws-test'`)
+	dvInsertTask(t, db, dvTask(9, dispatch.ScopeTask, dispatch.StatusSeeded, 2))
+	// An earlier run recorded the immutable closure assignment, then the task
+	// root was lost. Prepare freezes the assignment; the committed setup
+	// instruction must be retry mode carrying its exact pins, never a fresh
+	// re-resolution of the (possibly moved) target ref (ADR-016 D5).
+	dvExec(t, db, `INSERT INTO task_assignments
+		(task_id, target_ref, branch, task_root_key, object_format, base_sha, local_repo_uuid, closure_digest)
+		VALUES (9, 'main', 'mc/task-9', '.mission-control/tasks/task-9', 'sha1', ?, ?, ?)`,
+		strings.Repeat("a", 40), "0a1b2c3d-4e5f-6071-8293-a4b5c6d7e8f9", strings.Repeat("b", 64))
+	if err := os.Chmod(os.Getenv("MC_HOME"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(os.Getenv("MC_HOME"), "mount-allowlist"), []byte("version = 1\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	prepared := dfPrepare(t, db, dfRequestID)
+	attested, err := dispatchAttest(os.Getenv("MC_HOME"), prepared)
+	if err != nil || attested.refusal != nil {
+		t.Fatalf("dispatchAttest = refusal %+v err %v", attested.refusal, err)
+	}
+	eff := dfCommit(t, db, prepared, attested)
+	if eff["action"] != "spawn" {
+		t.Fatalf("effect = %v, want spawn", eff)
+	}
+	body, err := json.Marshal(eff["mount_plan"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	var plan PrivateDispatchMountPlan
+	if err := json.Unmarshal(body, &plan); err != nil {
+		t.Fatal(err)
+	}
+	if plan.TaskPrecreate == nil || plan.TaskPrecreate.Setup == nil {
+		t.Fatalf("committed retry plan = %+v, want a precreate step with a setup instruction", plan)
+	}
+	setup := plan.TaskPrecreate.Setup
+	if setup.Mode != "retry" || setup.ObjectFormat != "sha1" || setup.TargetRef != "" ||
+		setup.PinnedBaseSHA != strings.Repeat("a", 40) ||
+		setup.PinnedClosureDigest != strings.Repeat("b", 64) ||
+		setup.PinnedLocalRepoUUID != "0a1b2c3d-4e5f-6071-8293-a4b5c6d7e8f9" {
+		t.Fatalf("committed retry setup = %+v, want the recorded assignment pins", setup)
 	}
 }

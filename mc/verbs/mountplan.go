@@ -111,12 +111,31 @@ type PrivateDispatchPathIdentity struct {
 	OwnerUID  int    `json:"owner_uid"`
 }
 
+// PrivateDispatchTaskSetup is the plan's first-task setup instruction: the
+// only knowledge the spine-blind resident may use to write /mc/setup.json
+// (branch and worktree name are pure derivations of the task id and never
+// travel). Mode and pins restate token-frozen spine state; the object format
+// is host evidence probed at attest from the repo's administrative files.
+// Field order is alphabetical because the containing plan is replayed through
+// canonical JSON; the optional fields use omitempty so fresh instructions
+// carry no pin keys and retry instructions no target key.
+type PrivateDispatchTaskSetup struct {
+	Mode                string `json:"mode"`
+	ObjectFormat        string `json:"object_format"`
+	PinnedBaseSHA       string `json:"pinned_base_sha,omitempty"`
+	PinnedClosureDigest string `json:"pinned_closure_digest,omitempty"`
+	PinnedLocalRepoUUID string `json:"pinned_local_repo_uuid,omitempty"`
+	TargetRef           string `json:"target_ref,omitempty"`
+}
+
 // PrivateDispatchTaskPrecreate is ADR-016 D5/D6's first post-claim setup
 // operation. Presence means the exact task root was proved absent beneath the
-// captured parent. It authorizes only resident precreation; it does not invent
-// mount rows for paths that do not exist yet.
+// captured parent. It authorizes only resident precreation plus the closure
+// setup its Setup instruction names; it does not invent mount rows for paths
+// that do not exist yet.
 type PrivateDispatchTaskPrecreate struct {
 	ChildMode     int                         `json:"child_mode"`
+	Setup         *PrivateDispatchTaskSetup   `json:"setup"`
 	TaskID        int64                       `json:"task_id"`
 	TasksParent   PrivateDispatchPathIdentity `json:"tasks_parent"`
 	WorkspaceRoot string                      `json:"workspace_root"`

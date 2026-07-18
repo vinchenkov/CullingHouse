@@ -292,6 +292,56 @@ func validatePrivateTaskPrecreateCandidate(cand *preparedCandidate, plan *Privat
 	if err != nil || selected.Kind != "repo" || selected.WorkspaceRoot != step.WorkspaceRoot {
 		return Domainf("dispatch: private task precreate does not match the selected repo Worksource")
 	}
+	// The setup instruction must restate the token-frozen spine state, never
+	// invent it: with a frozen assignment the step is retry mode carrying its
+	// exact pins (ADR-016 D5); without one it is fresh mode pinned to the
+	// frozen target ref. (validatePrivateTaskSetup already proved the shape.)
+	if assignment := cand.mountState.SubjectTaskAssignment; assignment != nil {
+		if step.Setup == nil || step.Setup.Mode != "retry" ||
+			step.Setup.ObjectFormat != assignment.ObjectFormat ||
+			step.Setup.PinnedBaseSHA != assignment.BaseSHA ||
+			step.Setup.PinnedClosureDigest != assignment.ClosureDigest ||
+			step.Setup.PinnedLocalRepoUUID != assignment.LocalRepoUUID {
+			return Domainf("dispatch: private task setup does not restate the frozen closure assignment")
+		}
+	} else if step.Setup == nil || step.Setup.Mode != "fresh" ||
+		step.Setup.TargetRef != cand.mountState.SubjectTaskTargetRef {
+		return Domainf("dispatch: private task setup does not restate the frozen target ref")
+	}
+	return nil
+}
+
+// validatePrivateTaskSetup keeps the helper boundary strict about the plan's
+// setup instruction: a closed mode pair, a closed object-format set, and
+// pins shaped exactly as the task_assignments CHECKs would have produced
+// them. Fresh instructions carry a target and no pins; retry instructions
+// carry the pins and no target.
+func validatePrivateTaskSetup(setup *PrivateDispatchTaskSetup) error {
+	if setup == nil {
+		return Domainf("dispatch: private task precreate carries no setup instruction")
+	}
+	switch setup.Mode {
+	case "fresh":
+		if !validStructuralText(setup.TargetRef, maxPrivateScalarBytes) ||
+			setup.PinnedBaseSHA != "" || setup.PinnedClosureDigest != "" || setup.PinnedLocalRepoUUID != "" {
+			return Domainf("dispatch: private fresh task setup instruction is invalid")
+		}
+		if setup.ObjectFormat != "sha1" && setup.ObjectFormat != "sha256" {
+			return Domainf("dispatch: private task setup object format is outside the closed set")
+		}
+	case "retry":
+		if setup.TargetRef != "" {
+			return Domainf("dispatch: private retry task setup re-resolves a target ref (ADR-016 D5)")
+		}
+		if err := validateFirstTaskAssignment(FirstTaskAssignment{
+			ObjectFormat: setup.ObjectFormat, BaseSHA: setup.PinnedBaseSHA,
+			LocalRepoUUID: setup.PinnedLocalRepoUUID, ClosureDigest: setup.PinnedClosureDigest,
+		}); err != nil {
+			return Domainf("dispatch: private retry task setup pins are invalid")
+		}
+	default:
+		return Domainf("dispatch: private task setup mode is outside the closed pair")
+	}
 	return nil
 }
 
@@ -349,6 +399,9 @@ func validatePrivateMountPlan(plan *PrivateDispatchMountPlan) error {
 			parent.Canonical != path.Join(step.WorkspaceRoot, ".mission-control", "tasks") ||
 			!validDecimalText(parent.Device) || !validDecimalText(parent.Inode) || parent.OwnerUID < 0 {
 			return Domainf("dispatch: private task precreate parent evidence is invalid")
+		}
+		if err := validatePrivateTaskSetup(step.Setup); err != nil {
+			return err
 		}
 	}
 	prior := ""
@@ -554,6 +607,19 @@ func validatePrivateMountState(state PrivateDispatchMountState) error {
 	}
 	if err := validatePrivateTaskSetupRoots(state.SubjectTaskSetupRoots); err != nil {
 		return err
+	}
+	if state.SubjectTaskTargetRef != "" && !validStructuralText(state.SubjectTaskTargetRef, maxPrivateScalarBytes) {
+		return Domainf("dispatch: private subject task target ref is invalid")
+	}
+	if assignment := state.SubjectTaskAssignment; assignment != nil {
+		// Mirror the task_assignments CHECKs at the helper boundary, exactly
+		// as the setup-receipt roots mirror theirs.
+		if err := validateFirstTaskAssignment(FirstTaskAssignment{
+			ObjectFormat: assignment.ObjectFormat, BaseSHA: assignment.BaseSHA,
+			LocalRepoUUID: assignment.LocalRepoUUID, ClosureDigest: assignment.ClosureDigest,
+		}); err != nil {
+			return Domainf("dispatch: private subject task assignment projection is invalid")
+		}
 	}
 	return nil
 }

@@ -203,6 +203,168 @@ func readGitPointerLine(path, prefix string) (string, error) {
 	return value, nil
 }
 
+// maxGitConfigProbeBytes bounds the administrative config read below. Real
+// repository configs are a few hundred bytes; anything past this is not a
+// shape the probe will reason about.
+const maxGitConfigProbeBytes = 64 * 1024
+
+// probeRepoObjectFormat reads the registered repository's object format from
+// its administrative files alone — the host never executes operator-installed
+// git (spec §17 posture; the in-container executor re-verifies against the
+// pinned image's git and refuses on divergence). An absent config or one
+// without an extensions.objectFormat entry is sha1 by definition
+// (repositoryformatversion 0); an unreadable, aliased, oversized, or
+// unrecognized shape refuses rather than guessing.
+func probeRepoObjectFormat(workspaceRoot string) (string, error) {
+	admin, err := resolveGitAdminDir(workspaceRoot)
+	if err != nil {
+		return "", err
+	}
+	configPath := filepath.Join(admin, "config")
+	info, err := os.Lstat(configPath)
+	if os.IsNotExist(err) {
+		return "sha1", nil
+	}
+	if err != nil || !info.Mode().IsRegular() || info.Size() > maxGitConfigProbeBytes {
+		return "", &boundary.MountError{
+			Code: boundary.CodeSourceWrongKind,
+			Msg:  "administrative config is unreadable, aliased, or exceeds its byte bound",
+		}
+	}
+	body, err := os.ReadFile(configPath)
+	if err != nil {
+		return "", &boundary.MountError{
+			Code: boundary.CodeSourceWrongKind,
+			Msg:  "administrative config is unreadable: " + err.Error(),
+		}
+	}
+	return parseGitObjectFormat(body)
+}
+
+// resolveGitAdminDir names the directory whose config governs the repository:
+// the .git directory itself, or — through a linked-worktree pointer — the
+// shared control root its commondir names.
+func resolveGitAdminDir(workspaceRoot string) (string, error) {
+	gitPath := filepath.Join(workspaceRoot, ".git")
+	info, err := os.Lstat(gitPath)
+	if os.IsNotExist(err) {
+		bare, bErr := workspaceHasBareGitMarker(workspaceRoot)
+		if bErr != nil {
+			return "", bErr
+		}
+		if bare {
+			return filepath.Clean(workspaceRoot), nil
+		}
+		return "", &boundary.MountError{
+			Code: boundary.CodeSourceWrongKind,
+			Msg:  "repo Worksource carries no Git administrative directory to probe",
+		}
+	}
+	if err != nil {
+		return "", &boundary.MountError{
+			Code: boundary.CodeSourceWrongKind,
+			Msg:  "workspace Git control is unreadable: " + err.Error(),
+		}
+	}
+	switch {
+	case info.Mode()&os.ModeSymlink != 0:
+		return "", &boundary.MountError{
+			Code: boundary.CodeSourceWrongKind,
+			Msg:  "workspace .git is a symlink; a control identity must be resolved, not aliased",
+		}
+	case info.IsDir():
+		return gitPath, nil
+	case info.Mode().IsRegular():
+		target, err := readGitPointerLine(gitPath, "gitdir: ")
+		if err != nil {
+			return "", err
+		}
+		if !filepath.IsAbs(target) {
+			target = filepath.Join(workspaceRoot, target)
+		}
+		commonPath := filepath.Join(target, "commondir")
+		if _, err := os.Lstat(commonPath); os.IsNotExist(err) {
+			return filepath.Clean(target), nil
+		} else if err != nil {
+			return "", &boundary.MountError{
+				Code: boundary.CodeSourceWrongKind,
+				Msg:  "administrative commondir is unreadable: " + err.Error(),
+			}
+		}
+		commonTarget, err := readGitPointerLine(commonPath, "")
+		if err != nil {
+			return "", err
+		}
+		if !filepath.IsAbs(commonTarget) {
+			commonTarget = filepath.Join(target, commonTarget)
+		}
+		return filepath.Clean(commonTarget), nil
+	default:
+		return "", &boundary.MountError{
+			Code: boundary.CodeSourceWrongKind,
+			Msg:  "workspace .git is neither a directory nor a gitdir pointer file",
+		}
+	}
+}
+
+// parseGitObjectFormat scans a git config for extensions.objectFormat.
+// Sections and keys compare case-insensitively (git's grammar); the closed
+// value set does not — an exotically cased or unknown value refuses, because
+// misreading the format would send the setup container a wrong pin.
+func parseGitObjectFormat(body []byte) (string, error) {
+	format := ""
+	section := ""
+	for _, raw := range strings.Split(string(body), "\n") {
+		line := strings.TrimSpace(raw)
+		if line == "" || strings.HasPrefix(line, "#") || strings.HasPrefix(line, ";") {
+			continue
+		}
+		if strings.HasPrefix(line, "[") {
+			end := strings.Index(line, "]")
+			if end < 0 {
+				return "", &boundary.MountError{
+					Code: boundary.CodeSourceWrongKind,
+					Msg:  "administrative config carries an unterminated section header",
+				}
+			}
+			section = strings.ToLower(strings.TrimSpace(line[1:end]))
+			continue
+		}
+		if section != "extensions" {
+			continue
+		}
+		eq := strings.Index(line, "=")
+		if eq < 0 {
+			continue
+		}
+		if strings.ToLower(strings.TrimSpace(line[:eq])) != "objectformat" {
+			continue
+		}
+		value := strings.TrimSpace(line[eq+1:])
+		if cut := strings.IndexAny(value, ";#"); cut >= 0 {
+			value = strings.TrimSpace(value[:cut])
+		}
+		if format != "" && format != value {
+			return "", &boundary.MountError{
+				Code: boundary.CodeSourceWrongKind,
+				Msg:  "administrative config declares conflicting object formats",
+			}
+		}
+		format = value
+	}
+	switch format {
+	case "":
+		return "sha1", nil
+	case "sha1", "sha256":
+		return format, nil
+	default:
+		return "", &boundary.MountError{
+			Code: boundary.CodeSourceWrongKind,
+			Msg:  "administrative config object format is outside the closed set",
+		}
+	}
+}
+
 func dedupSortedControls(controls []boundary.ProtectedID) []boundary.ProtectedID {
 	sort.Slice(controls, func(i, j int) bool { return controls[i].Canonical < controls[j].Canonical })
 	out := controls[:0]

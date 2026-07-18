@@ -410,11 +410,20 @@ func TestValidatePrivateAttestationTaskPrecreateRules(t *testing.T) {
 			Entries: []PrivateDispatchMountEntry{},
 			TaskPrecreate: &PrivateDispatchTaskPrecreate{
 				ChildMode: 0o700, TaskID: 7, WorkspaceRoot: "/srv/repo",
+				Setup: &PrivateDispatchTaskSetup{Mode: "fresh", ObjectFormat: "sha1", TargetRef: "main"},
 				TasksParent: PrivateDispatchPathIdentity{
 					Canonical: "/srv/repo/.mission-control/tasks", Device: "8", Inode: "9", OwnerUID: 501,
 				},
 			},
 			Version: 1,
+		}
+	}
+	retrySetup := func() *PrivateDispatchTaskSetup {
+		return &PrivateDispatchTaskSetup{
+			Mode: "retry", ObjectFormat: "sha1",
+			PinnedBaseSHA:       strings.Repeat("a", 40),
+			PinnedClosureDigest: strings.Repeat("b", 64),
+			PinnedLocalRepoUUID: "0a1b2c3d-4e5f-6071-8293-a4b5c6d7e8f9",
 		}
 	}
 	route := func(plan *PrivateDispatchMountPlan) PrivateDispatchAttestation {
@@ -425,6 +434,11 @@ func TestValidatePrivateAttestationTaskPrecreateRules(t *testing.T) {
 	if err := validatePrivateAttestation(route(valid())); err != nil {
 		t.Fatalf("valid task precreate rejected: %v", err)
 	}
+	validRetry := valid()
+	validRetry.TaskPrecreate.Setup = retrySetup()
+	if err := validatePrivateAttestation(route(validRetry)); err != nil {
+		t.Fatalf("valid retry task precreate rejected: %v", err)
+	}
 	mutations := map[string]func(*PrivateDispatchTaskPrecreate){
 		"relative_workspace": func(s *PrivateDispatchTaskPrecreate) { s.WorkspaceRoot = "srv/repo" },
 		"wrong_parent":       func(s *PrivateDispatchTaskPrecreate) { s.TasksParent.Canonical = "/srv/other" },
@@ -433,6 +447,33 @@ func TestValidatePrivateAttestationTaskPrecreateRules(t *testing.T) {
 		"zero_task":          func(s *PrivateDispatchTaskPrecreate) { s.TaskID = 0 },
 		"unwritable_mode":    func(s *PrivateDispatchTaskPrecreate) { s.ChildMode = 0o500 },
 		"widened_mode":       func(s *PrivateDispatchTaskPrecreate) { s.ChildMode = 0o777 },
+		"no_setup":           func(s *PrivateDispatchTaskPrecreate) { s.Setup = nil },
+		"unknown_mode":       func(s *PrivateDispatchTaskPrecreate) { s.Setup.Mode = "rebase" },
+		"unknown_format":     func(s *PrivateDispatchTaskPrecreate) { s.Setup.ObjectFormat = "sha512" },
+		"fresh_no_target":    func(s *PrivateDispatchTaskPrecreate) { s.Setup.TargetRef = "" },
+		"fresh_with_pin": func(s *PrivateDispatchTaskPrecreate) {
+			s.Setup.PinnedBaseSHA = strings.Repeat("a", 40)
+		},
+		"retry_with_target": func(s *PrivateDispatchTaskPrecreate) {
+			s.Setup = retrySetup()
+			s.Setup.TargetRef = "main"
+		},
+		"retry_short_sha": func(s *PrivateDispatchTaskPrecreate) {
+			s.Setup = retrySetup()
+			s.Setup.PinnedBaseSHA = strings.Repeat("a", 39)
+		},
+		"retry_sha_format_mismatch": func(s *PrivateDispatchTaskPrecreate) {
+			s.Setup = retrySetup()
+			s.Setup.ObjectFormat = "sha256" // pins stay 40 hex: sha1-shaped
+		},
+		"retry_upper_digest": func(s *PrivateDispatchTaskPrecreate) {
+			s.Setup = retrySetup()
+			s.Setup.PinnedClosureDigest = strings.Repeat("B", 64)
+		},
+		"retry_bad_uuid": func(s *PrivateDispatchTaskPrecreate) {
+			s.Setup = retrySetup()
+			s.Setup.PinnedLocalRepoUUID = "not-a-uuid"
+		},
 	}
 	for name, mutate := range mutations {
 		t.Run(name, func(t *testing.T) {
@@ -457,6 +498,7 @@ func TestValidatePrivateTaskPrecreateCandidateRejectsHostilePairings(t *testing.
 	taskID := int64(7)
 	step := &PrivateDispatchTaskPrecreate{
 		ChildMode: 0o700, TaskID: taskID, WorkspaceRoot: "/srv/repo",
+		Setup: &PrivateDispatchTaskSetup{Mode: "fresh", ObjectFormat: "sha1", TargetRef: "main"},
 		TasksParent: PrivateDispatchPathIdentity{
 			Canonical: "/srv/repo/.mission-control/tasks", Device: "8", Inode: "9", OwnerUID: 501,
 		},
@@ -469,6 +511,7 @@ func TestValidatePrivateTaskPrecreateCandidateRejectsHostilePairings(t *testing.
 				Worksources: []PrivateDispatchWorksource{{
 					WorksourceID: "repo", Kind: "repo", WorkspaceRoot: "/srv/repo",
 				}},
+				SubjectTaskTargetRef: "main",
 			},
 		}
 	}
@@ -488,6 +531,16 @@ func TestValidatePrivateTaskPrecreateCandidateRejectsHostilePairings(t *testing.
 		},
 		"wrong_workspace": func(c *preparedCandidate) { c.mountState.Worksources[0].WorkspaceRoot = "/srv/other" },
 		"non_repo":        func(c *preparedCandidate) { c.mountState.Worksources[0].Kind = "personal" },
+		// The setup instruction must restate the frozen state, not invent it:
+		// a fresh plan whose target differs from the frozen ref, or one that
+		// ignores a frozen assignment row, is a forged instruction.
+		"fresh_target_drift": func(c *preparedCandidate) { c.mountState.SubjectTaskTargetRef = "other" },
+		"assignment_ignored_by_fresh_plan": func(c *preparedCandidate) {
+			c.mountState.SubjectTaskAssignment = &PrivateDispatchTaskAssignment{
+				BaseSHA: strings.Repeat("a", 40), ClosureDigest: strings.Repeat("b", 64),
+				LocalRepoUUID: "0a1b2c3d-4e5f-6071-8293-a4b5c6d7e8f9", ObjectFormat: "sha1",
+			}
+		},
 	}
 	for name, mutate := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -495,6 +548,112 @@ func TestValidatePrivateTaskPrecreateCandidateRejectsHostilePairings(t *testing.
 			mutate(cand)
 			if err := validatePrivateTaskPrecreateCandidate(cand, plan); err == nil {
 				t.Fatal("hostile task-precreate pairing was accepted")
+			}
+		})
+	}
+}
+
+func TestValidatePrivateTaskPrecreateCandidateRetryPins(t *testing.T) {
+	taskID := int64(7)
+	assignment := func() *PrivateDispatchTaskAssignment {
+		return &PrivateDispatchTaskAssignment{
+			BaseSHA: strings.Repeat("a", 40), ClosureDigest: strings.Repeat("b", 64),
+			LocalRepoUUID: "0a1b2c3d-4e5f-6071-8293-a4b5c6d7e8f9", ObjectFormat: "sha1",
+		}
+	}
+	step := &PrivateDispatchTaskPrecreate{
+		ChildMode: 0o700, TaskID: taskID, WorkspaceRoot: "/srv/repo",
+		Setup: &PrivateDispatchTaskSetup{
+			Mode: "retry", ObjectFormat: "sha1",
+			PinnedBaseSHA:       strings.Repeat("a", 40),
+			PinnedClosureDigest: strings.Repeat("b", 64),
+			PinnedLocalRepoUUID: "0a1b2c3d-4e5f-6071-8293-a4b5c6d7e8f9",
+		},
+		TasksParent: PrivateDispatchPathIdentity{
+			Canonical: "/srv/repo/.mission-control/tasks", Device: "8", Inode: "9", OwnerUID: 501,
+		},
+	}
+	valid := func() *preparedCandidate {
+		return &preparedCandidate{
+			spawn: &dispatch.Spawn{Role: dispatch.RoleWorker, SubjectID: &taskID},
+			mountState: PrivateDispatchMountState{
+				SelectedWorksource: "repo",
+				Worksources: []PrivateDispatchWorksource{{
+					WorksourceID: "repo", Kind: "repo", WorkspaceRoot: "/srv/repo",
+				}},
+				SubjectTaskAssignment: assignment(),
+				SubjectTaskTargetRef:  "main",
+			},
+		}
+	}
+	plan := &PrivateDispatchMountPlan{Entries: []PrivateDispatchMountEntry{}, TaskPrecreate: step, Version: 1}
+	if err := validatePrivateTaskPrecreateCandidate(valid(), plan); err != nil {
+		t.Fatalf("valid retry pairing rejected: %v", err)
+	}
+	cases := map[string]func(*preparedCandidate){
+		// A retry plan with no frozen assignment fabricates a closure pin.
+		"no_assignment": func(c *preparedCandidate) { c.mountState.SubjectTaskAssignment = nil },
+		"base_sha_drift": func(c *preparedCandidate) {
+			c.mountState.SubjectTaskAssignment.BaseSHA = strings.Repeat("c", 40)
+		},
+		"digest_drift": func(c *preparedCandidate) {
+			c.mountState.SubjectTaskAssignment.ClosureDigest = strings.Repeat("c", 64)
+		},
+		"uuid_drift": func(c *preparedCandidate) {
+			c.mountState.SubjectTaskAssignment.LocalRepoUUID = "ffffffff-4e5f-6071-8293-a4b5c6d7e8f9"
+		},
+		"format_drift": func(c *preparedCandidate) {
+			c.mountState.SubjectTaskAssignment.ObjectFormat = "sha256"
+		},
+	}
+	for name, mutate := range cases {
+		t.Run(name, func(t *testing.T) {
+			cand := valid()
+			mutate(cand)
+			if err := validatePrivateTaskPrecreateCandidate(cand, plan); err == nil {
+				t.Fatal("a retry pairing that diverges from the frozen assignment was accepted")
+			}
+		})
+	}
+}
+
+// The candidate's frozen mount state is helper-boundary input like any other:
+// the two setup projections must arrive shaped exactly as the spine tables
+// would have produced them.
+func TestValidatePrivateMountStateSetupProjections(t *testing.T) {
+	valid := func() PrivateDispatchMountState {
+		return PrivateDispatchMountState{
+			SelectedWorksource: "repo",
+			Worksources: []PrivateDispatchWorksource{{
+				WorksourceID: "repo", Kind: "repo", Status: "active",
+				ArtifactRoots: []string{}, ReadonlyMounts: []string{}, DeniedPaths: []string{},
+			}},
+			SubjectTaskSetupRoots: []PrivateDispatchTaskSetupIdentity{},
+			SubjectTaskAssignment: &PrivateDispatchTaskAssignment{
+				BaseSHA: strings.Repeat("a", 40), ClosureDigest: strings.Repeat("b", 64),
+				LocalRepoUUID: "0a1b2c3d-4e5f-6071-8293-a4b5c6d7e8f9", ObjectFormat: "sha1",
+			},
+			SubjectTaskTargetRef: "main",
+		}
+	}
+	if err := validatePrivateMountState(valid()); err != nil {
+		t.Fatalf("valid setup projections rejected: %v", err)
+	}
+	cases := map[string]func(*PrivateDispatchMountState){
+		"assignment_bad_format": func(s *PrivateDispatchMountState) { s.SubjectTaskAssignment.ObjectFormat = "sha512" },
+		"assignment_short_sha":  func(s *PrivateDispatchMountState) { s.SubjectTaskAssignment.BaseSHA = strings.Repeat("a", 39) },
+		"assignment_bad_uuid":   func(s *PrivateDispatchMountState) { s.SubjectTaskAssignment.LocalRepoUUID = "nope" },
+		"assignment_upper_digest": func(s *PrivateDispatchMountState) {
+			s.SubjectTaskAssignment.ClosureDigest = strings.Repeat("B", 64)
+		},
+		"target_ref_control_bytes": func(s *PrivateDispatchMountState) { s.SubjectTaskTargetRef = "main\x00" },
+	}
+	for name, mutate := range cases {
+		t.Run(name, func(t *testing.T) {
+			state := valid()
+			mutate(&state)
+			if err := validatePrivateMountState(state); err == nil {
+				t.Fatal("a malformed setup projection was accepted")
 			}
 		})
 	}

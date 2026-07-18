@@ -491,6 +491,11 @@ func captureDispatchMountHostSnapshot(home string, state PrivateDispatchMountSta
 				if err != nil {
 					return dispatchMountHostSnapshot{}, err
 				}
+				setup, err := captureTaskSetup(selected.WorkspaceRoot, state)
+				if err != nil {
+					return dispatchMountHostSnapshot{}, err
+				}
+				step.Setup = &setup
 				snapshot.TaskPrecreate = &step
 			} else if err != nil {
 				return dispatchMountHostSnapshot{}, err
@@ -600,6 +605,40 @@ func captureTaskPrecreate(workspaceRoot string, taskID int64, ownerUID int) (Pri
 			OwnerUID:  int(st.Uid),
 		},
 	}, nil
+}
+
+// captureTaskSetup authors the precreate step's setup instruction. Mode and
+// pins restate token-frozen spine state only (ADR-016 D5: a recorded
+// assignment is reused, never rebased; a fresh run pins the frozen target
+// ref), while the object format is fresh host evidence probed from the repo's
+// administrative files — the resident is spine-blind, so this instruction is
+// everything it may know when it writes /mc/setup.json.
+func captureTaskSetup(workspaceRoot string, state PrivateDispatchMountState) (PrivateDispatchTaskSetup, error) {
+	format, err := probeRepoObjectFormat(workspaceRoot)
+	if err != nil {
+		return PrivateDispatchTaskSetup{}, err
+	}
+	if assignment := state.SubjectTaskAssignment; assignment != nil {
+		if assignment.ObjectFormat != format {
+			return PrivateDispatchTaskSetup{}, &boundary.MountError{
+				Code: boundary.CodeRuntimeUnappliable,
+				Msg:  "repo object format diverged from the recorded first-task assignment (ADR-016 D5: a retry reuses, never rebases)",
+			}
+		}
+		return PrivateDispatchTaskSetup{
+			Mode: "retry", ObjectFormat: assignment.ObjectFormat,
+			PinnedBaseSHA:       assignment.BaseSHA,
+			PinnedClosureDigest: assignment.ClosureDigest,
+			PinnedLocalRepoUUID: assignment.LocalRepoUUID,
+		}, nil
+	}
+	if state.SubjectTaskTargetRef == "" {
+		return PrivateDispatchTaskSetup{}, &boundary.MountError{
+			Code: boundary.CodeRuntimeUnappliable,
+			Msg:  "subject task carries no target ref; a first-task closure cannot be pinned",
+		}
+	}
+	return PrivateDispatchTaskSetup{Mode: "fresh", ObjectFormat: format, TargetRef: state.SubjectTaskTargetRef}, nil
 }
 
 var captureDispatchMountSnapshot = captureDispatchMountHostSnapshot

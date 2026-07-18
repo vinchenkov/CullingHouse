@@ -14,6 +14,7 @@ import (
 type PrivateDispatchMountState = substrate.DispatchMountState
 type PrivateDispatchWorksource = substrate.DispatchWorksource
 type PrivateDispatchTaskSetupIdentity = substrate.DispatchTaskSetupIdentity
+type PrivateDispatchTaskAssignment = substrate.DispatchTaskAssignment
 
 func loadDispatchMountState(ctx context.Context, q Q, sp *dispatch.Spawn, rec dispatch.Records) (PrivateDispatchMountState, error) {
 	state := PrivateDispatchMountState{
@@ -24,6 +25,7 @@ func loadDispatchMountState(ctx context.Context, q Q, sp *dispatch.Spawn, rec di
 		for _, task := range rec.Tasks {
 			if task.ID == *sp.SubjectID {
 				state.SelectedWorksource = task.Worksource
+				state.SubjectTaskTargetRef = task.TargetRef
 				if task.InitiativeID != nil {
 					initiativeID := *task.InitiativeID
 					state.SubjectInitiativeID = &initiativeID
@@ -43,6 +45,16 @@ func loadDispatchMountState(ctx context.Context, q Q, sp *dispatch.Spawn, rec di
 			return state, err
 		}
 		state.SubjectTaskSetupRoots = roots
+		// Freeze any recorded first-task closure assignment (ADR-016 D5): the
+		// spine-free attest leg authors the plan's setup instruction from the
+		// frozen state alone, so a fresh run pins the frozen target ref and a
+		// retry restates the recorded pins — it can neither re-read the spine
+		// nor rebase.
+		assignment, err := substrate.LoadSubjectTaskAssignment(ctx, q, *sp.SubjectID)
+		if err != nil {
+			return state, err
+		}
+		state.SubjectTaskAssignment = assignment
 	}
 
 	rows, err := substrate.LoadDispatchWorksourceProjection(ctx, q)

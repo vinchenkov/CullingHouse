@@ -104,6 +104,7 @@ func mrTaskPrecreate(t *testing.T) PrivateDispatchTaskPrecreate {
 	device, inode, uid, _ := maEvidence(t, tasks)
 	return PrivateDispatchTaskPrecreate{
 		ChildMode: 0o700, TaskID: 7, WorkspaceRoot: workspaceID.Canonical,
+		Setup: &PrivateDispatchTaskSetup{Mode: "fresh", ObjectFormat: "sha1", TargetRef: "main"},
 		TasksParent: PrivateDispatchPathIdentity{
 			Canonical: tasks, Device: device, Inode: inode, OwnerUID: uid,
 		},
