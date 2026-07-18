@@ -1111,3 +1111,60 @@ five-leg fast lane is green at 8f896a9.
 NEXT (moved to PROGRESS.md): route the standalone Worker's typed task-plan
 derivation through the receipt-fenced inspection, proven through full
 Dispatch over a writer-materialized skeleton.
+
+## 2026-07-17 — dispatch-attest typed task plan gated by the setup receipt
+
+Claude session, resuming at cf2ab7f. The standing NEXT was to route the
+standalone Worker's typed task-plan derivation (mountattest.go:489) through
+the receipt-fenced inspection so only receipt-bound, setup-completed roots
+enter an agent plan. Before writing code, a decorrelated read-only fork
+mapped the wiring against the actual code and found NEXT's literal instruction
+unrealizable: `InspectFirstTaskSetup` → `ReadFirstTaskSetup` fences the receipt
+to the CURRENT lock holder (a live, non-ended pipeline/worker run whose id
+equals `lock.run_id`, tasksetup.go:122-132), but the line-489 arm runs at
+spawn dispatch-attest where the lock is FREE and the candidate run id (minted
+by `newRunID()` at prepare, canonical only at commit) is not yet a live run.
+Neither the candidate nor any prior setup run's id can satisfy that fence at
+attest; the run-keyed wrapper is the resident/setup-container's post-claim
+consumer. The line-489 arm is the retry/resume-residue case (ADR-016:609-621):
+a skeleton already materialized by a prior, now-ended setup run whose durable
+`task_setup_receipts` rows persist but hold no lease.
+
+Realized NEXT's intent the conservative way. Added a task-keyed projection
+`substrate.LoadSubjectTaskSetupRoots(taskID)` returning the DISTINCT receipt
+identities for the subject task, sorted for canonical determinism, no
+live-lease fence (appropriate for a projection), bounded at 64. It freezes at
+prepare into a new `DispatchMountState.SubjectTaskSetupRoots` field
+(`loadDispatchMountState`), so it rides the existing preparation token,
+commit-time `reflect.DeepEqual`, and `plan_digest` fences — no unlocked spine
+read is added to the deliberately host-file-only attest seam (dispatchseam.go
+:554). The arm now admits the resolved `KindTaskRoot` only when its
+device/inode/owner is a member of the frozen set, reusing `inspectFirstTaskTable`'s
+exact tuple encoding (`requireTaskSetupReceiptVouch`); a materialized-but-
+unattested skeleton (e.g. an attacker-planted well-formed tree at the expected
+path) health-refuses `mount.runtime_unappliable`/deployment. The change only
+tightens what enters an agent plan (fail-closed) and adds no invariant surface.
+`InspectFirstTaskSetup` stays the resident/setup-container caller. The
+helper-boundary validator `validatePrivateMountState` mirrors the receipt
+table's CHECKs (canonical decimal device/inode ≤20 bytes, uid ≥0,
+sorted+deduped, bounded) so a hostile private frame cannot smuggle the set past
+the token.
+
+Red-first: `TestAttestCandidateMountsRefusesSkeletonWithoutSetupReceipt` and
+`…RejectsReceiptForADifferentRoot` (unit), and the full-Dispatch
+`TestDispatchRepoWorkerRefusesSkeletonWithoutSetupReceipt` (deployment-health
+refusal, inert commit, one dispatch.health row) drove the gate; the positive
+full-Dispatch proof `TestDispatchRepoWorkerCommitsTaskLocalMountPlan` and the
+real-capture attest test were updated to seed a matching receipt (the new
+contract). `maRepoCandidate` seeds the subject task-root identity by default.
+The canonical-prepare golden vector gained `subject_task_setup_roots`. A focused
+`substrate.LoadSubjectTaskSetupRoots` test pins distinct/sorted/empty. All five
+fast-lane legs green; the full mc check (fmt+vet across all build tags + tests)
+passes. Deviation logged (IMPLEMENTATION-NOTES 2026-07-17).
+
+NEXT (moved to PROGRESS.md): implement the first-task setup-container
+extraction slice red-first — the closure writer's first production caller —
+running the sanitized pinned-SHA reachable-closure extraction in a short-lived
+network=none setup container, registering the durable receipt, and replacing
+the caller-supplied digest pin with the Run's recorded pins (D5/D6). That
+closes the production loop the dispatch gate now requires.

@@ -10,7 +10,7 @@ Access does NOT fix it — the failure precedes any policy lookup. Symptom:
 `stat` works, reads return `Operation not permitted`, git says
 `Unable to read current working directory`.
 
-LAST GREEN SHA: 8f896a9 (local; the operator pushes manually — decided 2026-07-14. Agents: do not push.)
+LAST GREEN SHA: 243497d (local; the operator pushes manually — decided 2026-07-14. Agents: do not push.)
 
 PHASES PASSING: Phase 0 COMPLETE (S1–S8 all green, no fallback ADRs; only operator-leg deferrals remain); Phase 1 COMPLETE (1a substrate 172; 1b walking skeleton reviewed-and-fixed — fake-harness 43, agent-runner 13, runner/image 40, resident 42, dispatch + cmd/mc suites; Docker e2e PASS ×4 total); Phase 2 COMPLETE for every unparked acceptance line (domain/§18 surface, deterministic split-brain convergence, bounded honesty + five mutants, tagged dispatch/metamorphic/twin-spine lifecycle properties; the initiative-wave CLI is no longer isolated — ADR-020 landed 2026-07-14 and closed the last Phase 2 acceptance line)
 KNOWN-FAILING: `TestOnboardConcurrentFreshHomeNeverDeletesTheWinner` (mc/verbs),
@@ -274,6 +274,18 @@ kept below. Operator legs that remain open are under `## Parked`, not here.
         through the joined receipt-plus-15-row inspection; residue refuses
         without cleanup. Caller-supplied pin + no production caller are logged
         [owed: setup-container extraction slice]
+  - [x] Dispatch-attest typed task plan gated by the setup receipt: the
+        standalone-Worker arm (mountattest.go:489) now admits the resolved
+        task skeleton into an agent plan only when its device/inode/owner
+        matches a durable `task_setup_receipts` identity for the subject task,
+        frozen at prepare into `DispatchMountState.SubjectTaskSetupRoots`
+        (new `substrate.LoadSubjectTaskSetupRoots`, task-keyed — the run-keyed
+        `InspectFirstTaskSetup` fence is unsatisfiable at spawn attest, logged
+        2026-07-17). A materialized-but-unattested skeleton health-refuses
+        `mount.runtime_unappliable`; proven through full Dispatch both ways.
+        Rides the existing token/DeepEqual/plan_digest fences; helper-boundary
+        validator mirrors the receipt CHECKs. No unlocked spine read added to
+        attest
 - [ ] Phase 4 — E2E control loops (six scenario families)
 - [ ] Phase 5 — Real-subscription acceptance (operator-scheduled)
 - [ ] Release prep (after Phase 5): swap the repo's construction face for
@@ -293,12 +305,18 @@ deleted, not struck through. History is in `docs/ledger/`.
   agent cannot sleep the machine it runs on). Instructions in
   `spikes/07-launchd-clock/RESULT.md`. All other S7 sub-tests passed.
 
-NEXT: Route the standalone Worker's typed task-plan derivation through the
-receipt-fenced inspection red-first: the dispatch attest arm that today
-resolves the task skeleton bare (mountattest.go:489's direct
-resolveTaskLocalSkeleton call, which never consults the receipt) must consume
-InspectFirstTaskSetup so only receipt-bound, setup-completed roots enter an
-agent plan; prove it through full Dispatch over a writer-materialized
-skeleton. Keep the setup-container extraction with its Run-recorded pins,
-accepted seals, downstream reconciliation, disposable/committed projections,
-structured Engine-API binds, and launchd in their named later slices.
+NEXT: Implement the first-task setup-container extraction slice red-first —
+the closure writer's (`WriteFirstTaskSetupClosure`) first production caller.
+The resident's post-claim setup step must run the sanitized closure
+extraction (pinned base/target SHA reachable-object closure only, no
+local-clone hardlink/alternate/real object db) inside a short-lived
+`network=none` setup container, then register the durable receipt and hand
+the digest to the writer — replacing the CALLER-SUPPLIED pin with the Run's
+recorded pins (`plan_digest`/store identity/UUID/branch/base-SHA columns,
+ADR-016 D5/D6). That closes the production loop the dispatch gate now
+requires: today the arm refuses every real first task because nothing
+materializes a receipt-backed skeleton. Keep accepted-seal rebuild,
+Worker-retry reconciliation, Verifier disposable-source / committed-tree
+projections, structured Engine-API binds, and launchd in their named later
+slices; the D5 exact retry-residue acceptance lands with this slice's proof
+set.
