@@ -35,6 +35,8 @@ export interface TaskSkeletonRequest {
   setup: TaskSetupInstruction;
   /** Exact `.mission-control/tasks` identity attested before claim. */
   tasks_parent: PathIdentity;
+  /** Existing receipt-vouched root to exact-empty before fresh setup. */
+  recover_root?: PathIdentity;
 }
 
 function decimal(value: bigint): string {
@@ -83,6 +85,9 @@ async function requireAbsent(path: string): Promise<void> {
  * registered identity could erase bytes created by a racing operator.
  */
 export async function precreateTaskSkeleton(request: TaskSkeletonRequest): Promise<PathIdentity> {
+	if (request.recover_root !== undefined) {
+		throw new Error("recovery skeleton must be exact-emptied by the host helper");
+	}
   if (!Number.isSafeInteger(request.task_id) || request.task_id < 1) {
     throw new Error("task_id must be a canonical positive safe integer");
   }

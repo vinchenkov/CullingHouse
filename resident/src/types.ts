@@ -70,6 +70,8 @@ export interface TickDeps {
   };
 	/** Exclusive post-claim task-root materializer (ADR-016 D5). */
 	precreateTaskSkeleton(request: TaskSkeletonRequest): Promise<PathIdentity>;
+	/** Descriptor-relative exact-empty of an existing receipt-vouched root. */
+	recoverTaskSkeleton(request: TaskSkeletonRequest): Promise<PathIdentity>;
 	/** Repeats parent identity, owner-only mode, and native ACL trust. */
 	recheckTaskParent(request: TaskSkeletonRequest): Promise<void>;
 	/** Durably registers the exact returned identity before any setup consumer runs. */

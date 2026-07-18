@@ -106,12 +106,40 @@ async function main(): Promise<void> {
 					inode: step.tasks_parent.inode,
 					owner_uid: step.tasks_parent.owner_uid,
 				},
+				...(step.recover_root === undefined ? {} : {
+					recover_root: {
+						canonical: step.recover_root.canonical,
+						device: step.recover_root.device,
+						inode: step.recover_root.inode,
+						owner_uid: step.recover_root.owner_uid,
+					},
+				}),
 				workspace_root: step.workspace_root,
 			});
 			const result = await runMc(["__task-parent-recheck", frame]);
 			if (result.exitCode !== 0) {
 				throw new Error(`task parent recheck refused (exit ${result.exitCode}): ${result.stderr.trim()}`);
 			}
+		},
+		recoverTaskSkeleton: async (step) => {
+			const result = await runMc(["__task-skeleton-recover", JSON.stringify({
+				child_mode: step.child_mode,
+				recover_root: step.recover_root,
+				setup: step.setup,
+				task_id: step.task_id,
+				tasks_parent: step.tasks_parent,
+				workspace_root: step.workspace_root,
+			})]);
+			if (result.exitCode !== 0) {
+				throw new Error(`task skeleton recovery refused (exit ${result.exitCode}): ${result.stderr.trim()}`);
+			}
+			const identity = JSON.parse(result.stdout) as import("./task-skeleton").PathIdentity;
+			if (step.recover_root === undefined || identity.canonical !== step.recover_root.canonical ||
+				identity.device !== step.recover_root.device || identity.inode !== step.recover_root.inode ||
+				identity.owner_uid !== step.recover_root.owner_uid) {
+				throw new Error("task skeleton recovery returned different identity evidence");
+			}
+			return identity;
 		},
 		registerTaskRoot: async (runId, taskId, identity) => {
 			const result = await runMc([

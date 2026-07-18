@@ -309,6 +309,21 @@ func validatePrivateTaskPrecreateCandidate(cand *preparedCandidate, plan *Privat
 		step.Setup.TargetRef != cand.mountState.SubjectTaskTargetRef {
 		return Domainf("dispatch: private task setup does not restate the frozen target ref")
 	}
+	if root := step.RecoverRoot; root != nil {
+		if cand.mountState.SubjectTaskAssignment != nil {
+			return Domainf("dispatch: private task recovery must not replace an assigned closure")
+		}
+		matched := false
+		for _, receipt := range cand.mountState.SubjectTaskSetupRoots {
+			if root.Device == receipt.Device && root.Inode == receipt.Inode && root.OwnerUID == receipt.OwnerUID {
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			return Domainf("dispatch: private task recovery root is not receipt-vouched by the prepared candidate")
+		}
+	}
 	return nil
 }
 

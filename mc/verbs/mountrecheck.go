@@ -18,6 +18,7 @@ import (
 	"strconv"
 	"syscall"
 
+	"golang.org/x/sys/unix"
 	"mc/boundary"
 )
 
@@ -49,13 +50,135 @@ func TaskParentRecheck(step PrivateDispatchTaskPrecreate) (map[string]any, error
 			Msg: "task parent recheck: identity changed after preclaim"}
 	}
 	root := filepath.Join(parent.Canonical, "task-"+strconv.FormatInt(step.TaskID, 10))
-	if _, err := os.Lstat(root); err == nil {
-		return nil, &DomainError{Code: boundary.CodeIdentityChanged,
-			Msg: "task parent recheck: expected-absent task root appeared"}
-	} else if !os.IsNotExist(err) {
+	if step.RecoverRoot == nil {
+		if _, err := os.Lstat(root); err == nil {
+			return nil, &DomainError{Code: boundary.CodeIdentityChanged,
+				Msg: "task parent recheck: expected-absent task root appeared"}
+		} else if !os.IsNotExist(err) {
+			return nil, err
+		}
+	} else if err := recheckRecoveryRoot(root, *step.RecoverRoot); err != nil {
 		return nil, err
 	}
 	return map[string]any{"action": "task-parent-recheck", "status": "ok"}, nil
+}
+
+func recheckRecoveryRoot(root string, expected PrivateDispatchPathIdentity) error {
+	info, err := os.Lstat(root)
+	if err != nil {
+		return &DomainError{Code: boundary.CodeIdentityChanged,
+			Msg: "task recovery root is absent or unreadable: " + err.Error()}
+	}
+	st, ok := info.Sys().(*syscall.Stat_t)
+	if !ok || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 || info.Mode().Perm() != 0o555 ||
+		strconv.FormatUint(uint64(st.Dev), 10) != expected.Device || strconv.FormatUint(st.Ino, 10) != expected.Inode ||
+		int(st.Uid) != expected.OwnerUID || int(st.Uid) != os.Getuid() {
+		return &DomainError{Code: boundary.CodeIdentityChanged,
+			Msg: "task recovery root identity changed after preclaim"}
+	}
+	return nil
+}
+
+// RecoverTaskSkeleton exact-empties a receipt-vouched root without ever
+// resolving a child through a mutable path. The directory descriptors keep
+// deletion beneath the attested parent/root pair; a raced symlink is refused
+// by O_NOFOLLOW and a raced mount/undeletable entry leaves the recovery run
+// failed rather than broadening cleanup authority.
+func RecoverTaskSkeleton(step PrivateDispatchTaskPrecreate) (PrivateDispatchPathIdentity, error) {
+	if step.RecoverRoot == nil {
+		return PrivateDispatchPathIdentity{}, Domainf("task recovery has no recovery root evidence")
+	}
+	if _, err := TaskParentRecheck(step); err != nil {
+		return PrivateDispatchPathIdentity{}, err
+	}
+	parentFD, err := unix.Open(step.TasksParent.Canonical, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW, 0)
+	if err != nil {
+		return PrivateDispatchPathIdentity{}, Domainf("task recovery cannot open attested parent: %v", err)
+	}
+	defer unix.Close(parentFD)
+	var parent unix.Stat_t
+	if err := unix.Fstat(parentFD, &parent); err != nil ||
+		strconv.FormatUint(uint64(parent.Dev), 10) != step.TasksParent.Device ||
+		strconv.FormatUint(parent.Ino, 10) != step.TasksParent.Inode || int(parent.Uid) != step.TasksParent.OwnerUID {
+		return PrivateDispatchPathIdentity{}, &DomainError{Code: boundary.CodeIdentityChanged, Msg: "task recovery parent changed while opening"}
+	}
+	name := "task-" + strconv.FormatInt(step.TaskID, 10)
+	rootFD, err := unix.Openat(parentFD, name, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW, 0)
+	if err != nil {
+		return PrivateDispatchPathIdentity{}, &DomainError{Code: boundary.CodeIdentityChanged, Msg: "task recovery cannot open attested root: " + err.Error()}
+	}
+	defer unix.Close(rootFD)
+	if err := recoveryRootFDMatches(rootFD, *step.RecoverRoot); err != nil {
+		return PrivateDispatchPathIdentity{}, err
+	}
+	if err := unix.Fchmod(rootFD, 0o700); err != nil {
+		return PrivateDispatchPathIdentity{}, Domainf("task recovery cannot make root private: %v", err)
+	}
+	if err := clearDirectoryFD(rootFD); err != nil {
+		return PrivateDispatchPathIdentity{}, Domainf("task recovery could not exact-empty root: %v", err)
+	}
+	if err := recoveryRootFDMatches(rootFD, *step.RecoverRoot); err != nil {
+		return PrivateDispatchPathIdentity{}, err
+	}
+	if err := unix.Fchmod(rootFD, 0o555); err != nil {
+		return PrivateDispatchPathIdentity{}, Domainf("task recovery cannot restore root mode: %v", err)
+	}
+	return *step.RecoverRoot, nil
+}
+
+func recoveryRootFDMatches(fd int, expected PrivateDispatchPathIdentity) error {
+	var st unix.Stat_t
+	if err := unix.Fstat(fd, &st); err != nil || st.Mode&unix.S_IFMT != unix.S_IFDIR ||
+		strconv.FormatUint(uint64(st.Dev), 10) != expected.Device || strconv.FormatUint(st.Ino, 10) != expected.Inode ||
+		int(st.Uid) != expected.OwnerUID || int(st.Uid) != os.Getuid() {
+		return &DomainError{Code: boundary.CodeIdentityChanged, Msg: "task recovery root changed while emptying"}
+	}
+	return nil
+}
+
+func clearDirectoryFD(fd int) error {
+	dup, err := unix.Dup(fd)
+	if err != nil {
+		return err
+	}
+	dir := os.NewFile(uintptr(dup), "task-recovery-root")
+	entries, err := dir.ReadDir(-1)
+	closeErr := dir.Close()
+	if err != nil {
+		return err
+	}
+	if closeErr != nil {
+		return closeErr
+	}
+	for _, entry := range entries {
+		name := entry.Name()
+		var st unix.Stat_t
+		if err := unix.Fstatat(fd, name, &st, unix.AT_SYMLINK_NOFOLLOW); err != nil {
+			return err
+		}
+		if st.Mode&unix.S_IFMT == unix.S_IFDIR {
+			childFD, err := unix.Openat(fd, name, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW, 0)
+			if err != nil {
+				return err
+			}
+			err = clearDirectoryFD(childFD)
+			closeErr := unix.Close(childFD)
+			if err != nil {
+				return err
+			}
+			if closeErr != nil {
+				return closeErr
+			}
+			if err := unix.Unlinkat(fd, name, unix.AT_REMOVEDIR); err != nil {
+				return err
+			}
+			continue
+		}
+		if err := unix.Unlinkat(fd, name, 0); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // MountRecheck validates the plan file's own trust seam, decodes the closed

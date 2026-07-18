@@ -134,6 +134,40 @@ func TestTaskParentRecheckRepeatsTrustIdentityAndAbsence(t *testing.T) {
 	}
 }
 
+func TestRecoverTaskSkeletonExactEmptiesOnlyTheReceiptVouchedRoot(t *testing.T) {
+	step := mrTaskPrecreate(t)
+	root := filepath.Join(step.TasksParent.Canonical, "task-7")
+	if err := os.MkdirAll(filepath.Join(root, "source", "nested"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "source", "nested", "partial"), []byte("partial"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("/not-followed", filepath.Join(root, "git")); err != nil {
+		t.Fatal(err)
+	}
+	device, inode, uid, _ := maEvidence(t, root)
+	step.RecoverRoot = &PrivateDispatchPathIdentity{Canonical: root, Device: device, Inode: inode, OwnerUID: uid}
+	if err := os.Chmod(root, 0o555); err != nil {
+		t.Fatal(err)
+	}
+	got, err := RecoverTaskSkeleton(step)
+	if err != nil {
+		t.Fatalf("RecoverTaskSkeleton: %v", err)
+	}
+	if got != *step.RecoverRoot {
+		t.Fatalf("recovery identity = %+v, want %+v", got, *step.RecoverRoot)
+	}
+	entries, err := os.ReadDir(root)
+	if err != nil || len(entries) != 0 {
+		t.Fatalf("recovery left root entries %v, err %v", entries, err)
+	}
+	info, err := os.Lstat(root)
+	if err != nil || info.Mode().Perm() != 0o555 {
+		t.Fatalf("recovery root mode = %v, err %v, want 0555", info.Mode(), err)
+	}
+}
+
 func TestMountRecheckCatchesEveryDriftClass(t *testing.T) {
 	cases := map[string]struct {
 		drift func(t *testing.T, source string)

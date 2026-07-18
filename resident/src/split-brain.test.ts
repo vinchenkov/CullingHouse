@@ -988,12 +988,15 @@ describe("split-brain convergence: committed spawn before first heartbeat", () =
           reason: "spawn-watchdog",
           stop_container: true,
         });
-        expect(docker.calls).toHaveLength(initialDockerCalls + 1);
-        expect(docker.calls.at(-1)).toEqual(["stop", oldContainer]);
-        expect(docker.live.has(oldContainer)).toBe(false);
-        expect(recovered.logs.some((line) => line.includes("No such container"))).toBe(
-          !boundary.oldContainerExists,
-        );
+		expect(docker.calls).toHaveLength(initialDockerCalls + 2);
+		expect(docker.calls.slice(-2)).toEqual([
+			["stop", `mc-setup-${oldRun}`],
+			["stop", oldContainer],
+		]);
+		expect(docker.live.has(oldContainer)).toBe(false);
+		expect(recovered.logs.some((line) => line.includes(`mc-run-${oldRun}`) && line.includes("No such container"))).toBe(
+			!boundary.oldContainerExists,
+		);
         expect(existsSync(oldEnvelope)).toBe(false);
         expect(existsSync(oldSession)).toBe(boundary.oldFolderExists);
         if (boundary.oldFolderExists) expect(readdirSync(oldSession)).toEqual([]);
@@ -1042,7 +1045,7 @@ describe("split-brain convergence: committed spawn before first heartbeat", () =
         expect(existsSync(oldSession)).toBe(boundary.oldFolderExists);
         if (boundary.oldFolderExists) expect(readdirSync(oldSession)).toEqual([]);
 
-        expect(docker.calls).toHaveLength(initialDockerCalls + 3);
+		expect(docker.calls).toHaveLength(initialDockerCalls + 4);
         const retryDocker = docker.calls.at(-2)!;
         expect(retryDocker[0]).toBe("create");
         expect(retryDocker).toContain(`mc-run-${newRun}`);
@@ -1082,7 +1085,7 @@ describe("split-brain convergence: committed spawn before first heartbeat", () =
         await recovered.timer.fire();
         expect(effects).toHaveLength(4);
         expect(effects[3]).toEqual({ action: "idle", reason: "lease-held" });
-        expect(docker.calls).toHaveLength(initialDockerCalls + 3);
+		expect(docker.calls).toHaveLength(initialDockerCalls + 4);
         expect(await runs(fixture)).toHaveLength(2);
         expect(await task(fixture)).toMatchObject({ dispatch_retries: 2 });
 

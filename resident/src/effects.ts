@@ -116,6 +116,14 @@ function invalidMountPlanReason(plan: MountPlan | undefined): string | null {
 			!Number.isSafeInteger(step.tasks_parent.owner_uid) || step.tasks_parent.owner_uid < 0) {
 			return "task precreate descriptor is malformed";
 		}
+		if (step.recover_root !== undefined &&
+			(step.recover_root === null || typeof step.recover_root !== "object" ||
+				step.recover_root.canonical !== posix.join(step.tasks_parent.canonical, `task-${step.task_id}`) ||
+				!(/^(0|[1-9][0-9]*)$/).test(step.recover_root.device) ||
+				!(/^(0|[1-9][0-9]*)$/).test(step.recover_root.inode) ||
+				step.recover_root.owner_uid !== step.tasks_parent.owner_uid)) {
+			return "task recovery root descriptor is malformed";
+		}
 		const invalidSetup = invalidTaskSetupReason(step.setup);
 		if (invalidSetup !== null) return invalidSetup;
 	}
@@ -192,7 +200,9 @@ async function spawn(effect: SpawnEffect, deps: TickDeps): Promise<void> {
 			return;
 		}
 		await deps.recheckTaskParent(step);
-		const registered = await deps.precreateTaskSkeleton(step);
+		const registered = step.recover_root === undefined
+			? await deps.precreateTaskSkeleton(step)
+			: await deps.recoverTaskSkeleton(step);
 		if (registered === null || typeof registered !== "object" ||
 			registered.canonical !== posix.join(step.tasks_parent.canonical, `task-${step.task_id}`) ||
 			!(/^(0|[1-9][0-9]*)$/).test(registered.device) ||
@@ -356,6 +366,7 @@ async function runFirstTaskSetup(
 	await deps.fs.writeFile(setupJsonPath, JSON.stringify(envelope, null, 2) + "\n", { mode: 0o644 });
 	const run = await deps.docker([
 		"run", "--rm",
+		"--name", `mc-setup-${run_id}`,
 		"--network", "none",
 		"--label", "mc-managed",
 		"--user", "10002:10002",
@@ -449,8 +460,10 @@ async function land(effect: LandEffect, deps: TickDeps): Promise<void> {
 }
 
 /** §11.6 decide-then-effect: the decision (and its writes) are already
- * committed; the resident only stops the exact-named container, then removes
- * the run's launch envelope ("removed with the container", §11.3). */
+ * committed. A run has at most one of the two exact derivable container
+ * names: its setup-class predecessor or its ordinary agent container. Stop
+ * both names so an expired setup writer cannot race D6 recovery cleanup.
+ * Then remove the run's launch envelope ("removed with the container", §11.3). */
 async function reap(effect: ReapEffect, deps: TickDeps): Promise<void> {
   const { log } = deps;
   if (!effect.stop_container) {
@@ -461,11 +474,13 @@ async function reap(effect: ReapEffect, deps: TickDeps): Promise<void> {
     log(`reap refused: run_id ${JSON.stringify(effect.run_id)} fails the container-name charset`);
     return;
   }
-  const res = await deps.docker(["stop", `mc-run-${effect.run_id}`]);
-  if (res.exitCode !== 0) {
-    // Already-gone containers are expected (crash path); log and continue.
-    log(`reap ${effect.run_id}: docker stop exited ${res.exitCode}: ${res.stderr.trim()}`);
-  }
+	for (const name of [`mc-setup-${effect.run_id}`, `mc-run-${effect.run_id}`]) {
+		const res = await deps.docker(["stop", name]);
+		if (res.exitCode !== 0) {
+			// Already-gone containers are expected (crash path); log and continue.
+			log(`reap ${effect.run_id}: docker stop ${name} exited ${res.exitCode}: ${res.stderr.trim()}`);
+		}
+	}
   // The envelope and its plan sibling are ephemeral launch input (spec §4,
   // §11.3): removed with the container. Normal-exit removal awaits a
   // container-exit hook (see deviation note); missing files are fine (force

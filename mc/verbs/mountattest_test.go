@@ -3,7 +3,6 @@ package verbs
 import (
 	"context"
 	"crypto/sha256"
-	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -1181,7 +1180,7 @@ func TestDispatchRepoWorkerRefusesSkeletonWithoutSetupReceipt(t *testing.T) {
 	}
 }
 
-func TestDispatchRepoWorkerRefusesReceiptBackedSkeletonWithoutClosureAssignment(t *testing.T) {
+func TestDispatchRepoWorkerRecoversReceiptBackedSkeletonWithoutClosureAssignment(t *testing.T) {
 	ws, _ := tsBuild(t)
 	if err := os.Mkdir(filepath.Join(ws, ".git"), 0o700); err != nil {
 		t.Fatal(err)
@@ -1206,20 +1205,35 @@ func TestDispatchRepoWorkerRefusesReceiptBackedSkeletonWithoutClosureAssignment(
 	if err != nil {
 		t.Fatalf("dispatchAttest: %v", err)
 	}
-	if attested.refusal == nil || attested.refusal.Code != boundary.CodeRuntimeUnappliable ||
-		attested.refusal.Authority != refusal.AuthorityDeployment {
-		t.Fatalf("receipt without assignment = %+v, want a deployment-health refusal", attested.refusal)
+	if attested.refusal != nil {
+		t.Fatalf("dispatchAttest refusal = %+v, want recovery plan", attested.refusal)
 	}
 	eff := dfCommit(t, db, prepared, attested)
-	if eff["action"] != "refused" {
-		t.Fatalf("effect = %v, want refused", eff)
+	if eff["action"] != "spawn" {
+		t.Fatalf("effect = %v, want spawn", eff)
 	}
-	if got := dfInt(t, db, `SELECT COUNT(*) FROM runs`); got != 1 {
-		t.Fatalf("receipt-without-assignment refusal opened a new Run: count=%d", got)
+	body, err := json.Marshal(eff["mount_plan"])
+	if err != nil {
+		t.Fatal(err)
 	}
-	var lockRun sql.NullString
-	if err := db.QueryRow(`SELECT run_id FROM lock WHERE id=1`).Scan(&lockRun); err != nil || lockRun.Valid {
-		t.Fatalf("receipt-without-assignment refusal held the lease: (%v, %v)", lockRun, err)
+	var plan PrivateDispatchMountPlan
+	if err := json.Unmarshal(body, &plan); err != nil {
+		t.Fatalf("decode recovery mount_plan: %v", err)
+	}
+	if len(plan.Entries) != 0 || plan.TaskPrecreate == nil || plan.TaskPrecreate.RecoverRoot == nil ||
+		plan.TaskPrecreate.TaskID != 7 || plan.TaskPrecreate.RecoverRoot.Device != device ||
+		plan.TaskPrecreate.RecoverRoot.Inode != inode || plan.TaskPrecreate.RecoverRoot.OwnerUID != uid {
+		t.Fatalf("committed recovery plan = %+v", plan)
+	}
+	if plan.TaskPrecreate.Setup == nil || plan.TaskPrecreate.Setup.Mode != "fresh" {
+		t.Fatalf("recovery setup instruction = %+v, want fresh setup", plan.TaskPrecreate.Setup)
+	}
+	if got := dfInt(t, db, `SELECT COUNT(*) FROM runs`); got != 2 {
+		t.Fatalf("receipt-backed recovery opened %d Runs, want predecessor plus recovery Run", got)
+	}
+	var lockRunID string
+	if err := db.QueryRow(`SELECT run_id FROM lock WHERE id=1`).Scan(&lockRunID); err != nil || lockRunID == "" {
+		t.Fatalf("recovery plan did not hold the new Worker lease: (%q, %v)", lockRunID, err)
 	}
 }
 

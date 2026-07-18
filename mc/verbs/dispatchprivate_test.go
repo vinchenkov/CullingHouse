@@ -525,6 +525,24 @@ func TestValidatePrivateTaskPrecreateCandidateRejectsHostilePairings(t *testing.
 	if err := validatePrivateTaskPrecreateCandidate(valid(), plan); err != nil {
 		t.Fatalf("valid candidate pairing rejected: %v", err)
 	}
+	recovery := func() (*preparedCandidate, *PrivateDispatchMountPlan) {
+		cand := valid()
+		cand.mountState.SubjectTaskSetupRoots = []PrivateDispatchTaskSetupIdentity{{Device: "8", Inode: "10", OwnerUID: 501}}
+		recoveryStep := *step
+		recoveryStep.RecoverRoot = &PrivateDispatchPathIdentity{
+			Canonical: "/srv/repo/.mission-control/tasks/task-7", Device: "8", Inode: "10", OwnerUID: 501,
+		}
+		return cand, &PrivateDispatchMountPlan{Entries: []PrivateDispatchMountEntry{}, TaskPrecreate: &recoveryStep, Version: 1}
+	}
+	if cand, recoveryPlan := recovery(); validatePrivateTaskPrecreateCandidate(cand, recoveryPlan) != nil {
+		t.Fatalf("receipt-vouched recovery pairing rejected")
+	}
+	if cand, recoveryPlan := recovery(); func() bool {
+		cand.mountState.SubjectTaskSetupRoots = nil
+		return validatePrivateTaskPrecreateCandidate(cand, recoveryPlan) == nil
+	}() {
+		t.Fatal("recovery root absent from the frozen receipts was accepted")
+	}
 	cases := map[string]func(*preparedCandidate){
 		"non_worker": func(c *preparedCandidate) { c.spawn.Role = dispatch.RoleEditor },
 		"wrong_task": func(c *preparedCandidate) {

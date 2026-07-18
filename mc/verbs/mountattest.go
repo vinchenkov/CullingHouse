@@ -504,12 +504,20 @@ func captureDispatchMountHostSnapshot(home string, state PrivateDispatchMountSta
 				// not say the closure extraction reached its durable last step.
 				// Never mint an agent plan from a skeleton whose immutable
 				// assignment is absent: a crashed/lost setup-record must recover
-				// through the pinned setup path, not expose an unpinned tree.
+				// through the closed recovery setup path, not expose an unpinned
+				// tree to an agent.
 				if state.SubjectTaskAssignment == nil {
-					return dispatchMountHostSnapshot{}, &boundary.MountError{
-						Code: boundary.CodeRuntimeUnappliable,
-						Msg:  "task skeleton has a setup receipt but no immutable closure assignment (ADR-016 D6)",
+					step, err := captureTaskRecovery(selected.WorkspaceRoot, *subjectTaskID, uid, state.SubjectTaskSetupRoots)
+					if err != nil {
+						return dispatchMountHostSnapshot{}, err
 					}
+					setup, err := captureTaskSetup(selected.WorkspaceRoot, state)
+					if err != nil {
+						return dispatchMountHostSnapshot{}, err
+					}
+					step.Setup = &setup
+					snapshot.TaskPrecreate = &step
+					return snapshot, nil
 				}
 				typed, err := resolveTaskLocalSkeleton(selected.WorkspaceRoot, *subjectTaskID, uid)
 				if err != nil {
@@ -541,6 +549,58 @@ func captureDispatchMountHostSnapshot(home string, state PrivateDispatchMountSta
 // encoding so a materialized-but-unattested skeleton (or one swapped to a
 // different identity than any receipt recorded) health-refuses rather than
 // being trusted.
+// captureTaskRecovery preserves an existing task-root inode only when its
+// exact identity is already frozen from a durable receipt. It deliberately
+// checks less than resolveTaskLocalSkeleton: this is the partial-store path
+// whose child contents the resident will later scrub under its new lease.
+func captureTaskRecovery(workspaceRoot string, taskID int64, ownerUID int, frozen []PrivateDispatchTaskSetupIdentity) (PrivateDispatchTaskPrecreate, error) {
+	if taskID < 1 || taskID > maxJavaScriptSafeInteger {
+		return PrivateDispatchTaskPrecreate{}, Domainf("task id %d is not a canonical positive decimal (ADR-017 D6)", taskID)
+	}
+	workspace, err := boundary.ResolveSource(workspaceRoot)
+	if err != nil {
+		return PrivateDispatchTaskPrecreate{}, err
+	}
+	if workspace.Canonical != filepath.Clean(workspaceRoot) {
+		return PrivateDispatchTaskPrecreate{}, &boundary.MountError{Code: boundary.CodeSourceWrongKind, Msg: "repo workspace is not its exact canonical path"}
+	}
+	parentPath := filepath.Join(workspace.Canonical, ".mission-control", "tasks")
+	if err := boundary.TrustHomeDir(parentPath, ownerUID); err != nil {
+		return PrivateDispatchTaskPrecreate{}, err
+	}
+	parent, err := boundary.ResolveSource(parentPath)
+	if err != nil {
+		return PrivateDispatchTaskPrecreate{}, err
+	}
+	if !parent.IsDir || parent.Canonical != parentPath || parent.Info.Mode().Perm() != 0o700 {
+		return PrivateDispatchTaskPrecreate{}, &boundary.MountError{Code: boundary.CodeSourceWrongKind, Msg: "task parent is not the exact canonical mode-0700 .mission-control/tasks directory"}
+	}
+	pst, ok := parent.Info.Sys().(*syscall.Stat_t)
+	if !ok || int(pst.Uid) != ownerUID {
+		return PrivateDispatchTaskPrecreate{}, &boundary.MountError{Code: boundary.CodeRuntimeUnappliable, Msg: "task parent is not owned by the operator"}
+	}
+	rootPath := filepath.Join(parentPath, "task-"+strconv.FormatInt(taskID, 10))
+	root, err := os.Lstat(rootPath)
+	if err != nil {
+		return PrivateDispatchTaskPrecreate{}, err
+	}
+	if !root.IsDir() || root.Mode()&os.ModeSymlink != 0 || root.Mode().Perm() != 0o555 {
+		return PrivateDispatchTaskPrecreate{}, &boundary.MountError{Code: boundary.CodeRuntimeUnappliable, Msg: "task recovery root is not the fixed non-symlink mode-0555 directory"}
+	}
+	rst, ok := root.Sys().(*syscall.Stat_t)
+	if !ok || int(rst.Uid) != ownerUID {
+		return PrivateDispatchTaskPrecreate{}, &boundary.MountError{Code: boundary.CodeRuntimeUnappliable, Msg: "task recovery root is not owned by the operator"}
+	}
+	identity := PrivateDispatchPathIdentity{Canonical: rootPath, Device: strconv.FormatUint(uint64(rst.Dev), 10), Inode: strconv.FormatUint(rst.Ino, 10), OwnerUID: int(rst.Uid)}
+	for _, prior := range frozen {
+		if prior.Device == identity.Device && prior.Inode == identity.Inode && prior.OwnerUID == identity.OwnerUID {
+			return PrivateDispatchTaskPrecreate{ChildMode: taskSkeletonChildMode, RecoverRoot: &identity, TaskID: taskID,
+				TasksParent: PrivateDispatchPathIdentity{Canonical: parent.Canonical, Device: strconv.FormatUint(uint64(pst.Dev), 10), Inode: strconv.FormatUint(pst.Ino, 10), OwnerUID: int(pst.Uid)}, WorkspaceRoot: workspace.Canonical}, nil
+		}
+	}
+	return PrivateDispatchTaskPrecreate{}, &boundary.MountError{Code: boundary.CodeRuntimeUnappliable, Msg: "task recovery root has no durable first-task setup receipt"}
+}
+
 func requireTaskSetupReceiptVouch(root boundary.ProtectedID, frozen []PrivateDispatchTaskSetupIdentity) error {
 	if root.Info == nil {
 		return &boundary.MountError{

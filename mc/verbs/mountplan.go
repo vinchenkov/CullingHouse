@@ -129,10 +129,11 @@ type PrivateDispatchTaskSetup struct {
 }
 
 // PrivateDispatchTaskPrecreate is ADR-016 D5/D6's first post-claim setup
-// operation. Presence means the exact task root was proved absent beneath the
-// captured parent. It authorizes only resident precreation plus the closure
-// setup its Setup instruction names; it does not invent mount rows for paths
-// that do not exist yet.
+// operation. Ordinary setup proves the exact task root absent beneath the
+// captured parent; recovery instead carries a receipt-vouched existing root
+// for host-only exact-empty. It authorizes only that skeleton operation plus
+// the closure setup its Setup instruction names; it does not invent task
+// mount rows before setup has inspected the resulting store.
 type PrivateDispatchTaskPrecreate struct {
 	ChildMode int `json:"child_mode"`
 	// RecoverRoot is present only for ADR-016 D6 recovery. It is the exact

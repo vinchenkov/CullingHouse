@@ -70,7 +70,8 @@ const SETUP_COVER_DIR = "/tmp/mc-home/runs/run-42-worker.setup-cover";
  * its source/git children RW, envelope RO) inside ADR-019's setup-class
  * resource/security envelope. */
 const setupRunArgv = [
-  "run", "--rm",
+	"run", "--rm",
+	"--name", "mc-setup-run-42-worker",
   "--network", "none",
   "--label", "mc-managed",
   "--user", "10002:10002",
@@ -171,6 +172,38 @@ describe("spawn effect", () => {
       "task", "setup-continue", "--run", "run-42-worker",
     ]]);
     expect(rig.logs.some((line) => line.includes("first-task setup recorded"))).toBe(true);
+  });
+
+  test("receipt-backed recovery uses only the host exact-empty helper before fresh setup", async () => {
+    const events: string[] = [];
+    const recoverRoot = {
+      canonical: "/host/workspace/.mission-control/tasks/task-42",
+      device: "9",
+      inode: "99",
+      owner_uid: 501,
+    };
+    const rig = makeRig({
+      recheckTaskParent: async () => { events.push("recheck"); },
+      precreateTaskSkeleton: async () => {
+        throw new Error("ordinary precreate must not consume a recovery plan");
+      },
+      recoverTaskSkeleton: async (request) => {
+        events.push("recover");
+        expect(request.recover_root).toEqual(recoverRoot);
+        return recoverRoot;
+      },
+      registerTaskRoot: async () => { events.push("register"); },
+    });
+    rig.docker.enqueue(ok(setupResultJson + "\n"));
+    await applyEffect({
+      ...spawnEffect,
+      mount_plan: {
+        entries: [],
+        task_precreate: { ...taskPrecreateStep, recover_root: recoverRoot },
+        version: 1,
+      },
+    }, rig.deps);
+    expect(events).toEqual(["recheck", "recover", "register"]);
   });
 
   test("the setup envelope restates exactly the committed fresh instruction", async () => {
@@ -754,7 +787,7 @@ describe("reap effect", () => {
 			{ action: "interrupt", task_id: 42, run_id: "run-42-worker", stop_container: true },
 			rig.deps,
 		);
-		expect(rig.docker.calls).toEqual([["stop", "mc-run-run-42-worker"]]);
+		expect(rig.docker.calls).toEqual([["stop", "mc-setup-run-42-worker"], ["stop", "mc-run-run-42-worker"]]);
 		expect(rig.fakeFs.events).toEqual([
 			"rm:/tmp/mc-home/runs/run-42-worker.json",
 			"rm:/tmp/mc-home/runs/run-42-worker.mounts.json",
@@ -765,7 +798,7 @@ describe("reap effect", () => {
     const rig = makeRig();
     rig.docker.enqueue(ok(""));
     await applyEffect({ action: "reap", run_id: "run-42-worker", stop_container: true }, rig.deps);
-    expect(rig.docker.calls).toEqual([["stop", "mc-run-run-42-worker"]]);
+		expect(rig.docker.calls).toEqual([["stop", "mc-setup-run-42-worker"], ["stop", "mc-run-run-42-worker"]]);
   });
 
   test("removes the launch envelope and plan sibling with the container (§11.3)", async () => {
@@ -797,7 +830,7 @@ describe("reap effect", () => {
     const rig = makeRig();
     rig.docker.enqueue(fail(1, "No such container"));
     await applyEffect({ action: "reap", run_id: "run-42-worker", stop_container: true }, rig.deps);
-    expect(rig.logs.some((l) => l.includes("docker stop exited 1"))).toBe(true);
+	expect(rig.logs.some((l) => l.includes("docker stop mc-setup-run-42-worker exited 1"))).toBe(true);
     expect(rig.fakeFs.events).toEqual([
       "rm:/tmp/mc-home/runs/run-42-worker.json",
       "rm:/tmp/mc-home/runs/run-42-worker.mounts.json",

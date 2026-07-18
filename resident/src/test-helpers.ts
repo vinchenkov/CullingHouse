@@ -125,6 +125,10 @@ export function makeRig(overrides: Partial<TickDeps> = {}): TestRig {
 			inode: request.tasks_parent.inode,
 			owner_uid: request.tasks_parent.owner_uid,
 		}),
+		recoverTaskSkeleton: async (request) => {
+			if (request.recover_root === undefined) throw new Error("missing recovery root");
+			return request.recover_root;
+		},
 		recheckTaskParent: async () => {},
 		registerTaskRoot: async () => {},
     config: testConfig,
