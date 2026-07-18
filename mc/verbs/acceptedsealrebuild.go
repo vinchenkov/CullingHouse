@@ -23,6 +23,8 @@ type CompletionSealManifest struct {
 	CompletionRequest string               `json:"completion_request_id"`
 	ObjectFormat      string               `json:"object_format"`
 	SealedSHA         string               `json:"sealed_sha"`
+	Tree              string               `json:"tree,omitempty"`
+	ObjectCount       int                  `json:"object_count,omitempty"`
 	ClosureDigest     string               `json:"closure_digest"`
 	LocalRepoUUID     string               `json:"local_repo_uuid"`
 	Files             []CompletionSealFile `json:"files"`
@@ -58,7 +60,7 @@ func RebuildAcceptedCompletionSeal(sealDir, taskRoot string, seal AcceptedComple
 	if err := dec.Decode(&extra); err != io.EOF {
 		return SetupResult{}, Domainf("accepted seal manifest is malformed")
 	}
-	if m.Version != 1 || m.RunID != seal.RunID || m.TaskID != seal.TaskID || m.CompletionRequest != seal.CompletionRequest || m.ObjectFormat != seal.ObjectFormat || m.SealedSHA != seal.SealedSHA || m.ClosureDigest != seal.ClosureDigest || !assignmentUUID.MatchString(m.LocalRepoUUID) {
+	if m.Version != 1 || m.RunID != seal.RunID || m.TaskID != seal.TaskID || m.CompletionRequest != seal.CompletionRequest || m.ObjectFormat != seal.ObjectFormat || m.SealedSHA != seal.SealedSHA || m.ClosureDigest != seal.ClosureDigest || !assignmentUUID.MatchString(m.LocalRepoUUID) || len(m.Tree) != oidLen(m.ObjectFormat) || !assignmentHex.MatchString(m.Tree) || m.ObjectCount < 1 {
 		return SetupResult{}, Domainf("accepted seal manifest does not reproduce its immutable receipt")
 	}
 	if len(m.Files) != 2 {
@@ -132,7 +134,18 @@ func RebuildAcceptedCompletionSeal(sealDir, taskRoot string, seal AcceptedComple
 	if err := os.WriteFile(filepath.Join(tmp, "refs", "heads", "mc", "task-"+strconv.FormatInt(m.TaskID, 10)), []byte(m.SealedSHA+"\n"), 0o600); err != nil {
 		return SetupResult{}, err
 	}
-	return MaterializeFirstTaskStore(tmp, taskRoot, FirstTaskSetupSpec{TaskID: m.TaskID, Mode: "retry", PinnedBaseSHA: m.SealedSHA, ObjectFormat: m.ObjectFormat, LocalRepoUUID: m.LocalRepoUUID})
+	sealedTree, err := gitOutput(tmp, sourceGitEnv(), nil, "rev-parse", "--verify", m.SealedSHA+"^{tree}")
+	if err != nil || strings.TrimSpace(string(sealedTree)) != m.Tree {
+		return SetupResult{}, Domainf("accepted seal manifest tree does not match its sealed commit")
+	}
+	result, err := MaterializeFirstTaskStore(tmp, taskRoot, FirstTaskSetupSpec{TaskID: m.TaskID, Mode: "retry", PinnedBaseSHA: m.SealedSHA, ObjectFormat: m.ObjectFormat, LocalRepoUUID: m.LocalRepoUUID})
+	if err != nil {
+		return SetupResult{}, err
+	}
+	if result.ObjectCount != m.ObjectCount {
+		return SetupResult{}, Domainf("accepted seal manifest object count does not match its sealed closure")
+	}
+	return result, nil
 }
 
 func verifyAcceptedSealIdentity(path string, seal AcceptedCompletionSeal) error {

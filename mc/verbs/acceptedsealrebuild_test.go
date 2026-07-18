@@ -21,6 +21,10 @@ func TestRebuildAcceptedCompletionSealUsesOnlyManifestVerifiedPack(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
+	tree, err := gitAtSource(filepath.Join(seed, "source"), "rev-parse", "--verify", seeded.BaseSHA+"^{tree}")
+	if err != nil {
+		t.Fatal(err)
+	}
 	sealDir := t.TempDir()
 	entries, err := os.ReadDir(filepath.Join(seed, "git", "objects", "pack"))
 	if err != nil {
@@ -39,7 +43,7 @@ func TestRebuildAcceptedCompletionSealUsesOnlyManifestVerifiedPack(t *testing.T)
 		files = append(files, CompletionSealFile{Name: e.Name(), Digest: hex.EncodeToString(d[:])})
 	}
 	sort.Slice(files, func(i, j int) bool { return files[i].Name < files[j].Name })
-	m := CompletionSealManifest{Version: 1, RunID: "worker", TaskID: 7, CompletionRequest: "0011223344556677", ObjectFormat: format, SealedSHA: seeded.BaseSHA, ClosureDigest: seeded.ClosureDigest, LocalRepoUUID: uuid, Files: files}
+	m := CompletionSealManifest{Version: 1, RunID: "worker", TaskID: 7, CompletionRequest: "0011223344556677", ObjectFormat: format, SealedSHA: seeded.BaseSHA, Tree: strings.TrimSpace(string(tree)), ObjectCount: seeded.ObjectCount, ClosureDigest: seeded.ClosureDigest, LocalRepoUUID: uuid, Files: files}
 	body, err := json.Marshal(m)
 	if err != nil {
 		t.Fatal(err)
@@ -86,6 +90,34 @@ func TestRebuildAcceptedCompletionSealUsesOnlyManifestVerifiedPack(t *testing.T)
 	_, err = RebuildAcceptedCompletionSeal(sealDir, mkTaskChildren(t), AcceptedCompletionSeal{RunID: "worker", TaskID: 7, CompletionRequest: "0011223344556677", ObjectFormat: format, SealedSHA: seeded.BaseSHA, ClosureDigest: seeded.ClosureDigest, ManifestDigest: hex.EncodeToString(mismatchedDigest[:]), Device: strconv.FormatUint(uint64(st.Dev), 10), Inode: strconv.FormatUint(st.Ino, 10), OwnerUID: int64(st.Uid)})
 	if err == nil || !strings.Contains(err.Error(), "invalid pack entry") {
 		t.Fatalf("mismatched pack pair error = %v", err)
+	}
+	badTree := m
+	badTree.Tree = strings.Repeat("0", len(badTree.Tree))
+	badTreeBody, err := json.Marshal(badTree)
+	if err != nil {
+		t.Fatal(err)
+	}
+	badTreeDigest := sha256.Sum256(badTreeBody)
+	if err := os.WriteFile(filepath.Join(sealDir, "manifest.json"), badTreeBody, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, err = RebuildAcceptedCompletionSeal(sealDir, mkTaskChildren(t), AcceptedCompletionSeal{RunID: "worker", TaskID: 7, CompletionRequest: "0011223344556677", ObjectFormat: format, SealedSHA: seeded.BaseSHA, ClosureDigest: seeded.ClosureDigest, ManifestDigest: hex.EncodeToString(badTreeDigest[:]), Device: strconv.FormatUint(uint64(st.Dev), 10), Inode: strconv.FormatUint(st.Ino, 10), OwnerUID: int64(st.Uid)})
+	if err == nil || !strings.Contains(err.Error(), "tree does not match") {
+		t.Fatalf("mismatched manifest tree error = %v", err)
+	}
+	badCount := m
+	badCount.ObjectCount++
+	badCountBody, err := json.Marshal(badCount)
+	if err != nil {
+		t.Fatal(err)
+	}
+	badCountDigest := sha256.Sum256(badCountBody)
+	if err := os.WriteFile(filepath.Join(sealDir, "manifest.json"), badCountBody, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, err = RebuildAcceptedCompletionSeal(sealDir, mkTaskChildren(t), AcceptedCompletionSeal{RunID: "worker", TaskID: 7, CompletionRequest: "0011223344556677", ObjectFormat: format, SealedSHA: seeded.BaseSHA, ClosureDigest: seeded.ClosureDigest, ManifestDigest: hex.EncodeToString(badCountDigest[:]), Device: strconv.FormatUint(uint64(st.Dev), 10), Inode: strconv.FormatUint(st.Ino, 10), OwnerUID: int64(st.Uid)})
+	if err == nil || !strings.Contains(err.Error(), "object count does not match") {
+		t.Fatalf("mismatched manifest count error = %v", err)
 	}
 	// A second document must not be silently ignored after a valid first one.
 	multi := append(append([]byte(nil), body...), []byte("\n{}")...)
