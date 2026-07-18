@@ -1402,3 +1402,12 @@ that NULL legacy state rather than infer a manifest from mutable seal bytes.
 Focused schema/verb tests, then the full five-leg fast lane, are green; the
 parallel resident-control flake recurred once and passed on the mandated idle
 rerun. The canonical-store rebuild consumer remains NEXT.
+
+## 2026-07-18 — accepted-seal authority reader
+
+`5f79940` adds the spine-side D6 rebuild fence. A setup caller can load only a
+named `run_id + completion_request_id` that is an accepted, completed pipeline
+Worker receipt and carries a canonical immutable manifest digest. It returns
+only logical and filesystem identity facts—never a host path. Published or
+wrong-terminal receipts are inert. The next slice consumes this authority to
+open/re-attest the seal and reconstruct the task-local store.
