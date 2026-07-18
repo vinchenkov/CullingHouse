@@ -1068,3 +1068,46 @@ reachable closure and relative Git controls, then call the completed
 receipt-plus-15-row inspection before those rows can enter an agent plan. Keep
 accepted seals, downstream reconciliation, disposable/committed projections,
 structured Engine-API binds, and launchd in their named later slices.
+
+## 2026-07-17 — takeover review closed, receipt-bound inspection, closure writer
+
+Claude session, resuming after the other harness's c27616e..9c5d6c3. Per
+AGENTS.md §2 the range got a spawned two-lens adversarial review with
+per-finding adversarial verification (a dynamic workflow: mechanism +
+hostile/test-strength lenses, then one verifier per finding). Five findings
+confirmed, none refuted, deduplicating to three defects. The major: the new
+inspection seam never re-bound the walked fifteen-row table to the durable
+receipt, so a task root swapped at the same path between the attest stat and
+the resolver walk returned as receipt-attested — both lenses found it
+independently, and a probe demonstrated the swap passing. Repaired by
+extracting `inspectFirstTaskTable`, which refuses unless the walked
+KindTaskRoot row carries the receipt's exact device/inode/owner tuple; a
+same-path rebuild test (via the new `tsBuildAt`) fails without the check
+(7a5c4e8). The masked test minor: the un-restored chmod-0700 made the mode
+gate refuse before the deleted-cover arm ever ran; the chmod is gone, so the
+missing-row refusal is now the operative trigger. The third (attest-side
+os.Getuid() clause has no killing test) is retained defense-in-depth, logged
+as untestable without a uid seam (IMPLEMENTATION-NOTES 2026-07-17).
+
+The standing NEXT then landed: `WriteFirstTaskSetupClosure` (8f896a9)
+materializes the fixed first-task closure from the receipt-attested root —
+exactly one digest-pinned pack/index pair (canonical name-covering sha256,
+golden-vectored, recomputed over the landed bytes after write), the
+generated covers and relative Git controls derived from taskPlanRows so the
+writer cannot drift from the inspector, every create O_EXCL beneath the
+resident's verified-empty source/ and git/ only, and success returned only
+through the joined receipt-plus-15-row inspection. Residue refuses without
+cleanup; D5's exact retry-residue acceptance and the Run-recorded pin
+columns are owed to the setup-container extraction slice, which will also be
+the writer's first production caller. Deviations and mode pins are in
+IMPLEMENTATION-NOTES (2026-07-17).
+
+One suite intermittent surfaced and is recorded in the PROGRESS header: the
+resident control identity-mismatch test can lose its hello bytes to an
+fd-3 double-ownership close race under load (EBADF instead of the mismatch
+refusal), test-only shape, fail-closed either way, 16/16 green idle. The
+five-leg fast lane is green at 8f896a9.
+
+NEXT (moved to PROGRESS.md): route the standalone Worker's typed task-plan
+derivation through the receipt-fenced inspection, proven through full
+Dispatch over a writer-materialized skeleton.

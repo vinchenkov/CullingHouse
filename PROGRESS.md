@@ -10,7 +10,7 @@ Access does NOT fix it — the failure precedes any policy lookup. Symptom:
 `stat` works, reads return `Operation not permitted`, git says
 `Unable to read current working directory`.
 
-LAST GREEN SHA: 3473492 (local; the operator pushes manually — decided 2026-07-14. Agents: do not push.)
+LAST GREEN SHA: 8f896a9 (local; the operator pushes manually — decided 2026-07-14. Agents: do not push.)
 
 PHASES PASSING: Phase 0 COMPLETE (S1–S8 all green, no fallback ADRs; only operator-leg deferrals remain); Phase 1 COMPLETE (1a substrate 172; 1b walking skeleton reviewed-and-fixed — fake-harness 43, agent-runner 13, runner/image 40, resident 42, dispatch + cmd/mc suites; Docker e2e PASS ×4 total); Phase 2 COMPLETE for every unparked acceptance line (domain/§18 surface, deterministic split-brain convergence, bounded honesty + five mutants, tagged dispatch/metamorphic/twin-spine lifecycle properties; the initiative-wave CLI is no longer isolated — ADR-020 landed 2026-07-14 and closed the last Phase 2 acceptance line)
 KNOWN-FAILING: `TestOnboardConcurrentFreshHomeNeverDeletesTheWinner` (mc/verbs),
@@ -28,6 +28,21 @@ await/retry like the existing `awaitConcurrentProvision`/`recoverConcurrentProvi
 paths (which already handle the *later* stages of this same race) and refuse only
 if it stays table-less. Owner: whoever next touches onboarding — not a Phase 3
 blocker. Full diagnosis in IMPLEMENTATION-NOTES.md (2026-07-15).
+
+KNOWN-FAILING (2): `resident one-use dispatch control > rejects every identity
+mismatch before accepting child output` (resident/src/resident-control.test.ts),
+INTERMITTENT and load-sensitive — 2 failures during a concurrent five-leg run
+on 2026-07-17, then 16/16 green on an idle machine and 8/8 green at f2680b8.
+The test's mismatch child exits immediately after writing its hello
+(waitForAck=false); Bun.spawn's subprocess reaping and BunControlChannel's
+Bun.connect both believe they own the parent's fd-3 descriptor, so under load
+the reap-side close can win before the socket poller drains the hello, and the
+channel surfaces `EBADF: bad file descriptor, close` instead of the mismatch
+refusal. Fail-closed either way; production mc waits for the ack, so the
+immediate-exit shape is test-only. Repro (under load):
+`for i in $(seq 1 8); do ./resident/check.sh || break; done` while another
+suite runs. Owner: whoever next touches the resident control crossing — not a
+Phase 3 blocker.
 
 Note the spine is now schema v4 (substrate.CurrentSchemaVersion): `mc onboard home` migrates older spines in place (v1→v2→v3→v4); scratch MC_HOME spines need no action. v4 is the typeof fence-trigger pair closing the D2 BLOB hole on activity/outbox replay keys.
 FAST SUITE: mc/check.sh (gofmt + vet on the untagged build AND on the nightly/docker_e2e/test_fake_routing tagged builds — they must compile every commit, added 2026-07-14 after a tagged suite rotted invisibly — + go test ./...; includes substrate + promoted dispatch) + runner/fake-harness/check.sh + runner/agent-runner/check.sh + runner/image/check.sh + resident/check.sh. Docker e2e (phase-completion lane): cd mc && mise exec -- go test -tags docker_e2e -timeout 15m ./e2e/...
@@ -246,6 +261,19 @@ kept below. Operator legs that remain open are under `## Parked`, not here.
         Worksource root, and re-attests non-symlink directory shape, 0555 mode,
         operator ownership, and device/inode identity before any setup can
         populate it. It creates no Git state or task mount rows.
+  - [x] Cross-harness takeover review of c27616e..9c5d6c3 (two lenses +
+        adversarial verification, 5 confirmed / 0 refuted → 3 defects): the
+        inspection walk now re-binds the resolved KindTaskRoot row to the
+        receipt's device/inode/owner (7a5c4e8, same-path swap test); the
+        masked deleted-cover test arm unmasked; the untestable attest-side
+        Getuid clause retained and logged (IMPLEMENTATION-NOTES 2026-07-17)
+  - [x] First-task setup closure writer (8f896a9): digest-pinned pack/index
+        pair materialized with the generated covers/relative Git controls
+        derived from taskPlanRows, O_EXCL beneath the receipt-attested root's
+        empty resident children, landed bytes re-digested, success only
+        through the joined receipt-plus-15-row inspection; residue refuses
+        without cleanup. Caller-supplied pin + no production caller are logged
+        [owed: setup-container extraction slice]
 - [ ] Phase 4 — E2E control loops (six scenario families)
 - [ ] Phase 5 — Real-subscription acceptance (operator-scheduled)
 - [ ] Release prep (after Phase 5): swap the repo's construction face for
@@ -265,9 +293,12 @@ deleted, not struck through. History is in `docs/ledger/`.
   agent cannot sleep the machine it runs on). Instructions in
   `spikes/07-launchd-clock/RESULT.md`. All other S7 sub-tests passed.
 
-NEXT: Implement the fixed first-task setup closure writer red-first. It must
-build from the durable-receipt-attested root, populate only the pinned
-reachable closure and relative Git controls, then call the completed
-receipt-plus-15-row inspection before those rows can enter an agent plan. Keep
+NEXT: Route the standalone Worker's typed task-plan derivation through the
+receipt-fenced inspection red-first: the dispatch attest arm that today
+resolves the task skeleton bare (mountattest.go:489's direct
+resolveTaskLocalSkeleton call, which never consults the receipt) must consume
+InspectFirstTaskSetup so only receipt-bound, setup-completed roots enter an
+agent plan; prove it through full Dispatch over a writer-materialized
+skeleton. Keep the setup-container extraction with its Run-recorded pins,
 accepted seals, downstream reconciliation, disposable/committed projections,
 structured Engine-API binds, and launchd in their named later slices.

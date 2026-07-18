@@ -233,3 +233,17 @@ date/title; delete a line here when its slice lands.
 - Choice: pin the resident handshake to schema v5 and require the receipt/attested root owner to equal the current host operator UID. The alleged empty-skeleton launch gap was refuted: `resolveTaskLocalSkeleton` requires all fifteen populated rows, while the resident creates only `source/` and `git/`, so the next dispatch health-refuses before emitting a Worker plan.
 - Spec impact: none.
 - Needs your decision: no.
+
+## 2026-07-17 — takeover review of the setup inspection range
+- Where: Phase 3, `c27616e..9c5d6c3`, first-task setup repair and inspection seam; spawned two-lens review with adversarial verification (5 confirmed, 0 refuted, deduping to 3 defects).
+- Gap: (1) major — `InspectFirstTaskSetup` never re-bound the walked fifteen-row table to the durable receipt's device/inode, so a same-path root swapped between the attest stat and the resolver walk returned as receipt-attested; (2) minor — the new inspection test's un-restored `chmod 0700` made the mode gate refuse first, leaving the deleted-cover arm untested (a delete-mutant of the `os.Remove` survived); (3) minor — the repair commit's attest-side `os.Getuid()` clause has no killing test.
+- Choice: (1) fixed — the walk half is now `inspectFirstTaskTable`, which refuses unless the walked `KindTaskRoot` row carries the receipt's exact device/inode/owner tuple, with a same-path swap test that fails without the check; (2) fixed — the test no longer chmods the root, so the missing-cover refusal is the operative trigger; (3) retained and logged only: the clause differs from the receipt-equality check only when the process uid changes between register and attest, which an unprivileged test cannot construct; adding a uid-function seam to a trust check for testability was judged the less conservative option. The residual attest-to-walk stat window inside one call remains the documented ADR-016 D5 TOCTOU posture (narrowed, not closed).
+- Spec impact: none.
+- Needs your decision: no.
+
+## 2026-07-17 — first-task setup closure writer pins
+- Where: Phase 3, `WriteFirstTaskSetupClosure` (`mc/verbs/taskclosure.go`), ADR-016 D5 / contract's trusted-setup population.
+- Gap: D5's closure extraction runs in a setup container and its pins live on the immutable Run record; neither exists yet, and the spec does not say what the host-side writer half may accept meanwhile.
+- Choice: the writer consumes an already-extracted closure as exactly one `pack-<hex>.pack` + matching `.idx` pinned by a canonical sha256 digest (golden-vectored, name-covering, recomputed over the landed bytes after write); the digest pin is CALLER-SUPPLIED until the Run-recorded pin columns land [owed: the setup-container extraction slice must replace the caller pin with the Run's]; any residue in the resident skeleton refuses without cleanup — D5's exact retry-residue acceptance is owed to the same later slice, since its proof set (store identity, repository UUID, sole branch, base SHA) does not exist yet and a weaker partial proof would pretend to be the real one; generated covers are written 0444/0555, interior directories 0755 (spec silent on host modes; reversible); admitted closure bytes are fenced at 1 GiB before hashing. The writer has no production caller yet, like `applyRefusal` before it.
+- Spec impact: none.
+- Needs your decision: no.
