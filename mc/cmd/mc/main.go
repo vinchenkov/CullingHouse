@@ -440,6 +440,34 @@ func cmdTask(args []string) (any, error) {
 		receipt := verbs.TaskSetupReceipt{RunID: *runID, TaskID: *taskID,
 			Root: verbs.TaskSetupIdentity{Device: *device, Inode: *inode, OwnerUID: *ownerUID}}
 		return withSpine(func(db *sql.DB) (any, error) { return verbs.RegisterFirstTaskSetup(db, receipt) })
+	case "setup-record":
+		fs := newFlags("mc task setup-record")
+		runID := fs.String("run", "", "pipeline run id")
+		workspace := fs.String("workspace", "", "worksource workspace root")
+		result := fs.String("result", "", "setup result JSON from the setup container")
+		if err := parse(fs, args[1:]); err != nil {
+			return nil, err
+		}
+		idn, err := verbs.LoadIdentity()
+		if err != nil {
+			return nil, err
+		}
+		if err := verbs.RequireHostScope(idn, "mc task setup-record"); err != nil {
+			return nil, err
+		}
+		dec := json.NewDecoder(strings.NewReader(*result))
+		dec.DisallowUnknownFields()
+		var res verbs.SetupResult
+		if err := dec.Decode(&res); err != nil {
+			return nil, verbs.Usagef("setup result is invalid: %v", err)
+		}
+		return withSpine(func(db *sql.DB) (any, error) {
+			root, rows, err := verbs.RecordFirstTaskSetupClosure(db, *runID, *workspace, res)
+			if err != nil {
+				return nil, err
+			}
+			return map[string]any{"task_id": root.Receipt.TaskID, "rows": len(rows)}, nil
+		})
 	case "add":
 		title, rest, err := positional("mc task add", args[1:])
 		if err != nil {

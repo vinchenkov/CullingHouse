@@ -77,3 +77,13 @@ func TestSetupFirstTaskSubcommandMaterializesAStore(t *testing.T) {
 		t.Fatalf("an agent-scoped caller ran the setup executor: %v", denied.json)
 	}
 }
+
+func TestSetupRecordRejectsMalformedResult(t *testing.T) {
+	res := runMC(t, nil, "", "task", "setup-record", "--run", "r", "--workspace", "/w", "--result", "{not json")
+	if res.code != 2 {
+		t.Fatalf("malformed setup result exit = %d json=%v stderr=%q", res.code, res.json, res.stderr)
+	}
+	if e, _ := res.json["error"].(map[string]any); e == nil || e["code"] != "usage" {
+		t.Fatalf("want a usage error envelope, got %v", res.json)
+	}
+}
