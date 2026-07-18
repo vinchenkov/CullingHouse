@@ -1269,3 +1269,30 @@ invent that transition here.
 
 Outgoing NEXT (moved to PROGRESS.md): resolve the D6 post-setup Worker
 continuation / retry-reconciliation state machine red-first.
+
+## 2026-07-18 — successful first-task setup continuation
+
+Codex resumed the D6 state-machine seam at `3793fee`. The accepted design is
+a distinct setup-only terminal rather than mutating the immutable zero-row
+precreate plan: `mc task setup-continue --run` checks the exact standalone
+Worker run, lease, durable root receipt, and immutable task assignment in one
+transaction, stamps `setup-complete`, then fenced-releases the lease. It
+spends neither quality nor dispatch budget. An exact lost-response retry reads
+the terminal evidence and returns idempotently; unrecorded, stale, wrong-role,
+or other terminal runs refuse without mutation.
+
+The resident invokes that host-scoped continuation only after `setup-record`
+succeeds, and preserves the setup envelope if it refuses. A direct lifecycle
+test begins with a real materialized closure, records it, continues the setup
+run, then runs prepare/attest/commit and proves exactly two Worker Run rows
+(setup + new agent run) and the second's 15-row plan. The original zero-row
+plan never launches an agent. The dispatch attest guard now also rejects a
+receipt-backed on-disk skeleton without an immutable assignment, closing the
+lost-record/partial-setup admission gap.
+
+The full five-leg fast lane is green. This closes only the successful handoff;
+failure/crash residue cleanup and pinned retry remain the next D6 half.
+
+Outgoing NEXT (moved to PROGRESS.md): implement failure-side Worker-retry
+reconciliation for interrupted setup containers and partial receipt/root
+residue, red-first.

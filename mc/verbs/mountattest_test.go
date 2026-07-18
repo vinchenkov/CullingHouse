@@ -3,6 +3,7 @@ package verbs
 import (
 	"context"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -596,6 +597,10 @@ func maRepoCandidate(t *testing.T, role dispatch.Role, subject *int64) (string, 
 				Inode:    strconv.FormatUint(st.Ino, 10),
 				OwnerUID: int(st.Uid),
 			}}
+			state.SubjectTaskAssignment = &PrivateDispatchTaskAssignment{
+				BaseSHA: strings.Repeat("a", 40), ClosureDigest: strings.Repeat("b", 64),
+				LocalRepoUUID: "0a1b2c3d-4e5f-6071-8293-a4b5c6d7e8f9", ObjectFormat: "sha1",
+			}
 		}
 	}
 	return mcHome, &preparedCandidate{spawn: &dispatch.Spawn{Role: role, SubjectID: subject}, mountState: state}, ws
@@ -1052,6 +1057,10 @@ func TestDispatchRepoWorkerCommitsTaskLocalMountPlan(t *testing.T) {
 		VALUES ('setup-run', 'pipeline', 'worker', 'ws-test', 7, datetime('now'))`)
 	dvExec(t, db, `INSERT INTO task_setup_receipts (run_id, task_id, root_device, root_inode, root_owner_uid)
 		VALUES ('setup-run', 7, ?, ?, ?)`, device, inode, uid)
+	dvExec(t, db, `INSERT INTO task_assignments
+		(task_id, target_ref, branch, task_root_key, object_format, base_sha, local_repo_uuid, closure_digest)
+		VALUES (7, 'main', 'mc/task-7', '.mission-control/tasks/task-7', 'sha1', ?, ?, ?)`,
+		strings.Repeat("a", 40), "0a1b2c3d-4e5f-6071-8293-a4b5c6d7e8f9", strings.Repeat("b", 64))
 	if err := os.Chmod(os.Getenv("MC_HOME"), 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -1090,6 +1099,53 @@ func TestDispatchRepoWorkerCommitsTaskLocalMountPlan(t *testing.T) {
 	}
 }
 
+func TestFirstTaskSetupContinuationLeadsToANewlyAttestedFullWorkerPlan(t *testing.T) {
+	ws := grWorkspace(t)
+	db := dvSpine(t, func(a *InitArgs) { a.WorkspaceRoot = ws })
+	dvExec(t, db, `UPDATE worksources SET kind='repo' WHERE id='ws-test'`)
+	if err := os.Mkdir(filepath.Join(ws, ".git"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	_, res := tcMaterializedAt(t, db, ws)
+	if _, _, err := RecordFirstTaskSetupClosure(db, "setup-run", ws, res); err != nil {
+		t.Fatalf("record first-task closure: %v", err)
+	}
+	continued, err := ContinueFirstTaskSetup(db, "setup-run")
+	if err != nil || continued.AlreadyContinued {
+		t.Fatalf("continue first-task setup = (%+v, %v)", continued, err)
+	}
+	if err := os.Chmod(os.Getenv("MC_HOME"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(os.Getenv("MC_HOME"), "mount-allowlist"), []byte("version = 1\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	prepared := dfPrepare(t, db, dfRequestID)
+	attested, err := dispatchAttest(os.Getenv("MC_HOME"), prepared)
+	if err != nil || attested.refusal != nil {
+		t.Fatalf("post-continuation attest = (refusal %+v, err %v)", attested.refusal, err)
+	}
+	eff := dfCommit(t, db, prepared, attested)
+	if eff["action"] != "spawn" {
+		t.Fatalf("post-continuation effect = %v, want spawn", eff)
+	}
+	body, err := json.Marshal(eff["mount_plan"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	var plan PrivateDispatchMountPlan
+	if err := json.Unmarshal(body, &plan); err != nil {
+		t.Fatal(err)
+	}
+	if plan.TaskPrecreate != nil || len(plan.Entries) != len(taskPlanRows(7)) {
+		t.Fatalf("post-continuation mount plan = %+v, want the attested 15-row Worker plan", plan)
+	}
+	if got := dfInt(t, db, `SELECT COUNT(*) FROM runs WHERE subject=7`); got != 2 {
+		t.Fatalf("continuation plus full Worker plan produced %d runs, want exactly setup+agent", got)
+	}
+}
+
 func TestDispatchRepoWorkerRefusesSkeletonWithoutSetupReceipt(t *testing.T) {
 	ws, _ := tsBuild(t)
 	if err := os.Mkdir(filepath.Join(ws, ".git"), 0o700); err != nil {
@@ -1122,6 +1178,48 @@ func TestDispatchRepoWorkerRefusesSkeletonWithoutSetupReceipt(t *testing.T) {
 	dfAssertInert(t, db, eff)
 	if n := dfInt(t, db, `SELECT COUNT(*) FROM activity WHERE kind='dispatch.health'`); n != 1 {
 		t.Fatalf("refusal wrote %d dispatch.health rows, want one", n)
+	}
+}
+
+func TestDispatchRepoWorkerRefusesReceiptBackedSkeletonWithoutClosureAssignment(t *testing.T) {
+	ws, _ := tsBuild(t)
+	if err := os.Mkdir(filepath.Join(ws, ".git"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	db := dvSpine(t, func(a *InitArgs) { a.WorkspaceRoot = ws })
+	dvExec(t, db, `UPDATE worksources SET kind='repo' WHERE id='ws-test'`)
+	dvInsertTask(t, db, dvTask(7, dispatch.ScopeTask, dispatch.StatusSeeded, 2))
+	device, inode, uid, _ := maEvidence(t, filepath.Join(ws, ".mission-control", "tasks", "task-7"))
+	dvExec(t, db, `INSERT INTO runs (id, tier, role, worksource, subject, ended_at)
+		VALUES ('incomplete-setup', 'pipeline', 'worker', 'ws-test', 7, datetime('now'))`)
+	dvExec(t, db, `INSERT INTO task_setup_receipts (run_id, task_id, root_device, root_inode, root_owner_uid)
+		VALUES ('incomplete-setup', 7, ?, ?, ?)`, device, inode, uid)
+	if err := os.Chmod(os.Getenv("MC_HOME"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(os.Getenv("MC_HOME"), "mount-allowlist"), []byte("version = 1\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	prepared := dfPrepare(t, db, dfRequestID)
+	attested, err := dispatchAttest(os.Getenv("MC_HOME"), prepared)
+	if err != nil {
+		t.Fatalf("dispatchAttest: %v", err)
+	}
+	if attested.refusal == nil || attested.refusal.Code != boundary.CodeRuntimeUnappliable ||
+		attested.refusal.Authority != refusal.AuthorityDeployment {
+		t.Fatalf("receipt without assignment = %+v, want a deployment-health refusal", attested.refusal)
+	}
+	eff := dfCommit(t, db, prepared, attested)
+	if eff["action"] != "refused" {
+		t.Fatalf("effect = %v, want refused", eff)
+	}
+	if got := dfInt(t, db, `SELECT COUNT(*) FROM runs`); got != 1 {
+		t.Fatalf("receipt-without-assignment refusal opened a new Run: count=%d", got)
+	}
+	var lockRun sql.NullString
+	if err := db.QueryRow(`SELECT run_id FROM lock WHERE id=1`).Scan(&lockRun); err != nil || lockRun.Valid {
+		t.Fatalf("receipt-without-assignment refusal held the lease: (%v, %v)", lockRun, err)
 	}
 }
 

@@ -167,6 +167,8 @@ describe("spawn effect", () => {
       "--run", "run-42-worker",
       "--workspace", "/host/workspace",
       "--result", setupResultJson + "\n",
+    ], [
+      "task", "setup-continue", "--run", "run-42-worker",
     ]]);
     expect(rig.logs.some((line) => line.includes("first-task setup recorded"))).toBe(true);
   });

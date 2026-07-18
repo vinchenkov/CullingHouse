@@ -417,7 +417,7 @@ func cmdInit(args []string) (any, error) {
 
 func cmdTask(args []string) (any, error) {
 	if len(args) == 0 {
-		return nil, verbs.Usagef("usage: mc task add|get|block|unblock|setup-register …")
+		return nil, verbs.Usagef("usage: mc task add|get|block|unblock|setup-register|setup-continue …")
 	}
 	switch args[0] {
 	case "setup-register":
@@ -467,6 +467,22 @@ func cmdTask(args []string) (any, error) {
 				return nil, err
 			}
 			return map[string]any{"task_id": root.Receipt.TaskID, "rows": len(rows)}, nil
+		})
+	case "setup-continue":
+		fs := newFlags("mc task setup-continue")
+		runID := fs.String("run", "", "pipeline run id")
+		if err := parse(fs, args[1:]); err != nil {
+			return nil, err
+		}
+		idn, err := verbs.LoadIdentity()
+		if err != nil {
+			return nil, err
+		}
+		if err := verbs.RequireHostScope(idn, "mc task setup-continue"); err != nil {
+			return nil, err
+		}
+		return withSpine(func(db *sql.DB) (any, error) {
+			return verbs.ContinueFirstTaskSetup(db, *runID)
 		})
 	case "add":
 		title, rest, err := positional("mc task add", args[1:])

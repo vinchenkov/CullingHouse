@@ -500,6 +500,17 @@ func captureDispatchMountHostSnapshot(home string, state PrivateDispatchMountSta
 			} else if err != nil {
 				return dispatchMountHostSnapshot{}, err
 			} else {
+				// A receipt says the resident created this identity, but it does
+				// not say the closure extraction reached its durable last step.
+				// Never mint an agent plan from a skeleton whose immutable
+				// assignment is absent: a crashed/lost setup-record must recover
+				// through the pinned setup path, not expose an unpinned tree.
+				if state.SubjectTaskAssignment == nil {
+					return dispatchMountHostSnapshot{}, &boundary.MountError{
+						Code: boundary.CodeRuntimeUnappliable,
+						Msg:  "task skeleton has a setup receipt but no immutable closure assignment (ADR-016 D6)",
+					}
+				}
 				typed, err := resolveTaskLocalSkeleton(selected.WorkspaceRoot, *subjectTaskID, uid)
 				if err != nil {
 					return dispatchMountHostSnapshot{}, err

@@ -312,6 +312,19 @@ kept below. Operator legs that remain open are under `## Parked`, not here.
         and the empty git/shallow cover makes git report is-shallow=true
         (harmless for a complete store; the object-set proof is the completeness
         guard). Docker-lane owed: the real container run + closure e2e fixtures.
+  - [x] Post-setup Worker continuation (ADR-016 D6): `mc task
+        setup-continue --run` atomically proves the registered receipt plus
+        immutable assignment, ends only the setup-only Worker as
+        `setup-complete`, and frees its exact lease without spending
+        `dispatch_retries`. Its lost-response replay is idempotent; a stale,
+        unrecorded, wrong-role, or otherwise terminal run cannot mutate state.
+        The resident calls it only after successful `setup-record`, retaining
+        the envelope on refusal. The next normal dispatch then produces a
+        second, newly attested 15-row Worker plan (never an agent launch from
+        the zero-row precreate plan); a receipt-backed skeleton without its
+        closure assignment health-refuses. Focused lifecycle test and complete
+        five-leg fast lane green. The failed/interrupted setup recovery path is
+        intentionally still open below.
 - [ ] Phase 4 — E2E control loops (six scenario families)
 - [ ] Phase 5 — Real-subscription acceptance (operator-scheduled)
 - [ ] Release prep (after Phase 5): swap the repo's construction face for
@@ -331,18 +344,16 @@ deleted, not struck through. History is in `docs/ledger/`.
   agent cannot sleep the machine it runs on). Instructions in
   `spikes/07-launchd-clock/RESULT.md`. All other S7 sub-tests passed.
 
-NEXT: Resolve the post-setup Worker continuation before treating this as a
-production-complete loop. The successful `task_precreate` effect now creates,
-materializes, and records the task store, but its immutable precreate plan has
-no agent task rows; it must never launch an agent from that plan. The original
-claimed lease otherwise remains held, while ordinary reconciliation only knows
-how to idle a fresh lease or reap a no-container lease. Implement the named
-ADR-016 D6 Worker-retry reconciliation slice red-first: specify and prove the
-fenced transition from successful setup to a newly attested 15-row Worker plan
-(or the ADR-prescribed equivalent), including exact retry/reap behavior, no
-spurious retry charge/block, and no agent start before the task rows and launch
-receipts are authoritative. Consult ADR-016 Decision 6 before changing the
-state machine. Keep accepted-seal rebuild, Verifier disposable-source /
-committed-tree projections, structured Engine-API binds, and launchd in their
-named later slices. Docker-lane obligations at phase completion: the real setup
-container run, closure e2e fixtures, and the D1 deployment-mirror check.
+NEXT: Complete the remaining ADR-016 D6 Worker-retry reconciliation failure
+half red-first. A successful first-task setup now transitions safely, but a
+failed/interrupted setup container leaves a live precreate run and a durable
+receipt/root with no immutable assignment; after the ordinary reaper it must
+converge through exact observed-residue cleanup and a retry pinned to the
+recorded closure where one exists, never health-wedging that task indefinitely
+or launching from partial bytes. Specify the cleanup authority/fences and
+prove crash cuts, lost `setup-record` response, retry charging/blocking, and
+the no-agent-before-authoritative-plan rule against ADR-016 Decision 6. Keep
+accepted-seal rebuild, Verifier disposable-source / committed-tree projections,
+structured Engine-API binds, and launchd in their named later slices.
+Docker-lane obligations at phase completion: the real setup container run,
+closure e2e fixtures, and the D1 deployment-mirror check.

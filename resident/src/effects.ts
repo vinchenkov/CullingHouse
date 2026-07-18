@@ -395,8 +395,17 @@ async function runFirstTaskSetup(
 	if (recorded.exitCode !== 0) {
 		throw new Error(`first-task setup record refused (exit ${recorded.exitCode}): ${recorded.stderr.trim()}`);
 	}
+	// The precreate-only Run is intentionally not an agent plan.  Once the
+	// host has recorded the receipt-attested closure assignment, finish that
+	// setup operation under its exact run/lease fence.  A later tick will make
+	// a new claim and attest the now-existing 15-row Worker plan; it must never
+	// launch an agent from this immutable zero-row plan.
+	const continued = await deps.runMc(["task", "setup-continue", "--run", run_id]);
+	if (continued.exitCode !== 0) {
+		throw new Error(`first-task setup continuation refused (exit ${continued.exitCode}): ${continued.stderr.trim()}`);
+	}
 	await deps.fs.rm(setupJsonPath);
-	log(`spawn ${run_id}: first-task setup recorded for task ${step.task_id}`);
+	log(`spawn ${run_id}: first-task setup recorded and continued for task ${step.task_id}`);
 }
 
 /** §7 Landing: run the baked mc-land script, then report its exit code.

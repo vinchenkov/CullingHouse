@@ -39,8 +39,16 @@ func tcRegistered(t *testing.T, db *sql.DB, root string) TaskSetupReceipt {
 // RecordFirstTaskSetupClosure.
 func tcMaterialized(t *testing.T, db *sql.DB) (string, string, SetupResult) {
 	t.Helper()
-	src, _, objfmt := buildSourceRepo(t)
 	ws := grWorkspace(t)
+	root, res := tcMaterializedAt(t, db, ws)
+	return ws, root, res
+}
+
+// tcMaterializedAt is tcMaterialized with the Worksource root supplied by an
+// integration caller that also needs dispatch to attest the same tree.
+func tcMaterializedAt(t *testing.T, db *sql.DB, ws string) (string, SetupResult) {
+	t.Helper()
+	src, _, objfmt := buildSourceRepo(t)
 	root := filepath.Join(ws, ".mission-control", "tasks", "task-7")
 	for _, d := range []string{"source", "git"} {
 		if err := os.MkdirAll(filepath.Join(root, d), 0o755); err != nil {
@@ -59,7 +67,7 @@ func tcMaterialized(t *testing.T, db *sql.DB) (string, string, SetupResult) {
 		t.Fatal(err)
 	}
 	tcRegistered(t, db, root)
-	return ws, root, res
+	return root, res
 }
 
 func TestRecordFirstTaskSetupClosureRecordsTheAssignmentAndInspects(t *testing.T) {
@@ -110,5 +118,62 @@ func TestRecordFirstTaskSetupClosureRequiresTheLiveReceipt(t *testing.T) {
 	dvExec(t, db, `UPDATE runs SET ended_at=datetime('now') WHERE id='setup-run'`)
 	if _, _, err := RecordFirstTaskSetupClosure(db, "setup-run", ws, res); err == nil {
 		t.Fatal("an ended run recorded a closure")
+	}
+}
+
+func TestContinueFirstTaskSetupFencesThenReleasesWithoutChargingTheTask(t *testing.T) {
+	db := dvSpine(t)
+	ws, _, res := tcMaterialized(t, db)
+	if _, _, err := RecordFirstTaskSetupClosure(db, "setup-run", ws, res); err != nil {
+		t.Fatalf("record: %v", err)
+	}
+
+	got, err := ContinueFirstTaskSetup(db, "setup-run")
+	if err != nil {
+		t.Fatalf("continue: %v", err)
+	}
+	if got.RunID != "setup-run" || got.TaskID != 7 || got.AlreadyContinued {
+		t.Fatalf("continue = %+v, want fresh completion for setup-run/task 7", got)
+	}
+	var outcome sql.NullString
+	var retries int
+	if err := db.QueryRow(`SELECT outcome FROM runs WHERE id='setup-run'`).Scan(&outcome); err != nil || !outcome.Valid || outcome.String != "setup-complete" {
+		t.Fatalf("setup run outcome = (%v, %v), want setup-complete", outcome, err)
+	}
+	if err := db.QueryRow(`SELECT dispatch_retries FROM tasks WHERE id=7`).Scan(&retries); err != nil || retries != 3 {
+		t.Fatalf("continuation charged dispatch retries = (%d, %v), want 3", retries, err)
+	}
+	var lockRun sql.NullString
+	if err := db.QueryRow(`SELECT run_id FROM lock WHERE id=1`).Scan(&lockRun); err != nil || lockRun.Valid {
+		t.Fatalf("continuation did not release the setup lease: (%v, %v)", lockRun, err)
+	}
+
+	replay, err := ContinueFirstTaskSetup(db, "setup-run")
+	if err != nil || !replay.AlreadyContinued || replay.TaskID != 7 {
+		t.Fatalf("lost-response replay = (%+v, %v), want the same continued task", replay, err)
+	}
+}
+
+func TestContinueFirstTaskSetupRejectsUnrecordedOrStaleRunsWithoutMutation(t *testing.T) {
+	db := dvSpine(t)
+	ws, _, res := tcMaterialized(t, db)
+	if _, err := ContinueFirstTaskSetup(db, "setup-run"); err == nil {
+		t.Fatal("continuation accepted before the closure record")
+	}
+	var ended sql.NullString
+	var lockRun sql.NullString
+	if err := db.QueryRow(`SELECT ended_at FROM runs WHERE id='setup-run'`).Scan(&ended); err != nil || ended.Valid {
+		t.Fatalf("unrecorded continuation ended run = (%v, %v)", ended, err)
+	}
+	if err := db.QueryRow(`SELECT run_id FROM lock WHERE id=1`).Scan(&lockRun); err != nil || !lockRun.Valid || lockRun.String != "setup-run" {
+		t.Fatalf("unrecorded continuation changed lease = (%v, %v)", lockRun, err)
+	}
+
+	if _, _, err := RecordFirstTaskSetupClosure(db, "setup-run", ws, res); err != nil {
+		t.Fatalf("record: %v", err)
+	}
+	dvExec(t, db, `UPDATE lock SET run_id='other-run' WHERE id=1`)
+	if _, err := ContinueFirstTaskSetup(db, "setup-run"); err == nil {
+		t.Fatal("stale continuation released a different lease holder")
 	}
 }
