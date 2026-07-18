@@ -1434,3 +1434,13 @@ before the consumer attempts to parse even malformed manifest bytes.
 
 `21e84df` closes the strict-decoding gap: a manifest with a valid first JSON
 document plus any second document now refuses after digest verification.
+
+## 2026-07-18 — sealed pair completeness
+
+`84178c3` narrows the immutable seal manifest to exactly one matching
+`pack-*.pack` and `pack-*.idx` basename pair. It first validates both named
+records, their digest grammar, uniqueness, pair stem, and cardinality, then
+opens either seal path. The regression rewrites only the accepted manifest and
+its receipt digest to name a mismatched index; reconstruction refuses before
+that attacker-named file can be read. The full five-leg fast lane is green
+serially.
