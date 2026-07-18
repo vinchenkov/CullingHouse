@@ -134,11 +134,15 @@ type PrivateDispatchTaskSetup struct {
 // setup its Setup instruction names; it does not invent mount rows for paths
 // that do not exist yet.
 type PrivateDispatchTaskPrecreate struct {
-	ChildMode     int                         `json:"child_mode"`
-	Setup         *PrivateDispatchTaskSetup   `json:"setup"`
-	TaskID        int64                       `json:"task_id"`
-	TasksParent   PrivateDispatchPathIdentity `json:"tasks_parent"`
-	WorkspaceRoot string                      `json:"workspace_root"`
+	ChildMode int `json:"child_mode"`
+	// RecoverRoot is present only for ADR-016 D6 recovery. It is the exact
+	// receipt-vouched root whose inode must be preserved while setup children
+	// are scrubbed; ordinary first setup proves this path absent and omits it.
+	RecoverRoot   *PrivateDispatchPathIdentity `json:"recover_root,omitempty"`
+	Setup         *PrivateDispatchTaskSetup    `json:"setup"`
+	TaskID        int64                        `json:"task_id"`
+	TasksParent   PrivateDispatchPathIdentity  `json:"tasks_parent"`
+	WorkspaceRoot string                       `json:"workspace_root"`
 }
 
 // PrivateDispatchMountPlan is ADR-016 D5's bounded authorization carrier: the

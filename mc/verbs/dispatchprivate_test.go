@@ -448,9 +448,15 @@ func TestValidatePrivateAttestationTaskPrecreateRules(t *testing.T) {
 		"unwritable_mode":    func(s *PrivateDispatchTaskPrecreate) { s.ChildMode = 0o500 },
 		"widened_mode":       func(s *PrivateDispatchTaskPrecreate) { s.ChildMode = 0o777 },
 		"no_setup":           func(s *PrivateDispatchTaskPrecreate) { s.Setup = nil },
-		"unknown_mode":       func(s *PrivateDispatchTaskPrecreate) { s.Setup.Mode = "rebase" },
-		"unknown_format":     func(s *PrivateDispatchTaskPrecreate) { s.Setup.ObjectFormat = "sha512" },
-		"fresh_no_target":    func(s *PrivateDispatchTaskPrecreate) { s.Setup.TargetRef = "" },
+		"recovery_wrong_root": func(s *PrivateDispatchTaskPrecreate) {
+			s.RecoverRoot = &PrivateDispatchPathIdentity{Canonical: "/srv/repo/.mission-control/tasks/task-8", Device: "8", Inode: "10", OwnerUID: 501}
+		},
+		"recovery_bad_identity": func(s *PrivateDispatchTaskPrecreate) {
+			s.RecoverRoot = &PrivateDispatchPathIdentity{Canonical: "/srv/repo/.mission-control/tasks/task-7", Device: "x", Inode: "10", OwnerUID: 501}
+		},
+		"unknown_mode":    func(s *PrivateDispatchTaskPrecreate) { s.Setup.Mode = "rebase" },
+		"unknown_format":  func(s *PrivateDispatchTaskPrecreate) { s.Setup.ObjectFormat = "sha512" },
+		"fresh_no_target": func(s *PrivateDispatchTaskPrecreate) { s.Setup.TargetRef = "" },
 		"fresh_with_pin": func(s *PrivateDispatchTaskPrecreate) {
 			s.Setup.PinnedBaseSHA = strings.Repeat("a", 40)
 		},

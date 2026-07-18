@@ -10,6 +10,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"path"
+	"strconv"
 	"strings"
 	"unicode/utf8"
 
@@ -402,6 +403,14 @@ func validatePrivateMountPlan(plan *PrivateDispatchMountPlan) error {
 		}
 		if err := validatePrivateTaskSetup(step.Setup); err != nil {
 			return err
+		}
+		if root := step.RecoverRoot; root != nil {
+			if !validStructuralText(root.Canonical, maxPrivateScalarBytes) ||
+				root.Canonical != path.Join(parent.Canonical, "task-"+strconv.FormatInt(step.TaskID, 10)) ||
+				!validDecimalText(root.Device) || !validDecimalText(root.Inode) ||
+				root.OwnerUID != parent.OwnerUID {
+				return Domainf("dispatch: private task recovery root evidence is invalid")
+			}
 		}
 	}
 	prior := ""
