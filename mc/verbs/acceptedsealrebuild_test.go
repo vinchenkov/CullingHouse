@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strconv"
+	"strings"
 	"syscall"
 	"testing"
 )
@@ -58,5 +59,18 @@ func TestRebuildAcceptedCompletionSealUsesOnlyManifestVerifiedPack(t *testing.T)
 	}
 	if got.BaseSHA != seeded.BaseSHA || got.ClosureDigest != seeded.ClosureDigest {
 		t.Fatalf("rebuild=%+v seed=%+v", got, seeded)
+	}
+}
+
+func TestRebuildAcceptedCompletionSealRejectsWrongRootIdentityBeforeManifestRead(t *testing.T) {
+	sealDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(sealDir, "manifest.json"), []byte("not json"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, err := RebuildAcceptedCompletionSeal(sealDir, mkTaskChildren(t), AcceptedCompletionSeal{
+		Device: "0", Inode: "0", OwnerUID: 0,
+	})
+	if err == nil || !strings.Contains(err.Error(), "different filesystem object") {
+		t.Fatalf("wrong identity error = %v", err)
 	}
 }
