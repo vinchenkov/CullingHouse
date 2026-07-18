@@ -1444,3 +1444,11 @@ opens either seal path. The regression rewrites only the accepted manifest and
 its receipt digest to name a mismatched index; reconstruction refuses before
 that attacker-named file can be read. The full five-leg fast lane is green
 serially.
+
+## 2026-07-18 — strict setup-envelope framing
+
+`c533534` makes the shared setup-envelope reader consume exactly one JSON
+document. A second document now fails closed rather than being overlooked by
+the decoder's array-only `More` predicate. The full five-leg fast lane is
+green serially. This is the framing prerequisite for D6's accepted-seal setup
+operation.
