@@ -1529,3 +1529,12 @@ all receipt facts, rather than selecting a historical seal by time or run-id.
 Focused and full serial fast lanes are green. The next slice turns this
 path-free authority into an attested resident setup instruction and proves the
 producer absent before execution.
+
+## 2026-07-18 — accepted-seal rebuild plan carrier
+
+`ac4b7c9` adds a closed `accepted_seal_rebuild` member to the digest-bound
+mount plan. A verifier candidate with the task-pointed accepted receipt carries
+the exact run/request, object format, SHA, both digests, and seal filesystem
+identity; the helper repeats the full grammar. It grants no inferred task bind
+before setup. The resident must next re-attest `MC_HOME/seals/<run>`, require
+the producer artifacts absent, and run the fixed rebuild executor.
