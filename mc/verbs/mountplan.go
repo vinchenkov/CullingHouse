@@ -146,16 +146,34 @@ type PrivateDispatchTaskPrecreate struct {
 	WorkspaceRoot string                       `json:"workspace_root"`
 }
 
+// PrivateDispatchAcceptedSealRebuild is D6's downstream setup authority. It
+// contains only the task-pointed accepted receipt frozen at prepare; the
+// resident derives the host seal source from MC_HOME/seals/<run_id> and must
+// re-attest its identity before invoking the fixed setup executor.
+type PrivateDispatchAcceptedSealRebuild struct {
+	ClosureDigest     string `json:"closure_digest"`
+	CompletionRequest string `json:"completion_request_id"`
+	Device            string `json:"device"`
+	Inode             string `json:"inode"`
+	ManifestDigest    string `json:"manifest_digest"`
+	ObjectFormat      string `json:"object_format"`
+	OwnerUID          int    `json:"owner_uid"`
+	RunID             string `json:"run_id"`
+	SealedSHA         string `json:"sealed_sha"`
+	TaskID            int64  `json:"task_id"`
+}
+
 // PrivateDispatchMountPlan is ADR-016 D5's bounded authorization carrier: the
 // complete validated plan the attestation and the committed spawn effect
 // carry, and the only mount authority the resident may consume. Entries are
 // sorted by destination (the declared key of a semantically unordered set).
 // The alphabetical field order is load-bearing — see the entry type.
 type PrivateDispatchMountPlan struct {
-	Entries            []PrivateDispatchMountEntry   `json:"entries"`
-	JurisdictionDigest string                        `json:"jurisdiction_digest,omitempty"`
-	TaskPrecreate      *PrivateDispatchTaskPrecreate `json:"task_precreate,omitempty"`
-	Version            int                           `json:"version"`
+	AcceptedSealRebuild *PrivateDispatchAcceptedSealRebuild `json:"accepted_seal_rebuild,omitempty"`
+	Entries             []PrivateDispatchMountEntry         `json:"entries"`
+	JurisdictionDigest  string                              `json:"jurisdiction_digest,omitempty"`
+	TaskPrecreate       *PrivateDispatchTaskPrecreate       `json:"task_precreate,omitempty"`
+	Version             int                                 `json:"version"`
 }
 
 type mountPlanInputs struct {

@@ -263,6 +263,12 @@ func deriveDispatchMountRequests(state PrivateDispatchMountState, role string, s
 		}
 		return requests, selected, nil, nil
 	}
+	if baseRole(role) == "verifier" && subjectID != nil && state.SubjectAcceptedCompletionSeal != nil {
+		// The resident consumes the closed accepted-seal setup instruction
+		// before any verifier container exists. No task-store bind is granted
+		// to this pre-setup plan.
+		return requests, selected, nil, nil
+	}
 	if baseRole(role) != "worker" || subjectID == nil || selected.WorkspaceRoot == "" {
 		// The only realizable production repo arm today is the standalone-task
 		// Worker over an existing exact skeleton. A projection-consuming or
@@ -805,6 +811,14 @@ func attestCandidateMounts(home string, cand *preparedCandidate, allowLegacyFake
 	plan := &PrivateDispatchMountPlan{
 		Version: 1, Entries: entries, JurisdictionDigest: jurisdictionDigest,
 		TaskPrecreate: snapshot.TaskPrecreate,
+	}
+	if baseRole(string(cand.spawn.Role)) == "verifier" && cand.spawn.SubjectID != nil && cand.mountState.SubjectAcceptedCompletionSeal != nil {
+		s := cand.mountState.SubjectAcceptedCompletionSeal
+		plan.AcceptedSealRebuild = &PrivateDispatchAcceptedSealRebuild{
+			TaskID: *cand.spawn.SubjectID, RunID: s.RunID, CompletionRequest: s.CompletionRequest,
+			ObjectFormat: s.ObjectFormat, SealedSHA: s.SealedSHA, ClosureDigest: s.ClosureDigest,
+			ManifestDigest: s.ManifestDigest, Device: s.Device, Inode: s.Inode, OwnerUID: s.OwnerUID,
+		}
 	}
 	body, err := json.Marshal(plan)
 	if err != nil {
