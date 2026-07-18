@@ -1421,3 +1421,10 @@ from those verified bytes. The established materializer then builds and fsck
 checks the canonical task-local store. A real Git fixture proves no original
 Worksource read is needed after seal creation. Resident filesystem identity and
 producer-absence rechecks remain the next integration seam.
+
+## 2026-07-18 — seal-root identity re-attest
+
+`09dd8c2` closes the filesystem half of the pure consumer: it LSTATS the seal
+root before opening any manifest or pack bytes and requires a real directory
+with the accepted receipt's decimal device/inode/operator uid. A swapped path,
+symlink, ownership drift, or object-type change refuses before reconstruction.
