@@ -127,6 +127,13 @@ function invalidMountPlanReason(plan: MountPlan | undefined): string | null {
 		const invalidSetup = invalidTaskSetupReason(step.setup);
 		if (invalidSetup !== null) return invalidSetup;
 	}
+	if (plan.accepted_seal_rebuild !== undefined) {
+		// The D6 setup executor is intentionally a separate resident effect:
+		// it must first prove the former Worker agent/guard/runner absent and
+		// re-attest MC_HOME/seals/<run>. Never fall through to agent creation
+		// while that operation is not installed.
+		return "accepted-seal rebuild requires the dedicated resident setup executor";
+	}
   return null;
 }
 

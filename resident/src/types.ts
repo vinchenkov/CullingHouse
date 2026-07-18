@@ -97,6 +97,18 @@ export interface MountPlanEntry {
 
 /** The committed spawn effect's validated mount plan; explicit, never absent. */
 export interface MountPlan {
+	accepted_seal_rebuild?: {
+		closure_digest: string;
+		completion_request_id: string;
+		device: string;
+		inode: string;
+		manifest_digest: string;
+		object_format: "sha1" | "sha256";
+		owner_uid: number;
+		run_id: string;
+		sealed_sha: string;
+		task_id: number;
+	};
   entries: MountPlanEntry[];
 	task_precreate?: TaskSkeletonRequest;
   version: number;
