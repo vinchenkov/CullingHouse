@@ -4,7 +4,7 @@
 // `mc land report` handoff, exact-name reap, and idle/reenter as no-ops.
 
 import { describe, expect, test } from "bun:test";
-import { applyEffect } from "./effects";
+import { applyEffect, requireAcceptedSealProducerAbsent } from "./effects";
 import { fail, makeRig, ok, testConfig } from "./test-helpers";
 import type { Effect } from "./types";
 
@@ -73,7 +73,9 @@ const setupRunArgv = [
 	"run", "--rm",
 	"--name", "mc-setup-run-42-worker",
   "--network", "none",
-  "--label", "mc-managed",
+  "--label", "mc-managed=true",
+  "--label", "mc-tier=pipeline",
+  "--label", "mc-run-id=run-42-worker",
   "--user", "10002:10002",
   "--cap-drop", "ALL",
   "--security-opt", "no-new-privileges=true",
@@ -118,6 +120,34 @@ describe("idle / reenter / unknown", () => {
 });
 
 describe("spawn effect", () => {
+
+  test("accepted-seal setup admits only confirmed absence of the exact prior Worker artifacts", async () => {
+    const rig = makeRig();
+    rig.docker.enqueue(fail(1, "No such container"), fail(1, "No such container"));
+    await expect(requireAcceptedSealProducerAbsent("run-42-worker", rig.deps)).resolves.toBeUndefined();
+    expect(rig.docker.calls).toEqual([
+      ["inspect", "--type", "container", "mc-run-run-42-worker"],
+      ["inspect", "--type", "container", "mc-setup-run-42-worker"],
+    ]);
+  });
+
+  test("accepted-seal setup refuses a surviving or ambiguously labelled producer", async () => {
+    const rig = makeRig();
+    rig.docker.enqueue(ok(JSON.stringify([{
+      Id: "a".repeat(64), Name: "/mc-run-run-42-worker",
+      Config: { Labels: { "mc-managed": "true", "mc-run-id": "run-42-worker", "mc-tier": "pipeline" } },
+      State: { Status: "exited" },
+    }])));
+    await expect(requireAcceptedSealProducerAbsent("run-42-worker", rig.deps)).rejects.toThrow("still present");
+
+    const ambiguous = makeRig();
+    ambiguous.docker.enqueue(ok(JSON.stringify([{
+      Id: "a".repeat(64), Name: "/mc-run-run-42-worker",
+      Config: { Labels: { "mc-managed": "true", "mc-tier": "pipeline" } },
+      State: { Status: "exited" },
+    }])));
+    await expect(requireAcceptedSealProducerAbsent("run-42-worker", ambiguous.deps)).rejects.toThrow("identity is ambiguous");
+  });
 
   test("post-claim task precreate registers, then runs the setup container and records its result", async () => {
     const events: string[] = [];
@@ -355,7 +385,14 @@ describe("spawn effect", () => {
   });
 
   test("an accepted-seal setup plan cannot fall through to verifier creation", async () => {
-    const rig = makeRig();
+		let rechecked = false;
+    const rig = makeRig({
+			recheckAcceptedSeal: async () => {
+				rechecked = true;
+				return "/tmp/mc-home/seals/run-42-worker";
+			},
+		});
+		rig.docker.enqueue(fail(1, "No such container"), fail(1, "No such container"));
     await applyEffect({
       ...spawnEffect,
       role: "verifier",
@@ -370,11 +407,47 @@ describe("spawn effect", () => {
         },
       },
     }, rig.deps);
-    expect(rig.docker.calls).toEqual([]);
+    expect(rig.docker.calls).toEqual([
+			["inspect", "--type", "container", "mc-run-run-42-worker"],
+			["inspect", "--type", "container", "mc-setup-run-42-worker"],
+		]);
     expect(rig.mc.calls).toEqual([]);
     expect(rig.fakeFs.events).toEqual([]);
+		expect(rechecked).toBe(true);
     expect(rig.logs.some((line) => line.includes("accepted-seal rebuild"))).toBe(true);
   });
+
+	test("a surviving accepted-seal producer leaves the verifier unprepared", async () => {
+		let rechecked = false;
+		const rig = makeRig({ recheckAcceptedSeal: async () => {
+			rechecked = true;
+			return "/tmp/mc-home/seals/run-42-worker";
+		} });
+		rig.docker.enqueue(ok(JSON.stringify([{
+			Id: "a".repeat(64), Name: "/mc-run-run-42-worker",
+			Config: { Labels: { "mc-managed": "true", "mc-run-id": "run-42-worker", "mc-tier": "pipeline" } },
+			State: { Status: "exited" },
+		}])));
+		await applyEffect({
+			...spawnEffect,
+			role: "verifier",
+			mount_plan: {
+				entries: [], version: 1,
+				accepted_seal_rebuild: {
+					task_id: 42, run_id: "run-42-worker", completion_request_id: "0011223344556677",
+					object_format: "sha1", sealed_sha: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+					closure_digest: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+					manifest_digest: "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+					device: "1", inode: "2", owner_uid: 501,
+				},
+			},
+		}, rig.deps);
+		expect(rig.docker.calls).toEqual([["inspect", "--type", "container", "mc-run-run-42-worker"]]);
+		expect(rig.mc.calls).toEqual([]);
+		expect(rig.fakeFs.events).toEqual([]);
+		expect(rechecked).toBe(false);
+		expect(rig.logs.some((line) => line.includes("producer is still present"))).toBe(true);
+	});
 
   test("a malformed accepted-seal receipt is refused before the setup fence", async () => {
     const rig = makeRig();
@@ -615,8 +688,9 @@ describe("spawn effect", () => {
         "create", "--rm",
         "--network", "none",
         "--name", "mc-run-run-42-worker",
-        "--label", "mc-managed",
+        "--label", "mc-managed=true",
         "--label", "mc-tier=pipeline",
+		"--label", "mc-run-id=run-42-worker",
         "-v", "/tmp/mc-home/sessions/run-42-worker:/mc/session",
         "-v", "/tmp/mc-home/runs/run-42-worker.json:/mc/run.json:ro",
         "-v", "/host/behaviors:/mc/behaviors:ro",

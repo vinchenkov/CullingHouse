@@ -147,11 +147,8 @@ function invalidMountPlanReason(plan: MountPlan | undefined): string | null {
 		if (plan.task_precreate !== undefined) {
 			return "accepted seal rebuild cannot share a first-task setup plan";
 		}
-		// The D6 setup executor is intentionally a separate resident effect:
-		// it must first prove the former Worker agent/guard/runner absent and
-		// re-attest MC_HOME/seals/<run>. Never fall through to agent creation
-		// while that operation is not installed.
-		return "accepted-seal rebuild requires the dedicated resident setup executor";
+		// Spawn handles this closed setup carrier before ordinary route/container
+		// work. It never reaches the generic agent-create path.
 	}
   return null;
 }
@@ -196,6 +193,44 @@ type SpawnEffect = Extract<Effect, { action: "spawn" }>;
 type LandEffect = Extract<Effect, { action: "land" }>;
 type ReapEffect = Extract<Effect, { action: "reap" }>;
 
+/** D6's former-producer fence. A missing exact container is the only success;
+ * a live, exited-but-not-removed, malformed, or inspect-unavailable object
+ * keeps downstream accepted-seal setup unprepared. Runner execution is inside
+ * the pipeline agent container; network guards are added only with ADR-018's
+ * guard runtime and must join this exact inventory then. */
+export async function requireAcceptedSealProducerAbsent(runId: string, deps: TickDeps): Promise<void> {
+	if (!SAFE_ID.test(runId)) throw new Error("accepted seal producer run id is malformed");
+	for (const component of ["mc-run", "mc-setup"]) {
+		const name = `${component}-${runId}`;
+		const inspected = await deps.docker(["inspect", "--type", "container", name]);
+		if (inspected.exitCode === 1) continue; // Docker's exact not-found result.
+		if (inspected.exitCode !== 0) {
+			throw new Error(`cannot confirm accepted seal producer absence for ${name}: docker inspect exited ${inspected.exitCode}`);
+		}
+		let records: unknown;
+		try {
+			records = JSON.parse(inspected.stdout);
+		} catch {
+			throw new Error(`accepted seal producer identity is ambiguous for ${name}`);
+		}
+		if (!Array.isArray(records) || records.length !== 1 || records[0] === null || typeof records[0] !== "object") {
+			throw new Error(`accepted seal producer identity is ambiguous for ${name}`);
+		}
+		const record = records[0] as {
+			Id?: unknown; Name?: unknown; Config?: { Labels?: Record<string, unknown> }; State?: { Status?: unknown };
+		};
+		const labels = record.Config?.Labels;
+		if (typeof record.Id !== "string" || !/^[0-9a-f]{64}$/.test(record.Id) ||
+			record.Name !== `/${name}` || labels === undefined ||
+			labels["mc-managed"] !== "true" || labels["mc-tier"] !== "pipeline" || labels["mc-run-id"] !== runId ||
+			typeof record.State?.Status !== "string" ||
+			!(["created", "running", "paused", "restarting", "removing", "exited", "dead"] as string[]).includes(record.State.Status)) {
+			throw new Error(`accepted seal producer identity is ambiguous for ${name}`);
+		}
+		throw new Error(`accepted seal producer is still present: ${name} (${record.State.Status})`);
+	}
+}
+
 /** §10 effect order, literally: folder → run.json → plan sibling →
  * recheck → create → recheck → start (ADR-016 D5's launch legs). */
 async function spawn(effect: SpawnEffect, deps: TickDeps): Promise<void> {
@@ -219,6 +254,26 @@ async function spawn(effect: SpawnEffect, deps: TickDeps): Promise<void> {
     log(`spawn refused: no behavior mapped for role ${JSON.stringify(role)} (fail-closed)`);
     return;
   }
+	if (effect.mount_plan.accepted_seal_rebuild !== undefined) {
+		const step = effect.mount_plan.accepted_seal_rebuild;
+		if (role.split(":", 1)[0] !== "verifier" || effect.subject_id !== step.task_id) {
+			log("spawn refused: accepted-seal rebuild does not match the claimed Verifier (fail-closed)");
+			return;
+		}
+		try {
+			await requireAcceptedSealProducerAbsent(step.run_id, deps);
+			await deps.recheckAcceptedSeal(step);
+		} catch (err) {
+			log(`spawn refused: accepted-seal setup precondition failed: ${(err as Error).message} (fail-closed)`);
+			return;
+		}
+		// Rebuild is deliberately still fenced here. Its closed setup operation
+		// needs a durable result/continuation before it can mutate the canonical
+		// task store; running it then falling through would strand that mutation
+		// under a run with no verifier-safe source materialization.
+		log("spawn refused: accepted-seal rebuild awaits the dedicated resident setup executor (fail-closed)");
+		return;
+	}
 	if (effect.mount_plan.task_precreate !== undefined) {
 		const step = effect.mount_plan.task_precreate;
 		if (role.split(":", 1)[0] !== "worker" || effect.subject_id !== step.task_id) {
@@ -310,8 +365,9 @@ async function spawn(effect: SpawnEffect, deps: TickDeps): Promise<void> {
     "create", "--rm",
     "--network", "none",
     "--name", name,
-    "--label", "mc-managed",
+    "--label", "mc-managed=true",
     "--label", "mc-tier=pipeline",
+		"--label", `mc-run-id=${run_id}`,
     "-v", `${sessionDir}:/mc/session`,
     "-v", `${runJsonPath}:/mc/run.json:ro`,
     "-v", `${config.behaviorsDir}:/mc/behaviors:ro`,
@@ -394,7 +450,9 @@ async function runFirstTaskSetup(
 		"run", "--rm",
 		"--name", `mc-setup-${run_id}`,
 		"--network", "none",
-		"--label", "mc-managed",
+		"--label", "mc-managed=true",
+		"--label", "mc-tier=pipeline",
+		"--label", `mc-run-id=${run_id}`,
 		"--user", "10002:10002",
 		"--cap-drop", "ALL",
 		"--security-opt", "no-new-privileges=true",
