@@ -161,13 +161,43 @@ func TestInspectFirstTaskSetupRequiresTheReceiptAttestedCompleteTaskTable(t *tes
 		t.Fatalf("inspected rows = %d, want %d", len(rows), len(taskPlanRows(7)))
 	}
 
-	if err := os.Chmod(root, 0o700); err != nil {
-		t.Fatal(err)
-	}
 	if err := os.Remove(filepath.Join(root, "git", "shallow")); err != nil {
 		t.Fatal(err)
 	}
 	if _, _, err := InspectFirstTaskSetup(db, "setup-run", ws); err == nil {
 		t.Fatal("incomplete task table was accepted after receipt attestation")
+	}
+}
+
+func TestInspectFirstTaskTableBindsTheWalkedRootToTheReceipt(t *testing.T) {
+	ws, root := tsBuild(t)
+	info, err := os.Lstat(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	st := info.Sys().(*syscall.Stat_t)
+	fr := FirstTaskSetupRoot{
+		Receipt: TaskSetupReceipt{RunID: "setup-run", TaskID: 7, Root: TaskSetupIdentity{
+			Device:   strconv.FormatUint(uint64(st.Dev), 10),
+			Inode:    strconv.FormatUint(st.Ino, 10),
+			OwnerUID: int(st.Uid),
+		}},
+		Canonical: root,
+	}
+	if _, err := inspectFirstTaskTable(fr, ws); err != nil {
+		t.Fatalf("the receipt-identical root failed inspection: %v", err)
+	}
+
+	if err := os.Chmod(root, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.RemoveAll(root); err != nil {
+		t.Fatal(err)
+	}
+	if rebuilt := tsBuildAt(t, ws); rebuilt != root {
+		t.Fatalf("rebuilt skeleton moved: %q", rebuilt)
+	}
+	if _, err := inspectFirstTaskTable(fr, ws); err == nil {
+		t.Fatal("a same-path swapped task root passed inspection against the stale receipt")
 	}
 }

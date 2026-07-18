@@ -15,6 +15,13 @@ import (
 func tsBuild(t *testing.T) (string, string) {
 	t.Helper()
 	ws := grWorkspace(t)
+	return ws, tsBuildAt(t, ws)
+}
+
+// tsBuildAt builds the same skeleton beneath an existing workspace root, so a
+// test can rebuild it in place at the same path with a fresh identity.
+func tsBuildAt(t *testing.T, ws string) string {
+	t.Helper()
 	root := filepath.Join(ws, ".mission-control", "tasks", "task-7")
 	for _, dir := range []string{
 		"source/.mission-control",
@@ -43,7 +50,7 @@ func tsBuild(t *testing.T) (string, string) {
 	if err := os.Chmod(root, 0o555); err != nil {
 		t.Fatal(err)
 	}
-	return ws, root
+	return root
 }
 
 func TestTaskPlanRowsAreAClosedCollisionFreeTable(t *testing.T) {

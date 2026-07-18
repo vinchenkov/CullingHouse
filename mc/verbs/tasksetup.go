@@ -206,12 +206,33 @@ func InspectFirstTaskSetup(db *sql.DB, runID, workspaceRoot string) (FirstTaskSe
 	if err != nil {
 		return FirstTaskSetupRoot{}, nil, err
 	}
-	rows, err := resolveTaskLocalSkeleton(workspaceRoot, root.Receipt.TaskID, root.Receipt.Root.OwnerUID)
+	rows, err := inspectFirstTaskTable(root, workspaceRoot)
 	if err != nil {
 		return FirstTaskSetupRoot{}, nil, err
 	}
-	if got, ok := rows[boundary.KindTaskRoot]; !ok || got.Canonical != root.Canonical {
-		return FirstTaskSetupRoot{}, nil, Domainf("task setup inspection did not recover its receipt-attested task root")
-	}
 	return root, rows, nil
+}
+
+// inspectFirstTaskTable is the walk half of the joined inspection. The walked
+// KindTaskRoot row must carry the durable receipt's exact device/inode/owner
+// identity, not merely its constructed path: the attest gate's stat and the
+// resolver's stat are separate observations, and a same-path root swapped
+// between them would otherwise be returned as receipt-attested (takeover
+// review of c27616e..9c5d6c3, 2026-07-17).
+func inspectFirstTaskTable(root FirstTaskSetupRoot, workspaceRoot string) (map[boundary.TypedKind]boundary.ProtectedID, error) {
+	rows, err := resolveTaskLocalSkeleton(workspaceRoot, root.Receipt.TaskID, root.Receipt.Root.OwnerUID)
+	if err != nil {
+		return nil, err
+	}
+	got, ok := rows[boundary.KindTaskRoot]
+	if !ok || got.Canonical != root.Canonical || got.Info == nil {
+		return nil, Domainf("task setup inspection did not recover its receipt-attested task root")
+	}
+	st, ok := got.Info.Sys().(*syscall.Stat_t)
+	if !ok || strconv.FormatUint(uint64(st.Dev), 10) != root.Receipt.Root.Device ||
+		strconv.FormatUint(st.Ino, 10) != root.Receipt.Root.Inode ||
+		int(st.Uid) != root.Receipt.Root.OwnerUID {
+		return nil, Domainf("task setup inspection root identity does not match the durable receipt")
+	}
+	return rows, nil
 }
