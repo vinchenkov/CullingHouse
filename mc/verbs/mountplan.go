@@ -163,6 +163,23 @@ type PrivateDispatchAcceptedSealRebuild struct {
 	TaskID            int64  `json:"task_id"`
 }
 
+// PrivateDispatchVerifierProjection authorizes one execution-scoped disposable
+// source after the exact accepted seal has already rebuilt the canonical store.
+// ProjectionRoot is deliberately absent: the resident derives its run-keyed
+// host path and may not accept one from dispatch.
+type PrivateDispatchVerifierProjection struct {
+	ClosureDigest     string `json:"closure_digest"`
+	CompletionRequest string `json:"completion_request_id"`
+	ManifestDigest    string `json:"manifest_digest"`
+	ObjectFormat      string `json:"object_format"`
+	RebuildRunID      string `json:"rebuild_run_id"`
+	SealDevice        string `json:"seal_device"`
+	SealInode         string `json:"seal_inode"`
+	SealOwnerUID      int    `json:"seal_owner_uid"`
+	SealedSHA         string `json:"sealed_sha"`
+	TaskID            int64  `json:"task_id"`
+}
+
 // PrivateDispatchMountPlan is ADR-016 D5's bounded authorization carrier: the
 // complete validated plan the attestation and the committed spawn effect
 // carry, and the only mount authority the resident may consume. Entries are
@@ -173,6 +190,7 @@ type PrivateDispatchMountPlan struct {
 	Entries             []PrivateDispatchMountEntry         `json:"entries"`
 	JurisdictionDigest  string                              `json:"jurisdiction_digest,omitempty"`
 	TaskPrecreate       *PrivateDispatchTaskPrecreate       `json:"task_precreate,omitempty"`
+	VerifierProjection  *PrivateDispatchVerifierProjection  `json:"verifier_projection,omitempty"`
 	Version             int                                 `json:"version"`
 }
 

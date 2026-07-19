@@ -438,6 +438,13 @@ func validatePrivateMountPlan(plan *PrivateDispatchMountPlan) error {
 			return Domainf("dispatch: private accepted seal rebuild evidence is invalid")
 		}
 	}
+	if step := plan.VerifierProjection; step != nil {
+		if plan.AcceptedSealRebuild != nil || step.TaskID < 1 || !validStructuralText(step.RebuildRunID, maxPrivateScalarBytes) ||
+			!validLowercaseHex(step.CompletionRequest, 16) || (step.ObjectFormat != "sha1" && step.ObjectFormat != "sha256") || !validLowercaseHex(step.SealedSHA, oidLen(step.ObjectFormat)) || !validLowercaseHex(step.ClosureDigest, 64) ||
+			!validLowercaseHex(step.ManifestDigest, 64) || !validDecimalText(step.SealDevice) || !validDecimalText(step.SealInode) || step.SealOwnerUID < 0 {
+			return Domainf("dispatch: private verifier projection evidence is invalid")
+		}
+	}
 	prior := ""
 	logicalIDs := map[string]bool{}
 	for i, e := range plan.Entries {

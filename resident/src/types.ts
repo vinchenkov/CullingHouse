@@ -109,6 +109,18 @@ export interface MountPlan {
 		owner_uid: number;
 		run_id: string;
 		sealed_sha: string;
+		seal_device: string;
+		seal_inode: string;
+		seal_owner_uid: number;
+		task_id: number;
+	};
+	verifier_projection?: {
+		closure_digest: string;
+		completion_request_id: string;
+		manifest_digest: string;
+		object_format: "sha1" | "sha256";
+		rebuild_run_id: string;
+		sealed_sha: string;
 		task_id: number;
 	};
   entries: MountPlanEntry[];

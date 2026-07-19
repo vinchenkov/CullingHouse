@@ -38,6 +38,9 @@ type DispatchMountState struct {
 	// for a downstream D6 setup. It is task-pointed at acceptance rather than
 	// selected from historical completion_seals rows by time or run ordering.
 	SubjectAcceptedCompletionSeal *DispatchAcceptedCompletionSeal `json:"subject_accepted_completion_seal,omitempty"`
+	// SubjectAcceptedSealRebuild freezes the completed setup receipt that proves
+	// the canonical store was reconstructed from that exact accepted seal.
+	SubjectAcceptedSealRebuild *DispatchAcceptedSealRebuild `json:"subject_accepted_seal_rebuild,omitempty"`
 	// SubjectTaskTargetRef freezes the subject task's target ref under the
 	// token so the spine-free attest leg can pin a fresh-mode first-task
 	// closure without re-reading the spine.
@@ -65,6 +68,16 @@ type DispatchAcceptedCompletionSeal struct {
 	Device            string `json:"device"`
 	Inode             string `json:"inode"`
 	OwnerUID          int    `json:"owner_uid"`
+}
+
+type DispatchAcceptedSealRebuild struct {
+	RunID             string `json:"run_id"`
+	CompletionRunID   string `json:"completion_run_id"`
+	CompletionRequest string `json:"completion_request_id"`
+	ObjectFormat      string `json:"object_format"`
+	SealedSHA         string `json:"sealed_sha"`
+	ClosureDigest     string `json:"closure_digest"`
+	ManifestDigest    string `json:"manifest_digest"`
 }
 
 // DispatchTaskSetupIdentity is the path-free durable identity of a
@@ -238,6 +251,33 @@ func LoadSubjectAcceptedCompletionSeal(ctx context.Context, q dispatchProjection
 	}
 	if rows.Next() {
 		return nil, fmt.Errorf("task %d accepted completion projection is ambiguous", taskID)
+	}
+	return &out, rows.Err()
+}
+
+// LoadSubjectAcceptedSealRebuild returns only a terminal Verifier setup
+// receipt joined to the task's current accepted-completion pointer. A stale
+// historical rebuild cannot authorize a later verifier projection.
+func LoadSubjectAcceptedSealRebuild(ctx context.Context, q dispatchProjectionQuerier, taskID int64) (*DispatchAcceptedSealRebuild, error) {
+	rows, err := q.QueryContext(ctx, `
+		SELECT b.run_id,b.completion_run_id,b.completion_request_id,b.object_format,b.sealed_sha,b.closure_digest,b.manifest_digest
+		FROM tasks t JOIN accepted_seal_rebuild_receipts b
+		 ON b.task_id=t.id AND b.completion_run_id=t.accepted_completion_run_id AND b.completion_request_id=t.accepted_completion_request_id
+		JOIN runs r ON r.id=b.run_id
+		WHERE t.id=? AND t.status='worked' AND r.outcome='accepted-seal-rebuilt'`, taskID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	if !rows.Next() {
+		return nil, rows.Err()
+	}
+	var out DispatchAcceptedSealRebuild
+	if err := rows.Scan(&out.RunID, &out.CompletionRunID, &out.CompletionRequest, &out.ObjectFormat, &out.SealedSHA, &out.ClosureDigest, &out.ManifestDigest); err != nil {
+		return nil, err
+	}
+	if rows.Next() {
+		return nil, fmt.Errorf("multiple accepted seal rebuild receipts for task %d", taskID)
 	}
 	return &out, rows.Err()
 }

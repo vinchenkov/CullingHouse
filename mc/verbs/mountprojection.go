@@ -61,6 +61,11 @@ func loadDispatchMountState(ctx context.Context, q Q, sp *dispatch.Spawn, rec di
 			return state, err
 		}
 		state.SubjectAcceptedCompletionSeal = seal
+		rebuild, err := substrate.LoadSubjectAcceptedSealRebuild(ctx, q, *sp.SubjectID)
+		if err != nil {
+			return state, err
+		}
+		state.SubjectAcceptedSealRebuild = rebuild
 	}
 
 	rows, err := substrate.LoadDispatchWorksourceProjection(ctx, q)

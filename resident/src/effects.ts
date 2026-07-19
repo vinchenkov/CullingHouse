@@ -150,6 +150,15 @@ function invalidMountPlanReason(plan: MountPlan | undefined): string | null {
 		// Spawn handles this closed setup carrier before ordinary route/container
 		// work. It never reaches the generic agent-create path.
 	}
+	if (plan.verifier_projection !== undefined) {
+		const step = plan.verifier_projection;
+		if (plan.accepted_seal_rebuild !== undefined || step === null || typeof step !== "object" ||
+			!Number.isSafeInteger(step.task_id) || step.task_id < 1 || !SAFE_ID.test(step.rebuild_run_id) ||
+			!/^[0-9a-f]{16}$/.test(step.completion_request_id) || !/^[0-9a-f]{64}$/.test(step.manifest_digest) ||
+			!(/^[0-9a-f]{40}$/.test(step.sealed_sha) || /^[0-9a-f]{64}$/.test(step.sealed_sha)) || !/^[0-9a-f]{64}$/.test(step.closure_digest) || (step.object_format !== "sha1" && step.object_format !== "sha256") || !/^(0|[1-9][0-9]*)$/.test(step.seal_device) || !/^(0|[1-9][0-9]*)$/.test(step.seal_inode) || !Number.isSafeInteger(step.seal_owner_uid) || step.seal_owner_uid < 0) {
+			return "verifier projection descriptor is malformed";
+		}
+	}
   return null;
 }
 
@@ -284,6 +293,29 @@ async function spawn(effect: SpawnEffect, deps: TickDeps): Promise<void> {
 		log(`spawn ${run_id}: accepted-seal rebuild recorded and continued for task ${step.task_id}`);
 		return;
 	}
+	let verifierProjection: string | undefined;
+	if (effect.mount_plan.verifier_projection !== undefined) {
+		const step = effect.mount_plan.verifier_projection;
+		if (role.split(":", 1)[0] !== "verifier" || effect.subject_id !== step.task_id) {
+			log("spawn refused: verifier projection does not match the claimed Verifier (fail-closed)"); return;
+		}
+		const taskRoot = effect.mount_plan.entries.find((entry) => entry.logical_id === "task-root" && entry.destination === "/workspace" && entry.access === "ro");
+		if (taskRoot === undefined) { log("spawn refused: verifier projection lacks canonical task root (fail-closed)"); return; }
+		verifierProjection = `${runsDir(config.mcHome)}/projections/${run_id}`;
+		try {
+			await deps.fs.mkdir(`${runsDir(config.mcHome)}/projections`);
+			await deps.fs.mkdir(verifierProjection);
+			const envelope = { schema_version: 1, operation: "verifier-disposable-source", run_id, task_id: step.task_id,
+				object_format: step.object_format, completion_request_id: step.completion_request_id,
+				sealed_sha: step.sealed_sha, closure_digest: step.closure_digest, manifest_digest: step.manifest_digest,
+				seal_device: step.seal_device, seal_inode: step.seal_inode, seal_owner_uid: step.seal_owner_uid, task_root: "/repo/task", projection_root: "/repo/projection" };
+			const path = `${runsDir(config.mcHome)}/${run_id}.projection.json`;
+			await deps.fs.writeFile(path, JSON.stringify(envelope) + "\n", { mode: 0o644 });
+			const setup = await deps.docker(["run", "--rm", "--name", `mc-setup-${run_id}`, "--network", "none", "--user", "10002:10002", "--cap-drop", "ALL", "--security-opt", "no-new-privileges=true", "--cpus", "1", "--memory", "1024m", "--pids-limit", "128", "-v", `${taskRoot.source}:/repo/task:ro`, "-v", `${verifierProjection}:/repo/projection`, "-v", `${path}:/mc/setup.json:ro`, config.image, "mc", "__setup-verifier-projection", "/mc/setup.json"]);
+			if (setup.exitCode !== 0) throw new Error(`verifier projection setup exited ${setup.exitCode}`);
+			await deps.fs.rm(path);
+		} catch (err) { log(`spawn refused: verifier projection setup failed: ${(err as Error).message} (fail-closed)`); return; }
+	}
 	if (effect.mount_plan.task_precreate !== undefined) {
 		const step = effect.mount_plan.task_precreate;
 		if (role.split(":", 1)[0] !== "worker" || effect.subject_id !== step.task_id) {
@@ -371,6 +403,7 @@ async function spawn(effect: SpawnEffect, deps: TickDeps): Promise<void> {
   const planBinds = effect.mount_plan.entries.flatMap((entry) => [
     "-v", `${entry.source}:${entry.destination}${entry.access === "ro" ? ":ro" : ""}`,
   ]);
+	if (verifierProjection !== undefined) planBinds.push("-v", `${verifierProjection}:/workspace/source`);
   const created = await deps.docker([
     "create", "--rm",
     "--network", "none",

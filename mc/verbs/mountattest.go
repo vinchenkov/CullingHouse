@@ -813,13 +813,20 @@ func attestCandidateMounts(home string, cand *preparedCandidate, allowLegacyFake
 		Version: 1, Entries: entries, JurisdictionDigest: jurisdictionDigest,
 		TaskPrecreate: snapshot.TaskPrecreate,
 	}
-	if baseRole(string(cand.spawn.Role)) == "verifier" && cand.spawn.SubjectID != nil && cand.mountState.SubjectAcceptedCompletionSeal != nil {
+	if baseRole(string(cand.spawn.Role)) == "verifier" && cand.spawn.SubjectID != nil && cand.mountState.SubjectAcceptedCompletionSeal != nil && cand.mountState.SubjectAcceptedSealRebuild == nil {
 		s := cand.mountState.SubjectAcceptedCompletionSeal
 		plan.AcceptedSealRebuild = &PrivateDispatchAcceptedSealRebuild{
 			TaskID: *cand.spawn.SubjectID, RunID: s.RunID, CompletionRequest: s.CompletionRequest,
 			ObjectFormat: s.ObjectFormat, SealedSHA: s.SealedSHA, ClosureDigest: s.ClosureDigest,
 			ManifestDigest: s.ManifestDigest, Device: s.Device, Inode: s.Inode, OwnerUID: s.OwnerUID,
 		}
+	}
+	if baseRole(string(cand.spawn.Role)) == "verifier" && cand.spawn.SubjectID != nil && cand.mountState.SubjectAcceptedSealRebuild != nil {
+		b := cand.mountState.SubjectAcceptedSealRebuild
+		s := cand.mountState.SubjectAcceptedCompletionSeal
+		plan.VerifierProjection = &PrivateDispatchVerifierProjection{TaskID: *cand.spawn.SubjectID, RebuildRunID: b.RunID,
+			CompletionRequest: b.CompletionRequest, SealedSHA: b.SealedSHA, ManifestDigest: b.ManifestDigest, ClosureDigest: b.ClosureDigest, ObjectFormat: b.ObjectFormat,
+			SealDevice: s.Device, SealInode: s.Inode, SealOwnerUID: s.OwnerUID}
 	}
 	body, err := json.Marshal(plan)
 	if err != nil {

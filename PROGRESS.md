@@ -416,9 +416,9 @@ deleted, not struck through. History is in `docs/ledger/`.
   agent cannot sleep the machine it runs on). Instructions in
   `spikes/07-launchd-clock/RESULT.md`. All other S7 sub-tests passed.
 
-NEXT: Wire ADR-016 D6's now-tested sealed Verifier disposable-source materializer
-through the closed setup envelope and resident projection bind, then add exact
-post-exit cleanup. Retain the completed seal record/continuation fences. Keep committed-tree
-projections, structured Engine-API binds, and launchd in their named later slices.
+NEXT: Add ADR-016 D6's exact post-exit cleanup for the run-keyed Verifier disposable
+projection, then cover the full rebuild→projection lifecycle. Retain the completed seal
+record/continuation fences. Keep committed-tree projections, structured Engine-API binds,
+and launchd in their named later slices.
 Docker-lane obligations at phase completion: the real setup container run,
 closure e2e fixtures, and the D1 deployment-mirror check.
