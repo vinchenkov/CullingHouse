@@ -93,6 +93,27 @@ func TestRecordAcceptedSealRebuildReattestsTheDerivedTaskRoot(t *testing.T) {
 	}
 }
 
+func TestFenceVerifierProjectionTreeRequiresTheAcceptedSealedTrackedTree(t *testing.T) {
+	db, ws, result := asrReady(t)
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(filepath.Join(ws, ".mission-control", "tasks", "task-7", "source")); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(cwd) })
+	if err := fenceVerifierProjectionTree(db, 7, result.BaseSHA); err != nil {
+		t.Fatalf("clean accepted tree refused: %v", err)
+	}
+	if err := os.WriteFile("README.md", []byte("projection drift\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := fenceVerifierProjectionTree(db, 7, result.BaseSHA); err == nil {
+		t.Fatal("tracked projection drift reached the verifier terminal fence")
+	}
+}
+
 func TestContinueAcceptedSealRebuildRequiresReceiptThenReleasesAndReplays(t *testing.T) {
 	db, ws, result := asrReady(t)
 	if _, err := ContinueAcceptedSealRebuild(db, "verify-run"); err == nil {

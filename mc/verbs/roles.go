@@ -336,6 +336,9 @@ func VerifierVerdict(db *sql.DB, id *RunIdentity, a VerdictArgs) (any, error) {
 	if a.Deepening != "" && a.Deepening != "genuine" && a.Deepening != "churn" {
 		return nil, Usagef("--deepening must be genuine|churn (§8)")
 	}
+	if err := fenceVerifierProjectionTree(db, a.Task, a.SHA); err != nil {
+		return nil, err
+	}
 
 	var res domain.VerdictResult
 	err := inTx(db, func(ctx context.Context, q Q) error {
@@ -379,6 +382,38 @@ func VerifierVerdict(db *sql.DB, id *RunIdentity, a VerdictArgs) (any, error) {
 		out["exception_labeled"] = true
 	}
 	return out, nil
+}
+
+// fenceVerifierProjectionTree is the D6 verdict-time fence. For a task with
+// an accepted sealed completion, the Verifier's current disposable worktree
+// must still reproduce that exact commit with no tracked/index drift before
+// the one-phase verdict is allowed to touch spine state. Legacy Phase-2 tasks
+// deliberately have no accepted pointer and retain their original terminal.
+func fenceVerifierProjectionTree(db *sql.DB, taskID int64, assertedSHA string) error {
+	var sealed string
+	err := db.QueryRow(`SELECT s.sealed_sha FROM tasks t JOIN completion_seals s
+		ON s.run_id=t.accepted_completion_run_id AND s.completion_request_id=t.accepted_completion_request_id
+		WHERE t.id=? AND t.status='worked' AND s.state='accepted'`, taskID).Scan(&sealed)
+	if err == sql.ErrNoRows {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if assertedSHA != "" && assertedSHA != sealed {
+		return Domainf("verifier verdict SHA does not match the accepted sealed completion")
+	}
+	projectionEnv := append(sourceGitEnv(), "GIT_OPTIONAL_LOCKS=0")
+	for _, args := range [][]string{{"diff", "--quiet"}, {"diff", "--cached", "--quiet"}} {
+		if _, err := gitOutput("", projectionEnv, nil, args...); err != nil {
+			return Domainf("verifier disposable projection has tracked-tree drift from the sealed completion")
+		}
+	}
+	got, err := gitOutput("", projectionEnv, nil, "rev-parse", "--verify", "HEAD^{commit}")
+	if err != nil || strings.TrimSpace(string(got)) != sealed {
+		return Domainf("verifier disposable projection does not reproduce the accepted sealed completion")
+	}
+	return nil
 }
 
 // PlanReviewArgs carries mc editor plan-review's flags (ADR-020 D5).

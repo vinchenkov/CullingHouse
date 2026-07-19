@@ -1652,3 +1652,26 @@ accepted-seal identity fields plus only fixed `/repo/task` and
 `/repo/projection` destinations; the first-task and accepted-rebuild arms
 explicitly reject projection authority. Focused envelope and projection tests,
 then `mc/check.sh`, are green. The resident carrier/bind/cleanup remains next.
+
+## 2026-07-18 — sealed Verifier projection delivery and verdict fence
+
+The accepted-seal rebuild receipt now freezes an exclusive Verifier projection
+carrier. The resident materializes its run-keyed disposable source only through
+the closed networkless setup container, mounts that tree RW at
+`/workspace/source`, then covers `.git` and `.mission-control` with the
+canonical task controls RO. Reaping stops either setup/agent container and
+removes only the matching projection root. The materializer writes the fixed
+relative worktree Git pointer, so the covered controls still resolve solely to
+the task-local store.
+
+Immediately before `mc verifier verdict` can enter its one-phase terminal
+transaction, the wrapper reads the current projection with
+`GIT_OPTIONAL_LOCKS=0`, refuses tracked or staged drift, and requires HEAD plus
+any asserted SHA to equal the task-pointed accepted seal. A focused clean/dirty
+projection test, `mc/check.sh`, and `resident/check.sh` are green. The next
+slice adds red-first resident effects coverage for the projection setup/bind
+ordering and refusal cleanup.
+
+NEXT (moved to PROGRESS.md): add red-first resident effects coverage for the
+sealed Verifier projection setup, bind ordering/control covers, and refusal
+cleanup.
