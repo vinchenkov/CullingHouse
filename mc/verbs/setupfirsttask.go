@@ -311,6 +311,14 @@ type FirstTaskSetupSpec struct {
 	PinnedBaseSHA string
 	ObjectFormat  string
 	LocalRepoUUID string
+	// ReplaceExisting laundres a populated canonical store instead of refusing
+	// it. Set ONLY by the accepted-seal rebuild, whose entire purpose is to
+	// discard "late branch moves and dangling objects even if the Worker
+	// damaged its local repository after completion" (ADR-017:533-537) and
+	// rebuild "despite late loose residue" (ADR-016:758-760). First-task
+	// creation leaves it false and keeps the empty-child precondition, which
+	// ADR-017:439-441 scopes to "the first setup action".
+	ReplaceExisting bool
 }
 
 // SetupResult is the git-derived evidence the in-container executor emits and
@@ -410,6 +418,36 @@ func validateTaskGitConfig(body []byte) error {
 	}
 	if uuid, ok := seen["mc.localrepouuid"]; !ok || !assignmentUUID.MatchString(uuid) {
 		return Domainf("task git config carries no valid MC identity")
+	}
+	return nil
+}
+
+// exactEmptyChild is requireEmptyChild's accepted-seal-rebuild counterpart: it
+// empties the child in place instead of refusing its contents. It removes only
+// entries directly beneath the child the setup container already holds RW for
+// this exact operation (ADR-017:694 lists "accepted-seal rebuild" among that
+// mount's authorized uses), never following a path out of it — a symlink entry
+// is unlinked, never traversed — and leaves the child directory itself exactly
+// as bound, so the mount is untouched.
+func exactEmptyChild(path string) error {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return Domainf("accepted-seal rebuild child %s is unreadable: %v", filepath.Base(path), err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+		return Domainf("accepted-seal rebuild child %s is not a non-symlink directory", filepath.Base(path))
+	}
+	entries, err := os.ReadDir(path)
+	if err != nil {
+		return Domainf("accepted-seal rebuild child %s is unreadable: %v", filepath.Base(path), err)
+	}
+	for _, e := range entries {
+		if err := os.RemoveAll(filepath.Join(path, e.Name())); err != nil {
+			return Domainf("accepted-seal rebuild cannot clear %s/%s: %v", filepath.Base(path), e.Name(), err)
+		}
+	}
+	if rest, err := os.ReadDir(path); err != nil || len(rest) != 0 {
+		return Domainf("accepted-seal rebuild child %s did not empty", filepath.Base(path))
 	}
 	return nil
 }
@@ -610,6 +648,12 @@ func MaterializeFirstTaskStore(sourceRepo, taskRoot string, spec FirstTaskSetupS
 	source := filepath.Join(taskRoot, "source")
 	gitDir := filepath.Join(taskRoot, "git")
 	for _, c := range []string{source, gitDir} {
+		if spec.ReplaceExisting {
+			if err := exactEmptyChild(c); err != nil {
+				return SetupResult{}, err
+			}
+			continue
+		}
 		if err := requireEmptyChild(c); err != nil {
 			return SetupResult{}, err
 		}

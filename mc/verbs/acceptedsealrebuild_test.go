@@ -143,3 +143,111 @@ func TestRebuildAcceptedCompletionSealRejectsWrongRootIdentityBeforeManifestRead
 		t.Fatalf("wrong identity error = %v", err)
 	}
 }
+
+// buildSealFrom freezes a populated task store into an accepted-seal directory
+// (pack/index + manifest) and returns its root plus manifest digest.
+func buildSealFrom(t *testing.T, store string, spec FirstTaskSetupSpec, seeded SetupResult) (string, string) {
+	t.Helper()
+	tree, err := gitAtSource(filepath.Join(store, "source"), "rev-parse", "--verify", seeded.BaseSHA+"^{tree}")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sealDir := t.TempDir()
+	entries, err := os.ReadDir(filepath.Join(store, "git", "objects", "pack"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	files := make([]CompletionSealFile, 0, len(entries))
+	for _, e := range entries {
+		b, err := os.ReadFile(filepath.Join(store, "git", "objects", "pack", e.Name()))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(sealDir, e.Name()), b, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		d := sha256.Sum256(b)
+		files = append(files, CompletionSealFile{Name: e.Name(), Digest: hex.EncodeToString(d[:])})
+	}
+	sort.Slice(files, func(i, j int) bool { return files[i].Name < files[j].Name })
+	m := CompletionSealManifest{Version: 1, RunID: "worker", TaskID: spec.TaskID, CompletionRequest: "0011223344556677",
+		ObjectFormat: spec.ObjectFormat, SealedSHA: seeded.BaseSHA, Tree: strings.TrimSpace(string(tree)),
+		ObjectCount: seeded.ObjectCount, ClosureDigest: seeded.ClosureDigest, LocalRepoUUID: spec.LocalRepoUUID, Files: files}
+	body, err := json.Marshal(m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(sealDir, "manifest.json"), body, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	d := sha256.Sum256(body)
+	return sealDir, hex.EncodeToString(d[:])
+}
+
+// The accepted-seal rebuild exists precisely to launder a POPULATED canonical
+// store the Worker may have damaged after it sealed (ADR-017:533-537 "discarding
+// late branch moves and dangling objects even if the Worker damaged its local
+// repository after completion"; ADR-016:758-760 "despite late loose residue").
+// It must therefore replace the existing store in place, not refuse it — the
+// empty-child precondition is scoped to "the first setup action" (ADR-017:439).
+func TestRebuildAcceptedCompletionSealReplacesADamagedCanonicalStore(t *testing.T) {
+	src, _, format := buildSourceRepo(t)
+	uuid := "0a1b2c3d-4e5f-6071-8293-a4b5c6d7e8f9"
+	spec := FirstTaskSetupSpec{TaskID: 7, Mode: "fresh", TargetRef: "HEAD", ObjectFormat: format, LocalRepoUUID: uuid}
+	store := mkTaskChildren(t)
+	seeded, err := MaterializeFirstTaskStore(src, store, spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sealDir, manifestDigest := buildSealFrom(t, store, spec, seeded)
+
+	// Damage the canonical store the way a post-seal Worker can: drop loose
+	// residue in the worktree and clobber the sole branch to a bogus SHA.
+	junk := filepath.Join(store, "source", "late-residue.txt")
+	if err := os.WriteFile(junk, []byte("written after the seal\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	branch := filepath.Join(store, "git", "refs", "heads", "mc", "task-7")
+	if err := os.WriteFile(branch, []byte(strings.Repeat("0", len(seeded.BaseSHA))+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	info, err := os.Lstat(sealDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	st := info.Sys().(*syscall.Stat_t)
+	got, err := RebuildAcceptedCompletionSeal(sealDir, store, AcceptedCompletionSeal{
+		RunID: "worker", TaskID: 7, CompletionRequest: "0011223344556677", ObjectFormat: format,
+		SealedSHA: seeded.BaseSHA, ClosureDigest: seeded.ClosureDigest, ManifestDigest: manifestDigest,
+		Device: strconv.FormatUint(uint64(st.Dev), 10), Inode: strconv.FormatUint(st.Ino, 10), OwnerUID: int64(st.Uid)})
+	if err != nil {
+		t.Fatalf("rebuild over a populated canonical store: %v", err)
+	}
+	if got.BaseSHA != seeded.BaseSHA || got.ClosureDigest != seeded.ClosureDigest {
+		t.Fatalf("rebuild=%+v seed=%+v", got, seeded)
+	}
+	// The late residue is gone and the branch is back at the sealed SHA: the
+	// rebuild started from the seal, never from a later filesystem observation.
+	if _, err := os.Lstat(junk); !os.IsNotExist(err) {
+		t.Fatalf("late residue survived the rebuild: %v", err)
+	}
+	ref, err := os.ReadFile(branch)
+	if err != nil || strings.TrimSpace(string(ref)) != seeded.BaseSHA {
+		t.Fatalf("sole branch = (%q, %v), want the sealed SHA %s", strings.TrimSpace(string(ref)), err, seeded.BaseSHA)
+	}
+}
+
+// First-task creation keeps its empty precondition: only the rebuild launders.
+func TestMaterializeFirstTaskStoreStillRefusesResidueOnFirstCreate(t *testing.T) {
+	src, _, format := buildSourceRepo(t)
+	store := mkTaskChildren(t)
+	if err := os.WriteFile(filepath.Join(store, "source", "residue"), []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, err := MaterializeFirstTaskStore(src, store, FirstTaskSetupSpec{TaskID: 7, Mode: "fresh", TargetRef: "HEAD",
+		ObjectFormat: format, LocalRepoUUID: "0a1b2c3d-4e5f-6071-8293-a4b5c6d7e8f9"})
+	if err == nil || !strings.Contains(err.Error(), "already holds residue") {
+		t.Fatalf("first create over residue = %v, want a residue refusal", err)
+	}
+}

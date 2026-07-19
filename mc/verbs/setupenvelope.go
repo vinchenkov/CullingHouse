@@ -211,11 +211,13 @@ func RunAcceptedSealSetup(env SetupEnvelope) (SetupResult, error) {
 	if env.Operation != SetupOperationAcceptedSealRebuild {
 		return SetupResult{}, Domainf("setup envelope is not an accepted-seal rebuild operation")
 	}
-	// The resident re-attests this receipt's host device/inode/owner tuple
-	// immediately before creating the exact seal bind. Docker Desktop exposes
-	// a namespace-local tuple to the container, so repeating that host-identity
-	// comparison here would reject every valid cross-VM bind. The shared
-	// rebuild still verifies every immutable manifest and pack byte.
+	// The receipt's device/inode/owner are recorded by the in-container setuid
+	// publisher, so the tuple is namespace-local: no comparison against it
+	// survives a bind crossing, here or on the host. The resident proves
+	// custody instead (derived path, non-symlink directory, host-operator
+	// ownership — task-skeleton.ts `recheckAcceptedSeal`, deviation logged
+	// 2026-07-19), and the shared rebuild below verifies every immutable
+	// manifest and pack byte, which is what actually binds the seal's content.
 	return rebuildAcceptedCompletionSeal(env.SealRoot, env.TaskRoot, AcceptedCompletionSeal{
 		RunID: env.CompletionRunID, TaskID: env.TaskID, CompletionRequest: env.CompletionRequest,
 		ObjectFormat: env.ObjectFormat, SealedSHA: env.SealedSHA,

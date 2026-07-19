@@ -150,7 +150,11 @@ func rebuildAcceptedCompletionSeal(sealDir, taskRoot string, seal AcceptedComple
 	if err != nil || strings.TrimSpace(string(sealedTree)) != m.Tree {
 		return SetupResult{}, Domainf("accepted seal manifest tree does not match its sealed commit")
 	}
-	result, err := MaterializeFirstTaskStore(tmp, taskRoot, FirstTaskSetupSpec{TaskID: m.TaskID, Mode: "retry", PinnedBaseSHA: m.SealedSHA, ObjectFormat: m.ObjectFormat, LocalRepoUUID: m.LocalRepoUUID})
+	// ReplaceExisting: the canonical store is normally still populated here —
+	// this runs after a Worker sealed and its store is the untrusted copy the
+	// rebuild exists to discard (ADR-017:533-537). Borrowing first-create's
+	// empty precondition made every live rebuild refuse (fixed 2026-07-19).
+	result, err := MaterializeFirstTaskStore(tmp, taskRoot, FirstTaskSetupSpec{TaskID: m.TaskID, Mode: "retry", PinnedBaseSHA: m.SealedSHA, ObjectFormat: m.ObjectFormat, LocalRepoUUID: m.LocalRepoUUID, ReplaceExisting: true})
 	if err != nil {
 		return SetupResult{}, err
 	}

@@ -16,6 +16,7 @@
 package e2e
 
 import (
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -26,6 +27,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	_ "modernc.org/sqlite"
 
 	"mc/verbs"
 )
@@ -936,7 +939,7 @@ func TestProductionWorkerCompletionSealDockerBoundary(t *testing.T) {
 | strategist | fake | fake |
 | editor | fake | fake |
 | worker | codex | chatgpt |
-| verifier | fake | fake |
+| verifier | claude-sdk | claude |
 | packager | fake | fake |
 | refiner | fake | fake |
 | homie | fake | fake |
@@ -1017,6 +1020,51 @@ func TestProductionWorkerCompletionSealDockerBoundary(t *testing.T) {
 	if mode := f.dockerOutput("run", "--rm", "--network", "none", "--user", "10001:10001",
 		"-v", sealDir+":/mc/private/completion-seal:ro", image, "stat", "-c", "%a", "/mc/private/completion-seal/manifest.json"); mode != "444\n" {
 		t.Fatalf("completion namespace manifest mode = %q, want 0444", mode)
+	}
+
+	// The carry-through: the SAME resident now drives the accepted-seal REBUILD
+	// off that seal, with no further host action. The Verifier routes to
+	// `claude-sdk/claude` — non-fake, so attest carries the 15-row task plan
+	// plus the `accepted_seal_rebuild` step (a fake route takes the legacy
+	// workspace branch and is gated out of both setup steps), and harness-
+	// decorrelated from the Worker's `codex`, which Inv. 9 (routing.go:119)
+	// requires. The rebuild is setup-only: the resident runs the network=none
+	// setup class over the canonical task root and passes the result through
+	// `mc task setup-record`/`setup-continue`, returning before any agent
+	// launch — so this route needs no agent-runner authorization. (The later
+	// VerifierProjection launch will; that is the next slice.)
+	var rebuildRun string
+	f.waitFor(180*time.Second, fmt.Sprintf("accepted-seal rebuild receipt for task %d", taskID), func() (bool, string) {
+		runID, completionRun, ok := f.acceptedSealRebuildReceipt(taskID)
+		if !ok {
+			// Name who holds the lease and what the Verifier runs did: a stalled
+			// rebuild is always one of "never dispatched" (no verifier run) or
+			// "dispatched and refused" (a verifier run pinning the lease).
+			lock := f.mcOK("", "lock", "get")
+			var verifiers []string
+			for _, r := range f.runs() {
+				if r["role"] == "verifier" {
+					verifiers = append(verifiers, fmt.Sprintf("%v(ended=%v outcome=%v)", r["id"], r["ended_at"], r["outcome"]))
+				}
+			}
+			return false, fmt.Sprintf("no rebuild receipt yet; lock=%v; verifier runs=%v", lock, verifiers)
+		}
+		if completionRun != workerRun {
+			return false, fmt.Sprintf("receipt %s cites completion run %s, want the sealing Worker %s", runID, completionRun, workerRun)
+		}
+		rebuildRun = runID
+		return true, ""
+	})
+
+	// The receipt's fencing trigger already proved the live-Verifier/accepted-
+	// seal/registered-root join at insert. What remains to prove out here is the
+	// continuation: the rebuild ended only its own setup run, on the Verifier.
+	row := f.runRow(rebuildRun)
+	if row == nil || row["role"] != "verifier" || row["outcome"] != "accepted-seal-rebuilt" {
+		t.Fatalf("rebuild run %s = %v, want a verifier run ended accepted-seal-rebuilt", rebuildRun, row)
+	}
+	if row["id"] == workerRun {
+		t.Fatalf("rebuild run must be a distinct run from the sealing Worker %s", workerRun)
 	}
 }
 
@@ -1139,6 +1187,11 @@ func setup(t *testing.T, opts ...func(*setupOptions)) *fixture {
 		"-e", "MC_HOME=/mc/home",
 		image, "sleep", "infinity")
 	t.Cleanup(func() {
+		// NOTE: `docker logs` on the helper is useless for diagnosing a private
+		// helper refusal — helper verbs run as `docker exec`, so their stderr
+		// goes to the exec, never to the container's log. Tried and reverted
+		// 2026-07-19. A private-helper refusal is diagnosable only by
+		// reproducing the prepare host-side.
 		// Reap any straggler agent containers this run spawned, then the helper.
 		if out, err := exec.Command("docker", "ps", "-aq",
 			"--filter", "label=mc-managed", "--filter", "name=mc-run-").Output(); err == nil {
@@ -1320,7 +1373,10 @@ func (f *fixture) startResident() {
 		logFile.Close()
 		if f.t.Failed() {
 			if b, err := os.ReadFile(logPath); err == nil {
-				f.t.Logf("resident log:\n%s", tail(string(b), 8000))
+				// A stalled resident emits an idle tick twice a second, so a raw
+				// tail is 8000 characters of "tick: idle" and the line that
+				// explains the stall has long scrolled off. Show the decisions.
+				f.t.Logf("resident log (idle ticks elided):\n%s", tail(residentDecisions(string(b)), 8000))
 			}
 		}
 	})
@@ -1387,6 +1443,28 @@ func (f *fixture) runRow(runID string) map[string]any {
 		}
 	}
 	return nil
+}
+
+// acceptedSealRebuildReceipt reads the durable v10 rebuild receipt for a task
+// directly from the host-bound spine, read-only and alongside the running
+// resident. There is no read verb for it by design: it is internal recovery
+// evidence, not an operator surface. Valid only under withHostBindSpine().
+func (f *fixture) acceptedSealRebuildReceipt(taskID int64) (runID, completionRun string, ok bool) {
+	f.t.Helper()
+	db, err := sql.Open("sqlite", "file:"+filepath.Join(f.volume, "spine.db")+"?mode=ro")
+	if err != nil {
+		f.t.Fatalf("open spine read-only: %v", err)
+	}
+	defer db.Close()
+	err = db.QueryRow(`SELECT run_id,completion_run_id FROM accepted_seal_rebuild_receipts WHERE task_id=?`, taskID).
+		Scan(&runID, &completionRun)
+	if err == sql.ErrNoRows {
+		return "", "", false
+	}
+	if err != nil {
+		f.t.Fatalf("read accepted seal rebuild receipt: %v", err)
+	}
+	return runID, completionRun, true
 }
 
 func (f *fixture) packets() []map[string]any {
@@ -1482,6 +1560,42 @@ func mustAbs(t *testing.T, p string) string {
 		t.Fatal(err)
 	}
 	return a
+}
+
+// residentDecisions drops the resident's idle-tick heartbeat, keeping only the
+// lines where it decided something. A stall produces thousands of the former
+// and exactly one of the latter, so the raw tail hides the cause.
+// A tick that fails the same way every 500ms repeats its line thousands of
+// times, which buries every earlier decision just as effectively as the idle
+// ticks do — so collapse consecutive repeats of the same message too. The
+// timestamp prefix is stripped for that comparison only.
+func residentDecisions(s string) string {
+	var kept []string
+	elided, prev, repeats := 0, "", 0
+	flush := func() {
+		if repeats > 1 {
+			kept = append(kept, fmt.Sprintf("        … previous line repeated %d more times", repeats-1))
+		}
+	}
+	for _, line := range strings.Split(s, "\n") {
+		if strings.Contains(line, "tick: idle") {
+			elided++
+			continue
+		}
+		msg := line
+		if i := strings.Index(line, "] "); i >= 0 {
+			msg = line[i+2:]
+		}
+		if msg == prev && msg != "" {
+			repeats++
+			continue
+		}
+		flush()
+		kept = append(kept, line)
+		prev, repeats = msg, 1
+	}
+	flush()
+	return fmt.Sprintf("(%d idle ticks elided)\n%s", elided, strings.Join(kept, "\n"))
 }
 
 func tail(s string, n int) string {
