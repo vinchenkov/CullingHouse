@@ -394,6 +394,57 @@ func TestVerifierProjectionDockerBoundary(t *testing.T) {
 	}
 }
 
+// TestDeploymentMirrorDockerBoundary covers D1's real resident/helper seam.
+// The unit frame tests own the prepare→attest swap race; this tagged probe
+// proves the host file is actually visible in the helper, a foreign value
+// prevents a resident-driven claim, and recovery requires the exact mirror.
+func TestDeploymentMirrorDockerBoundary(t *testing.T) {
+	f := setup(t)
+	mirror := filepath.Join(f.home, "deployment.uuid")
+	good, err := os.ReadFile(mirror)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := f.dockerOutput("exec", f.helper, "cat", "/mc/home/deployment.uuid"); got != string(good) {
+		t.Fatalf("helper deployment mirror = %q, want host bind bytes %q", got, good)
+	}
+	if err := os.WriteFile(mirror, []byte("foreign-deployment\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	f.startResident()
+	res := f.mcOK("", "task", "add", "mirror boundary task", "--worksource", worksource,
+		"--description", "must not claim under a foreign deployment mirror")
+	taskID := int64(res["task_id"].(float64))
+	f.waitFor(10*time.Second, "helper prepare rejection for a foreign deployment mirror", func() (bool, string) {
+		body, err := os.ReadFile(filepath.Join(f.base, "resident.log"))
+		if err != nil || !strings.Contains(string(body), "private helper __dispatch-prepare failed") {
+			return false, "mirror mismatch not yet logged"
+		}
+		if len(f.runs()) != 0 {
+			return false, "foreign mirror created a Run"
+		}
+		lock := f.mcOK("", "lock", "get")
+		if lock["run_id"] != nil {
+			return false, fmt.Sprintf("foreign mirror held lock %v", lock["run_id"])
+		}
+		return true, ""
+	})
+	if task := f.mcOK("", "task", "get", fmt.Sprint(taskID)); task["status"] != "proposed" || task["blocked"].(float64) != 0 {
+		t.Fatalf("foreign mirror mutated task state: %v", task)
+	}
+	if err := os.WriteFile(mirror, good, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	f.waitFor(15*time.Second, "dispatch recovery after restoring the exact deployment mirror", func() (bool, string) {
+		for _, run := range f.runs() {
+			if run["role"] == "editor" {
+				return true, ""
+			}
+		}
+		return false, "no editor Run after mirror recovery"
+	})
+}
+
 // ───────────────────────────── fixtures ─────────────────────────────────
 
 func setup(t *testing.T) *fixture {

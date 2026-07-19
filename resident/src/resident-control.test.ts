@@ -23,7 +23,7 @@ function helloChild(overrides: Record<string, unknown> = {}, waitForAck = true):
     seq: 1,
     release_build_id: "development",
     gateway_control_version: 1,
-    spine_schema_version: 5,
+    spine_schema_version: 10,
     config_schema_version: 1,
     deployment_uuid: "deployment-test-1",
     ...overrides,

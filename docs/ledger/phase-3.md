@@ -1725,3 +1725,19 @@ asserts that the real `mc verifier verdict` refuses with the tracked-tree
 fence. The full five-leg fast lane and full tagged Docker E2E suite are green.
 
 NEXT (moved to PROGRESS.md): add the D1 deployment-UUID mirror Docker proof.
+
+## 2026-07-18 — deployment-mirror Docker crossing
+
+`TestDeploymentMirrorDockerBoundary` reads the helper's RO
+`/mc/home/deployment.uuid` bind, changes the host mirror to a foreign value,
+and starts the real resident. The foreign identity reaches the private helper
+prepare step but creates no Run, lease, or task mutation; restoring the exact
+mirror causes the next timer-driven dispatch to create its Editor Run.
+
+The probe exposed an unrelated but critical release-pin drift: resident control
+still advertised schema v5 while the current spine is v10, which made every
+real control hello fail before dispatch. The constant and its identity test now
+pin v10. The full five-leg fast lane and full Docker E2E suite are green.
+
+NEXT (moved to PROGRESS.md): add the D5 real first-task setup/closure Docker
+fixture.
