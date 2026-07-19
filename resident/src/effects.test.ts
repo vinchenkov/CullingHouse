@@ -384,7 +384,7 @@ describe("spawn effect", () => {
     }
   });
 
-  test("an accepted-seal setup plan cannot fall through to verifier creation", async () => {
+  test("an accepted-seal setup rebuilds through its closed host handoff without verifier creation", async () => {
 		let rechecked = false;
     const rig = makeRig({
 			recheckAcceptedSeal: async () => {
@@ -393,11 +393,13 @@ describe("spawn effect", () => {
 			},
 		});
 		rig.docker.enqueue(fail(1, "No such container"), fail(1, "No such container"));
+		rig.docker.enqueue(ok(setupResultJson + "\n"));
     await applyEffect({
       ...spawnEffect,
+			run_id: "run-42-verifier",
       role: "verifier",
       mount_plan: {
-        entries: [], version: 1,
+			entries: [{ ...workspaceEntry, access: "ro", destination: "/workspace", logical_id: "task-root", source: "/host/workspace/.mission-control/tasks/task-42" }], version: 1,
         accepted_seal_rebuild: {
           task_id: 42, run_id: "run-42-worker", completion_request_id: "0011223344556677",
           object_format: "sha1", sealed_sha: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
@@ -410,11 +412,25 @@ describe("spawn effect", () => {
     expect(rig.docker.calls).toEqual([
 			["inspect", "--type", "container", "mc-run-run-42-worker"],
 			["inspect", "--type", "container", "mc-setup-run-42-worker"],
+			[
+				"run", "--rm", "--name", "mc-setup-run-42-verifier", "--network", "none",
+				"--label", "mc-managed=true", "--label", "mc-tier=pipeline", "--label", "mc-run-id=run-42-verifier",
+				"--user", "10002:10002", "--cap-drop", "ALL", "--security-opt", "no-new-privileges=true",
+				"--cpus", "1", "--memory", "1024m", "--pids-limit", "128",
+				"-v", "/tmp/mc-home/seals/run-42-worker:/repo/seal:ro",
+				"-v", "/host/workspace/.mission-control/tasks/task-42:/repo/task:ro", "-v", "/host/workspace/.mission-control/tasks/task-42/source:/repo/task/source",
+				"-v", "/host/workspace/.mission-control/tasks/task-42/git:/repo/task/git", "-v", "/tmp/mc-home/runs/run-42-verifier.setup.json:/mc/setup.json:ro",
+				"mc-fake-e2e:test", "mc", "__setup-accepted-seal", "/mc/setup.json",
+			],
 		]);
-    expect(rig.mc.calls).toEqual([]);
-    expect(rig.fakeFs.events).toEqual([]);
+		expect(rig.mc.calls).toEqual([
+			["task", "accepted-seal-record", "--run", "run-42-verifier", "--workspace", "/host/workspace", "--result", setupResultJson + "\n"],
+			["task", "accepted-seal-continue", "--run", "run-42-verifier"],
+		]);
+		expect(rig.fakeFs.events).toContain("write:/tmp/mc-home/runs/run-42-verifier.setup.json");
+		expect(rig.fakeFs.events).toContain("rm:/tmp/mc-home/runs/run-42-verifier.setup.json");
 		expect(rechecked).toBe(true);
-    expect(rig.logs.some((line) => line.includes("accepted-seal rebuild"))).toBe(true);
+		expect(rig.logs.some((line) => line.includes("accepted-seal rebuild recorded and continued"))).toBe(true);
   });
 
 	test("a surviving accepted-seal producer leaves the verifier unprepared", async () => {
@@ -432,7 +448,7 @@ describe("spawn effect", () => {
 			...spawnEffect,
 			role: "verifier",
 			mount_plan: {
-				entries: [], version: 1,
+			entries: [{ ...workspaceEntry, access: "ro", destination: "/workspace", logical_id: "task-root", source: "/host/workspace/.mission-control/tasks/task-42" }], version: 1,
 				accepted_seal_rebuild: {
 					task_id: 42, run_id: "run-42-worker", completion_request_id: "0011223344556677",
 					object_format: "sha1", sealed_sha: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",

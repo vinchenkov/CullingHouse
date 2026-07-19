@@ -1616,3 +1616,16 @@ are green.
 NEXT (moved to PROGRESS.md): implement the resident accepted-seal rebuild
 executor handoff, retaining the exact seal re-attestation and producer-absence
 fences and preventing any ordinary Verifier launch fall-through.
+
+## 2026-07-18 — resident accepted-seal rebuild execution
+
+The resident now turns the completed D6 carrier into one closed setup action:
+after exact former-Worker absence and seal identity re-attestation, it derives
+the Worksource parent only from the canonical task-root plan bind, mounts the
+seal RO and task-root RO with only its setup children writable, and runs
+`__setup-accepted-seal` networkless. The executor result crosses unchanged to
+the host record and continuation verbs; refusal retains the envelope and no
+Verifier agent is created. Full serial fast lane green.
+
+NEXT (moved to PROGRESS.md): implement the sealed Verifier disposable-source
+materialization arm.

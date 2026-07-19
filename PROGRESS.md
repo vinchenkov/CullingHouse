@@ -392,6 +392,11 @@ kept below. Operator legs that remain open are under `## Parked`, not here.
         durably records its v10 receipt before ending only that setup run and
         releasing its lease. Exact retries are inert; host-scope record and
         continuation verbs are reachable through dedicated `mc task` commands.
+  - [x] D6 resident accepted-seal rebuild execution: after exact former-producer
+        absence and seal re-attestation, the resident runs only the fixed
+        network=none setup class over the canonical task-root bind, then passes
+        the untouched result through the dedicated host record/continue verbs;
+        it cannot fall through to Verifier-agent creation.
 - [ ] Phase 4 — E2E control loops (six scenario families)
 - [ ] Phase 5 — Real-subscription acceptance (operator-scheduled)
 - [ ] Release prep (after Phase 5): swap the repo's construction face for
@@ -411,11 +416,9 @@ deleted, not struck through. History is in `docs/ledger/`.
   agent cannot sleep the machine it runs on). Instructions in
   `spikes/07-launchd-clock/RESULT.md`. All other S7 sub-tests passed.
 
-NEXT: Implement ADR-016 D6 resident accepted-seal rebuild execution red-first:
-after its existing exact seal re-attestation and producer-absence fence, run only the
-fixed network=none setup executor over the canonical task-store bind, pass its result
-byte-exactly through the dedicated host record/continuation commands, and never fall
-through to Verifier-agent launch. Keep Verifier disposable-source / committed-tree
-projections, structured Engine-API binds, and launchd in their named later slices.
+NEXT: Implement ADR-016 D6 Verifier disposable-source materialization red-first,
+bound only to the exact accepted seal and rebuilt canonical store; retain the completed
+seal record/continuation fences. Keep committed-tree projections, structured Engine-API
+binds, and launchd in their named later slices.
 Docker-lane obligations at phase completion: the real setup container run,
 closure e2e fixtures, and the D1 deployment-mirror check.

@@ -260,18 +260,28 @@ async function spawn(effect: SpawnEffect, deps: TickDeps): Promise<void> {
 			log("spawn refused: accepted-seal rebuild does not match the claimed Verifier (fail-closed)");
 			return;
 		}
+		const taskRoot = effect.mount_plan.entries.find((entry) =>
+			entry.logical_id === "task-root" && entry.destination === "/workspace" && entry.access === "ro",
+		);
+		const suffix = `/.mission-control/tasks/task-${step.task_id}`;
+		if (taskRoot === undefined || !taskRoot.source.endsWith(suffix)) {
+			log("spawn refused: accepted-seal rebuild has no canonical task-root bind (fail-closed)");
+			return;
+		}
+		const workspaceRoot = taskRoot.source.slice(0, -suffix.length);
+		if (workspaceRoot === "" || posix.normalize(workspaceRoot) !== workspaceRoot) {
+			log("spawn refused: accepted-seal rebuild task-root bind has no canonical Worksource parent (fail-closed)");
+			return;
+		}
 		try {
 			await requireAcceptedSealProducerAbsent(step.run_id, deps);
-			await deps.recheckAcceptedSeal(step);
+			const sealRoot = await deps.recheckAcceptedSeal(step);
+			await runAcceptedSealRebuild(run_id, step, taskRoot.source, workspaceRoot, sealRoot, deps);
 		} catch (err) {
 			log(`spawn refused: accepted-seal setup precondition failed: ${(err as Error).message} (fail-closed)`);
 			return;
 		}
-		// Rebuild is deliberately still fenced here. Its closed setup operation
-		// needs a durable result/continuation before it can mutate the canonical
-		// task store; running it then falling through would strand that mutation
-		// under a run with no verifier-safe source materialization.
-		log("spawn refused: accepted-seal rebuild awaits the dedicated resident setup executor (fail-closed)");
+		log(`spawn ${run_id}: accepted-seal rebuild recorded and continued for task ${step.task_id}`);
 		return;
 	}
 	if (effect.mount_plan.task_precreate !== undefined) {
@@ -501,6 +511,52 @@ async function runFirstTaskSetup(
 	}
 	await deps.fs.rm(setupJsonPath);
 	log(`spawn ${run_id}: first-task setup recorded and continued for task ${step.task_id}`);
+}
+
+/** D6's closed accepted-seal setup crossing. The resident receives no source
+ * repository or generic command: only the exact re-attested immutable seal,
+ * the canonical task-root plan bind, and a credential-free envelope enter the
+ * networkless setup class. The host record and continuation re-prove the live
+ * Verifier lease before its terminal is exposed. */
+async function runAcceptedSealRebuild(
+	runId: string,
+	step: NonNullable<MountPlan["accepted_seal_rebuild"]>,
+	taskRoot: string,
+	workspaceRoot: string,
+	sealRoot: string,
+	deps: TickDeps,
+): Promise<void> {
+	const { config } = deps;
+	const envelope = {
+		schema_version: 1, operation: "accepted-seal-rebuild", run_id: runId,
+		task_id: step.task_id, object_format: step.object_format,
+		completion_request_id: step.completion_request_id, sealed_sha: step.sealed_sha,
+		closure_digest: step.closure_digest, manifest_digest: step.manifest_digest,
+		seal_root: "/repo/seal", task_root: "/repo/task", seal_device: step.device,
+		seal_inode: step.inode, seal_owner_uid: step.owner_uid,
+	};
+	const setupJsonPath = `${runsDir(config.mcHome)}/${runId}.setup.json`;
+	await deps.fs.mkdir(runsDir(config.mcHome));
+	await deps.fs.writeFile(setupJsonPath, JSON.stringify(envelope, null, 2) + "\n", { mode: 0o644 });
+	const run = await deps.docker([
+		"run", "--rm", "--name", `mc-setup-${runId}`, "--network", "none",
+		"--label", "mc-managed=true", "--label", "mc-tier=pipeline", "--label", `mc-run-id=${runId}`,
+		"--user", "10002:10002", "--cap-drop", "ALL", "--security-opt", "no-new-privileges=true",
+		"--cpus", "1", "--memory", "1024m", "--pids-limit", "128",
+		"-v", `${sealRoot}:/repo/seal:ro`, "-v", `${taskRoot}:/repo/task:ro`,
+		"-v", `${taskRoot}/source:/repo/task/source`, "-v", `${taskRoot}/git:/repo/task/git`,
+		"-v", `${setupJsonPath}:/mc/setup.json:ro`, config.image,
+		"mc", "__setup-accepted-seal", "/mc/setup.json",
+	]);
+	if (run.exitCode !== 0) throw new Error(`accepted-seal setup container exited ${run.exitCode}: ${run.stderr.trim()}`);
+	if (run.stdout.trim() === "") throw new Error("accepted-seal setup container returned no SetupResult");
+	const recorded = await deps.runMc([
+		"task", "accepted-seal-record", "--run", runId, "--workspace", workspaceRoot, "--result", run.stdout,
+	]);
+	if (recorded.exitCode !== 0) throw new Error(`accepted-seal setup record refused (exit ${recorded.exitCode}): ${recorded.stderr.trim()}`);
+	const continued = await deps.runMc(["task", "accepted-seal-continue", "--run", runId]);
+	if (continued.exitCode !== 0) throw new Error(`accepted-seal setup continuation refused (exit ${continued.exitCode}): ${continued.stderr.trim()}`);
+	await deps.fs.rm(setupJsonPath);
 }
 
 /** §7 Landing: run the baked mc-land script, then report its exit code.
