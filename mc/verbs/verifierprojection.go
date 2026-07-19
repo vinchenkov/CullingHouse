@@ -46,5 +46,12 @@ func MaterializeVerifierDisposableSource(taskRoot, projectionRoot string, seal A
 	if _, err := gitOutput("", env, nil, "checkout-index", "-a", "-f"); err != nil {
 		return Domainf("verifier disposable projection could not materialize its sealed tree: %v", err)
 	}
+	// The later container overlays this pointer read-only. Its relative target
+	// resolves through the simultaneously RO-mounted canonical task root, so
+	// Git reads sealed task-local controls without a primary-repository alias.
+	pointer := []byte("gitdir: ../git/worktrees/" + taskWorktreeName(seal.TaskID) + "\n")
+	if err := os.WriteFile(filepath.Join(projectionRoot, ".git"), pointer, 0o644); err != nil {
+		return Domainf("verifier disposable projection could not write its Git pointer: %v", err)
+	}
 	return nil
 }

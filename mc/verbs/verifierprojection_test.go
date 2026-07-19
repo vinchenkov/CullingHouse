@@ -29,6 +29,10 @@ func TestMaterializeVerifierDisposableSourceUsesOnlyTheSealedTree(t *testing.T) 
 	if _, err := os.Stat(filepath.Join(projection, "README.md")); err != nil {
 		t.Fatalf("sealed tree missing file: %v", err)
 	}
+	pointer, err := os.ReadFile(filepath.Join(projection, ".git"))
+	if err != nil || string(pointer) != "gitdir: ../git/worktrees/mc-task-7\n" {
+		t.Fatalf("projection .git pointer=(%q,%v), want fixed relative task control", pointer, err)
+	}
 	if err := os.WriteFile(filepath.Join(task, "source", "late.txt"), []byte("late"), 0o644); err != nil {
 		t.Fatal(err)
 	}

@@ -403,7 +403,13 @@ async function spawn(effect: SpawnEffect, deps: TickDeps): Promise<void> {
   const planBinds = effect.mount_plan.entries.flatMap((entry) => [
     "-v", `${entry.source}:${entry.destination}${entry.access === "ro" ? ":ro" : ""}`,
   ]);
-	if (verifierProjection !== undefined) planBinds.push("-v", `${verifierProjection}:/workspace/source`);
+	if (verifierProjection !== undefined) {
+		const taskRoot = effect.mount_plan.entries.find((entry) => entry.logical_id === "task-root" && entry.destination === "/workspace");
+		if (taskRoot === undefined) throw new Error("verifier projection lost canonical task root before create");
+		planBinds.push("-v", `${verifierProjection}:/workspace/source`);
+		planBinds.push("-v", `${taskRoot.source}/source/.git:/workspace/source/.git:ro`);
+		planBinds.push("-v", `${taskRoot.source}/source/.mission-control:/workspace/source/.mission-control:ro`);
+	}
   const created = await deps.docker([
     "create", "--rm",
     "--network", "none",
