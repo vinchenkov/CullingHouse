@@ -1629,3 +1629,17 @@ Verifier agent is created. Full serial fast lane green.
 
 NEXT (moved to PROGRESS.md): implement the sealed Verifier disposable-source
 materialization arm.
+
+## 2026-07-18 — sealed Verifier disposable-source core
+
+`MaterializeVerifierDisposableSource` is the pure setup primitive for the
+execution-scoped Verifier tree. It accepts only a canonical sealed commit,
+requires the canonical task source clean, refuses a nonempty/symlinked
+projection root, and uses the task-local sanitized Git store to read-tree and
+checkout only that sealed commit into the projection. It never copies the
+canonical worktree or consults a primary checkout. A focused test proves the
+sealed tree appears and a late canonical write prevents a second projection.
+The mc fast lane is green.
+
+NEXT (moved to PROGRESS.md): wire the sealed materializer through the closed
+setup envelope, resident bind, and exact cleanup.
