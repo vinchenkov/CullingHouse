@@ -1811,3 +1811,24 @@ suite are green.
 
 NEXT (moved to PROGRESS.md): wire the D6 completion-seal root through the
 resident Worker plan and mount table.
+
+## 2026-07-18 — completion-seal plan authority and resident mount crossing
+
+The Worker completion root is now an explicit post-claim plan descriptor, not
+an effect-supplied host path. Attestation proves the operator-owned
+`MC_HOME/seals` parent and the exact run child absent; the resident derives and
+creates that child, rechecks it before Docker create and after create, and
+binds it only at `/mc/private/completion-seal`. The private helper rejects
+parent identity/mode/owner drift and an unexpected or malformed child.
+
+The exception is constrained to this descriptor: it must match the claimed
+Worker task, current run, and resident `MC_HOME`; it runs as model uid 10002
+with all capabilities dropped, while the normal test-fake compatibility route
+does not receive the production seal descriptor. The existing walking-skeleton
+Docker path remains green, as does the full tagged suite. This slice exposed
+that the legacy route cannot run its broad workspace bind as the final model
+uid, so the final-uid/no-new-privileges envelope remains scoped to the
+production completion-root carrier pending the production resident E2E.
+
+NEXT (moved to PROGRESS.md): exercise that production Worker carrier through
+the real resident and accepted completion fence.
