@@ -492,6 +492,12 @@ async function spawn(effect: SpawnEffect, deps: TickDeps): Promise<void> {
     ...planBinds,
     "-v", `${config.spineVolume}:${posix.dirname(config.spineDbPath)}`,
     "-e", `MC_SPINE=${config.spineDbPath}`,
+    // Authorize the in-container fake adapter to stand in for the same non-fake
+    // routes the resident's own launch gate accepts (fail-closed: absent ⇒
+    // fake-only inside the container too).
+    ...(config.agentRunnerRoutes && config.agentRunnerRoutes.length > 0
+      ? ["-e", `MC_AGENT_RUNNER_ROUTES=${config.agentRunnerRoutes.join(",")}`]
+      : []),
     config.image,
     ...config.agentCmd,
   ]);

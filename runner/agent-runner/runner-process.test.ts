@@ -40,6 +40,7 @@ async function runRunner(opts: {
   delayRegistration?: boolean;
 	  harness?: string;
 	  modelBinding?: string;
+	  agentRunnerRoutes?: string;
 }): Promise<RunResult> {
   const root = mkdtempSync(join(tmpdir(), "mc-runner-test-"));
   roots.push(root);
@@ -94,6 +95,7 @@ async function runRunner(opts: {
       PATH: `${binDir}:${process.env["PATH"] ?? ""}`,
       MC_RUN_JSON: runJsonPath,
       MC_HARNESS_CLI: HARNESS_CLI,
+      ...(opts.agentRunnerRoutes !== undefined ? { MC_AGENT_RUNNER_ROUTES: opts.agentRunnerRoutes } : {}),
     },
   });
   const [exitCode, stderr] = await Promise.all([
@@ -122,6 +124,33 @@ describe("agent runner process behaviors (contract §4, spec §11.5)", () => {
 	      behavior: { steps: [{ do: "succeed", output: "must not run" }] },
 	      harness: "codex",
 	      modelBinding: "chatgpt",
+	    });
+	    expect(res.exitCode).toBe(2);
+	    expect(res.stderr).toContain("unsupported runtime route");
+	    expect(res.mcCalls).toEqual([]);
+	  }, 20_000);
+
+	  // Design B: the deployment authorizes its one fake adapter to stand in for
+	  // named non-fake routes (MC_AGENT_RUNNER_ROUTES), so a production
+	  // completion-seal Worker can run through it. Unset stays fake-only above.
+	  test("an authorized non-fake route runs through the fake adapter", async () => {
+	    const res = await runRunner({
+	      behavior: { steps: [{ do: "sleep", seconds: 0.5 }, { do: "succeed", output: "ok" }] },
+	      harness: "codex",
+	      modelBinding: "chatgpt",
+	      agentRunnerRoutes: "codex/chatgpt",
+	    });
+	    expect(res.exitCode).toBe(0);
+	    expect(res.stderr).not.toContain("unsupported runtime route");
+	    expect(res.mcCalls.some((c) => c.startsWith("run register-session"))).toBe(true);
+	  }, 20_000);
+
+	  test("a non-fake route absent from MC_AGENT_RUNNER_ROUTES stays refused", async () => {
+	    const res = await runRunner({
+	      behavior: { steps: [{ do: "succeed", output: "must not run" }] },
+	      harness: "claude-sdk",
+	      modelBinding: "claude",
+	      agentRunnerRoutes: "codex/chatgpt",
 	    });
 	    expect(res.exitCode).toBe(2);
 	    expect(res.stderr).toContain("unsupported runtime route");

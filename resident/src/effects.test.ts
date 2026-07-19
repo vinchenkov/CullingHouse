@@ -727,6 +727,9 @@ describe("spawn effect", () => {
     const create = rig.docker.calls[0]!;
     expect(create[0]).toBe("create");
     expect(create).toContain("mc-run-run-42-worker");
+    // The same allowlist is handed to the in-container adapter so it, too, will
+    // stand in for the route (its own fail-closed gate is otherwise fake-only).
+    expect(create).toEqual(expect.arrayContaining(["-e", "MC_AGENT_RUNNER_ROUTES=codex/chatgpt"]));
     // The run.json records the real committed route, never a fake relabel.
     const runJson = JSON.parse(rig.fakeFs.writes.get("/tmp/mc-home/runs/run-42-worker.json")!);
     expect(runJson.harness).toBe("codex");

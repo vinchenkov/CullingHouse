@@ -94,9 +94,16 @@ async function mc(argv: string[]): Promise<number> {
 
 async function main(): Promise<number> {
   const run = (await Bun.file(RUN_JSON).json()) as RunEnvelope;
-	if (run.harness !== "fake" || run.model_binding !== "fake") {
+	// This runner contains only the fake adapter. fake/fake always runs; a
+	// non-fake (production) route runs only when the deployment has authorized
+	// this adapter to stand in for it via MC_AGENT_RUNNER_ROUTES (a comma list
+	// of `harness/model_binding`). Unset ⇒ fake-only, fail-closed. The gate is
+	// symmetric with the resident's own launch allowlist.
+	const routeKey = `${run.harness}/${run.model_binding}`;
+	const authorizedRoutes = (process.env["MC_AGENT_RUNNER_ROUTES"] ?? "").split(",").filter((r) => r !== "");
+	if (!(run.harness === "fake" && run.model_binding === "fake") && !authorizedRoutes.includes(routeKey)) {
 		log(
-			`unsupported runtime route ${JSON.stringify(`${run.harness}/${run.model_binding}`)}; ` +
+			`unsupported runtime route ${JSON.stringify(routeKey)}; ` +
 				"this test runner contains only the fake adapter",
 		);
 		return 2;

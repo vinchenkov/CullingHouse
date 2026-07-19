@@ -27,9 +27,13 @@ RUN apt-get update \
  && dpkg --compare-versions "$ver" ge "$GIT_MIN" \
  || { echo "git $ver < required $GIT_MIN (§6.2 relative worktrees)"; exit 1; }
 
-# Bun at the mise pin (§16.1).
-RUN curl -fsSL https://bun.sh/install | bash -s "bun-v${BUN_VERSION}" \
- && ln -s /root/.bun/bin/bun /usr/local/bin/bun \
+# Bun at the mise pin (§16.1). Install under /opt (world-traversable) rather
+# than the installer's default /root/.bun: a production Worker runs the runner
+# as the model uid (10001/10002), and /root is 0700, so a /root-hosted runtime
+# is unreachable to that uid ("exec bun failed: Permission denied").
+RUN curl -fsSL https://bun.sh/install | BUN_INSTALL=/opt/bun bash -s "bun-v${BUN_VERSION}" \
+ && ln -s /opt/bun/bin/bun /usr/local/bin/bun \
+ && chmod -R a+rX /opt/bun \
  && bun --version
 
 # The bind-mounted workspace's apparent uid varies by Docker Desktop file

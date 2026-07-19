@@ -844,10 +844,202 @@ func TestSealedWorkerCompletionDockerBoundary(t *testing.T) {
 	}
 }
 
+// TestProductionWorkerCompletionSealDockerBoundary is the resident-driven half
+// of the D6 completion-seal crossing. TestSealedWorkerCompletionDockerBoundary
+// invokes `mc complete --seal-request` directly; this proves the SAME accepted
+// immutable seal fence is reached when the REAL resident dispatches a
+// production (non-fake) Worker whose plan carries the run-keyed completion-seal
+// row. The Worker route is `codex/chatgpt` — a non-fake route, so the Go attest
+// attaches the typed task-store plan plus the completion seal — and the
+// resident's `agentRunnerRoutes` allowlist authorizes the shipped agent-runner
+// to execute it. Nothing here calls `mc dispatch`; the timer drives the spawn.
+func TestProductionWorkerCompletionSealDockerBoundary(t *testing.T) {
+	f := setup(t, withHostBindSpine())
+	const (
+		taskID      = int64(7)
+		setupRun    = "prod-setup-run"
+		sealRequest = "0011223344556677"
+	)
+
+	// Materialize the canonical task store the production Worker will seal,
+	// exactly as first-task setup would leave it, then fix the root to 0555.
+	taskRoot := filepath.Join(f.ws, ".mission-control", "tasks", "task-7")
+	for _, child := range []string{"source", "git"} {
+		if err := os.MkdirAll(filepath.Join(taskRoot, child), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	seeded, err := verbs.MaterializeFirstTaskStore(f.ws, taskRoot, verbs.FirstTaskSetupSpec{
+		TaskID: taskID, Mode: "fresh", TargetRef: "main", ObjectFormat: "sha1",
+		LocalRepoUUID: "0a1b2c3d-4e5f-6071-8293-a4b5c6d7e8f9",
+	})
+	if err != nil {
+		t.Fatalf("materialize production task store: %v", err)
+	}
+	if err := os.Chmod(taskRoot, 0o555); err != nil {
+		t.Fatal(err)
+	}
+
+	// Seed the resident's own spine as if first-task setup already completed:
+	// task 7 seeded and assigned, a durable receipt vouching the materialized
+	// skeleton identity, and a free lock. The next dispatch resolves the 15-row
+	// Worker plan (never a precreate), so the resident spawns the sealing Worker.
+	spine := filepath.Join(f.volume, "spine.db")
+	db, err := verbs.OpenSpine(spine)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO tasks (id,title,scope,priority,created_at,status,dispatch_retries,origin,worksource,target_ref)
+		VALUES (7,'production seal fixture','task',2,datetime('now'),'proposed',3,'user',?,'main')`, worksource); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`UPDATE tasks SET status='seeded' WHERE id=7`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO runs (id,tier,role,worksource,subject) VALUES (?, 'pipeline', 'worker', ?, 7)`, setupRun, worksource); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`UPDATE lock SET run_id=?, worksource=?, subject=7, owner='worker', acquired_at=datetime('now'), hard_deadline_at=datetime('now', '+1 hour') WHERE id=1`, setupRun, worksource); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Lstat(taskRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	st, ok := info.Sys().(*syscall.Stat_t)
+	if !ok {
+		t.Fatal("task root lacks native filesystem identity")
+	}
+	if _, err := verbs.RegisterFirstTaskSetup(db, verbs.TaskSetupReceipt{RunID: setupRun, TaskID: taskID,
+		Root: verbs.TaskSetupIdentity{Device: strconv.FormatUint(uint64(st.Dev), 10), Inode: strconv.FormatUint(uint64(st.Ino), 10), OwnerUID: int(st.Uid)}}); err != nil {
+		t.Fatalf("register production skeleton receipt: %v", err)
+	}
+	if _, _, err := verbs.RecordFirstTaskSetupClosure(db, setupRun, f.ws, seeded); err != nil {
+		t.Fatalf("record production closure assignment: %v", err)
+	}
+	if _, err := db.Exec(`UPDATE runs SET ended_at=datetime('now'), outcome='setup-complete' WHERE id=?`, setupRun); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`UPDATE lock SET run_id=NULL, worksource=NULL, subject=NULL, owner=NULL, acquired_at=NULL, hard_deadline_at=NULL WHERE id=1`); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	// Route the Worker to the non-fake production binding, authorize the
+	// agent-runner to stand in for it, and give it a behavior that reaches the
+	// real sealed completion terminal.
+	if err := os.WriteFile(filepath.Join(f.home, "routing.md"), []byte(`# production seal E2E routing
+| role | harness | binding |
+| --- | --- | --- |
+| strategist | fake | fake |
+| editor | fake | fake |
+| worker | codex | chatgpt |
+| verifier | fake | fake |
+| packager | fake | fake |
+| refiner | fake | fake |
+| homie | fake | fake |
+`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	sealBehavior := `{"steps":[
+		{"do":"exec","command":"mc complete \"$MC_SUBJECT_ID\" --run \"$MC_RUN_ID\" --seal-request ` + sealRequest + `"},
+		{"do":"succeed","output":"sealed"}]}`
+	if err := os.WriteFile(filepath.Join(f.base, "behaviors", "worker-seal.json"), []byte(sealBehavior), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfgBytes, err := os.ReadFile(filepath.Join(f.base, "resident.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cfg map[string]any
+	if err := json.Unmarshal(cfgBytes, &cfg); err != nil {
+		t.Fatal(err)
+	}
+	cfg["roleBehaviors"].(map[string]any)["worker"] = "/mc/behaviors/worker-seal.json"
+	cfg["agentRunnerRoutes"] = []string{"codex/chatgpt"}
+	out, err := json.MarshalIndent(cfg, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(f.base, "resident.json"), out, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// From here the real timer drives: tick → dispatch → production Worker with
+	// the completion-seal plan row → resident precreates MC_HOME/seals/<run>,
+	// binds /mc/private/completion-seal, launches the agent-runner Worker (model
+	// uid 10002, no NNP) → the behavior's `mc complete --seal-request` crosses
+	// the setuid wrapper and publishes+accepts the seal in one transaction.
+	f.startResident()
+
+	// Task 7 is an assigned standalone task, so `worked` is unreachable through
+	// the legacy unsealed `--status worked` bypass — only CompleteSealedWorker
+	// can transition it, which publishes AND accepts the seal in one
+	// transaction. Reaching `worked` therefore already proves the accepted fence.
+	f.waitForTaskStatus(taskID, "worked", 90*time.Second)
+
+	// The completing Worker is a fresh resident-dispatched run (not the seeded
+	// setup run); find it by its completed terminal on task 7. A completed
+	// terminal also proves its lease was released — CompleteSealedWorker accepts
+	// the seal and frees the lease in one transaction. (The resident then moves
+	// on to a downstream Verifier rebuild, which churns the lease, so this test
+	// deliberately does not assert a free lock at rest — that is a later slice.)
+	var workerRun string
+	for _, r := range f.runs() {
+		if r["role"] == "worker" && r["id"] != setupRun && r["subject"] != nil &&
+			int64(r["subject"].(float64)) == taskID && r["outcome"] == "completed" {
+			workerRun = r["id"].(string)
+		}
+	}
+	if workerRun == "" {
+		t.Fatalf("no completed production Worker run for task %d: %v", taskID, f.runs())
+	}
+
+	// The accepted immutable seal is the SAME fence TestSealedWorkerCompletion…
+	// proves directly: three regular sealed files under the run-keyed private
+	// root, the manifest frozen read-only.
+	sealDir := filepath.Join(f.home, "seals", workerRun)
+	entries, err := os.ReadDir(sealDir)
+	if err != nil || len(entries) != 3 {
+		t.Fatalf("sealed root %s entries = (%v, %v), want pack/index/manifest", sealDir, entries, err)
+	}
+	for _, entry := range entries {
+		fi, err := entry.Info()
+		if err != nil || !fi.Mode().IsRegular() {
+			t.Fatalf("sealed entry %q = (%v, %v), want regular immutable content", entry.Name(), fi.Mode(), err)
+		}
+	}
+	// The frozen 0444 mode is authoritative only inside the Linux mount
+	// namespace — Docker Desktop projects a different host-side mode (see
+	// TestSealedWorkerCompletionDockerBoundary). Read it as the completion uid.
+	if mode := f.dockerOutput("run", "--rm", "--network", "none", "--user", "10001:10001",
+		"-v", sealDir+":/mc/private/completion-seal:ro", image, "stat", "-c", "%a", "/mc/private/completion-seal/manifest.json"); mode != "444\n" {
+		t.Fatalf("completion namespace manifest mode = %q, want 0444", mode)
+	}
+}
+
 // ───────────────────────────── fixtures ─────────────────────────────────
 
-func setup(t *testing.T) *fixture {
+// setupOptions tunes the shared fixture for the tests that need it.
+type setupOptions struct {
+	// hostBindSpine binds a host directory at /mc/spine instead of a Docker
+	// named volume, so the test can seed the resident's own spine host-side
+	// with the verbs package (production task state) before the resident runs.
+	hostBindSpine bool
+}
+
+func withHostBindSpine() func(*setupOptions) {
+	return func(o *setupOptions) { o.hostBindSpine = true }
+}
+
+func setup(t *testing.T, opts ...func(*setupOptions)) *fixture {
 	t.Helper()
+	var o setupOptions
+	for _, fn := range opts {
+		fn(&o)
+	}
 	if _, err := exec.LookPath("docker"); err != nil {
 		t.Fatalf("docker CLI not found: %v", err)
 	}
@@ -918,12 +1110,27 @@ func setup(t *testing.T) *fixture {
 		t.Fatalf("build image: %v\n%s", err, out)
 	}
 
-	// Spine volume + warm helper: the lock domain (Inv. 24, §11.5).
-	f.docker("volume", "create", f.volume)
-	t.Cleanup(func() {
-		// Volume removal must outlive (run after) container removal: LIFO.
-		exec.Command("docker", "volume", "rm", "-f", f.volume).Run()
-	})
+	// Spine volume + warm helper: the lock domain (Inv. 24, §11.5). The
+	// host-bind variant swaps the named volume for a world-writable host
+	// directory (Docker Desktop maps container writes to the host user, so the
+	// helper's root and the completion wrapper's uid 10001 can both write it),
+	// which lets the test seed production task state through the verbs package
+	// before the resident starts.
+	if o.hostBindSpine {
+		f.volume = filepath.Join(base, "spine")
+		if err := os.MkdirAll(f.volume, 0o777); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chmod(f.volume, 0o777); err != nil {
+			t.Fatal(err)
+		}
+	} else {
+		f.docker("volume", "create", f.volume)
+		t.Cleanup(func() {
+			// Volume removal must outlive (run after) container removal: LIFO.
+			exec.Command("docker", "volume", "rm", "-f", f.volume).Run()
+		})
+	}
 	f.docker("run", "-d", "--rm", "--name", f.helper,
 		"--label", "mc-managed", "--label", "mc-tier=helper",
 		"-v", f.volume+":/mc/spine",
