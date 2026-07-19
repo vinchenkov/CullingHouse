@@ -57,6 +57,15 @@ async function main(): Promise<void> {
     process.exit(2);
   }
 
+  // A malformed adapter allowlist must never silently degrade to "launch
+  // anything" or crash mid-tick: reject it up front, fail-closed.
+  if (config.agentRunnerRoutes !== undefined &&
+      (!Array.isArray(config.agentRunnerRoutes) ||
+        !config.agentRunnerRoutes.every((r) => typeof r === "string" && /^[^/]+\/[^/]+$/.test(r)))) {
+    console.error("resident: agentRunnerRoutes must be an array of harness/model_binding strings");
+    process.exit(2);
+  }
+
   const envInterval = process.env["MC_TICK_INTERVAL_MS"];
   const intervalMs = envInterval
     ? Number.parseInt(envInterval, 10)

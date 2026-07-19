@@ -46,6 +46,15 @@ export interface ResidentConfig {
   /** role → in-container behavior file path (contract §6 / deviation D-4:
    * role→behavior mapping lives in the resident's e2e config). */
   roleBehaviors: Record<string, string>;
+  /** Non-fake `harness/model_binding` routes this deployment's shipped
+   * agent-runner is authorized to stand in for. The seal + typed task-store
+   * plan attach only on a non-fake (production) route, but this image ships
+   * only the fake adapter; this allowlist lets the boundary e2e drive a real
+   * production Worker through that adapter. Default (unset/empty): only the
+   * fake/fake route launches and every real-harness route is refused
+   * fail-closed. A production deployment leaves this empty and ships real
+   * per-harness adapters. */
+  agentRunnerRoutes?: string[];
 }
 
 /** The injectable dependency bundle for `startTickLoop` (contract §5). */

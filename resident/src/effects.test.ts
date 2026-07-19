@@ -714,6 +714,53 @@ describe("spawn effect", () => {
     expect(rig.logs.some((l) => l.includes("spawn refused") && l.includes("unsupported route"))).toBe(true);
   });
 
+  // Design B (production completion-seal E2E): the shipped image carries only
+  // the fake agent-runner, but the seal + typed task-store plan attach only on
+  // a non-fake (production) route. `agentRunnerRoutes` authorizes exactly which
+  // non-fake `harness/model_binding` routes that one adapter may stand in for,
+  // so the real resident can launch a production Worker through it. The default
+  // (unset) keeps the fake/fake-only refusal — fail-closed.
+  test("a configured non-fake adapter route launches through the shipped agent-runner", async () => {
+    const rig = makeRig({ config: { ...testConfig, agentRunnerRoutes: ["codex/chatgpt"] } });
+    rig.docker.enqueue(ok("container-id\n"), ok(""));
+    await applyEffect({ ...spawnEffect, harness: "codex", model_binding: "chatgpt" }, rig.deps);
+    const create = rig.docker.calls[0]!;
+    expect(create[0]).toBe("create");
+    expect(create).toContain("mc-run-run-42-worker");
+    // The run.json records the real committed route, never a fake relabel.
+    const runJson = JSON.parse(rig.fakeFs.writes.get("/tmp/mc-home/runs/run-42-worker.json")!);
+    expect(runJson.harness).toBe("codex");
+    expect(runJson.model_binding).toBe("chatgpt");
+    expect(rig.logs.some((l) => l.includes("unsupported route"))).toBe(false);
+  });
+
+  test("a non-fake route absent from the adapter allowlist stays refused (fail-closed)", async () => {
+    const rig = makeRig({ config: { ...testConfig, agentRunnerRoutes: ["codex/chatgpt"] } });
+    await applyEffect({ ...spawnEffect, harness: "claude-sdk", model_binding: "claude" }, rig.deps);
+    expect(rig.docker.calls).toEqual([]);
+    expect(rig.logs.some((l) => l.includes("spawn refused") && l.includes("unsupported route"))).toBe(true);
+  });
+
+  test("an authorized non-fake Worker still binds its private completion seal and drops to model uid", async () => {
+    const states: string[] = [];
+    const rig = makeRig({
+      config: { ...testConfig, agentRunnerRoutes: ["codex/chatgpt"] },
+      recheckCompletionSeal: async (_step, state) => { states.push(state); },
+    });
+    await applyEffect({
+      ...spawnEffect, harness: "codex", model_binding: "chatgpt",
+      mount_plan: { version: 1, entries: [workspaceEntry], completion_seal: {
+        run_id: "run-42-worker", task_id: 42,
+        seals_parent: { canonical: "/tmp/mc-home/seals", device: "1", inode: "2", owner_uid: 501 },
+      } },
+    }, rig.deps);
+    const create = rig.docker.calls[0]!;
+    expect(create).toContain("/tmp/mc-home/seals/run-42-worker:/mc/private/completion-seal");
+    expect(create).toEqual(expect.arrayContaining(["--user", "10002:10002", "--cap-drop", "ALL"]));
+    expect(create).not.toContain("no-new-privileges=true");
+    expect(states).toEqual(["absent", "ready", "ready", "ready"]);
+  });
+
   test("effects in §10 order: folder → run.json → container", async () => {
     const rig = makeRig();
     rig.docker.enqueue(ok("container-id\n"));

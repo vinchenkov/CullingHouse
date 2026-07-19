@@ -389,9 +389,16 @@ async function spawn(effect: SpawnEffect, deps: TickDeps): Promise<void> {
 			return;
 		}
 	}
-	if (effect.harness !== "fake" || effect.model_binding !== "fake") {
+	// The image ships one adapter — the fake agent-runner. fake/fake always
+	// launches; any non-fake (production) route launches only when the operator
+	// has explicitly authorized this adapter to stand in for it. An unlisted
+	// route is refused, so the default posture stays fake-only and fail-closed.
+	const routeKey = `${effect.harness}/${effect.model_binding}`;
+	const launchable = (effect.harness === "fake" && effect.model_binding === "fake") ||
+		(config.agentRunnerRoutes?.includes(routeKey) ?? false);
+	if (!launchable) {
 		log(
-			`spawn refused: unsupported route ${JSON.stringify(`${effect.harness}/${effect.model_binding}`)}; ` +
+			`spawn refused: unsupported route ${JSON.stringify(routeKey)}; ` +
 				"the current resident image contains only the explicitly test-tagged fake adapter (fail-closed)",
 		);
 		return;
