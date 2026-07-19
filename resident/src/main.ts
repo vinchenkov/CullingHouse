@@ -16,7 +16,7 @@ import { mkdir, rm, writeFile } from "node:fs/promises";
 import { startTickLoop } from "./tick-loop";
 import type { Exec, ResidentConfig, TickDeps } from "./types";
 import { CONFIG_SCHEMA_VERSION, execMcVia } from "./resident-control";
-import { precreateTaskSkeleton, recheckAcceptedSeal } from "./task-skeleton";
+import { precreateCompletionSeal, precreateTaskSkeleton, recheckAcceptedSeal } from "./task-skeleton";
 
 interface MainConfig extends ResidentConfig {
   mcPath: string;
@@ -86,6 +86,13 @@ async function main(): Promise<void> {
       rm: (path, opts) => rm(path, { force: true, recursive: opts?.recursive ?? false }),
     },
 		precreateTaskSkeleton,
+		precreateCompletionSeal,
+		recheckCompletionSeal: async (step, state) => {
+			const result = await runMc(["__completion-seal-recheck", JSON.stringify(step), state]);
+			if (result.exitCode !== 0) {
+				throw new Error(`completion seal recheck refused (exit ${result.exitCode}): ${result.stderr.trim()}`);
+			}
+		},
 		recheckTaskParent: async (step) => {
 			const frame = JSON.stringify({
 				child_mode: step.child_mode,

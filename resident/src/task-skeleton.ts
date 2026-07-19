@@ -23,6 +23,13 @@ export interface AcceptedSealIdentity {
 	run_id: string;
 }
 
+/** Producer-side, absent-derived completion-root authority. */
+export interface CompletionSealRequest {
+	run_id: string;
+	task_id: number;
+	seals_parent: PathIdentity;
+}
+
 /** The plan's first-task setup instruction (ADR-016 D5): everything the
  * spine-blind resident may know when it writes /mc/setup.json. Fresh mode
  * carries the frozen target ref and no pins; retry mode carries the recorded
@@ -100,6 +107,31 @@ export async function recheckAcceptedSeal(
 		throw new Error("accepted seal root is a different filesystem object than its receipt");
 	}
 	return root;
+}
+
+// Creates only the run-keyed child after the host helper has rechecked its
+// parent and absence. The child is derived here, never accepted as an effect
+// path, and is fixed back to private mode before it can be bound.
+export async function precreateCompletionSeal(
+	mcHome: string,
+	step: CompletionSealRequest,
+): Promise<PathIdentity> {
+	if (!isAbsolute(mcHome) || normalize(mcHome) !== mcHome ||
+		!(/^[a-zA-Z0-9][a-zA-Z0-9_.-]*$/).test(step.run_id) ||
+		!Number.isSafeInteger(step.task_id) || step.task_id < 1 ||
+		step.seals_parent.canonical !== join(mcHome, "seals") ||
+		!validDecimal(step.seals_parent.device) || !validDecimal(step.seals_parent.inode) ||
+		!Number.isSafeInteger(step.seals_parent.owner_uid) || step.seals_parent.owner_uid < 0) {
+		throw new Error("completion seal precreate descriptor is malformed");
+	}
+	const root = join(step.seals_parent.canonical, step.run_id);
+	await mkdir(root, { mode: 0o700 });
+	await chmod(root, 0o700);
+	const identity = await registeredIdentity(root);
+	if (identity.owner_uid !== step.seals_parent.owner_uid) {
+		throw new Error("completion seal root owner differs from its attested parent");
+	}
+	return identity;
 }
 
 async function requireAbsent(path: string): Promise<void> {

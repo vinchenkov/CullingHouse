@@ -428,6 +428,18 @@ func validatePrivateMountPlan(plan *PrivateDispatchMountPlan) error {
 			}
 		}
 	}
+	if step := plan.CompletionSeal; step != nil {
+		parent := step.SealsParent
+		if step.TaskID < 1 || !validStructuralText(step.RunID, maxPrivateScalarBytes) ||
+			!validStructuralText(parent.Canonical, maxPrivateScalarBytes) ||
+			!path.IsAbs(parent.Canonical) || path.Clean(parent.Canonical) != parent.Canonical ||
+			!validDecimalText(parent.Device) || !validDecimalText(parent.Inode) || parent.OwnerUID < 0 {
+			return Domainf("dispatch: private completion seal precreate evidence is invalid")
+		}
+		if plan.TaskPrecreate != nil || plan.AcceptedSealRebuild != nil || plan.VerifierProjection != nil {
+			return Domainf("dispatch: private completion seal cannot share a setup-only plan")
+		}
+	}
 	if step := plan.AcceptedSealRebuild; step != nil {
 		if step.TaskID < 1 || !validStructuralText(step.RunID, maxPrivateScalarBytes) ||
 			!validLowercaseHex(step.CompletionRequest, 16) ||

@@ -146,6 +146,18 @@ type PrivateDispatchTaskPrecreate struct {
 	WorkspaceRoot string                       `json:"workspace_root"`
 }
 
+// PrivateDispatchCompletionSeal is the Worker-only post-claim authority for
+// its current run's otherwise-absent completion staging root.  The resident
+// derives the child as <seals_parent>/<run_id>; neither dispatch nor a caller
+// gets to carry a host path for that child.  Like task precreate, the parent
+// identity proves the expected absence before claim and is rechecked before
+// creation and each Docker launch leg.
+type PrivateDispatchCompletionSeal struct {
+	RunID       string                      `json:"run_id"`
+	SealsParent PrivateDispatchPathIdentity `json:"seals_parent"`
+	TaskID      int64                       `json:"task_id"`
+}
+
 // PrivateDispatchAcceptedSealRebuild is D6's downstream setup authority. It
 // contains only the task-pointed accepted receipt frozen at prepare; the
 // resident derives the host seal source from MC_HOME/seals/<run_id> and must
@@ -187,6 +199,7 @@ type PrivateDispatchVerifierProjection struct {
 // The alphabetical field order is load-bearing — see the entry type.
 type PrivateDispatchMountPlan struct {
 	AcceptedSealRebuild *PrivateDispatchAcceptedSealRebuild `json:"accepted_seal_rebuild,omitempty"`
+	CompletionSeal      *PrivateDispatchCompletionSeal      `json:"completion_seal,omitempty"`
 	Entries             []PrivateDispatchMountEntry         `json:"entries"`
 	JurisdictionDigest  string                              `json:"jurisdiction_digest,omitempty"`
 	TaskPrecreate       *PrivateDispatchTaskPrecreate       `json:"task_precreate,omitempty"`

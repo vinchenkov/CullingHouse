@@ -807,9 +807,12 @@ describe("spawn effect", () => {
         "--network", "none",
         "--name", "mc-run-run-42-worker",
         "--label", "mc-managed=true",
-        "--label", "mc-tier=pipeline",
+		"--label", "mc-tier=pipeline",
 		"--label", "mc-run-id=run-42-worker",
-        "-v", "/tmp/mc-home/sessions/run-42-worker:/mc/session",
+		"--user", "10002:10002",
+		"--cap-drop", "ALL",
+		"--security-opt", "no-new-privileges=true",
+		"-v", "/tmp/mc-home/sessions/run-42-worker:/mc/session",
         "-v", "/tmp/mc-home/runs/run-42-worker.json:/mc/run.json:ro",
         "-v", "/host/behaviors:/mc/behaviors:ro",
         "-v", "/host/runner:/app/src:ro",
@@ -822,6 +825,20 @@ describe("spawn effect", () => {
       ["start", "mc-run-run-42-worker"],
     ]);
   });
+
+	test("a completion-seal Worker binds only its derived private root and omits NNP", async () => {
+		let states: string[] = [];
+		const rig = makeRig({ recheckCompletionSeal: async (_step, state) => { states.push(state); } });
+		await applyEffect({ ...spawnEffect, mount_plan: { version: 1, entries: [workspaceEntry], completion_seal: {
+			run_id: "run-42-worker", task_id: 42,
+			seals_parent: { canonical: "/tmp/mc-home/seals", device: "1", inode: "2", owner_uid: 501 },
+		} } }, rig.deps);
+		const create = rig.docker.calls[0]!;
+		expect(create).toContain("/tmp/mc-home/seals/run-42-worker:/mc/private/completion-seal");
+		expect(create).toEqual(expect.arrayContaining(["--user", "10002:10002", "--cap-drop", "ALL"]));
+		expect(create).not.toContain("no-new-privileges=true");
+		expect(states).toEqual(["absent", "ready", "ready", "ready"]);
+	});
 
   test("an RO plan entry binds with the :ro flag; an empty plan skips the rechecks", async () => {
     const rig = makeRig();

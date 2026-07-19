@@ -144,11 +144,25 @@ function invalidMountPlanReason(plan: MountPlan | undefined): string | null {
 			!Number.isSafeInteger(step.owner_uid) || step.owner_uid < 0) {
 			return "accepted seal rebuild descriptor is malformed";
 		}
-		if (plan.task_precreate !== undefined) {
+	if (plan.task_precreate !== undefined) {
 			return "accepted seal rebuild cannot share a first-task setup plan";
 		}
 		// Spawn handles this closed setup carrier before ordinary route/container
 		// work. It never reaches the generic agent-create path.
+	}
+	if (plan.completion_seal !== undefined) {
+		const step = plan.completion_seal;
+		if (step === null || typeof step !== "object" || !SAFE_ID.test(step.run_id) ||
+			!Number.isSafeInteger(step.task_id) || step.task_id < 1 ||
+			step.seals_parent === null || typeof step.seals_parent !== "object" ||
+			typeof step.seals_parent.canonical !== "string" || !step.seals_parent.canonical.startsWith("/") ||
+			posix.normalize(step.seals_parent.canonical) !== step.seals_parent.canonical ||
+			!(/^(0|[1-9][0-9]*)$/).test(step.seals_parent.device) ||
+			!(/^(0|[1-9][0-9]*)$/).test(step.seals_parent.inode) ||
+			!Number.isSafeInteger(step.seals_parent.owner_uid) || step.seals_parent.owner_uid < 0 ||
+			plan.task_precreate !== undefined || plan.accepted_seal_rebuild !== undefined || plan.verifier_projection !== undefined) {
+			return "completion seal descriptor is malformed";
+		}
 	}
 	if (plan.verifier_projection !== undefined) {
 		const step = plan.verifier_projection;
@@ -353,6 +367,28 @@ async function spawn(effect: SpawnEffect, deps: TickDeps): Promise<void> {
 		// Starting here, without those rows, would expose an empty workspace.
 		return;
 	}
+	let completionSealRoot: string | undefined;
+	if (effect.mount_plan.completion_seal !== undefined) {
+		const step = effect.mount_plan.completion_seal;
+		if (role.split(":", 1)[0] !== "worker" || effect.subject_id !== step.task_id || step.run_id !== run_id ||
+			step.seals_parent.canonical !== posix.join(config.mcHome, "seals")) {
+			log("spawn refused: completion seal does not match the claimed Worker/run/home (fail-closed)");
+			return;
+		}
+		try {
+			await deps.recheckCompletionSeal(step, "absent");
+			const created = await deps.precreateCompletionSeal(config.mcHome, step);
+			completionSealRoot = posix.join(config.mcHome, "seals", run_id);
+			if (created === null || typeof created !== "object" || created.canonical !== completionSealRoot ||
+				created.owner_uid !== step.seals_parent.owner_uid) {
+				throw new Error("completion seal precreate returned invalid identity evidence");
+			}
+			await deps.recheckCompletionSeal(step, "ready");
+		} catch (err) {
+			log(`spawn refused: completion seal precreate failed: ${(err as Error).message} (fail-closed)`);
+			return;
+		}
+	}
 	if (effect.harness !== "fake" || effect.model_binding !== "fake") {
 		log(
 			`spawn refused: unsupported route ${JSON.stringify(`${effect.harness}/${effect.model_binding}`)}; ` +
@@ -402,6 +438,14 @@ async function spawn(effect: SpawnEffect, deps: TickDeps): Promise<void> {
       log(`spawn ${run_id}: mount recheck refused ${leg} (exit ${res.exitCode}): ${res.stderr.trim()}`);
       return false;
     }
+		if (effect.mount_plan.completion_seal !== undefined) {
+			try {
+				await deps.recheckCompletionSeal(effect.mount_plan.completion_seal, "ready");
+			} catch (err) {
+				log(`spawn ${run_id}: completion seal recheck refused ${leg}: ${(err as Error).message}`);
+				return false;
+			}
+		}
     return true;
   };
 
@@ -416,6 +460,9 @@ async function spawn(effect: SpawnEffect, deps: TickDeps): Promise<void> {
   const planBinds = effect.mount_plan.entries.flatMap((entry) => [
     "-v", `${entry.source}:${entry.destination}${entry.access === "ro" ? ":ro" : ""}`,
   ]);
+	if (completionSealRoot !== undefined) {
+		planBinds.push("-v", `${completionSealRoot}:/mc/private/completion-seal`);
+	}
 	if (verifierProjection !== undefined) {
 		const taskRoot = effect.mount_plan.entries.find((entry) => entry.logical_id === "task-root" && entry.destination === "/workspace");
 		if (taskRoot === undefined) throw new Error("verifier projection lost canonical task root before create");
@@ -430,6 +477,9 @@ async function spawn(effect: SpawnEffect, deps: TickDeps): Promise<void> {
     "--label", "mc-managed=true",
     "--label", "mc-tier=pipeline",
 		"--label", `mc-run-id=${run_id}`,
+		"--user", "10002:10002",
+		"--cap-drop", "ALL",
+    ...(completionSealRoot === undefined ? ["--security-opt", "no-new-privileges=true"] : []),
     "-v", `${sessionDir}:/mc/session`,
     "-v", `${runJsonPath}:/mc/run.json:ro`,
     "-v", `${config.behaviorsDir}:/mc/behaviors:ro`,

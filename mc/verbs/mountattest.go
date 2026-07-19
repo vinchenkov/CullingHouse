@@ -685,6 +685,49 @@ func captureTaskPrecreate(workspaceRoot string, taskID int64, ownerUID int) (Pri
 	}, nil
 }
 
+// captureCompletionSealPrecreate records only the trusted MC_HOME/seals
+// parent.  The run-keyed child is deliberately absent through preclaim and is
+// created by the claimed resident, mirroring task skeleton creation rather
+// than smuggling an un-attested path through the effect.
+func captureCompletionSealPrecreate(home, runID string, taskID int64, ownerUID int) (PrivateDispatchCompletionSeal, error) {
+	if taskID < 1 || taskID > maxJavaScriptSafeInteger || !validStructuralText(runID, maxPrivateScalarBytes) {
+		return PrivateDispatchCompletionSeal{}, Domainf("completion seal run/task identity is invalid")
+	}
+	parentPath := filepath.Join(home, "seals")
+	// `seals/` is resident-control topology, not an agent-visible derived
+	// source. Establish its fixed parent before claim; the run child itself
+	// remains absent until the claimed effect.
+	if _, err := os.Lstat(parentPath); os.IsNotExist(err) {
+		if err := os.Mkdir(parentPath, 0o700); err != nil {
+			return PrivateDispatchCompletionSeal{}, err
+		}
+	} else if err != nil {
+		return PrivateDispatchCompletionSeal{}, err
+	}
+	if err := boundary.TrustHomeDir(parentPath, ownerUID); err != nil {
+		return PrivateDispatchCompletionSeal{}, err
+	}
+	parent, err := boundary.ResolveSource(parentPath)
+	if err != nil {
+		return PrivateDispatchCompletionSeal{}, err
+	}
+	st, ok := parent.Info.Sys().(*syscall.Stat_t)
+	if !ok || !parent.IsDir || parent.Info.Mode().Perm() != 0o700 || int(st.Uid) != ownerUID {
+		return PrivateDispatchCompletionSeal{}, &boundary.MountError{Code: boundary.CodeRuntimeUnappliable,
+			Msg: "completion seal parent is not the exact operator-owned mode-0700 MC_HOME/seals directory"}
+	}
+	root := filepath.Join(parent.Canonical, runID)
+	if _, err := os.Lstat(root); err == nil {
+		return PrivateDispatchCompletionSeal{}, &boundary.MountError{Code: boundary.CodeRuntimeUnappliable,
+			Msg: "completion seal root appeared during absent-path attestation"}
+	} else if !os.IsNotExist(err) {
+		return PrivateDispatchCompletionSeal{}, err
+	}
+	return PrivateDispatchCompletionSeal{RunID: runID, TaskID: taskID, SealsParent: PrivateDispatchPathIdentity{
+		Canonical: parent.Canonical, Device: strconv.FormatUint(uint64(st.Dev), 10), Inode: strconv.FormatUint(st.Ino, 10), OwnerUID: int(st.Uid),
+	}}, nil
+}
+
 // captureTaskSetup authors the precreate step's setup instruction. Mode and
 // pins restate token-frozen spine state only (ADR-016 D5: a recorded
 // assignment is reused, never rebased; a fresh run pins the frozen target
@@ -812,6 +855,14 @@ func attestCandidateMounts(home string, cand *preparedCandidate, allowLegacyFake
 	plan := &PrivateDispatchMountPlan{
 		Version: 1, Entries: entries, JurisdictionDigest: jurisdictionDigest,
 		TaskPrecreate: snapshot.TaskPrecreate,
+	}
+	if cand.runID != "" && snapshot.TaskPrecreate == nil && baseRole(string(cand.spawn.Role)) == "worker" && cand.spawn.SubjectID != nil {
+		step, err := captureCompletionSealPrecreate(home, cand.runID, *cand.spawn.SubjectID, snapshot.OwnerUID)
+		if err != nil {
+			r, aerr := adaptMountError(err, refusal.AuthorityDeployment, nil)
+			return nil, r, aerr
+		}
+		plan.CompletionSeal = &step
 	}
 	if baseRole(string(cand.spawn.Role)) == "verifier" && cand.spawn.SubjectID != nil && cand.mountState.SubjectAcceptedCompletionSeal != nil && cand.mountState.SubjectAcceptedSealRebuild == nil {
 		s := cand.mountState.SubjectAcceptedCompletionSeal

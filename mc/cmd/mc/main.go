@@ -46,7 +46,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	}
 	// The launch-time identity recheck reads HOST files by definition: it must
 	// run locally even when every ordinary verb self-delegates into the helper.
-	if args[0] == "__mount-recheck" || args[0] == "__task-parent-recheck" || args[0] == "__task-skeleton-recover" || args[0] == "__setup-first-task" || args[0] == "__setup-accepted-seal" || args[0] == "__setup-verifier-projection" {
+	if args[0] == "__mount-recheck" || args[0] == "__task-parent-recheck" || args[0] == "__completion-seal-recheck" || args[0] == "__task-skeleton-recover" || args[0] == "__setup-first-task" || args[0] == "__setup-accepted-seal" || args[0] == "__setup-verifier-projection" {
 		return runLocal(args, stdin, stdout, stderr)
 	}
 
@@ -134,6 +134,27 @@ func dispatchVerb(args []string, stdin io.Reader) (any, error) {
 	verb := args[0]
 	rest := args[1:]
 	switch verb {
+	case "__completion-seal-recheck":
+		if len(rest) != 2 || (rest[1] != "absent" && rest[1] != "ready") {
+			return nil, verbs.Usagef("usage: mc __completion-seal-recheck <step-json> <absent|ready>")
+		}
+		id, err := verbs.LoadIdentity()
+		if err != nil {
+			return nil, err
+		}
+		if err := verbs.RequireHostScope(id, "mc __completion-seal-recheck"); err != nil {
+			return nil, err
+		}
+		var step verbs.PrivateDispatchCompletionSeal
+		dec := json.NewDecoder(strings.NewReader(rest[0]))
+		dec.DisallowUnknownFields()
+		if err := dec.Decode(&step); err != nil {
+			return nil, verbs.Usagef("completion seal step is invalid: %v", err)
+		}
+		if dec.More() {
+			return nil, verbs.Usagef("completion seal step carries trailing data")
+		}
+		return verbs.CompletionSealRecheck(step, rest[1] == "ready")
 	case "__task-parent-recheck":
 		if len(rest) != 1 {
 			return nil, verbs.Usagef("usage: mc __task-parent-recheck <step-json>")

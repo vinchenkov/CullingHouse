@@ -5,7 +5,7 @@
 // (folder + run.json writes, §10 effect order); both are injectable so
 // `bun test` never touches the real filesystem or Docker.
 
-import type { AcceptedSealIdentity, PathIdentity, TaskSkeletonRequest } from "./task-skeleton";
+import type { AcceptedSealIdentity, CompletionSealRequest, PathIdentity, TaskSkeletonRequest } from "./task-skeleton";
 
 /** Result of running an external command (mc or docker). */
 export interface ExecResult {
@@ -76,6 +76,10 @@ export interface TickDeps {
 	recoverTaskSkeleton(request: TaskSkeletonRequest): Promise<PathIdentity>;
 	/** Repeats parent identity, owner-only mode, and native ACL trust. */
 	recheckTaskParent(request: TaskSkeletonRequest): Promise<void>;
+	/** Repeats completion-seal parent trust plus expected absent/ready root shape. */
+	recheckCompletionSeal(step: CompletionSealRequest, state: "absent" | "ready"): Promise<void>;
+	/** Creates the exact run-keyed completion staging root after an absent recheck. */
+	precreateCompletionSeal(mcHome: string, step: CompletionSealRequest): Promise<PathIdentity>;
 	/** Repeats the exact accepted seal root identity before trusted setup binds it. */
 	recheckAcceptedSeal(seal: AcceptedSealIdentity): Promise<string>;
 	/** Durably registers the exact returned identity before any setup consumer runs. */
@@ -101,6 +105,7 @@ export interface MountPlanEntry {
 
 /** The committed spawn effect's validated mount plan; explicit, never absent. */
 export interface MountPlan {
+	completion_seal?: CompletionSealRequest;
 	accepted_seal_rebuild?: {
 		closure_digest: string;
 		completion_request_id: string;

@@ -63,6 +63,49 @@ func TaskParentRecheck(step PrivateDispatchTaskPrecreate) (map[string]any, error
 	return map[string]any{"action": "task-parent-recheck", "status": "ok"}, nil
 }
 
+// CompletionSealRecheck repeats the parent trust/identity predicate and then
+// requires the derived run child either to remain absent (before post-claim
+// creation) or to be the closed private staging directory (at launch legs).
+// No caller-supplied child path is accepted.
+func CompletionSealRecheck(step PrivateDispatchCompletionSeal, requireRoot bool) (map[string]any, error) {
+	plan := &PrivateDispatchMountPlan{CompletionSeal: &step, Entries: []PrivateDispatchMountEntry{}, Version: 1}
+	if err := validatePrivateMountPlan(plan); err != nil {
+		return nil, err
+	}
+	parent := step.SealsParent
+	if err := boundary.TrustHomeDir(parent.Canonical, parent.OwnerUID); err != nil {
+		return nil, &DomainError{Code: boundary.CodeIdentityChanged, Msg: "completion seal parent recheck: trust predicate changed: " + err.Error()}
+	}
+	identity, err := boundary.ResolveSource(parent.Canonical)
+	if err != nil {
+		return nil, err
+	}
+	st, ok := identity.Info.Sys().(*syscall.Stat_t)
+	if !ok || !identity.IsDir || identity.Canonical != parent.Canonical || identity.Info.Mode().Perm() != 0o700 ||
+		strconv.FormatUint(uint64(st.Dev), 10) != parent.Device || strconv.FormatUint(st.Ino, 10) != parent.Inode || int(st.Uid) != parent.OwnerUID {
+		return nil, &DomainError{Code: boundary.CodeIdentityChanged, Msg: "completion seal parent recheck: identity changed after preclaim"}
+	}
+	root := filepath.Join(parent.Canonical, step.RunID)
+	info, err := os.Lstat(root)
+	if !requireRoot {
+		if err == nil {
+			return nil, &DomainError{Code: boundary.CodeIdentityChanged, Msg: "completion seal parent recheck: expected-absent root appeared"}
+		}
+		if !os.IsNotExist(err) {
+			return nil, err
+		}
+		return map[string]any{"action": "completion-seal-recheck", "status": "absent"}, nil
+	}
+	if err != nil {
+		return nil, &DomainError{Code: boundary.CodeIdentityChanged, Msg: "completion seal root is absent or unreadable: " + err.Error()}
+	}
+	rst, ok := info.Sys().(*syscall.Stat_t)
+	if !ok || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 || info.Mode().Perm() != 0o700 || int(rst.Uid) != parent.OwnerUID {
+		return nil, &DomainError{Code: boundary.CodeIdentityChanged, Msg: "completion seal root is not the fixed private operator-owned directory"}
+	}
+	return map[string]any{"action": "completion-seal-recheck", "status": "ready"}, nil
+}
+
 func recheckRecoveryRoot(root string, expected PrivateDispatchPathIdentity) error {
 	info, err := os.Lstat(root)
 	if err != nil {
