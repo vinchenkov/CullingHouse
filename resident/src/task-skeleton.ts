@@ -85,7 +85,17 @@ async function registeredIdentity(path: string): Promise<PathIdentity> {
 
 /** Re-attest the exact run-keyed completion seal before it can be bound into
  * accepted-seal setup.  `MC_HOME/seals/<run>` is derived locally rather than
- * supplied by dispatch, so a hostile effect cannot choose another host path. */
+ * supplied by dispatch, so a hostile effect cannot choose another host path.
+ *
+ * The receipt's device/inode/owner are deliberately NOT compared here. They are
+ * recorded by the in-container setuid publisher and are namespace-local (uid
+ * 10001, container device numbers), so a host lstat can never equal them on
+ * Docker Desktop; comparing made every non-fake rebuild refuse. What survives is
+ * custody, not identity: the path is derived, must resolve to itself, and must
+ * be a non-symlink directory owned by the host operator this resident runs as.
+ * Seal integrity remains the in-image immutable manifest/pack digest
+ * verification (`verifyAcceptedSealIdentity` + the manifest digest bound in
+ * `completion_seals`). Logged deviation, IMPLEMENTATION-NOTES 2026-07-19. */
 export async function recheckAcceptedSeal(
 	mcHome: string,
 	seal: AcceptedSealIdentity,
@@ -101,10 +111,12 @@ export async function recheckAcceptedSeal(
 		throw new Error("accepted seal root is not its exact canonical run path");
 	}
 	const stat = await lstat(root, { bigint: true });
-	if (!stat.isDirectory() || stat.isSymbolicLink() ||
-		decimal(stat.dev) !== seal.device || decimal(stat.ino) !== seal.inode ||
-		Number(stat.uid) !== seal.owner_uid) {
-		throw new Error("accepted seal root is a different filesystem object than its receipt");
+	if (!stat.isDirectory() || stat.isSymbolicLink()) {
+		throw new Error("accepted seal root is not a non-symlink directory");
+	}
+	const operatorUID = typeof process.getuid === "function" ? process.getuid() : -1;
+	if (operatorUID < 0 || Number(stat.uid) !== operatorUID) {
+		throw new Error("accepted seal root is not owned by the host operator");
 	}
 	return root;
 }

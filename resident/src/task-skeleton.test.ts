@@ -1,4 +1,4 @@
-import { chmod, lstat, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, describe, expect, test } from "bun:test";
@@ -132,7 +132,12 @@ describe("resident task-skeleton precreate (ADR-017:437-441)", () => {
 });
 
 describe("resident accepted completion seal recheck", () => {
-	test("derives only MC_HOME/seals/<run> and repeats the receipt identity", async () => {
+	// The recorded receipt identity is written by the in-container setuid
+	// publisher and is namespace-local, so it is NOT comparable to a host lstat
+	// (IMPLEMENTATION-NOTES 2026-07-19). This side proves host-operator custody
+	// of the locally derived path; the seal's integrity is the in-image
+	// manifest/pack digest verification.
+	test("derives only MC_HOME/seals/<run> under host-operator custody", async () => {
 		const f = await fixture();
 		const seal = join(f.workspace, "seals", "run-7-worker");
 		await mkdir(seal, { recursive: true, mode: 0o700 });
@@ -140,8 +145,44 @@ describe("resident accepted completion seal recheck", () => {
 		await expect(recheckAcceptedSeal(f.workspace, {
 			run_id: "run-7-worker", device: stat.dev.toString(10), inode: stat.ino.toString(10), owner_uid: Number(stat.uid),
 		})).resolves.toBe(seal);
+	});
+
+	test("accepts the namespace-local recorded identity it can no longer compare", async () => {
+		const f = await fixture();
+		const seal = join(f.workspace, "seals", "run-7-worker");
+		await mkdir(seal, { recursive: true, mode: 0o700 });
 		await expect(recheckAcceptedSeal(f.workspace, {
-			run_id: "run-7-worker", device: stat.dev.toString(10), inode: (stat.ino + 1n).toString(10), owner_uid: Number(stat.uid),
-		})).rejects.toThrow("different filesystem object");
+			run_id: "run-7-worker", device: "48", inode: "1234567", owner_uid: 10001,
+		})).resolves.toBe(seal);
+	});
+
+	test("still refuses malformed receipts, escaping run ids, and non-directories", async () => {
+		const f = await fixture();
+		await mkdir(join(f.workspace, "seals"), { recursive: true, mode: 0o700 });
+		for (const run_id of ["../escape", "run/7", ".hidden", ""]) {
+			await expect(recheckAcceptedSeal(f.workspace, {
+				run_id, device: "1", inode: "2", owner_uid: 501,
+			})).rejects.toThrow("malformed");
+		}
+		await expect(recheckAcceptedSeal(f.workspace, {
+			run_id: "run-7-worker", device: "01", inode: "2", owner_uid: 501,
+		})).rejects.toThrow("malformed");
+		await expect(recheckAcceptedSeal(f.workspace, {
+			run_id: "run-7-worker", device: "1", inode: "2", owner_uid: -1,
+		})).rejects.toThrow("malformed");
+		await writeFile(join(f.workspace, "seals", "run-8-worker"), "not a directory\n", { mode: 0o600 });
+		await expect(recheckAcceptedSeal(f.workspace, {
+			run_id: "run-8-worker", device: "1", inode: "2", owner_uid: 501,
+		})).rejects.toThrow("non-symlink directory");
+	});
+
+	test("refuses a seal root that is not the exact canonical run path", async () => {
+		const f = await fixture();
+		const seals = join(f.workspace, "seals");
+		await mkdir(join(seals, "elsewhere"), { recursive: true, mode: 0o700 });
+		await symlink(join(seals, "elsewhere"), join(seals, "run-9-worker"));
+		await expect(recheckAcceptedSeal(f.workspace, {
+			run_id: "run-9-worker", device: "1", inode: "2", owner_uid: 501,
+		})).rejects.toThrow("exact canonical run path");
 	});
 });
