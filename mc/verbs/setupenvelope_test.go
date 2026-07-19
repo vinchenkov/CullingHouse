@@ -99,7 +99,7 @@ func TestValidateAcceptedSealSetupEnvelopeIsAClosedReceipt(t *testing.T) {
 	base := SetupEnvelope{
 		SchemaVersion: 1, Operation: SetupOperationAcceptedSealRebuild,
 		RunID: "worker", TaskID: 7, ObjectFormat: "sha1",
-		CompletionRequest: "0011223344556677", SealedSHA: strings.Repeat("a", 40),
+		CompletionRunID: "completion-worker", CompletionRequest: "0011223344556677", SealedSHA: strings.Repeat("a", 40),
 		ClosureDigest: strings.Repeat("b", 64), ManifestDigest: strings.Repeat("c", 64),
 		SealRoot: "/repo/seal", TaskRoot: "/repo/task", SealDevice: "1", SealInode: "2", SealOwnerUID: 501,
 	}
@@ -109,6 +109,7 @@ func TestValidateAcceptedSealSetupEnvelopeIsAClosedReceipt(t *testing.T) {
 	bad := map[string]func(*SetupEnvelope){
 		"host-path":         func(e *SetupEnvelope) { e.SealRoot = "/private/seal" },
 		"request":           func(e *SetupEnvelope) { e.CompletionRequest = "not-a-request" },
+		"completion-run":    func(e *SetupEnvelope) { e.CompletionRunID = "" },
 		"sha":               func(e *SetupEnvelope) { e.SealedSHA = "bad" },
 		"digest":            func(e *SetupEnvelope) { e.ManifestDigest = "bad" },
 		"identity":          func(e *SetupEnvelope) { e.SealInode = "01" },

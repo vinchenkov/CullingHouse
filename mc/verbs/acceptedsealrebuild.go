@@ -39,8 +39,20 @@ type CompletionSealFile struct {
 // this pure executor verifies its immutable manifest and files before forming a
 // throwaway bare source used by the existing closure materializer.
 func RebuildAcceptedCompletionSeal(sealDir, taskRoot string, seal AcceptedCompletionSeal) (SetupResult, error) {
-	if err := verifyAcceptedSealIdentity(sealDir, seal); err != nil {
-		return SetupResult{}, err
+	return rebuildAcceptedCompletionSeal(sealDir, taskRoot, seal, true)
+}
+
+// rebuildAcceptedCompletionSeal performs the sealed-byte verification common
+// to both callers. Host callers can compare the receipt's host filesystem
+// identity directly; the setup container cannot, because Docker Desktop bind
+// namespaces remap device/inode values. That crossing is re-attested by the
+// resident immediately before the exact bind is created, while this executor
+// proves the immutable manifest and pack bytes it can observe.
+func rebuildAcceptedCompletionSeal(sealDir, taskRoot string, seal AcceptedCompletionSeal, verifyIdentity bool) (SetupResult, error) {
+	if verifyIdentity {
+		if err := verifyAcceptedSealIdentity(sealDir, seal); err != nil {
+			return SetupResult{}, err
+		}
 	}
 	body, err := os.ReadFile(filepath.Join(sealDir, "manifest.json"))
 	if err != nil {

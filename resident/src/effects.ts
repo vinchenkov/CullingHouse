@@ -582,7 +582,7 @@ async function runAcceptedSealRebuild(
 	const envelope = {
 		schema_version: 1, operation: "accepted-seal-rebuild", run_id: runId,
 		task_id: step.task_id, object_format: step.object_format,
-		completion_request_id: step.completion_request_id, sealed_sha: step.sealed_sha,
+		completion_run_id: step.run_id, completion_request_id: step.completion_request_id, sealed_sha: step.sealed_sha,
 		closure_digest: step.closure_digest, manifest_digest: step.manifest_digest,
 		seal_root: "/repo/seal", task_root: "/repo/task", seal_device: step.device,
 		seal_inode: step.inode, seal_owner_uid: step.owner_uid,

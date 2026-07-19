@@ -1762,3 +1762,25 @@ fast-lane legs (the documented resident FD-3 flake passed on its immediate
 idle rerun) and the full tagged Docker E2E suite are green.
 
 NEXT (moved to PROGRESS.md): add the D6 accepted-seal rebuild Docker fixture.
+
+## 2026-07-18 — accepted-seal rebuild Docker boundary
+
+`TestAcceptedSealRebuildDockerBoundary` creates a genuine canonical task store,
+publishes its immutable completion seal, and accepts that exact Worker receipt
+before entering the D6 setup image. The setup container receives only the
+sealed pack/index/manifest RO, the 0555 canonical task root with its two RW
+children, and the closed envelope. Its result then passes the live Verifier
+record and continuation fences, yielding the immutable rebuild receipt and a
+free lease.
+
+The real Desktop crossing found two defects hidden by host-only tests. First,
+the bind's device/inode are namespace-local, so identity comparison belongs at
+the resident's host re-attestation immediately before bind creation; the image
+retains complete manifest and pack-byte verification. Second, the envelope had
+used the current Verifier setup run where the seal manifest requires the
+accepted Worker producer run. The new closed `completion_run_id` carrier keeps
+those identities distinct. The five-leg fast lane and full tagged Docker E2E
+suite are green.
+
+NEXT (moved to PROGRESS.md): add the D6 sealed Worker completion publisher
+Docker fixture.

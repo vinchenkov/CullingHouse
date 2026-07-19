@@ -38,6 +38,7 @@ type SetupEnvelope struct {
 	WorktreeName        string `json:"worktree_name"`
 	SourceRepo          string `json:"source_repo"`
 	TaskRoot            string `json:"task_root"`
+	CompletionRunID     string `json:"completion_run_id,omitempty"`
 	CompletionRequest   string `json:"completion_request_id,omitempty"`
 	SealedSHA           string `json:"sealed_sha,omitempty"`
 	ClosureDigest       string `json:"closure_digest,omitempty"`
@@ -61,7 +62,7 @@ func validateSetupEnvelope(env SetupEnvelope) error {
 	}
 	switch env.Operation {
 	case SetupOperationFirstTaskClosure:
-		if env.CompletionRequest != "" || env.SealedSHA != "" || env.ClosureDigest != "" ||
+		if env.CompletionRunID != "" || env.CompletionRequest != "" || env.SealedSHA != "" || env.ClosureDigest != "" ||
 			env.ManifestDigest != "" || env.SealRoot != "" || env.SealDevice != "" || env.ProjectionRoot != "" ||
 			env.SealInode != "" || env.SealOwnerUID != 0 {
 			return Domainf("first-task setup envelope carries accepted-seal authority")
@@ -99,7 +100,7 @@ func validateSetupEnvelope(env SetupEnvelope) error {
 		if env.TaskRoot != "/repo/task" || env.SealRoot != "/repo/seal" {
 			return Domainf("accepted-seal setup envelope carries paths outside its fixed container destinations")
 		}
-		if len(env.CompletionRequest) != 16 || !assignmentHex.MatchString(env.CompletionRequest) ||
+		if env.CompletionRunID == "" || len(env.CompletionRequest) != 16 || !assignmentHex.MatchString(env.CompletionRequest) ||
 			len(env.SealedSHA) != oidLen(env.ObjectFormat) || !assignmentHex.MatchString(env.SealedSHA) ||
 			len(env.ClosureDigest) != 64 || !assignmentHex.MatchString(env.ClosureDigest) ||
 			len(env.ManifestDigest) != 64 || !assignmentHex.MatchString(env.ManifestDigest) ||
@@ -109,7 +110,7 @@ func validateSetupEnvelope(env SetupEnvelope) error {
 	case SetupOperationVerifierProjection:
 		if env.Mode != "" || env.TargetRef != "" || env.PinnedBaseSHA != "" ||
 			env.PinnedClosureDigest != "" || env.PinnedLocalRepoUUID != "" ||
-			env.Branch != "" || env.WorktreeName != "" || env.SourceRepo != "" || env.SealRoot != "" {
+			env.Branch != "" || env.WorktreeName != "" || env.SourceRepo != "" || env.SealRoot != "" || env.CompletionRunID != "" {
 			return Domainf("verifier projection envelope carries unrelated setup authority")
 		}
 		if env.TaskRoot != "/repo/task" || env.ProjectionRoot != "/repo/projection" {
@@ -210,12 +211,17 @@ func RunAcceptedSealSetup(env SetupEnvelope) (SetupResult, error) {
 	if env.Operation != SetupOperationAcceptedSealRebuild {
 		return SetupResult{}, Domainf("setup envelope is not an accepted-seal rebuild operation")
 	}
-	return RebuildAcceptedCompletionSeal(env.SealRoot, env.TaskRoot, AcceptedCompletionSeal{
-		RunID: env.RunID, TaskID: env.TaskID, CompletionRequest: env.CompletionRequest,
+	// The resident re-attests this receipt's host device/inode/owner tuple
+	// immediately before creating the exact seal bind. Docker Desktop exposes
+	// a namespace-local tuple to the container, so repeating that host-identity
+	// comparison here would reject every valid cross-VM bind. The shared
+	// rebuild still verifies every immutable manifest and pack byte.
+	return rebuildAcceptedCompletionSeal(env.SealRoot, env.TaskRoot, AcceptedCompletionSeal{
+		RunID: env.CompletionRunID, TaskID: env.TaskID, CompletionRequest: env.CompletionRequest,
 		ObjectFormat: env.ObjectFormat, SealedSHA: env.SealedSHA,
 		ClosureDigest: env.ClosureDigest, ManifestDigest: env.ManifestDigest,
 		Device: env.SealDevice, Inode: env.SealInode, OwnerUID: env.SealOwnerUID,
-	})
+	}, false)
 }
 
 // RunVerifierProjectionSetup materializes only the sealed tree into the

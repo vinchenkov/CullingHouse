@@ -544,6 +544,160 @@ func TestFirstTaskSetupDockerBoundary(t *testing.T) {
 	}
 }
 
+// TestAcceptedSealRebuildDockerBoundary proves the D6 setup crossing with the
+// shipped image. It publishes and accepts a real immutable seal, gives the
+// image only that seal plus the resident-shaped empty canonical root, then
+// records and continues the exact live Verifier setup receipt.
+func TestAcceptedSealRebuildDockerBoundary(t *testing.T) {
+	f := setup(t)
+	const (
+		taskID        = int64(7)
+		setupRun      = "setup-run"
+		workerRun     = "worker-seal"
+		completionReq = "0011223344556677"
+		verifierRun   = "verify-run"
+	)
+	seedRoot := filepath.Join(f.base, "sealed-source")
+	for _, child := range []string{"source", "git"} {
+		if err := os.MkdirAll(filepath.Join(seedRoot, child), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	seeded, err := verbs.MaterializeFirstTaskStore(f.ws, seedRoot, verbs.FirstTaskSetupSpec{
+		TaskID: taskID, Mode: "fresh", TargetRef: "main", ObjectFormat: "sha1",
+		LocalRepoUUID: "0a1b2c3d-4e5f-6071-8293-a4b5c6d7e8f9",
+	})
+	if err != nil {
+		t.Fatalf("materialize seal source: %v", err)
+	}
+	seals := filepath.Join(f.home, "seals")
+	if err := os.MkdirAll(seals, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	sealRoot := filepath.Join(seals, workerRun)
+	publication, err := verbs.SealTaskCompletion(seedRoot, sealRoot, workerRun, completionReq, taskID)
+	if err != nil {
+		t.Fatalf("publish filesystem seal: %v", err)
+	}
+
+	taskRoot := filepath.Join(f.ws, ".mission-control", "tasks", "task-7")
+	for _, child := range []string{"source", "git"} {
+		if err := os.MkdirAll(filepath.Join(taskRoot, child), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Chmod(taskRoot, 0o555); err != nil {
+		t.Fatal(err)
+	}
+	spine := filepath.Join(f.base, "d6-spine.db")
+	if _, err := verbs.Init(verbs.InitArgs{Spine: spine, Worksource: "ws-d6", WorkspaceRoot: f.ws}); err != nil {
+		t.Fatalf("init D6 spine: %v", err)
+	}
+	db, err := verbs.OpenSpine(spine)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if _, err := db.Exec(`INSERT INTO tasks (id,title,scope,priority,created_at,status,dispatch_retries,origin,worksource,target_ref)
+		VALUES (7,'D6 rebuild fixture','task',2,datetime('now'),'proposed',3,'user','ws-d6','main')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`UPDATE tasks SET status='seeded' WHERE id=7`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO runs (id,tier,role,worksource,subject) VALUES (?, 'pipeline', 'worker', 'ws-d6', 7)`, setupRun); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`UPDATE lock SET run_id=?, worksource='ws-d6', subject=7, owner='worker', acquired_at=datetime('now'), hard_deadline_at=datetime('now', '+1 hour') WHERE id=1`, setupRun); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Lstat(taskRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	st, ok := info.Sys().(*syscall.Stat_t)
+	if !ok {
+		t.Fatal("task root lacks native filesystem identity")
+	}
+	if _, err := verbs.RegisterFirstTaskSetup(db, verbs.TaskSetupReceipt{RunID: setupRun, TaskID: taskID,
+		Root: verbs.TaskSetupIdentity{Device: strconv.FormatUint(uint64(st.Dev), 10), Inode: strconv.FormatUint(uint64(st.Ino), 10), OwnerUID: int(st.Uid)}}); err != nil {
+		t.Fatalf("register canonical D6 skeleton: %v", err)
+	}
+	if _, err := db.Exec(`UPDATE runs SET ended_at=datetime('now'), outcome='setup-complete' WHERE id=?`, setupRun); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`UPDATE lock SET run_id=NULL, worksource=NULL, subject=NULL, owner=NULL, acquired_at=NULL, hard_deadline_at=NULL WHERE id=1`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO runs (id,tier,role,worksource,subject) VALUES (?, 'pipeline', 'worker', 'ws-d6', 7)`, workerRun); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`UPDATE lock SET run_id=?, worksource='ws-d6', subject=7, owner='worker', acquired_at=datetime('now'), hard_deadline_at=datetime('now', '+1 hour') WHERE id=1`, workerRun); err != nil {
+		t.Fatal(err)
+	}
+	if err := verbs.PublishCompletionSeal(db, publication); err != nil {
+		t.Fatalf("record published seal: %v", err)
+	}
+	if err := verbs.AcceptCompletionSeal(db, workerRun, completionReq); err != nil {
+		t.Fatalf("accept sealed Worker completion: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO runs (id,tier,role,worksource,subject) VALUES (?, 'pipeline', 'verifier', 'ws-d6', 7)`, verifierRun); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`UPDATE lock SET run_id=?, worksource='ws-d6', subject=7, owner='verifier', acquired_at=datetime('now'), hard_deadline_at=datetime('now', '+1 hour') WHERE id=1`, verifierRun); err != nil {
+		t.Fatal(err)
+	}
+
+	envelope := verbs.SetupEnvelope{
+		SchemaVersion: 1, Operation: verbs.SetupOperationAcceptedSealRebuild,
+		RunID: verifierRun, TaskID: taskID, ObjectFormat: publication.ObjectFormat,
+		CompletionRunID: workerRun, CompletionRequest: completionReq, SealedSHA: publication.SealedSHA,
+		ClosureDigest: publication.ClosureDigest, ManifestDigest: publication.ManifestDigest,
+		SealRoot: "/repo/seal", TaskRoot: "/repo/task", SealDevice: publication.Device,
+		SealInode: publication.Inode, SealOwnerUID: publication.OwnerUID,
+	}
+	body, err := json.Marshal(envelope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	envelopePath := filepath.Join(f.home, verifierRun+".setup.json")
+	if err := os.WriteFile(envelopePath, append(body, '\n'), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	output := f.dockerOutput("run", "--rm", "--name", "mc-setup-"+verifierRun, "--network", "none",
+		"--label", "mc-managed=true", "--label", "mc-tier=pipeline", "--label", "mc-run-id="+verifierRun,
+		"--user", "10002:10002", "--cap-drop", "ALL", "--security-opt", "no-new-privileges=true",
+		"--cpus", "1", "--memory", "1024m", "--pids-limit", "128",
+		"-v", sealRoot+":/repo/seal:ro", "-v", taskRoot+":/repo/task:ro",
+		"-v", filepath.Join(taskRoot, "source")+":/repo/task/source", "-v", filepath.Join(taskRoot, "git")+":/repo/task/git",
+		"-v", envelopePath+":/mc/setup.json:ro", image, "mc", "__setup-accepted-seal", "/mc/setup.json")
+	var result verbs.SetupResult
+	if err := json.Unmarshal([]byte(output), &result); err != nil {
+		t.Fatalf("accepted-seal setup result %q: %v", output, err)
+	}
+	if !result.FsckClean || result.BaseSHA != seeded.BaseSHA || result.ClosureDigest != publication.ClosureDigest {
+		t.Fatalf("accepted-seal setup result = %+v, want sealed clean closure", result)
+	}
+	receipt, err := verbs.RecordAcceptedSealRebuild(db, verifierRun, f.ws, result)
+	if err != nil {
+		t.Fatalf("record accepted-seal rebuild: %v", err)
+	}
+	if receipt.CompletionRunID != workerRun || receipt.ManifestDigest != publication.ManifestDigest || receipt.Root.Device != strconv.FormatUint(uint64(st.Dev), 10) {
+		t.Fatalf("accepted-seal receipt = %+v, want live seal/root evidence", receipt)
+	}
+	continued, err := verbs.ContinueAcceptedSealRebuild(db, verifierRun)
+	if err != nil || continued.AlreadyContinued {
+		t.Fatalf("continue accepted-seal rebuild = (%+v, %v)", continued, err)
+	}
+	var holder any
+	if err := db.QueryRow(`SELECT run_id FROM lock WHERE id=1`).Scan(&holder); err != nil {
+		t.Fatal(err)
+	}
+	if holder != nil {
+		t.Fatalf("accepted-seal continuation left lease held by %v", holder)
+	}
+}
+
 // ───────────────────────────── fixtures ─────────────────────────────────
 
 func setup(t *testing.T) *fixture {
