@@ -2006,3 +2006,85 @@ NEXT (moved to PROGRESS.md): the carry-through slice — (a) fix the
 `recheckAcceptedSeal` seal-identity crossing, (b) route the E2E verifier
 non-fake AND decorrelated (`claude-sdk/claude`), (c) assert the resident-driven
 rebuild receipt lands; then Verifier→Packager→land. Ordered detail in PROGRESS.
+
+## 2026-07-19 — the carry-through slice: seal custody, the rebuild's empty-root defect, and the host-path/helper-scope crossing beneath it
+
+Three layers of the carry-through, two fixed and one diagnosed.
+
+**(a) `recheckAcceptedSeal` now proves custody, not identity** (690fb08). The
+completion seal's device/inode/owner are recorded by the in-container setuid
+publisher, so a host lstat can never equal them on Docker Desktop. The resident
+now verifies the locally derived `MC_HOME/seals/<run>` path, realpath identity,
+a non-symlink directory, and host-operator ownership (`process.getuid()`), and
+leaves seal integrity to the immutable manifest/pack digest chain. Deviation
+logged. Note the container half had already reached this conclusion:
+`RunAcceptedSealRebuildSetup` passes `verifyIdentity=false` and has since the
+rebuild-core slice — this only brought the host half into agreement, and the
+stale comment there claiming the resident still re-attests is corrected.
+
+**(b) the rebuild refused the only state it exists for** (b31a038). With (a)
+fixed, the live loop reached the setup container and died on
+`first-task setup child source already holds residue; setup never overwrites`.
+A spawned read-only ADR review settled the design question decisively and
+against my initial framing: ADR-017:533-537 has the rebuild discard "late branch
+moves and dangling objects even if the Worker damaged its local repository after
+completion", ADR-016:758-760 rebuild the canonical store "despite late loose
+residue", and ADR-017:1208-1211 make a damaged-store fixture a mandatory D6
+acceptance criterion. The rebuild is a laundering step over an untrusted
+populated store — an empty-root rebuild is the case with no specified purpose.
+The executor had borrowed `requireEmptyChild`, which ADR-017:439-441 scopes to
+"the first setup action", for an operation ADR-017:694 lists as a distinct peer
+already holding RW authority on those children. Fixed with `ReplaceExisting` +
+`exactEmptyChild` (removes entries directly beneath the child, never traversing
+out, child left exactly as bound). Both prior rebuild tests — unit
+(`acceptedsealrebuild_test.go`, rebuilding into a fresh `mkTaskChildren`) and
+Docker (`e2e_test.go:552`, "the resident-shaped empty canonical root") — had
+constructed an empty target, so the specified path had never once run. The
+resident's wiring was correct throughout; only the executor was wrong.
+
+*Mechanism choice, ADR-worthy and not yet formalized:* the ADRs mandate that
+clearing happen but never say by what mechanism. In-container replace was taken
+as least-deviation (the RW authority already exists for this exact operation, it
+needs no new plan-carrier field, no new host mutation step, and reverts to one
+flag) over the host descriptor-based exact-empty primitive `recoverTaskSkeleton`
+already implements, and over staging-then-swap. If the operator wants that
+pinned, it belongs in an ADR under §6 rather than only the code comment it has
+now.
+
+**(c) OPEN — host-path record verbs self-delegate into the helper.** With (b)
+fixed the setup container now succeeds and the failure moved one layer later:
+`accepted-seal setup record refused: source "<ws>" does not exist`.
+`cmd/mc/main.go:49` enumerates the verbs that must `runLocal` because they read
+host files (`__mount-recheck`, `__setup-first-task`, `__setup-accepted-seal`, …);
+`task accepted-seal-record` is not among them, so with `MC_HELPER` set it
+self-delegates into the helper container, which carries only spine and home
+binds and cannot see the Worksource. `RequireHostScope` does not catch this — it
+rejects only run.json (pipeline) identities, and the helper is not one.
+`RecordAcceptedSealRebuild` -> `attestAcceptedSealRebuildRoot` ->
+`boundary.ResolveSource(workspaceRoot)` then resolves a host path inside a
+container. `task setup-record` has the identical shape and the same latent bug;
+it has simply never been driven through the resident under Docker (the D5
+boundary test records in-process, host-side). Making these verbs `runLocal` is
+not open on its own: they need the spine, and host mc deliberately has no spine
+path (§11.5, the spine never leaves the lock domain). So the fix is either to
+give the helper the Worksource, or — matching the pattern the rest of the
+boundary already uses — to split the verb so the host attests the filesystem and
+passes device/inode/owner identity to the delegated spine half, which records
+identity and never a path.
+
+**Diagnostics that made this findable** (kept, in `mc/e2e`): the resident-log
+dump elides idle ticks and collapses consecutive identical lines — a stalled
+resident emits two ticks a second and a 500ms failure loop repeated its line 284
+times, so the raw 8000-char tail was pure noise and every decision had scrolled
+off. The rebuild wait now prints the whole lock row and every Verifier run's
+outcome. One diagnostic was tried and reverted: `docker logs` on the helper is
+useless for a private-helper refusal, because helper verbs run as `docker exec`
+and their stderr never reaches the container log; a comment records that so it
+is not retried.
+
+Fast lane green at b31a038 (mc + all four TS legs). The Docker carry-through
+E2E is knowingly red at (c) — the red is data per §4, and its exact refusal and
+cause are above.
+
+NEXT (moved to PROGRESS.md): close (c), then re-run the carry-through E2E to the
+rebuild receipt, then on through Verifier→Packager→land.

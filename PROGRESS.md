@@ -10,7 +10,7 @@ Access does NOT fix it — the failure precedes any policy lookup. Symptom:
 `stat` works, reads return `Operation not permitted`, git says
 `Unable to read current working directory`.
 
-LAST GREEN SHA: dace2c6 (local; the operator pushes manually — decided 2026-07-14. Agents: do not push.)
+LAST GREEN SHA: b31a038 (local; the operator pushes manually — decided 2026-07-14. Agents: do not push.)
 
 PHASES PASSING: Phase 0 COMPLETE (S1–S8 all green, no fallback ADRs; only operator-leg deferrals remain); Phase 1 COMPLETE (1a substrate 172; 1b walking skeleton reviewed-and-fixed — fake-harness 43, agent-runner 13, runner/image 40, resident 42, dispatch + cmd/mc suites; Docker e2e PASS ×4 total); Phase 2 COMPLETE for every unparked acceptance line (domain/§18 surface, deterministic split-brain convergence, bounded honesty + five mutants, tagged dispatch/metamorphic/twin-spine lifecycle properties; the initiative-wave CLI is no longer isolated — ADR-020 landed 2026-07-14 and closed the last Phase 2 acceptance line)
 KNOWN-FAILING: `TestOnboardConcurrentFreshHomeNeverDeletesTheWinner` (mc/verbs),
@@ -503,28 +503,39 @@ note was wrong — it IS observed, see ledger):
    non-fake path would refuse at re-attestation. The direct rebuild Docker test
    dodged it by publishing host-side. Fix direction in the ledger.
 
-NEXT: The carry-through slice, in this order (each layer confirmed live
-2026-07-19):
-  (a) Fix `recheckAcceptedSeal` (resident/src/task-skeleton.ts) — it cannot
-      trust the namespace-local recorded seal identity; verify the
-      locally-derived canonical path + non-symlink dir + host-operator ownership
-      (`process.getuid()`, as precreateTaskSkeleton already does) and rely on the
-      in-image immutable manifest/pack verification, with a logged §6 deviation
-      (defense-in-depth weakening). The existing unit test
-      task-skeleton.test.ts:143 asserts inode-mismatch rejection and must be
-      rewritten to the new contract.
-  (b) Route the E2E verifier non-fake AND decorrelated from the worker. The
-      worker is `codex/chatgpt` (harness `codex`); Inv. 9 (routing.go:119)
-      refuses worker↔verifier on the same harness, so route the verifier to the
-      other production family: `verifier | claude-sdk | claude`. (Naively
-      reusing `codex/chatgpt` makes every dispatch return action `refused` and
-      the resident logs `unknown action "refused"` — confirmed.) The rebuild is
-      setup-only and returns before agent launch, so no adapter is needed for
-      the receipt; the LATER VerifierProjection launch will need the same
-      fake-adapter stand-in the worker uses (`agentRunnerRoutes` +
-      `MC_AGENT_RUNNER_ROUTES`, Design B).
-  (c) Extend `TestProductionWorkerCompletionSealDockerBoundary` past `worked` to
-      assert the `accepted_seal_rebuild_receipts` row lands. Then on through
-      Verifier→Packager→land.
+NEXT: Close the carry-through's third layer, then finish the E2E.
+
+KNOWN-FAILING (3): `TestProductionWorkerCompletionSealDockerBoundary`
+(mc/e2e, docker_e2e tag) — DELIBERATELY red at HEAD, one layer from done.
+Carry-through layers (a) seal custody and (b) the rebuild's empty-root defect
+are FIXED (690fb08, b31a038; full diagnosis in docs/ledger/phase-3.md
+2026-07-19). The remaining refusal, on a loop:
+  `accepted-seal setup record refused (exit 1): mc: source "<ws>" does not exist`
+Cause: `cmd/mc/main.go:49` lists the verbs that must `runLocal` because they
+read HOST files (`__mount-recheck`, `__setup-first-task`,
+`__setup-accepted-seal`, …). `task accepted-seal-record` is NOT among them, so
+with `MC_HELPER` set it self-delegates into the helper container, which carries
+only spine + home binds and cannot see the Worksource;
+`attestAcceptedSealRebuildRoot` then calls `boundary.ResolveSource(workspaceRoot)`
+on a host path from inside that container. `RequireHostScope` does not catch it
+(it rejects only run.json pipeline identities; the helper is not one).
+`task setup-record` has the IDENTICAL shape and the same latent bug — it has
+just never been driven through the resident under Docker (the D5 boundary test
+records in-process, host-side), so fix both together.
+Fix direction: `runLocal` is NOT available on its own — these verbs need the
+spine and host mc deliberately has no spine path (§11.5). So either bind the
+Worksource into the helper, or (matching the pattern the rest of the boundary
+already uses) split the verb: the HOST attests the filesystem and passes
+device/inode/owner identity to the delegated spine half, which records identity
+and never a path. Prefer the split — it is the established idiom and keeps the
+helper's mount surface unchanged.
+Repro: `cd mc && mise exec -- go test -tags docker_e2e -timeout 20m -run
+TestProductionWorkerCompletionSealDockerBoundary ./e2e/...` (~3 min).
+Then: re-run that E2E through to the `accepted_seal_rebuild_receipts` row, and
+on through Verifier→Packager→land.
+
+Owed, not blocking: the clearing mechanism chosen in (b) (in-container replace,
+over the host exact-empty primitive or staging-then-swap) is a design the ADRs
+delegate and mandate-without-specifying; it has a code comment but no ADR.
 Keep committed-tree projections, structured Engine-API binds, and launchd in
 their named later slices.
