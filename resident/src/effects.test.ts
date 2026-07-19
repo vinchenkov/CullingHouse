@@ -925,6 +925,7 @@ describe("reap effect", () => {
 		expect(rig.fakeFs.events).toEqual([
 			"rm:/tmp/mc-home/runs/run-42-worker.json",
 			"rm:/tmp/mc-home/runs/run-42-worker.mounts.json",
+			"rm:/tmp/mc-home/runs/projections/run-42-worker",
 		]);
 	});
 
@@ -942,6 +943,7 @@ describe("reap effect", () => {
     expect(rig.fakeFs.events).toEqual([
       "rm:/tmp/mc-home/runs/run-42-worker.json",
       "rm:/tmp/mc-home/runs/run-42-worker.mounts.json",
+			"rm:/tmp/mc-home/runs/projections/run-42-worker",
     ]);
   });
 
@@ -968,6 +970,7 @@ describe("reap effect", () => {
     expect(rig.fakeFs.events).toEqual([
       "rm:/tmp/mc-home/runs/run-42-worker.json",
       "rm:/tmp/mc-home/runs/run-42-worker.mounts.json",
+			"rm:/tmp/mc-home/runs/projections/run-42-worker",
     ]);
   });
 });

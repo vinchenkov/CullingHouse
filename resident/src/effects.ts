@@ -660,4 +660,8 @@ async function reap(effect: ReapEffect, deps: TickDeps): Promise<void> {
   // semantics).
   await deps.fs.rm(runJsonHostPath(deps.config.mcHome, effect.run_id));
   await deps.fs.rm(mountPlanHostPath(deps.config.mcHome, effect.run_id));
+	// A Verifier projection is derived only from this exact safe run id. It is
+	// disposable execution residue, never a task-store input; remove it only
+	// after both possible containers have been stopped.
+	await deps.fs.rm(`${runsDir(deps.config.mcHome)}/projections/${effect.run_id}`);
 }
