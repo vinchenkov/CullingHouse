@@ -1890,3 +1890,47 @@ resident-effected half.
 
 NEXT (moved to PROGRESS.md): wire the resident-driven Verifier accepted-seal
 rebuild, then carry the production-Worker E2E through Verifier→Packager→land.
+
+## 2026-07-18 — the resident-driven accepted-seal rebuild was already wired; the "owed" refusal was a stale premise
+
+Resumed clean: all five fast-lane legs green at `b47a2f5`, previous session
+Claude (no §2 takeover review). The NEXT/Parked note claimed the resident-driven
+Verifier accepted-seal REBUILD refuses `accepted-seal rebuild has no canonical
+task-root bind` because the seal-consumer mount plan lacks the `/workspace` RO
+task-root entry the resident effector (`resident/src/effects.ts:286`) requires.
+
+That premise is false at HEAD. Traced the two halves and reproduced the Go
+attest output directly (throwaway `TestReproSealConsumerPlan`): for a Verifier
+candidate carrying a frozen `SubjectAcceptedCompletionSeal` over a materialized,
+receipt-vouched, assigned task skeleton, `attestCandidateMounts` already emits a
+plan with `AcceptedSealRebuild` set AND all 15 task-local rows — the first being
+`logical_id=task-root`, `/workspace`, RO, source
+`<worksource>/.mission-control/tasks/task-<id>`, mode 0555 — exactly the entry
+the resident finds and strips to recover the Worksource root. `07615df` ("bind
+verifier seal setup to task plan", 14:57) landed the `sealConsumer` derivation
+that produces those rows RO; it was authored to feed the later verifier
+projection and incidentally closed the rebuild arm's task-root bind. The
+production-Worker seal session (`b47a2f5`, 22:58, 8 h later) logged the refusal
+as "owed, not fixed" without re-checking against `07615df`; the production
+E2E stops at `worked` and never dispatches a Verifier, so the refusal was never
+actually observed — only assumed.
+
+The genuine gap `07615df` left was test coverage: no attest-level test locked in
+the seal-consumer arm's resident-required plan shape (grep confirmed no
+`SubjectAcceptedCompletionSeal`/`AcceptedSealRebuild` reference in
+`mountattest_test.go`). Added `TestAttestCandidateMountsSealConsumerCarries
+ResidentTaskRootBind` (+ helper `maSealConsumerCandidate`): it asserts no
+refusal, `AcceptedSealRebuild` is the arm set (never the projection arm), the
+frozen accepted-seal identity is carried, every one of the 15 entries is RO, and
+the task-root entry is `/workspace`/RO/mode-0555 with the exact canonical suffix
+the resident strips. The resident half was already independently proven
+(`effects.test.ts:415` consumes precisely this shape); the two halves connect at
+the same entry, which is the closure of "the resident-effected half". No
+production Go/TS change — the wiring existed; only its guard test was missing.
+
+`mc/verbs` ran fresh (20.5s) green; the untouched TS legs stay green from
+startup.
+
+NEXT (moved to PROGRESS.md): carry the production-Worker E2E through the
+resident-driven Verifier accepted-seal rebuild and on through
+Verifier→Packager→land.

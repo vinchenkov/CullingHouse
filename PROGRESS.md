@@ -483,15 +483,18 @@ deleted, not struck through. History is in `docs/ledger/`.
 The completion-seal Docker line is closed: D1 deployment-mirror, D5 first-task
 setup, D6 accepted-seal rebuild, D6 image completion-wrapper, the carrier/unit +
 legacy-route crossings, AND the production resident Worker seal (dace2c6) are
-all green. One resident-driven D6 loop remains unwired (below).
+all green. The resident-driven Verifier accepted-seal REBUILD is also wired: the
+seal-consumer attest arm (07615df) already emits the `/workspace` RO task-root
+entry the resident effector strips, so the previously-"owed" refusal never
+actually fired (it was assumed, not observed — the production E2E stops at
+`worked`). Locked in by `TestAttestCandidateMountsSealConsumerCarriesResident
+TaskRootBind`; the resident half is proven by effects.test.ts:415. The remaining
+D6 loop work is the live E2E carry-through (below).
 
-NEXT: Wire the resident-driven Verifier accepted-seal REBUILD. After a production
-Worker seals, the resident dispatches a Verifier for the accepted seal but the
-spawn refuses `accepted-seal rebuild has no canonical task-root bind
-(fail-closed)` — the seal-consumer mount plan does not yet carry the
-`/workspace` RO task-root entry the resident effector requires (effects.ts
-spawn accepted_seal_rebuild arm vs the mountattest seal-consumer arm). The
-direct path is already proven (TestAcceptedSealRebuildDockerBoundary); this
-closes the resident-effected half. Then extend the same production-Worker E2E
-to carry through Verifier→Packager→land. Keep committed-tree projections,
-structured Engine-API binds, and launchd in their named later slices.
+NEXT: Carry the production-Worker E2E (TestProductionWorkerCompletionSeal
+DockerBoundary) past `worked` through the resident-driven Verifier accepted-seal
+rebuild (record + continue on the same task), then on through
+Verifier→Packager→land. The Go attest + resident effector are both proven for
+the rebuild arm; this is the live Docker crossing that exercises them together.
+Keep committed-tree projections, structured Engine-API binds, and launchd in
+their named later slices.

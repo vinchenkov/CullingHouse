@@ -17,6 +17,7 @@ import (
 	"mc/boundary"
 	"mc/dispatch"
 	"mc/refusal"
+	"mc/substrate"
 )
 
 func maID(t *testing.T, path string) boundary.ProtectedID {
@@ -637,6 +638,75 @@ func TestAttestCandidateMountsDerivesTaskLocalPlanThroughRealCapture(t *testing.
 	}
 	if got := byDest["/workspace/git/hooks"]; !got.RequireEmptyDir || got.ContentSHA256 != "" {
 		t.Fatalf("hooks cover evidence = %+v, want generated-empty-directory fence", got)
+	}
+}
+
+// maSealConsumerCandidate is a Verifier over the same materialized task-7
+// skeleton, carrying the frozen accepted Worker completion seal that turns the
+// candidate into the pre-verifier accepted-seal rebuild arm (ADR-016 D6).
+func maSealConsumerCandidate(t *testing.T, subject int64) (string, *preparedCandidate, string) {
+	t.Helper()
+	mcHome, cand, ws := maRepoCandidate(t, dispatch.RoleVerifier, &subject)
+	cand.mountState.SubjectAcceptedCompletionSeal = &substrate.DispatchAcceptedCompletionSeal{
+		RunID: "run-worker-seal", CompletionRequest: "0123456789abcdef",
+		ObjectFormat: "sha1", SealedSHA: strings.Repeat("c", 40),
+		ClosureDigest: strings.Repeat("d", 64), ManifestDigest: strings.Repeat("e", 64),
+		Device: "17", Inode: "42", OwnerUID: os.Getuid(),
+	}
+	return mcHome, cand, ws
+}
+
+// TestAttestCandidateMountsSealConsumerCarriesResidentTaskRootBind is the
+// attest-level guard for 07615df's seal-consumer derivation. The resident's
+// accepted-seal rebuild effector (resident/src/effects.ts) refuses unless the
+// committed plan carries BOTH the accepted_seal_rebuild step AND a task-root
+// entry at exactly `/workspace`, RO, whose source is the canonical
+// `<worksource>/.mission-control/tasks/task-<id>` skeleton it strips to recover
+// the Worksource root. Every task row is RO for this pre-verifier arm: the
+// rebuild mutates the store only inside its trusted network=none setup class.
+func TestAttestCandidateMountsSealConsumerCarriesResidentTaskRootBind(t *testing.T) {
+	subject := int64(7)
+	mcHome, cand, ws := maSealConsumerCandidate(t, subject)
+
+	plan, r, err := attestCandidateMounts(mcHome, cand, false)
+	if err != nil || r != nil {
+		t.Fatalf("attest = refusal %+v err %v", r, err)
+	}
+	if plan == nil || len(plan.Entries) != 15 {
+		t.Fatalf("plan = %+v, want the 15 task-local rows", plan)
+	}
+	// The rebuild step must be the arm set (never the later projection arm,
+	// which only activates once a rebuild receipt exists).
+	if plan.AcceptedSealRebuild == nil || plan.VerifierProjection != nil {
+		t.Fatalf("arm selection = rebuild %+v projection %+v, want the rebuild step alone", plan.AcceptedSealRebuild, plan.VerifierProjection)
+	}
+	step := plan.AcceptedSealRebuild
+	if step.TaskID != subject || step.RunID != "run-worker-seal" || step.SealedSHA != strings.Repeat("c", 40) ||
+		step.Device != "17" || step.Inode != "42" || step.OwnerUID != os.Getuid() {
+		t.Fatalf("rebuild step = %+v, want the frozen accepted-seal identity", step)
+	}
+	// The exact entry the resident finds: logical_id "task-root", /workspace, RO.
+	taskRoot := filepath.Join(ws, ".mission-control", "tasks", "task-7")
+	var found *PrivateDispatchMountEntry
+	for i := range plan.Entries {
+		if plan.Entries[i].LogicalID == "task-root" {
+			found = &plan.Entries[i]
+		}
+		if plan.Entries[i].Access != "ro" {
+			t.Fatalf("seal-consumer entry %+v is not RO; the pre-verifier rebuild binds every row read-only", plan.Entries[i])
+		}
+	}
+	if found == nil {
+		t.Fatal("plan carries no task-root entry; the resident rebuild effector would refuse (no canonical task-root bind)")
+	}
+	if found.Destination != "/workspace" || found.Access != "ro" || found.Source != taskRoot || found.Mode != 0o555 {
+		t.Fatalf("task-root entry = %+v, want /workspace RO at the canonical mode-0555 skeleton", *found)
+	}
+	// The resident recovers the Worksource root by stripping this exact suffix;
+	// prove the source ends with it so that strip cannot fail.
+	suffix := "/.mission-control/tasks/task-" + strconv.FormatInt(subject, 10)
+	if !strings.HasSuffix(found.Source, suffix) {
+		t.Fatalf("task-root source %q does not end with %q", found.Source, suffix)
 	}
 }
 
