@@ -1643,3 +1643,12 @@ The mc fast lane is green.
 
 NEXT (moved to PROGRESS.md): wire the sealed materializer through the closed
 setup envelope, resident bind, and exact cleanup.
+
+## 2026-07-18 — Verifier projection envelope and executor
+
+The projection core now has its own closed `SetupEnvelope` operation and a
+host-scope `mc __setup-verifier-projection` entrypoint. It accepts the exact
+accepted-seal identity fields plus only fixed `/repo/task` and
+`/repo/projection` destinations; the first-task and accepted-rebuild arms
+explicitly reject projection authority. Focused envelope and projection tests,
+then `mc/check.sh`, are green. The resident carrier/bind/cleanup remains next.

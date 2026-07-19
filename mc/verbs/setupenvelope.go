@@ -16,6 +16,7 @@ import (
 const (
 	SetupOperationFirstTaskClosure    = "first-task-closure-extraction"
 	SetupOperationAcceptedSealRebuild = "accepted-seal-rebuild"
+	SetupOperationVerifierProjection  = "verifier-disposable-source"
 )
 
 // SetupEnvelope is /mc/setup.json: the frozen, credential-free, host-path-free
@@ -45,6 +46,7 @@ type SetupEnvelope struct {
 	SealDevice          string `json:"seal_device,omitempty"`
 	SealInode           string `json:"seal_inode,omitempty"`
 	SealOwnerUID        int64  `json:"seal_owner_uid,omitempty"`
+	ProjectionRoot      string `json:"projection_root,omitempty"`
 }
 
 func validateSetupEnvelope(env SetupEnvelope) error {
@@ -60,7 +62,7 @@ func validateSetupEnvelope(env SetupEnvelope) error {
 	switch env.Operation {
 	case SetupOperationFirstTaskClosure:
 		if env.CompletionRequest != "" || env.SealedSHA != "" || env.ClosureDigest != "" ||
-			env.ManifestDigest != "" || env.SealRoot != "" || env.SealDevice != "" ||
+			env.ManifestDigest != "" || env.SealRoot != "" || env.SealDevice != "" || env.ProjectionRoot != "" ||
 			env.SealInode != "" || env.SealOwnerUID != 0 {
 			return Domainf("first-task setup envelope carries accepted-seal authority")
 		}
@@ -91,7 +93,7 @@ func validateSetupEnvelope(env SetupEnvelope) error {
 	case SetupOperationAcceptedSealRebuild:
 		if env.Mode != "" || env.TargetRef != "" || env.PinnedBaseSHA != "" ||
 			env.PinnedClosureDigest != "" || env.PinnedLocalRepoUUID != "" ||
-			env.Branch != "" || env.WorktreeName != "" || env.SourceRepo != "" {
+			env.Branch != "" || env.WorktreeName != "" || env.SourceRepo != "" || env.ProjectionRoot != "" {
 			return Domainf("accepted-seal setup envelope carries first-task authority")
 		}
 		if env.TaskRoot != "/repo/task" || env.SealRoot != "/repo/seal" {
@@ -103,6 +105,22 @@ func validateSetupEnvelope(env SetupEnvelope) error {
 			len(env.ManifestDigest) != 64 || !assignmentHex.MatchString(env.ManifestDigest) ||
 			!decimalIdentity.MatchString(env.SealDevice) || !decimalIdentity.MatchString(env.SealInode) || env.SealOwnerUID < 0 {
 			return Domainf("accepted-seal setup envelope does not reproduce an immutable accepted receipt")
+		}
+	case SetupOperationVerifierProjection:
+		if env.Mode != "" || env.TargetRef != "" || env.PinnedBaseSHA != "" ||
+			env.PinnedClosureDigest != "" || env.PinnedLocalRepoUUID != "" ||
+			env.Branch != "" || env.WorktreeName != "" || env.SourceRepo != "" || env.SealRoot != "" {
+			return Domainf("verifier projection envelope carries unrelated setup authority")
+		}
+		if env.TaskRoot != "/repo/task" || env.ProjectionRoot != "/repo/projection" {
+			return Domainf("verifier projection envelope carries paths outside its fixed container destinations")
+		}
+		if len(env.CompletionRequest) != 16 || !assignmentHex.MatchString(env.CompletionRequest) ||
+			len(env.SealedSHA) != oidLen(env.ObjectFormat) || !assignmentHex.MatchString(env.SealedSHA) ||
+			len(env.ClosureDigest) != 64 || !assignmentHex.MatchString(env.ClosureDigest) ||
+			len(env.ManifestDigest) != 64 || !assignmentHex.MatchString(env.ManifestDigest) ||
+			!decimalIdentity.MatchString(env.SealDevice) || !decimalIdentity.MatchString(env.SealInode) || env.SealOwnerUID < 0 {
+			return Domainf("verifier projection envelope does not reproduce an immutable accepted receipt")
 		}
 	default:
 		return Domainf("setup envelope operation %q is outside the closed union", env.Operation)
@@ -197,5 +215,22 @@ func RunAcceptedSealSetup(env SetupEnvelope) (SetupResult, error) {
 		ObjectFormat: env.ObjectFormat, SealedSHA: env.SealedSHA,
 		ClosureDigest: env.ClosureDigest, ManifestDigest: env.ManifestDigest,
 		Device: env.SealDevice, Inode: env.SealInode, OwnerUID: env.SealOwnerUID,
+	})
+}
+
+// RunVerifierProjectionSetup materializes only the sealed tree into the
+// execution-scoped projection root; the canonical task store remains mounted
+// read-only to the later Verifier container.
+func RunVerifierProjectionSetup(env SetupEnvelope) error {
+	if err := validateSetupEnvelope(env); err != nil {
+		return err
+	}
+	if env.Operation != SetupOperationVerifierProjection {
+		return Domainf("setup envelope is not a verifier projection operation")
+	}
+	return MaterializeVerifierDisposableSource(env.TaskRoot, env.ProjectionRoot, AcceptedCompletionSeal{
+		RunID: env.RunID, TaskID: env.TaskID, CompletionRequest: env.CompletionRequest,
+		ObjectFormat: env.ObjectFormat, SealedSHA: env.SealedSHA, ClosureDigest: env.ClosureDigest,
+		ManifestDigest: env.ManifestDigest, Device: env.SealDevice, Inode: env.SealInode, OwnerUID: env.SealOwnerUID,
 	})
 }
