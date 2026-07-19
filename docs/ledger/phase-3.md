@@ -1689,3 +1689,12 @@ and the remaining four fast-lane checks are green.
 
 NEXT (moved to PROGRESS.md): add the D6 Docker-boundary proof for the sealed
 Verifier projection.
+
+## 2026-07-18 — Verifier projection carrier type completion
+
+The resident runtime validator and setup envelope already consumed the frozen
+seal device/inode/owner tuple, but the TypeScript `MountPlan` carrier had
+omitted those three members. The declared carrier now matches the closed
+dispatch JSON shape, preventing a future type-checked build from accepting a
+producer that omits the runtime authority. The behavioral fast lane remains
+green.

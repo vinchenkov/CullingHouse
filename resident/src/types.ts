@@ -122,6 +122,9 @@ export interface MountPlan {
 		manifest_digest: string;
 		object_format: "sha1" | "sha256";
 		rebuild_run_id: string;
+		seal_device: string;
+		seal_inode: string;
+		seal_owner_uid: number;
 		sealed_sha: string;
 		task_id: number;
 	};
