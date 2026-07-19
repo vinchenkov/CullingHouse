@@ -78,12 +78,12 @@ async function main(): Promise<void> {
     docker: execVia("docker"),
     log: (msg) => console.error(`[resident ${new Date().toISOString()}] ${msg}`),
     fs: {
-      mkdir: async (path) => {
-        await mkdir(path, { recursive: true });
+      mkdir: async (path, opts) => {
+        await mkdir(path, { recursive: opts?.exclusive !== true });
       },
       writeFile: (path, data, opts) =>
         opts?.mode !== undefined ? writeFile(path, data, { mode: opts.mode }) : writeFile(path, data),
-      rm: (path) => rm(path, { force: true }),
+      rm: (path, opts) => rm(path, { force: true, recursive: opts?.recursive ?? false }),
     },
 		precreateTaskSkeleton,
 		recheckTaskParent: async (step) => {

@@ -294,6 +294,7 @@ async function spawn(effect: SpawnEffect, deps: TickDeps): Promise<void> {
 		return;
 	}
 	let verifierProjection: string | undefined;
+	let verifierProjectionCreated = false;
 	if (effect.mount_plan.verifier_projection !== undefined) {
 		const step = effect.mount_plan.verifier_projection;
 		if (role.split(":", 1)[0] !== "verifier" || effect.subject_id !== step.task_id) {
@@ -304,17 +305,28 @@ async function spawn(effect: SpawnEffect, deps: TickDeps): Promise<void> {
 		verifierProjection = `${runsDir(config.mcHome)}/projections/${run_id}`;
 		try {
 			await deps.fs.mkdir(`${runsDir(config.mcHome)}/projections`);
-			await deps.fs.mkdir(verifierProjection);
+			await deps.fs.mkdir(verifierProjection, { exclusive: true });
+			verifierProjectionCreated = true;
 			const envelope = { schema_version: 1, operation: "verifier-disposable-source", run_id, task_id: step.task_id,
 				object_format: step.object_format, completion_request_id: step.completion_request_id,
 				sealed_sha: step.sealed_sha, closure_digest: step.closure_digest, manifest_digest: step.manifest_digest,
 				seal_device: step.seal_device, seal_inode: step.seal_inode, seal_owner_uid: step.seal_owner_uid, task_root: "/repo/task", projection_root: "/repo/projection" };
 			const path = `${runsDir(config.mcHome)}/${run_id}.projection.json`;
 			await deps.fs.writeFile(path, JSON.stringify(envelope) + "\n", { mode: 0o644 });
-			const setup = await deps.docker(["run", "--rm", "--name", `mc-setup-${run_id}`, "--network", "none", "--user", "10002:10002", "--cap-drop", "ALL", "--security-opt", "no-new-privileges=true", "--cpus", "1", "--memory", "1024m", "--pids-limit", "128", "-v", `${taskRoot.source}:/repo/task:ro`, "-v", `${verifierProjection}:/repo/projection`, "-v", `${path}:/mc/setup.json:ro`, config.image, "mc", "__setup-verifier-projection", "/mc/setup.json"]);
+			const setup = await deps.docker(["run", "--rm", "--name", `mc-setup-${run_id}`, "--network", "none", "--label", "mc-managed=true", "--label", "mc-tier=pipeline", "--label", `mc-run-id=${run_id}`, "--user", "10002:10002", "--cap-drop", "ALL", "--security-opt", "no-new-privileges=true", "--cpus", "1", "--memory", "1024m", "--pids-limit", "128", "-v", `${taskRoot.source}:/repo/task:ro`, "-v", `${verifierProjection}:/repo/projection`, "-v", `${path}:/mc/setup.json:ro`, config.image, "mc", "__setup-verifier-projection", "/mc/setup.json"]);
 			if (setup.exitCode !== 0) throw new Error(`verifier projection setup exited ${setup.exitCode}`);
 			await deps.fs.rm(path);
-		} catch (err) { log(`spawn refused: verifier projection setup failed: ${(err as Error).message} (fail-closed)`); return; }
+		} catch (err) {
+			if (verifierProjectionCreated) {
+				try {
+					await deps.fs.rm(verifierProjection, { recursive: true });
+				} catch (cleanupErr) {
+					log(`spawn ${run_id}: verifier projection cleanup failed: ${(cleanupErr as Error).message}`);
+				}
+			}
+			log(`spawn refused: verifier projection setup failed: ${(err as Error).message} (fail-closed)`);
+			return;
+		}
 	}
 	if (effect.mount_plan.task_precreate !== undefined) {
 		const step = effect.mount_plan.task_precreate;
@@ -381,6 +393,7 @@ async function spawn(effect: SpawnEffect, deps: TickDeps): Promise<void> {
   const removeLaunchFiles = async () => {
     await deps.fs.rm(runJsonPath);
     await deps.fs.rm(planPath);
+		if (verifierProjection !== undefined) await deps.fs.rm(verifierProjection, { recursive: true });
   };
   const recheck = async (leg: string): Promise<boolean> => {
     if (effect.mount_plan.entries.length === 0) return true; // nothing can drift
@@ -669,5 +682,5 @@ async function reap(effect: ReapEffect, deps: TickDeps): Promise<void> {
 	// A Verifier projection is derived only from this exact safe run id. It is
 	// disposable execution residue, never a task-store input; remove it only
 	// after both possible containers have been stopped.
-	await deps.fs.rm(`${runsDir(deps.config.mcHome)}/projections/${effect.run_id}`);
+	await deps.fs.rm(`${runsDir(deps.config.mcHome)}/projections/${effect.run_id}`, { recursive: true });
 }

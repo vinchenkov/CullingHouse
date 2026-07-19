@@ -60,13 +60,15 @@ export interface TickDeps {
   docker: Exec;
   log: (msg: string) => void;
   fs: {
-    /** mkdir -p semantics. */
-    mkdir(path: string): Promise<void>;
+    /** mkdir -p semantics by default; exclusive is for a newly derived,
+     * run-keyed disposable root that must not adopt existing bytes. */
+    mkdir(path: string, opts?: { exclusive?: boolean }): Promise<void>;
     /** opts.mode applies on creation (the plan sibling must be 0600: the
      * recheck's trust seam refuses a group/other-readable plan file). */
     writeFile(path: string, data: string, opts?: { mode?: number }): Promise<void>;
-    /** rm -f semantics (missing file is not an error). */
-    rm(path: string): Promise<void>;
+    /** rm -f semantics (missing file is not an error). `recursive` is reserved
+     * for a resident-derived disposable directory under MC_HOME/runs. */
+    rm(path: string, opts?: { recursive?: boolean }): Promise<void>;
   };
 	/** Exclusive post-claim task-root materializer (ADR-016 D5). */
 	precreateTaskSkeleton(request: TaskSkeletonRequest): Promise<PathIdentity>;

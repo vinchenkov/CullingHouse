@@ -1675,3 +1675,17 @@ ordering and refusal cleanup.
 NEXT (moved to PROGRESS.md): add red-first resident effects coverage for the
 sealed Verifier projection setup, bind ordering/control covers, and refusal
 cleanup.
+
+## 2026-07-18 — Verifier projection resident effects coverage
+
+Red-first effects tests now prove the setup container is fully labeled and
+executes before generic agent creation, then inspect the bind sequence: the
+disposable projection overlays `/workspace/source` RW before the canonical
+`.git` and `.mission-control` controls cover it RO. A setup refusal retains the
+credential-free envelope but recursively removes only the freshly allocated
+run-keyed projection tree. Allocation itself is exclusive; an existing root is
+refused without an adoption, a Docker call, or a delete. `resident/check.sh`
+and the remaining four fast-lane checks are green.
+
+NEXT (moved to PROGRESS.md): add the D6 Docker-boundary proof for the sealed
+Verifier projection.

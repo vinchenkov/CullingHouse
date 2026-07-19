@@ -65,6 +65,19 @@ const setupResultJson =
 const SETUP_JSON_PATH = "/tmp/mc-home/runs/run-42-worker.setup.json";
 const SETUP_COVER_DIR = "/tmp/mc-home/runs/run-42-worker.setup-cover";
 
+const verifierProjection = {
+  task_id: 42,
+  rebuild_run_id: "run-42-rebuild",
+  completion_request_id: "0011223344556677",
+  object_format: "sha1" as const,
+  sealed_sha: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  closure_digest: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  manifest_digest: "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+  seal_device: "1",
+  seal_inode: "2",
+  seal_owner_uid: 501,
+};
+
 /** The exact one-shot setup-container argv: ADR-017's setup mount table
  * (source RO under an empty .mission-control cover, task root RO with only
  * its source/git children RW, envelope RO) inside ADR-019's setup-class
@@ -431,6 +444,95 @@ describe("spawn effect", () => {
 		expect(rig.fakeFs.events).toContain("rm:/tmp/mc-home/runs/run-42-verifier.setup.json");
 		expect(rechecked).toBe(true);
 		expect(rig.logs.some((line) => line.includes("accepted-seal rebuild recorded and continued"))).toBe(true);
+  });
+
+  test("a Verifier projection is set up before agent creation and covers canonical controls after its RW source", async () => {
+    const rig = makeRig();
+    rig.docker.enqueue(ok(""), ok(""), ok(""));
+    await applyEffect({
+      ...spawnEffect,
+      run_id: "run-42-verifier",
+      role: "verifier",
+      mount_plan: {
+        entries: [{ ...workspaceEntry, access: "ro", destination: "/workspace", logical_id: "task-root", source: "/host/workspace/.mission-control/tasks/task-42" }],
+        verifier_projection: verifierProjection,
+        version: 1,
+      },
+    }, rig.deps);
+
+    const projectionRoot = "/tmp/mc-home/runs/projections/run-42-verifier";
+    expect(rig.docker.calls[0]).toEqual([
+      "run", "--rm", "--name", "mc-setup-run-42-verifier", "--network", "none",
+      "--label", "mc-managed=true", "--label", "mc-tier=pipeline", "--label", "mc-run-id=run-42-verifier",
+      "--user", "10002:10002", "--cap-drop", "ALL", "--security-opt", "no-new-privileges=true",
+      "--cpus", "1", "--memory", "1024m", "--pids-limit", "128",
+      "-v", "/host/workspace/.mission-control/tasks/task-42:/repo/task:ro",
+      "-v", `${projectionRoot}:/repo/projection`,
+      "-v", "/tmp/mc-home/runs/run-42-verifier.projection.json:/mc/setup.json:ro",
+      "mc-fake-e2e:test", "mc", "__setup-verifier-projection", "/mc/setup.json",
+    ]);
+    expect(rig.docker.calls[1]).toContain(`${projectionRoot}:/workspace/source`);
+    const create = rig.docker.calls[1];
+    expect(create).toEqual(expect.arrayContaining([
+      "-v", `${projectionRoot}:/workspace/source`,
+      "-v", "/host/workspace/.mission-control/tasks/task-42/source/.git:/workspace/source/.git:ro",
+      "-v", "/host/workspace/.mission-control/tasks/task-42/source/.mission-control:/workspace/source/.mission-control:ro",
+    ]));
+    expect(create.indexOf(`${projectionRoot}:/workspace/source`)).toBeLessThan(create.indexOf("/host/workspace/.mission-control/tasks/task-42/source/.git:/workspace/source/.git:ro"));
+    expect(rig.fakeFs.events).toEqual(expect.arrayContaining([
+      `mkdir:${projectionRoot}`,
+      "rm:/tmp/mc-home/runs/run-42-verifier.projection.json",
+    ]));
+  });
+
+  test("a failed Verifier projection setup retains its envelope but recursively removes its unusable source tree", async () => {
+    const rig = makeRig();
+    rig.docker.enqueue(fail(1, "sealed tree mismatch"));
+    await applyEffect({
+      ...spawnEffect,
+      run_id: "run-42-verifier",
+      role: "verifier",
+      mount_plan: {
+        entries: [{ ...workspaceEntry, access: "ro", destination: "/workspace", logical_id: "task-root", source: "/host/workspace/.mission-control/tasks/task-42" }],
+        verifier_projection: verifierProjection,
+        version: 1,
+      },
+    }, rig.deps);
+    expect(rig.docker.calls).toHaveLength(1);
+    expect(rig.mc.calls).toEqual([]);
+    expect(rig.fakeFs.events).toEqual([
+      "mkdir:/tmp/mc-home/runs/projections",
+      "mkdir:/tmp/mc-home/runs/projections/run-42-verifier",
+      "write:/tmp/mc-home/runs/run-42-verifier.projection.json",
+      "rm:/tmp/mc-home/runs/projections/run-42-verifier",
+    ]);
+    expect(rig.logs.some((line) => line.includes("verifier projection setup failed"))).toBe(true);
+  });
+
+  test("an existing Verifier projection root is refused without adopting or deleting it", async () => {
+    const rig = makeRig();
+    const projectionRoot = "/tmp/mc-home/runs/projections/run-42-verifier";
+    const mkdir = rig.deps.fs.mkdir;
+    rig.deps.fs.mkdir = async (path, opts) => {
+      if (path === projectionRoot) {
+        expect(opts).toEqual({ exclusive: true });
+        throw new Error("file already exists");
+      }
+      return mkdir(path, opts);
+    };
+    await applyEffect({
+      ...spawnEffect,
+      run_id: "run-42-verifier",
+      role: "verifier",
+      mount_plan: {
+        entries: [{ ...workspaceEntry, access: "ro", destination: "/workspace", logical_id: "task-root", source: "/host/workspace/.mission-control/tasks/task-42" }],
+        verifier_projection: verifierProjection,
+        version: 1,
+      },
+    }, rig.deps);
+    expect(rig.docker.calls).toEqual([]);
+    expect(rig.fakeFs.events).toEqual(["mkdir:/tmp/mc-home/runs/projections"]);
+    expect(rig.logs.some((line) => line.includes("verifier projection setup failed"))).toBe(true);
   });
 
 	test("a surviving accepted-seal producer leaves the verifier unprepared", async () => {
