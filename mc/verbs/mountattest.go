@@ -856,7 +856,7 @@ func attestCandidateMounts(home string, cand *preparedCandidate, allowLegacyFake
 		Version: 1, Entries: entries, JurisdictionDigest: jurisdictionDigest,
 		TaskPrecreate: snapshot.TaskPrecreate,
 	}
-	if cand.runID != "" && snapshot.TaskPrecreate == nil && baseRole(string(cand.spawn.Role)) == "worker" && cand.spawn.SubjectID != nil {
+	if !allowLegacyFakeWorkspace && cand.runID != "" && snapshot.TaskPrecreate == nil && baseRole(string(cand.spawn.Role)) == "worker" && cand.spawn.SubjectID != nil {
 		step, err := captureCompletionSealPrecreate(home, cand.runID, *cand.spawn.SubjectID, snapshot.OwnerUID)
 		if err != nil {
 			r, aerr := adaptMountError(err, refusal.AuthorityDeployment, nil)
