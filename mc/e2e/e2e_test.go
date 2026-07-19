@@ -698,6 +698,152 @@ func TestAcceptedSealRebuildDockerBoundary(t *testing.T) {
 	}
 }
 
+// TestSealedWorkerCompletionDockerBoundary runs the real mc completion wrapper
+// in the shipped image. It starts with a recorded canonical store and live
+// Worker lease, gives the container only the task root, run identity, private
+// run-keyed seal root, and lock-domain spine, then proves publication and
+// acceptance form one durable terminal crossing.
+func TestSealedWorkerCompletionDockerBoundary(t *testing.T) {
+	f := setup(t)
+	const (
+		taskID    = int64(7)
+		setupRun  = "setup-run"
+		workerRun = "worker-seal"
+		requestID = "0011223344556677"
+	)
+	taskRoot := filepath.Join(f.ws, ".mission-control", "tasks", "task-7")
+	for _, child := range []string{"source", "git"} {
+		if err := os.MkdirAll(filepath.Join(taskRoot, child), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	seeded, err := verbs.MaterializeFirstTaskStore(f.ws, taskRoot, verbs.FirstTaskSetupSpec{
+		TaskID: taskID, Mode: "fresh", TargetRef: "main", ObjectFormat: "sha1",
+		LocalRepoUUID: "0a1b2c3d-4e5f-6071-8293-a4b5c6d7e8f9",
+	})
+	if err != nil {
+		t.Fatalf("materialize completion store: %v", err)
+	}
+	if err := os.Chmod(taskRoot, 0o555); err != nil {
+		t.Fatal(err)
+	}
+	spineDir := filepath.Join(f.base, "completion-spine")
+	if err := os.MkdirAll(spineDir, 0o777); err != nil {
+		t.Fatal(err)
+	}
+	spine := filepath.Join(spineDir, "spine.db")
+	if _, err := verbs.Init(verbs.InitArgs{Spine: spine, Worksource: "ws-completion", WorkspaceRoot: f.ws}); err != nil {
+		t.Fatalf("init completion spine: %v", err)
+	}
+	db, err := verbs.OpenSpine(spine)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if _, err := db.Exec(`INSERT INTO tasks (id,title,scope,priority,created_at,status,dispatch_retries,origin,worksource,target_ref)
+		VALUES (7,'D6 completion fixture','task',2,datetime('now'),'proposed',3,'user','ws-completion','main')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`UPDATE tasks SET status='seeded' WHERE id=7`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO runs (id,tier,role,worksource,subject) VALUES (?, 'pipeline', 'worker', 'ws-completion', 7)`, setupRun); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`UPDATE lock SET run_id=?, worksource='ws-completion', subject=7, owner='worker', acquired_at=datetime('now'), hard_deadline_at=datetime('now', '+1 hour') WHERE id=1`, setupRun); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Lstat(taskRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	st, ok := info.Sys().(*syscall.Stat_t)
+	if !ok {
+		t.Fatal("task root lacks native filesystem identity")
+	}
+	if _, err := verbs.RegisterFirstTaskSetup(db, verbs.TaskSetupReceipt{RunID: setupRun, TaskID: taskID,
+		Root: verbs.TaskSetupIdentity{Device: strconv.FormatUint(uint64(st.Dev), 10), Inode: strconv.FormatUint(uint64(st.Ino), 10), OwnerUID: int(st.Uid)}}); err != nil {
+		t.Fatalf("register canonical completion root: %v", err)
+	}
+	if _, _, err := verbs.RecordFirstTaskSetupClosure(db, setupRun, f.ws, seeded); err != nil {
+		t.Fatalf("record canonical completion store: %v", err)
+	}
+	if _, err := db.Exec(`UPDATE runs SET ended_at=datetime('now'), outcome='setup-complete' WHERE id=?`, setupRun); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`UPDATE lock SET run_id=NULL, worksource=NULL, subject=NULL, owner=NULL, acquired_at=NULL, hard_deadline_at=NULL WHERE id=1`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO runs (id,tier,role,worksource,subject) VALUES (?, 'pipeline', 'worker', 'ws-completion', 7)`, workerRun); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`UPDATE lock SET run_id=?, worksource='ws-completion', subject=7, owner='worker', acquired_at=datetime('now'), hard_deadline_at=datetime('now', '+1 hour') WHERE id=1`, workerRun); err != nil {
+		t.Fatal(err)
+	}
+	sealRoot := filepath.Join(f.home, "seals", workerRun)
+	if err := os.MkdirAll(sealRoot, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	runJSON := filepath.Join(f.base, workerRun+".run.json")
+	if err := os.WriteFile(runJSON, []byte(`{"run_id":"worker-seal","tier":"pipeline","role":"worker"}`+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	output := f.dockerOutput("run", "--rm", "--name", "mc-complete-"+workerRun, "--network", "none",
+		"--label", "mc-managed=true", "--label", "mc-tier=pipeline", "--label", "mc-run-id="+workerRun,
+		// The completion-only setuid wrapper is its deliberate D6 exception to
+		// no-new-privileges: uid 10002 never traverses /mc/private directly.
+		"--user", "10002:10002", "--cap-drop", "ALL",
+		"--cpus", "1", "--memory", "1024m", "--pids-limit", "128",
+		"-v", taskRoot+":/workspace", "-v", sealRoot+":/mc/private/completion-seal",
+		"-v", spineDir+":/mc/spine", "-v", runJSON+":/mc/run.json:ro", "-e", "MC_SPINE=/mc/spine/spine.db",
+		image, "mc", "complete", "7", "--run", workerRun, "--seal-request", requestID)
+	var result map[string]any
+	if err := json.Unmarshal([]byte(output), &result); err != nil {
+		t.Fatalf("completion result %q: %v", output, err)
+	}
+	if result["status"] != "worked" || int64(result["task_id"].(float64)) != taskID {
+		t.Fatalf("completion result = %v, want accepted worked task", result)
+	}
+	var state, outcome, sealedSHA, closure, manifest string
+	if err := db.QueryRow(`SELECT state,sealed_sha,closure_digest,manifest_digest FROM completion_seals WHERE run_id=? AND completion_request_id=?`, workerRun, requestID).Scan(&state, &sealedSHA, &closure, &manifest); err != nil {
+		t.Fatalf("read durable completion seal: %v", err)
+	}
+	if state != "accepted" || sealedSHA != seeded.BaseSHA || closure != seeded.ClosureDigest || len(manifest) != 64 {
+		t.Fatalf("completion seal = (%s,%s,%s,%s), want accepted immutable canonical closure", state, sealedSHA, closure, manifest)
+	}
+	if err := db.QueryRow(`SELECT outcome FROM runs WHERE id=?`, workerRun).Scan(&outcome); err != nil || outcome != "completed" {
+		t.Fatalf("Worker terminal = (%q, %v), want completed", outcome, err)
+	}
+	var holder any
+	if err := db.QueryRow(`SELECT run_id FROM lock WHERE id=1`).Scan(&holder); err != nil {
+		t.Fatal(err)
+	}
+	if holder != nil {
+		t.Fatalf("completion acceptance left lease held by %v", holder)
+	}
+	entries, err := os.ReadDir(sealRoot)
+	if err != nil || len(entries) != 3 {
+		t.Fatalf("sealed root entries = (%v, %v), want pack/index/manifest", entries, err)
+	}
+	for _, entry := range entries {
+		info, err := entry.Info()
+		if err != nil || !info.Mode().IsRegular() {
+			t.Fatalf("sealed entry %q = (%v, %v), want regular immutable content", entry.Name(), info.Mode(), err)
+		}
+	}
+	// The model uid cannot traverse the image-owned private parent even though
+	// Docker mounted this host seal RW below it; only the setuid wrapper crossed
+	// that gate. The completion uid sees the final immutable mode inside the
+	// Linux mount namespace (Desktop's host-side mode projection is not the
+	// authority boundary).
+	f.docker("run", "--rm", "--network", "none", "--user", "10002:10002",
+		"-v", sealRoot+":/mc/private/completion-seal", image, "sh", "-ec", "test ! -e /mc/private/completion-seal")
+	if mode := f.dockerOutput("run", "--rm", "--network", "none", "--user", "10001:10001",
+		"-v", sealRoot+":/mc/private/completion-seal:ro", image, "stat", "-c", "%a", "/mc/private/completion-seal/manifest.json"); mode != "444\n" {
+		t.Fatalf("completion namespace manifest mode = %q, want 0444", mode)
+	}
+}
+
 // ───────────────────────────── fixtures ─────────────────────────────────
 
 func setup(t *testing.T) *fixture {

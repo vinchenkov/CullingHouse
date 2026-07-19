@@ -8,6 +8,8 @@ cd "$(dirname "$0")"
 
 echo "build.sh: compiling linux/arm64 mc..." >&2
 (cd ../../mc && CGO_ENABLED=0 GOOS=linux GOARCH=arm64 mise exec -- go build -tags test_fake_routing -o ../runner/image/mc ./cmd/mc)
+(cd ../.. && CGO_ENABLED=0 GOOS=linux GOARCH=arm64 mise exec -- go build -o runner/image/mc-dispatch ./runner/image/mc_dispatch.go)
+(cd ../.. && CGO_ENABLED=0 GOOS=linux GOARCH=arm64 mise exec -- go build -o runner/image/mc-complete ./runner/image/mc_completion_wrapper.go)
 
 echo "build.sh: docker build -t mc-fake-e2e ..." >&2
 docker build -t mc-fake-e2e .

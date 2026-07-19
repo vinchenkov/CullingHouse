@@ -251,11 +251,24 @@ func extractTaskClosurePack(gitDir, head, format, packDir string) (int, error) {
 	if err := os.MkdirAll(packDir, 0o700); err != nil {
 		return 0, Domainf("create completion seal pack: %v", err)
 	}
-	syn, env, err := syntheticGitContext(format, filepath.Join(gitDir, "objects"))
+	taskObjects := filepath.Join(gitDir, "objects")
+	syn, env, err := syntheticGitContext(format, taskObjects)
 	if err != nil {
 		return 0, err
 	}
 	defer os.RemoveAll(syn)
+	scratchObjects := filepath.Join(packDir, ".mc-pack-objects")
+	if err := os.Mkdir(scratchObjects, 0o700); err != nil {
+		return 0, Domainf("create completion seal pack scratch: %v", err)
+	}
+	defer os.RemoveAll(scratchObjects)
+	// The task store and the run-keyed seal are separate Docker binds. Git
+	// creates pack temporaries under GIT_OBJECT_DIRECTORY before renaming them
+	// to the requested output, so task objects must be an alternate rather than
+	// the primary: cross-bind renames fail on Docker Desktop. Keep that primary
+	// in a disposable sibling so the staged seal still admits only its final
+	// pack/index/manifest files.
+	env = withGitObjectDirectories(env, scratchObjects, taskObjects)
 	revOut, err := gitOutput("", env, nil, "rev-list", "--objects", head)
 	if err != nil {
 		return 0, Domainf("completion seal cannot enumerate closure: %v", err)

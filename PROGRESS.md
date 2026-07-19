@@ -10,7 +10,7 @@ Access does NOT fix it — the failure precedes any policy lookup. Symptom:
 `stat` works, reads return `Operation not permitted`, git says
 `Unable to read current working directory`.
 
-LAST GREEN SHA: cda934c (local; the operator pushes manually — decided 2026-07-14. Agents: do not push.)
+LAST GREEN SHA: f33d949 (local; the operator pushes manually — decided 2026-07-14. Agents: do not push.)
 
 PHASES PASSING: Phase 0 COMPLETE (S1–S8 all green, no fallback ADRs; only operator-leg deferrals remain); Phase 1 COMPLETE (1a substrate 172; 1b walking skeleton reviewed-and-fixed — fake-harness 43, agent-runner 13, runner/image 40, resident 42, dispatch + cmd/mc suites; Docker e2e PASS ×4 total); Phase 2 COMPLETE for every unparked acceptance line (domain/§18 surface, deterministic split-brain convergence, bounded honesty + five mutants, tagged dispatch/metamorphic/twin-spine lifecycle properties; the initiative-wave CLI is no longer isolated — ADR-020 landed 2026-07-14 and closed the last Phase 2 acceptance line)
 KNOWN-FAILING: `TestOnboardConcurrentFreshHomeNeverDeletesTheWinner` (mc/verbs),
@@ -397,6 +397,17 @@ kept below. Operator legs that remain open are under `## Parked`, not here.
         The mounted exact seal root uses a manifest-last publication marker
         because Docker cannot rename a bind mount; its scoped D6 deviation is
         logged in IMPLEMENTATION-NOTES.md (2026-07-18).
+  - [x] D6 sealed Worker completion image boundary: the shipped image now has
+        the 0700 uid-10001 `/mc/private` gate and a completion-only setuid/setgid
+        wrapper. Its public dispatcher forwards only a sealed `mc complete`
+        invocation to that wrapper; ordinary verbs remain at model uid 10002.
+        The wrapper permanently drops to uid/gid 10001, installs the fixed
+        spine/run-identity paths, and admits only the closed Worker
+        `--seal-request` grammar. The real-image Docker probe starts as uid
+        10002, publishes/accepts the exact canonical closure, proves the
+        model cannot traverse the private seal path, and observes 0444 manifest
+        bytes from uid 10001. It caught the publisher's cross-bind temporary
+        pack rename, fixed by using an ephemeral staging-local object directory.
   - [x] D6 task-scoped accepted completion pointer (schema v9): acceptance
         atomically records its exact Worker run/request on the task, and the
         dispatch projection loads only that state-accepted immutable receipt.
@@ -457,12 +468,12 @@ deleted, not struck through. History is in `docs/ledger/`.
   agent cannot sleep the machine it runs on). Instructions in
   `spikes/07-launchd-clock/RESULT.md`. All other S7 sub-tests passed.
 
-Remaining Docker-lane obligation in this line: the D6 sealed Worker completion
-publisher crossing; D1 deployment-mirror, D5 first-task setup, and D6
-accepted-seal rebuild crossings are green.
+Remaining Docker-lane obligation in this line: the D6 resident completion-seal
+plan/mount crossing; D1 deployment-mirror, D5 first-task setup, D6 accepted-
+seal rebuild, and D6 image completion-wrapper crossings are green.
 
-NEXT: Add the ADR-016 D6 sealed Worker completion Docker fixture: run the real
-privileged completion wrapper over a canonical task store and prove its
-immutable pack/manifest publication reaches the acceptance fence. Keep
-committed-tree projections, structured Engine-API binds, and launchd in their
-named later slices.
+NEXT: Wire ADR-016 D6's run-keyed completion-seal root through the real Worker
+plan/resident mount table, including the narrow no-new-privileges exception for
+the setuid completion wrapper; prove the resident-driven container reaches the
+same immutable acceptance fence. Keep committed-tree projections, structured
+Engine-API binds, and launchd in their named later slices.

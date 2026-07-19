@@ -1784,3 +1784,30 @@ suite are green.
 
 NEXT (moved to PROGRESS.md): add the D6 sealed Worker completion publisher
 Docker fixture.
+
+## 2026-07-18 — sealed Worker completion image boundary
+
+`TestSealedWorkerCompletionDockerBoundary` materializes and records the
+canonical task store, arms a live Worker lease, then runs the shipped image as
+model uid 10002 with the real run identity, task root, private run-keyed seal
+root, and lock-domain spine. The public `mc` dispatcher admits only the sealed
+completion grammar to its setuid/setgid wrapper. That wrapper runs at uid/gid
+10001, permanently drops its saved ids, and executes only the real completion
+terminal with fixed spine and run-identity paths.
+
+The probe proves the immutable seal's publication reaches the accepted Worker
+terminal and releases its lease. It separately proves uid 10002 cannot traverse
+the 0700 `/mc/private` parent while uid 10001 sees the final manifest mode as
+0444. The Docker run found that `pack-objects` first creates its temporary pack
+under `GIT_OBJECT_DIRECTORY`; a task-store primary tried to rename across the
+private-seal bind. The publisher now uses a disposable staging-local primary
+object directory with task objects only as an alternate, and removes that
+scratch before the closed seal grammar is inspected.
+
+The current real resident has not yet derived/mounted the run-keyed completion
+seal row or made the narrow setuid exception to `no-new-privileges`; that is the
+next integration slice. All five fast-lane legs and the full tagged Docker E2E
+suite are green.
+
+NEXT (moved to PROGRESS.md): wire the D6 completion-seal root through the
+resident Worker plan and mount table.

@@ -36,12 +36,24 @@ RUN curl -fsSL https://bun.sh/install | bash -s "bun-v${BUN_VERSION}" \
 # sharing; in-container git must still read/write it (worktrees, mc-land).
 RUN git config --system safe.directory '*'
 
-# The two baked binaries: mc (linux/arm64, built by build.sh — §11.2 "baked,
-# never bind-mounted") and mc-land (§7 Landing: "a script baked into the
-# base image and versioned with it").
-COPY mc /usr/local/bin/mc
+# The public dispatcher keeps ordinary mc verbs at the calling uid. Only its
+# sealed-completion arm enters the setuid completion wrapper; /mc/private is
+# the kernel traversal gate that makes the mounted seal unreachable to uid
+# 10002 even if Docker presents it as writable.
+RUN groupadd --gid 10001 mc-completion \
+ && useradd --uid 10001 --gid 10001 --no-create-home --shell /usr/sbin/nologin mc-completion \
+ && groupadd --gid 10002 mc-model \
+ && useradd --uid 10002 --gid 10002 --no-create-home --shell /usr/sbin/nologin mc-model \
+ && install -d -o 10001 -g 10001 -m 0700 /mc/private \
+ && install -d -o 10001 -g 10001 -m 0711 /usr/local/libexec
+COPY mc /usr/local/libexec/mc-real
+COPY mc-dispatch /usr/local/bin/mc
+COPY mc-complete /usr/local/libexec/mc-complete
 COPY mc-land /usr/local/bin/mc-land
-RUN chmod 0755 /usr/local/bin/mc /usr/local/bin/mc-land
+RUN chown root:root /usr/local/libexec/mc-real /usr/local/bin/mc /usr/local/bin/mc-land \
+ && chown mc-completion:mc-completion /usr/local/libexec/mc-complete \
+ && chmod 0755 /usr/local/libexec/mc-real /usr/local/bin/mc /usr/local/bin/mc-land \
+ && chmod 6755 /usr/local/libexec/mc-complete
 
 # tini as PID 1 (§11.2): signal forwarding + zombie reaping for hang/reap.
 ENTRYPOINT ["/usr/bin/tini", "--"]
