@@ -87,3 +87,13 @@ func TestSetupRecordRejectsMalformedResult(t *testing.T) {
 		t.Fatalf("want a usage error envelope, got %v", res.json)
 	}
 }
+
+func TestAcceptedSealRecordRejectsMalformedResult(t *testing.T) {
+	res := runMC(t, nil, "", "task", "accepted-seal-record", "--run", "r", "--workspace", "/w", "--result", "{not json")
+	if res.code != 2 {
+		t.Fatalf("malformed accepted-seal result exit = %d json=%v stderr=%q", res.code, res.json, res.stderr)
+	}
+	if e, _ := res.json["error"].(map[string]any); e == nil || e["code"] != "usage" {
+		t.Fatalf("want a usage error envelope, got %v", res.json)
+	}
+}

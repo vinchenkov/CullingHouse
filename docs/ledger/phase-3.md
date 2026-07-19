@@ -1594,3 +1594,25 @@ shaped rows refuse. Fresh-versus-v1-migrated schema parity and live/tampered
 receipt cases are covered. The host record and run-continuation verbs are next;
 the resident remains unable to run the rebuild until they exist. Full serial
 fast lane green.
+
+## 2026-07-18 — accepted-seal rebuild host record and continuation
+
+The host-facing D6 half now exists. `RecordAcceptedSealRebuild` first derives
+the task root only from the live Verifier lease and selected Worksource,
+re-attests its fixed 0555 operator-owned identity against a prior task-root
+receipt, and verifies the reconstructed store bytes against the setup result.
+Its transaction then requires the task's exact accepted Worker pointer and
+matches object format, sealed SHA, and closure digest before inserting the v10
+receipt. Exact lost-response replay returns only an identical durable receipt.
+
+`ContinueAcceptedSealRebuild` requires that receipt, fences the same live
+Verifier lease, writes only `accepted-seal-rebuilt`, and releases only that
+lease; replay proves the durable terminal. Dedicated host-scope `mc task
+accepted-seal-record` and `accepted-seal-continue` commands expose the two
+operations for the later resident handoff. Focused re-attestation, mismatch,
+lease, replay, and CLI framing tests plus the full serial five-leg fast lane
+are green.
+
+NEXT (moved to PROGRESS.md): implement the resident accepted-seal rebuild
+executor handoff, retaining the exact seal re-attestation and producer-absence
+fences and preventing any ordinary Verifier launch fall-through.

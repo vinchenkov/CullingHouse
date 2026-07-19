@@ -386,6 +386,12 @@ kept below. Operator legs that remain open are under `## Parked`, not here.
         dispatch projection loads only that state-accepted immutable receipt.
         A later task cycle cannot select an earlier seal by timestamp or run
         ordering; pre-v9 rows without the pointer remain non-consumable.
+  - [x] D6 accepted-seal rebuild record/continuation: the host derives and
+        re-attests only the live Verifier lease's canonical task root, proves
+        the landed result matches the task-pointed accepted Worker seal, then
+        durably records its v10 receipt before ending only that setup run and
+        releasing its lease. Exact retries are inert; host-scope record and
+        continuation verbs are reachable through dedicated `mc task` commands.
 - [ ] Phase 4 — E2E control loops (six scenario families)
 - [ ] Phase 5 — Real-subscription acceptance (operator-scheduled)
 - [ ] Release prep (after Phase 5): swap the repo's construction face for
@@ -405,10 +411,11 @@ deleted, not struck through. History is in `docs/ledger/`.
   agent cannot sleep the machine it runs on). Instructions in
   `spikes/07-launchd-clock/RESULT.md`. All other S7 sub-tests passed.
 
-NEXT: Implement ADR-016 D6 host record/continuation for accepted-seal rebuild
-red-first: derive and re-attest the task root from the live verifier lease, cross-check
-the setup result against its exact task-pointed accepted seal, then idempotently land
-the v10 receipt and release only that setup run. Keep Verifier disposable-source /
-committed-tree projections, structured Engine-API binds, and launchd in their named later slices.
+NEXT: Implement ADR-016 D6 resident accepted-seal rebuild execution red-first:
+after its existing exact seal re-attestation and producer-absence fence, run only the
+fixed network=none setup executor over the canonical task-store bind, pass its result
+byte-exactly through the dedicated host record/continuation commands, and never fall
+through to Verifier-agent launch. Keep Verifier disposable-source / committed-tree
+projections, structured Engine-API binds, and launchd in their named later slices.
 Docker-lane obligations at phase completion: the real setup container run,
 closure e2e fixtures, and the D1 deployment-mirror check.

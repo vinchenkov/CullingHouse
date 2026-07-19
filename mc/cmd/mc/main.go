@@ -459,7 +459,7 @@ func cmdInit(args []string) (any, error) {
 
 func cmdTask(args []string) (any, error) {
 	if len(args) == 0 {
-		return nil, verbs.Usagef("usage: mc task add|get|block|unblock|setup-register|setup-continue …")
+		return nil, verbs.Usagef("usage: mc task add|get|block|unblock|setup-register|setup-continue|accepted-seal-record|accepted-seal-continue …")
 	}
 	switch args[0] {
 	case "setup-register":
@@ -525,6 +525,50 @@ func cmdTask(args []string) (any, error) {
 		}
 		return withSpine(func(db *sql.DB) (any, error) {
 			return verbs.ContinueFirstTaskSetup(db, *runID)
+		})
+	case "accepted-seal-record":
+		fs := newFlags("mc task accepted-seal-record")
+		runID := fs.String("run", "", "Verifier pipeline run id")
+		workspace := fs.String("workspace", "", "worksource workspace root")
+		result := fs.String("result", "", "accepted-seal setup result JSON from the setup container")
+		if err := parse(fs, args[1:]); err != nil {
+			return nil, err
+		}
+		idn, err := verbs.LoadIdentity()
+		if err != nil {
+			return nil, err
+		}
+		if err := verbs.RequireHostScope(idn, "mc task accepted-seal-record"); err != nil {
+			return nil, err
+		}
+		dec := json.NewDecoder(strings.NewReader(*result))
+		dec.DisallowUnknownFields()
+		var res verbs.SetupResult
+		if err := dec.Decode(&res); err != nil {
+			return nil, verbs.Usagef("accepted-seal setup result is invalid: %v", err)
+		}
+		return withSpine(func(db *sql.DB) (any, error) {
+			receipt, err := verbs.RecordAcceptedSealRebuild(db, *runID, *workspace, res)
+			if err != nil {
+				return nil, err
+			}
+			return map[string]any{"task_id": receipt.TaskID, "completion_run_id": receipt.CompletionRunID}, nil
+		})
+	case "accepted-seal-continue":
+		fs := newFlags("mc task accepted-seal-continue")
+		runID := fs.String("run", "", "Verifier pipeline run id")
+		if err := parse(fs, args[1:]); err != nil {
+			return nil, err
+		}
+		idn, err := verbs.LoadIdentity()
+		if err != nil {
+			return nil, err
+		}
+		if err := verbs.RequireHostScope(idn, "mc task accepted-seal-continue"); err != nil {
+			return nil, err
+		}
+		return withSpine(func(db *sql.DB) (any, error) {
+			return verbs.ContinueAcceptedSealRebuild(db, *runID)
 		})
 	case "add":
 		title, rest, err := positional("mc task add", args[1:])
