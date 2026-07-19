@@ -1698,3 +1698,13 @@ omitted those three members. The declared carrier now matches the closed
 dispatch JSON shape, preventing a future type-checked build from accepting a
 producer that omits the runtime authority. The behavioral fast lane remains
 green.
+
+## 2026-07-18 — Docker E2E baseline
+
+The tagged Docker walking skeleton is green at `db77926`:
+`mise exec -- go test -tags docker_e2e -timeout 15m ./e2e/...`. It confirms
+that the active Phase-1 route still crosses the real resident/helper/image
+boundary. That fixture deliberately follows its legacy fake-route completion
+arm, so it is a regression baseline rather than evidence for the new sealed
+Verifier projection; the dedicated D6 setup/bind/control/verdict probe remains
+the next acceptance slice.
