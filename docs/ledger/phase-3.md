@@ -1991,6 +1991,18 @@ boundary. This weakens a defense-in-depth check, so it needs a logged deviation
 Full mc fast lane green (verbs fresh, 19.8s). The production-Worker E2E baseline
 passes unchanged (probe reverted).
 
-NEXT (moved to PROGRESS.md): the carry-through slice — fix the
-`recheckAcceptedSeal` seal-identity crossing, route the E2E verifier non-fake,
-and assert the resident-driven rebuild receipt lands; then Verifier→Packager→land.
+Third layer, found while probing the carry-through (throwaway, reverted):
+routing the E2E verifier to the worker's own non-fake binding (`codex/chatgpt`)
+makes routing.Parse fail Inv. 9 (routing.go:119: worker↔verifier must use
+decorrelated harness families; the fake lane is exempt). Every dispatch then
+returns action `refused` and the resident logs `unknown action "refused";
+ignored`, so `worked` is never reached. The carry-through verifier must route to
+the OTHER production family — `verifier | claude-sdk | claude` (registry:
+chatgpt→codex, claude→claude-sdk, minimax→claude-sdk). The rebuild returns
+before agent launch so no adapter is needed for the receipt; the later
+VerifierProjection launch needs the worker's fake-adapter stand-in.
+
+NEXT (moved to PROGRESS.md): the carry-through slice — (a) fix the
+`recheckAcceptedSeal` seal-identity crossing, (b) route the E2E verifier
+non-fake AND decorrelated (`claude-sdk/claude`), (c) assert the resident-driven
+rebuild receipt lands; then Verifier→Packager→land. Ordered detail in PROGRESS.

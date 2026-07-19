@@ -503,13 +503,28 @@ note was wrong — it IS observed, see ledger):
    non-fake path would refuse at re-attestation. The direct rebuild Docker test
    dodged it by publishing host-side. Fix direction in the ledger.
 
-NEXT: The carry-through slice. (a) Fix `recheckAcceptedSeal` (resident/src/
-task-skeleton.ts) — it cannot trust the namespace-local recorded seal identity;
-verify the locally-derived canonical path + non-symlink dir + host-operator
-ownership and rely on the in-image immutable manifest/pack verification, with a
-logged §6 deviation (defense-in-depth weakening). (b) Route the E2E verifier
-non-fake (like the worker; the rebuild returns before agent launch, so no
-adapter is needed) and extend `TestProductionWorkerCompletionSealDockerBoundary`
-past `worked` to assert the `accepted_seal_rebuild_receipts` row lands. Then on
-through Verifier→Packager→land. Keep committed-tree projections, structured
-Engine-API binds, and launchd in their named later slices.
+NEXT: The carry-through slice, in this order (each layer confirmed live
+2026-07-19):
+  (a) Fix `recheckAcceptedSeal` (resident/src/task-skeleton.ts) — it cannot
+      trust the namespace-local recorded seal identity; verify the
+      locally-derived canonical path + non-symlink dir + host-operator ownership
+      (`process.getuid()`, as precreateTaskSkeleton already does) and rely on the
+      in-image immutable manifest/pack verification, with a logged §6 deviation
+      (defense-in-depth weakening). The existing unit test
+      task-skeleton.test.ts:143 asserts inode-mismatch rejection and must be
+      rewritten to the new contract.
+  (b) Route the E2E verifier non-fake AND decorrelated from the worker. The
+      worker is `codex/chatgpt` (harness `codex`); Inv. 9 (routing.go:119)
+      refuses worker↔verifier on the same harness, so route the verifier to the
+      other production family: `verifier | claude-sdk | claude`. (Naively
+      reusing `codex/chatgpt` makes every dispatch return action `refused` and
+      the resident logs `unknown action "refused"` — confirmed.) The rebuild is
+      setup-only and returns before agent launch, so no adapter is needed for
+      the receipt; the LATER VerifierProjection launch will need the same
+      fake-adapter stand-in the worker uses (`agentRunnerRoutes` +
+      `MC_AGENT_RUNNER_ROUTES`, Design B).
+  (c) Extend `TestProductionWorkerCompletionSealDockerBoundary` past `worked` to
+      assert the `accepted_seal_rebuild_receipts` row lands. Then on through
+      Verifier→Packager→land.
+Keep committed-tree projections, structured Engine-API binds, and launchd in
+their named later slices.
