@@ -10,7 +10,7 @@ Access does NOT fix it — the failure precedes any policy lookup. Symptom:
 `stat` works, reads return `Operation not permitted`, git says
 `Unable to read current working directory`.
 
-LAST GREEN SHA: d43e4c4 (local; the operator pushes manually — decided 2026-07-14. Agents: do not push.)
+LAST GREEN SHA: dace2c6 (local; the operator pushes manually — decided 2026-07-14. Agents: do not push.)
 
 PHASES PASSING: Phase 0 COMPLETE (S1–S8 all green, no fallback ADRs; only operator-leg deferrals remain); Phase 1 COMPLETE (1a substrate 172; 1b walking skeleton reviewed-and-fixed — fake-harness 43, agent-runner 13, runner/image 40, resident 42, dispatch + cmd/mc suites; Docker e2e PASS ×4 total); Phase 2 COMPLETE for every unparked acceptance line (domain/§18 surface, deterministic split-brain convergence, bounded honesty + five mutants, tagged dispatch/metamorphic/twin-spine lifecycle properties; the initiative-wave CLI is no longer isolated — ADR-020 landed 2026-07-14 and closed the last Phase 2 acceptance line)
 KNOWN-FAILING: `TestOnboardConcurrentFreshHomeNeverDeletesTheWinner` (mc/verbs),
@@ -435,6 +435,18 @@ kept below. Operator legs that remain open are under `## Parked`, not here.
         the accepted Worker producer run rather than conflating it with the
         live Verifier setup run. Immutable manifest/pack verification remains
         in the image.
+  - [x] D6 production Worker completion seal through the real resident: the
+        tagged E2E dispatches a production (non-fake, `codex/chatgpt`) Worker on
+        the run-keyed completion-seal plan carrier through the live timer, and
+        the image's setuid publisher reaches the same accepted immutable seal
+        fence proven directly by the sealed-completion probe. Because the
+        shipped image ships only the fake adapter, two fail-closed allowlists
+        authorize it to stand in for the one non-fake route: the resident's
+        `agentRunnerRoutes` (default unset ⇒ fake-only) and the symmetric
+        in-container `MC_AGENT_RUNNER_ROUTES`. Driving the full loop caught a
+        real image defect — `bun` under 0700 `/root` is unreachable by the
+        model uid a production Worker runs as — now installed to `/opt/bun`.
+        No Go dispatch/attest change. Deviation logged (2026-07-18)
   - [x] D6 sealed Verifier disposable projection: the accepted rebuild receipt
         freezes a distinct projection setup action; the resident materializes
         its sealed tree through the fixed network=none setup container, overlays
@@ -468,14 +480,18 @@ deleted, not struck through. History is in `docs/ledger/`.
   agent cannot sleep the machine it runs on). Instructions in
   `spikes/07-launchd-clock/RESULT.md`. All other S7 sub-tests passed.
 
-Remaining Docker-lane obligation in this line: prove the production (non-
-test-fake) resident Worker path publishes and accepts a completion seal through
-the new run-keyed plan carrier. D1 deployment-mirror, D5 first-task setup, D6
-accepted-seal rebuild, D6 image completion-wrapper, and the carrier/unit +
-legacy-route boundary crossings are green.
+The completion-seal Docker line is closed: D1 deployment-mirror, D5 first-task
+setup, D6 accepted-seal rebuild, D6 image completion-wrapper, the carrier/unit +
+legacy-route crossings, AND the production resident Worker seal (dace2c6) are
+all green. One resident-driven D6 loop remains unwired (below).
 
-NEXT: Extend the tagged Docker E2E fixture to dispatch a production Worker
-through the resident using the run-keyed completion-seal plan row, then prove
-the image's setuid publisher reaches the same accepted immutable seal fence.
-Keep committed-tree projections, structured Engine-API binds, and launchd in
-their named later slices.
+NEXT: Wire the resident-driven Verifier accepted-seal REBUILD. After a production
+Worker seals, the resident dispatches a Verifier for the accepted seal but the
+spawn refuses `accepted-seal rebuild has no canonical task-root bind
+(fail-closed)` — the seal-consumer mount plan does not yet carry the
+`/workspace` RO task-root entry the resident effector requires (effects.ts
+spawn accepted_seal_rebuild arm vs the mountattest seal-consumer arm). The
+direct path is already proven (TestAcceptedSealRebuildDockerBoundary); this
+closes the resident-effected half. Then extend the same production-Worker E2E
+to carry through Verifier→Packager→land. Keep committed-tree projections,
+structured Engine-API binds, and launchd in their named later slices.

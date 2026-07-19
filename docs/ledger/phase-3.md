@@ -1832,3 +1832,61 @@ production completion-root carrier pending the production resident E2E.
 
 NEXT (moved to PROGRESS.md): exercise that production Worker carrier through
 the real resident and accepted completion fence.
+
+## 2026-07-18 — production Worker completion seal proven through the real resident
+
+The completion-seal Docker line is closed.
+`TestProductionWorkerCompletionSealDockerBoundary` dispatches a production
+(non-fake, `codex/chatgpt`) Worker
+through the live resident timer on the run-keyed completion-seal plan carrier;
+the image's setuid publisher reaches the same accepted immutable seal fence the
+direct sealed-completion probe proves. No Go dispatch/attest change — the seal
+already attaches on a non-fake route; the whole slice is authorization +
+image + fixture.
+
+Design B, not A. The seal deliberately never rides the fake compatibility
+route (2026-07-18 entry above), so the E2E routes the Worker to a real non-fake
+binding and teaches the one shipped adapter to stand in for it. Two fail-closed
+allowlists, default-off: the resident's `agentRunnerRoutes` (launch gate) and
+the symmetric in-container `MC_AGENT_RUNNER_ROUTES` env the resident passes
+through (execution gate). A production deployment leaves both empty and ships
+real per-harness adapters (ADR-007).
+
+Driving the full loop caught three gaps the resident's mocked-Docker unit tests
+never could: the two adapter gates above, and — a real image defect — `bun`
+installed under `/root/.bun` while `/root` is `0700`, so the model uid a
+production Worker runs as could not exec it (`exec bun failed: Permission
+denied`). `bun` now installs to `/opt/bun`, world-traversable. The fixture
+seeds the resident's own spine (new `withHostBindSpine` setup option) with a
+materialized store + receipt + assignment so the timer dispatches the sealing
+Worker directly; because the task is assigned, `status=worked` is unreachable
+via the legacy unsealed bypass and alone proves acceptance. The 0444 manifest
+is confirmed inside the Linux namespace (Desktop projects a different host-side
+mode). Full tagged suite green; the run-keyed E2E is deterministic across
+repeated runs.
+
+Spawned adversarial review (read-only, two allowlists + E2E soundness +
+image/uid + invariants): no blocking findings. It confirmed both allowlists
+fail-closed in every branch (undefined/empty/malformed all refuse; `includes`
+is exact, not substring), `status=worked` is a genuine proxy for the accepted
+immutable fence (the assigned-task legacy `--status worked` refusal at
+`complete.go:133` leaves `CompleteSealedWorker` the only path to `worked`), the
+`/opt/bun` move adds only read/traverse (no write/setuid) and does not touch the
+`/mc/private` gate, and no production invariant is weakened (the host-bind spine
+and worker→codex/verifier→fake routing are test-only). Two non-blocking
+residuals recorded: (a) the fake adapter has no defense-in-depth self-check —
+the empty-allowlist default plus operator discipline is the sole barrier against
+a mis-shipped prod image sealing fake output; worth a self-assert if a real
+adapter image is ever built; (b) a non-fake, seal-bearing route that is NOT
+allowlisted precreates an orphaned `seals/<run>` dir before refusing (the
+precreate runs before the launch gate — pre-existing ordering, resource-leak
+only, no fail-open).
+
+Owed (logged, not fixed): the resident-driven Verifier accepted-seal REBUILD
+refuses `accepted-seal rebuild has no canonical task-root bind` — the
+seal-consumer mount plan lacks the `/workspace` RO task-root entry the resident
+effector requires. The direct rebuild path is already proven; this closes the
+resident-effected half.
+
+NEXT (moved to PROGRESS.md): wire the resident-driven Verifier accepted-seal
+rebuild, then carry the production-Worker E2E through Verifier→Packager→land.
