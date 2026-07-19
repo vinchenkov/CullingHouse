@@ -170,6 +170,22 @@ func syntheticGitContext(objectFormat, sourceObjectDir string) (string, []string
 	return syn, env, nil
 }
 
+// withGitObjectDirectories changes the primary object directory of a
+// synthetic context without weakening its config/ref isolation. Git reads
+// through the alternate but creates every temporary and output object under
+// primary. This matters for D5: the source bind is read-only while the
+// task-local store is intentionally writable.
+func withGitObjectDirectories(env []string, primary, alternate string) []string {
+	out := append([]string(nil), env...)
+	for i, value := range out {
+		if strings.HasPrefix(value, "GIT_OBJECT_DIRECTORY=") {
+			out[i] = "GIT_OBJECT_DIRECTORY=" + primary
+			break
+		}
+	}
+	return append(out, "GIT_ALTERNATE_OBJECT_DIRECTORIES="+alternate)
+}
+
 func firstTokens(out []byte) []string {
 	var toks []string
 	for _, line := range strings.Split(string(out), "\n") {
@@ -240,11 +256,17 @@ func extractClosurePack(sourceRepo, baseSHA, objectFormat, packDir string) (int,
 	if err != nil {
 		return 0, err
 	}
-	syn, env, err := syntheticGitContext(objectFormat, filepath.Join(gcd, "objects"))
+	sourceObjects := filepath.Join(gcd, "objects")
+	syn, env, err := syntheticGitContext(objectFormat, sourceObjects)
 	if err != nil {
 		return 0, err
 	}
 	defer os.RemoveAll(syn)
+	// pack-objects uses GIT_OBJECT_DIRECTORY for temporary pack files. The
+	// source is a read-only setup bind, so make the empty task-local object
+	// directory primary and admit the source only as a non-persistent read
+	// alternate.
+	env = withGitObjectDirectories(env, filepath.Dir(packDir), sourceObjects)
 
 	if typ, err := gitOutput("", env, nil, "cat-file", "-t", baseSHA); err != nil ||
 		strings.TrimSpace(string(typ)) != "commit" {

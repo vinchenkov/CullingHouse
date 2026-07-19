@@ -1741,3 +1741,24 @@ pin v10. The full five-leg fast lane and full Docker E2E suite are green.
 
 NEXT (moved to PROGRESS.md): add the D5 real first-task setup/closure Docker
 fixture.
+
+## 2026-07-18 — first-task setup Docker boundary
+
+`TestFirstTaskSetupDockerBoundary` runs the shipped image's closed
+`__setup-first-task` operation over the production D5 bind arrangement:
+network none, source Worksource RO with the `.mission-control` cover, a 0555
+task root, and only its `source` and `git` children writable. The returned
+result crosses the durable Worker receipt and host re-attestation gate, which
+records the canonical task root, all 15 typed task-plan rows, and the immutable
+assignment.
+
+Its first run found that `pack-objects` writes its temporary pack under
+`GIT_OBJECT_DIRECTORY`; the prior context pointed that at the intentionally
+read-only source object store. Closure extraction now uses the writable
+task-local object store as primary and the source objects solely as a
+non-persistent alternate. An untagged regression test makes source objects
+read-only and confirms the extracted pack lands in the task store. All five
+fast-lane legs (the documented resident FD-3 flake passed on its immediate
+idle rerun) and the full tagged Docker E2E suite are green.
+
+NEXT (moved to PROGRESS.md): add the D6 accepted-seal rebuild Docker fixture.

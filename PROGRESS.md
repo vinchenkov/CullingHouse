@@ -10,7 +10,7 @@ Access does NOT fix it — the failure precedes any policy lookup. Symptom:
 `stat` works, reads return `Operation not permitted`, git says
 `Unable to read current working directory`.
 
-LAST GREEN SHA: 7d1fa85 (local; the operator pushes manually — decided 2026-07-14. Agents: do not push.)
+LAST GREEN SHA: 3e70823 (local; the operator pushes manually — decided 2026-07-14. Agents: do not push.)
 
 PHASES PASSING: Phase 0 COMPLETE (S1–S8 all green, no fallback ADRs; only operator-leg deferrals remain); Phase 1 COMPLETE (1a substrate 172; 1b walking skeleton reviewed-and-fixed — fake-harness 43, agent-runner 13, runner/image 40, resident 42, dispatch + cmd/mc suites; Docker e2e PASS ×4 total); Phase 2 COMPLETE for every unparked acceptance line (domain/§18 surface, deterministic split-brain convergence, bounded honesty + five mutants, tagged dispatch/metamorphic/twin-spine lifecycle properties; the initiative-wave CLI is no longer isolated — ADR-020 landed 2026-07-14 and closed the last Phase 2 acceptance line)
 KNOWN-FAILING: `TestOnboardConcurrentFreshHomeNeverDeletesTheWinner` (mc/verbs),
@@ -318,6 +318,16 @@ kept below. Operator legs that remain open are under `## Parked`, not here.
         and the empty git/shallow cover makes git report is-shallow=true
         (harmless for a complete store; the object-set proof is the completeness
         guard). Docker-lane owed: the real container run + closure e2e fixtures.
+  - [x] D5 first-task setup Docker boundary: the shipped image receives the
+        exact network=none setup mount table — Worksource RO with an empty
+        `.mission-control` cover, root 0555, and only the `source`/`git`
+        children RW — and emits the closure result. A live Worker receipt then
+        re-attests and records the canonical root's 15 typed rows and immutable
+        assignment. The fixture caught a real source-RO bug: `pack-objects`
+        used the source object store for scratch space. Extraction now makes
+        the task object store primary and uses source objects only as a
+        non-persistent alternate; an untagged read-only-source regression test
+        retains that guarantee.
   - [x] Post-setup Worker continuation (ADR-016 D6): `mc task
         setup-continue --run` atomically proves the registered receipt plus
         immutable assignment, ends only the setup-only Worker as
@@ -436,9 +446,11 @@ deleted, not struck through. History is in `docs/ledger/`.
   agent cannot sleep the machine it runs on). Instructions in
   `spikes/07-launchd-clock/RESULT.md`. All other S7 sub-tests passed.
 
-NEXT: Add the ADR-016 D5 Docker closure fixture that runs the real first-task
-setup container and proves the recorded canonical task-local store over the
-resident/helper crossing. Keep committed-tree projections, structured Engine-API
-binds, and launchd in their named later slices.
-Docker-lane obligations at phase completion: the real setup container run,
-closure e2e fixtures, and the D1 deployment-mirror check.
+NEXT: Add the ADR-016 D6 accepted-seal rebuild Docker fixture: run the real
+sealed-pack rebuild setup container against the canonical task root, then prove
+the live Verifier receipt record/continuation crossing. Keep committed-tree
+projections, structured Engine-API binds, and launchd in their named later
+slices.
+Remaining Docker-lane obligation in this line: the D6 accepted-seal rebuild
+setup/record crossing; D1 deployment-mirror and D5 first-task setup crossings
+are green.

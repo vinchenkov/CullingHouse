@@ -120,6 +120,28 @@ func TestExtractClosurePackProducesTheExactReachableClosure(t *testing.T) {
 	}
 }
 
+func TestExtractClosurePackReadsAReadOnlySourceIntoTheTaskObjectStore(t *testing.T) {
+	src, base, objfmt := buildSourceRepo(t)
+	objects := filepath.Join(src, ".git", "objects")
+	packDir := filepath.Join(t.TempDir(), "objects", "pack")
+	if err := os.MkdirAll(packDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	// Match the setup container boundary: source objects are readable but no
+	// scratch pack may land there. Restore the mode for t.TempDir cleanup.
+	t.Cleanup(func() { _ = os.Chmod(objects, 0o700) })
+	if err := os.Chmod(objects, 0o555); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := extractClosurePack(src, base, objfmt, packDir); err != nil {
+		t.Fatalf("extract from read-only source: %v", err)
+	}
+	if _, err := singlePackIdx(packDir); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestExtractClosurePackRefusesAForbiddenSource(t *testing.T) {
 	cases := []struct {
 		name string

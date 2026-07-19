@@ -21,6 +21,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"testing"
@@ -443,6 +444,104 @@ func TestDeploymentMirrorDockerBoundary(t *testing.T) {
 		}
 		return false, "no editor Run after mirror recovery"
 	})
+}
+
+// TestFirstTaskSetupDockerBoundary runs the exact D5 setup container against
+// a resident-shaped empty skeleton, then records its emitted result only
+// through the live Worker receipt and task-root re-attestation gates.
+func TestFirstTaskSetupDockerBoundary(t *testing.T) {
+	f := setup(t)
+	const (
+		taskID = int64(7)
+		runID  = "setup-run"
+	)
+	taskRoot := filepath.Join(f.ws, ".mission-control", "tasks", "task-7")
+	for _, child := range []string{"source", "git"} {
+		if err := os.MkdirAll(filepath.Join(taskRoot, child), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Chmod(taskRoot, 0o555); err != nil {
+		t.Fatal(err)
+	}
+	setupCover := filepath.Join(f.home, runID+".setup-cover")
+	if err := os.MkdirAll(setupCover, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	envelope := verbs.SetupEnvelope{
+		SchemaVersion: 1, Operation: verbs.SetupOperationFirstTaskClosure,
+		RunID: runID, TaskID: taskID, Mode: "fresh", ObjectFormat: "sha1",
+		TargetRef: "main", Branch: "mc/task-7", WorktreeName: "mc-task-7",
+		SourceRepo: "/repo/source", TaskRoot: "/repo/task",
+	}
+	body, err := json.Marshal(envelope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	envelopePath := filepath.Join(f.home, runID+".setup.json")
+	if err := os.WriteFile(envelopePath, append(body, '\n'), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	output := f.dockerOutput("run", "--rm", "--name", "mc-setup-"+runID, "--network", "none",
+		"--label", "mc-managed=true", "--label", "mc-tier=pipeline", "--label", "mc-run-id="+runID,
+		"--user", "10002:10002", "--cap-drop", "ALL", "--security-opt", "no-new-privileges=true",
+		"--cpus", "1", "--memory", "1024m", "--pids-limit", "128",
+		"-v", f.ws+":/repo/source:ro", "-v", setupCover+":/repo/source/.mission-control:ro",
+		"-v", taskRoot+":/repo/task:ro", "-v", filepath.Join(taskRoot, "source")+":/repo/task/source",
+		"-v", filepath.Join(taskRoot, "git")+":/repo/task/git", "-v", envelopePath+":/mc/setup.json:ro",
+		image, "mc", "__setup-first-task", "/mc/setup.json")
+	var result verbs.SetupResult
+	if err := json.Unmarshal([]byte(output), &result); err != nil {
+		t.Fatalf("setup result %q: %v", output, err)
+	}
+	if !result.FsckClean || result.ObjectFormat != "sha1" || result.BaseSHA != f.git("rev-parse", "main") {
+		t.Fatalf("setup result = %+v, want clean pinned main store", result)
+	}
+
+	spine := filepath.Join(f.base, "d5-spine.db")
+	if _, err := verbs.Init(verbs.InitArgs{Spine: spine, Worksource: "ws-d5", WorkspaceRoot: f.ws}); err != nil {
+		t.Fatalf("init D5 spine: %v", err)
+	}
+	db, err := verbs.OpenSpine(spine)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if _, err := db.Exec(`INSERT INTO tasks (id,title,scope,priority,created_at,status,dispatch_retries,origin,worksource,target_ref)
+		VALUES (7,'D5 setup fixture','task',2,datetime('now'),'proposed',3,'user','ws-d5','main')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`UPDATE tasks SET status='seeded' WHERE id=7`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO runs (id,tier,role,worksource,subject) VALUES (?, 'pipeline', 'worker', 'ws-d5', 7)`, runID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`UPDATE lock SET run_id=?, worksource='ws-d5', subject=7, owner='worker', acquired_at=datetime('now'), hard_deadline_at=datetime('now', '+1 hour') WHERE id=1`, runID); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Lstat(taskRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	st, ok := info.Sys().(*syscall.Stat_t)
+	if !ok {
+		t.Fatal("task root lacks native filesystem identity")
+	}
+	if _, err := verbs.RegisterFirstTaskSetup(db, verbs.TaskSetupReceipt{RunID: runID, TaskID: taskID,
+		Root: verbs.TaskSetupIdentity{Device: strconv.FormatUint(uint64(st.Dev), 10), Inode: strconv.FormatUint(uint64(st.Ino), 10), OwnerUID: int(st.Uid)}}); err != nil {
+		t.Fatalf("register resident-style skeleton: %v", err)
+	}
+	recorded, rows, err := verbs.RecordFirstTaskSetupClosure(db, runID, f.ws, result)
+	if err != nil {
+		t.Fatalf("record setup result: %v", err)
+	}
+	if recorded.Canonical != taskRoot || len(rows) != 15 {
+		t.Fatalf("recorded D5 store = (%+v, %d rows), want canonical task root and 15 typed rows", recorded, len(rows))
+	}
+	if assignment, err := verbs.ReadFirstTaskAssignment(db, runID); err != nil || assignment.BaseSHA != result.BaseSHA || assignment.ClosureDigest != result.ClosureDigest {
+		t.Fatalf("recorded assignment = (%+v, %v), want setup result identity", assignment, err)
+	}
 }
 
 // ───────────────────────────── fixtures ─────────────────────────────────
