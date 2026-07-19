@@ -39,7 +39,14 @@ func MaterializeVerifierDisposableSource(taskRoot, projectionRoot string, seal A
 	}
 	// GIT_DIR names only the task-local sanitized store; GIT_WORK_TREE is the
 	// disposable root. No primary checkout path or object store enters here.
-	env := append(sourceGitEnv(), "GIT_DIR="+gitDir, "GIT_WORK_TREE="+projectionRoot)
+	// The canonical task store is mounted RO to this setup container. Git's
+	// default index location is therefore unavailable even though read-tree and
+	// checkout-index are otherwise read-only against that store. Keep the
+	// short-lived index in the disposable projection and remove it before that
+	// projection becomes an agent mount.
+	projectionIndex := filepath.Join(projectionRoot, ".mc-verifier-index")
+	defer os.Remove(projectionIndex)
+	env := append(sourceGitEnv(), "GIT_DIR="+gitDir, "GIT_WORK_TREE="+projectionRoot, "GIT_INDEX_FILE="+projectionIndex)
 	if _, err := gitOutput("", env, nil, "read-tree", seal.SealedSHA); err != nil {
 		return Domainf("verifier disposable projection could not build its sealed index: %v", err)
 	}

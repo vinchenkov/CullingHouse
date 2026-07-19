@@ -33,6 +33,9 @@ func TestMaterializeVerifierDisposableSourceUsesOnlyTheSealedTree(t *testing.T) 
 	if err != nil || string(pointer) != "gitdir: ../git/worktrees/mc-task-7\n" {
 		t.Fatalf("projection .git pointer=(%q,%v), want fixed relative task control", pointer, err)
 	}
+	if _, err := os.Stat(filepath.Join(projection, ".mc-verifier-index")); !os.IsNotExist(err) {
+		t.Fatalf("projection retained setup-only Git index: %v", err)
+	}
 	if err := os.WriteFile(filepath.Join(task, "source", "late.txt"), []byte("late"), 0o644); err != nil {
 		t.Fatal(err)
 	}

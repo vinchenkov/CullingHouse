@@ -1708,3 +1708,20 @@ boundary. That fixture deliberately follows its legacy fake-route completion
 arm, so it is a regression baseline rather than evidence for the new sealed
 Verifier projection; the dedicated D6 setup/bind/control/verdict probe remains
 the next acceptance slice.
+
+## 2026-07-18 — sealed Verifier projection Docker boundary
+
+`TestVerifierProjectionDockerBoundary` now uses the real image and fixed
+`__setup-verifier-projection` command over a materialized, immutable sealed
+task-local store. Its first run found that `git read-tree` attempted to create
+the canonical task store's `index.lock` even though that bind is intentionally
+RO. The materializer now directs its temporary Git index to the disposable
+projection and removes it before agent exposure.
+
+The tagged probe inspects `/workspace` RO, `/workspace/source` RW, and the
+canonical `.git`/`.mission-control` RO covers. It then mounts a minimal live
+accepted-seal/verifier spine, dirties the disposable README in the image, and
+asserts that the real `mc verifier verdict` refuses with the tracked-tree
+fence. The full five-leg fast lane and full tagged Docker E2E suite are green.
+
+NEXT (moved to PROGRESS.md): add the D1 deployment-UUID mirror Docker proof.

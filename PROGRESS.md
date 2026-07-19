@@ -10,7 +10,7 @@ Access does NOT fix it — the failure precedes any policy lookup. Symptom:
 `stat` works, reads return `Operation not permitted`, git says
 `Unable to read current working directory`.
 
-LAST GREEN SHA: db77926 (local; the operator pushes manually — decided 2026-07-14. Agents: do not push.)
+LAST GREEN SHA: e208164 (local; the operator pushes manually — decided 2026-07-14. Agents: do not push.)
 
 PHASES PASSING: Phase 0 COMPLETE (S1–S8 all green, no fallback ADRs; only operator-leg deferrals remain); Phase 1 COMPLETE (1a substrate 172; 1b walking skeleton reviewed-and-fixed — fake-harness 43, agent-runner 13, runner/image 40, resident 42, dispatch + cmd/mc suites; Docker e2e PASS ×4 total); Phase 2 COMPLETE for every unparked acceptance line (domain/§18 surface, deterministic split-brain convergence, bounded honesty + five mutants, tagged dispatch/metamorphic/twin-spine lifecycle properties; the initiative-wave CLI is no longer isolated — ADR-020 landed 2026-07-14 and closed the last Phase 2 acceptance line)
 KNOWN-FAILING: `TestOnboardConcurrentFreshHomeNeverDeletesTheWinner` (mc/verbs),
@@ -407,7 +407,10 @@ kept below. Operator legs that remain open are under `## Parked`, not here.
         the exact accepted sealed HEAD (with read-only Git operations). The
         resident effects tests prove setup precedes agent creation, control
         covers follow the RW overlay, setup containers retain their boundary
-        labels, and failed/existing roots cannot be adopted or deleted.
+        labels, and failed/existing roots cannot be adopted or deleted. The
+        tagged Docker probe runs the shipped setup image against a real sealed
+        task store, inspects the full RW/RO overlay, and proves a dirty
+        disposable source is refused by the actual in-container verdict fence.
 - [ ] Phase 4 — E2E control loops (six scenario families)
 - [ ] Phase 5 — Real-subscription acceptance (operator-scheduled)
 - [ ] Release prep (after Phase 5): swap the repo's construction face for
@@ -427,9 +430,9 @@ deleted, not struck through. History is in `docs/ledger/`.
   agent cannot sleep the machine it runs on). Instructions in
   `spikes/07-launchd-clock/RESULT.md`. All other S7 sub-tests passed.
 
-NEXT: Add the ADR-016 D6 Docker-boundary proof for the sealed Verifier
-projection: exact setup and agent bind inspection plus in-container control and
-verdict-fence probes. Keep committed-tree projections, structured Engine-API binds,
-and launchd in their named later slices.
+NEXT: Add the ADR-016 D1 Docker-boundary proof that the deployment-UUID mirror
+is bind-visible and rechecked across the real resident/helper crossing. Keep
+committed-tree projections, structured Engine-API binds, and launchd in their
+named later slices.
 Docker-lane obligations at phase completion: the real setup container run,
 closure e2e fixtures, and the D1 deployment-mirror check.

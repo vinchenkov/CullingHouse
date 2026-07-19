@@ -25,6 +25,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"mc/verbs"
 )
 
 const (
@@ -250,6 +252,145 @@ func TestWalkingSkeleton(t *testing.T) {
 				t.Fatalf("session %s holds %q — the folder holds nothing but the trace (Inv. 26)", s.Name(), e.Name())
 			}
 		}
+	}
+}
+
+// TestVerifierProjectionDockerBoundary proves the D6 disposable-source setup
+// against the shipped Linux image, rather than only asserting the resident's
+// argv in its fake-effects tests. The existing walking skeleton deliberately
+// keeps its legacy fake mount arm, so this probe creates the exact sealed
+// task-local input directly and exercises the production setup command.
+func TestVerifierProjectionDockerBoundary(t *testing.T) {
+	f := setup(t)
+	const (
+		taskID  = int64(42)
+		worker  = "worker-42"
+		request = "0011223344556677"
+		verify  = "verify-42"
+	)
+	taskRoot := filepath.Join(f.base, "task-42")
+	for _, child := range []string{"source", "git"} {
+		if err := os.MkdirAll(filepath.Join(taskRoot, child), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	_, err := verbs.MaterializeFirstTaskStore(f.ws, taskRoot, verbs.FirstTaskSetupSpec{
+		TaskID: taskID, Mode: "fresh", TargetRef: "main", ObjectFormat: "sha1",
+		LocalRepoUUID: "0a1b2c3d-4e5f-6071-8293-a4b5c6d7e8f9",
+	})
+	if err != nil {
+		t.Fatalf("materialize canonical task store: %v", err)
+	}
+	sealDir := filepath.Join(f.home, "seals", worker)
+	if err := os.MkdirAll(filepath.Dir(sealDir), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	seal, err := verbs.SealTaskCompletion(taskRoot, sealDir, worker, request, taskID)
+	if err != nil {
+		t.Fatalf("seal canonical task store: %v", err)
+	}
+	projection := filepath.Join(f.home, "runs", "projections", verify)
+	if err := os.MkdirAll(projection, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	envelope := verbs.SetupEnvelope{
+		SchemaVersion: 1, Operation: verbs.SetupOperationVerifierProjection,
+		RunID: verify, TaskID: taskID, ObjectFormat: seal.ObjectFormat,
+		CompletionRequest: seal.CompletionRequest, SealedSHA: seal.SealedSHA,
+		ClosureDigest: seal.ClosureDigest, ManifestDigest: seal.ManifestDigest,
+		SealDevice: seal.Device, SealInode: seal.Inode, SealOwnerUID: seal.OwnerUID,
+		TaskRoot: "/repo/task", ProjectionRoot: "/repo/projection",
+	}
+	body, err := json.Marshal(envelope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	envelopePath := filepath.Join(f.home, verify+".projection.json")
+	if err := os.WriteFile(envelopePath, append(body, '\n'), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	f.docker("run", "--rm", "--name", "mc-setup-"+verify, "--network", "none",
+		"--label", "mc-managed=true", "--label", "mc-tier=pipeline", "--label", "mc-run-id="+verify,
+		"--user", "10002:10002", "--cap-drop", "ALL", "--security-opt", "no-new-privileges=true",
+		"--cpus", "1", "--memory", "1024m", "--pids-limit", "128",
+		"-v", taskRoot+":/repo/task:ro", "-v", projection+":/repo/projection",
+		"-v", envelopePath+":/mc/setup.json:ro", image, "mc", "__setup-verifier-projection", "/mc/setup.json")
+
+	if got, err := os.ReadFile(filepath.Join(projection, "README.md")); err != nil || string(got) != "walking skeleton worksource\n" {
+		t.Fatalf("projection README = (%q, %v), want sealed source bytes", got, err)
+	}
+	if got, err := os.ReadFile(filepath.Join(projection, ".git")); err != nil || string(got) != "gitdir: ../git/worktrees/mc-task-42\n" {
+		t.Fatalf("projection .git pointer = (%q, %v), want fixed relative task control", got, err)
+	}
+	spineDir := filepath.Join(f.base, "verdict-spine")
+	if err := os.MkdirAll(spineDir, 0o777); err != nil {
+		t.Fatal(err)
+	}
+	spine := filepath.Join(spineDir, "spine.db")
+	if _, err := verbs.Init(verbs.InitArgs{Spine: spine, Worksource: "ws-verdict", WorkspaceRoot: f.ws}); err != nil {
+		t.Fatalf("init verdict spine: %v", err)
+	}
+	db, err := verbs.OpenSpine(spine)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO tasks (id,title,scope,priority,created_at,status,dispatch_retries,origin,worksource,target_ref)
+		VALUES (42,'verdict fixture','task',2,datetime('now'),'proposed',3,'user','ws-verdict','main')`); err != nil {
+		t.Fatal(err)
+	}
+	for _, status := range []string{"seeded", "worked"} {
+		if _, err := db.Exec(`UPDATE tasks SET status=? WHERE id=42`, status); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := db.Exec(`INSERT INTO runs (id,tier,role,worksource,subject,ended_at,outcome)
+		VALUES (?, 'pipeline', 'worker', 'ws-verdict', 42, datetime('now'), 'completed')`, worker); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO completion_seals
+		(run_id,task_id,completion_request_id,object_format,sealed_sha,closure_digest,manifest_digest,seal_device,seal_inode,seal_owner_uid,state,accepted_at)
+		VALUES (?,42,?,?,?,?,?,?,?,?,'accepted',datetime('now'))`, worker, request, seal.ObjectFormat, seal.SealedSHA, seal.ClosureDigest, seal.ManifestDigest, seal.Device, seal.Inode, seal.OwnerUID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`UPDATE tasks SET accepted_completion_run_id=?, accepted_completion_request_id=? WHERE id=42`, worker, request); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO runs (id,tier,role,worksource,subject) VALUES (?, 'pipeline', 'verifier', 'ws-verdict', 42)`, verify); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`UPDATE lock SET run_id=?, worksource='ws-verdict', subject=42, owner='verifier', acquired_at=datetime('now'), hard_deadline_at=datetime('now', '+1 hour') WHERE id=1`, verify); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	runJSON := filepath.Join(f.base, "verify-42.run.json")
+	if err := os.WriteFile(runJSON, []byte("{\"run_id\":\"verify-42\",\"tier\":\"pipeline\",\"role\":\"verifier\"}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	agent := "mc-run-" + verify
+	f.docker("create", "--rm", "--name", agent, "--network", "none", "--user", "10002:10002",
+		"-v", taskRoot+":/workspace:ro", "-v", projection+":/workspace/source",
+		"-v", filepath.Join(taskRoot, "source", ".git")+":/workspace/source/.git:ro",
+		"-v", filepath.Join(taskRoot, "source", ".mission-control")+":/workspace/source/.mission-control:ro",
+		"-v", spineDir+":/mc/spine", "-v", runJSON+":/mc/run.json:ro", "-e", "MC_SPINE=/mc/spine/spine.db",
+		image, "sh", "-ec", "printf drift > /workspace/source/README.md; mc verifier verdict 42 --run verify-42 --outcome pass --evidence d6-evidence --sha "+seal.SealedSHA)
+	t.Cleanup(func() { _ = exec.Command("docker", "rm", "-f", agent).Run() })
+	mounts := f.dockerOutput("inspect", "--format", "{{range .Mounts}}{{.Source}}|{{.Destination}}|{{.RW}}\\n{{end}}", agent)
+	for _, want := range []string{
+		taskRoot + "|/workspace|false",
+		projection + "|/workspace/source|true",
+		filepath.Join(taskRoot, "source", ".git") + "|/workspace/source/.git|false",
+		filepath.Join(taskRoot, "source", ".mission-control") + "|/workspace/source/.mission-control|false",
+	} {
+		if !strings.Contains(mounts, want) {
+			t.Fatalf("agent bind inspection missing %q:\n%s", want, mounts)
+		}
+	}
+	output, err := exec.Command("docker", "start", "-a", agent).CombinedOutput()
+	if err == nil || !strings.Contains(string(output), "tracked-tree drift") {
+		t.Fatalf("dirty disposable verdict = (%v, %q), want tracked-tree fence refusal", err, output)
 	}
 }
 
@@ -650,6 +791,15 @@ func (f *fixture) docker(args ...string) {
 	if out, err := exec.Command("docker", args...).CombinedOutput(); err != nil {
 		f.t.Fatalf("docker %v: %v\n%s", args, err, out)
 	}
+}
+
+func (f *fixture) dockerOutput(args ...string) string {
+	f.t.Helper()
+	out, err := exec.Command("docker", args...).CombinedOutput()
+	if err != nil {
+		f.t.Fatalf("docker %v: %v\n%s", args, err, out)
+	}
+	return string(out)
 }
 
 func (f *fixture) git(args ...string) string {
