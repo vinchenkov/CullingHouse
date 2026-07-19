@@ -864,7 +864,15 @@ func attestCandidateMounts(home string, cand *preparedCandidate, allowLegacyFake
 		}
 		plan.CompletionSeal = &step
 	}
-	if baseRole(string(cand.spawn.Role)) == "verifier" && cand.spawn.SubjectID != nil && cand.mountState.SubjectAcceptedCompletionSeal != nil && cand.mountState.SubjectAcceptedSealRebuild == nil {
+	// The accepted-seal rebuild and verifier projection are downstream setup
+	// authorities that REQUIRE the seal-consumer repo task rows (the /workspace
+	// RO task-root bind the resident strips). Those rows exist only on the
+	// non-fake repo path; the legacy-fake workspace lane produces just
+	// workspace:source. Gating the step emission on the same !allowLegacyFakeWorkspace
+	// condition keeps the plan coherent — a fake-routed verifier over a sealed
+	// task launches as an ordinary legacy verifier instead of receiving an
+	// unsatisfiable rebuild step the resident refuses every tick (2026-07-19).
+	if !allowLegacyFakeWorkspace && baseRole(string(cand.spawn.Role)) == "verifier" && cand.spawn.SubjectID != nil && cand.mountState.SubjectAcceptedCompletionSeal != nil && cand.mountState.SubjectAcceptedSealRebuild == nil {
 		s := cand.mountState.SubjectAcceptedCompletionSeal
 		plan.AcceptedSealRebuild = &PrivateDispatchAcceptedSealRebuild{
 			TaskID: *cand.spawn.SubjectID, RunID: s.RunID, CompletionRequest: s.CompletionRequest,
@@ -872,7 +880,7 @@ func attestCandidateMounts(home string, cand *preparedCandidate, allowLegacyFake
 			ManifestDigest: s.ManifestDigest, Device: s.Device, Inode: s.Inode, OwnerUID: s.OwnerUID,
 		}
 	}
-	if baseRole(string(cand.spawn.Role)) == "verifier" && cand.spawn.SubjectID != nil && cand.mountState.SubjectAcceptedSealRebuild != nil {
+	if !allowLegacyFakeWorkspace && baseRole(string(cand.spawn.Role)) == "verifier" && cand.spawn.SubjectID != nil && cand.mountState.SubjectAcceptedSealRebuild != nil {
 		b := cand.mountState.SubjectAcceptedSealRebuild
 		s := cand.mountState.SubjectAcceptedCompletionSeal
 		plan.VerifierProjection = &PrivateDispatchVerifierProjection{TaskID: *cand.spawn.SubjectID, RebuildRunID: b.RunID,

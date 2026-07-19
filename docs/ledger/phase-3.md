@@ -1934,3 +1934,63 @@ startup.
 NEXT (moved to PROGRESS.md): carry the production-Worker E2E through the
 resident-driven Verifier accepted-seal rebuild and on through
 Verifier→Packager→land.
+
+## 2026-07-18 (cont.) — the live refusal IS real (correcting the prior entry): fake-verifier routing, plus a latent seal-identity crossing
+
+The prior entry's claim that the accepted-seal-rebuild refusal "was never
+actually observed — only assumed" is **wrong**, and this entry corrects it.
+Drove the production-Worker E2E past `worked` with throwaway instrumentation
+(a resident-log/spine probe + an `MC_ATTEST_DEBUG` dump inside
+attestCandidateMounts; all reverted). The live resident refuses
+`accepted-seal rebuild has no canonical task-root bind` on a loop — three
+Verifier runs dispatched, each refused, lease-held then reaped.
+
+Root cause, proven by the attest dump: the E2E routes `verifier | fake | fake`.
+A fake route sets `allowLegacyFakeWorkspace=true`, so
+`deriveDispatchMountRequests` takes the legacy-workspace branch and returns
+ONLY `workspace:source` — never the seal-consumer 15 task rows. The worker
+(routed `codex/chatgpt`, non-fake) got all 15 including `task-root`; the
+verifier got `entries=1 ids=[workspace:source]` with `rebuildStep=true`. So the
+committed plan carried `accepted_seal_rebuild` with no `/workspace` task-root
+bind — exactly the resident refusal. The isolated Go guard test from the prior
+entry is still valid: it exercises the NON-fake path
+(`allowLegacyFakeWorkspace=false`), which real production always uses and which
+does carry the task-root entry. The refusal is therefore a test-routing
+artifact, not a real-production attest defect — but it IS observed, and the
+plan it produces is genuinely incoherent.
+
+Fixed that incoherence (this slice, green):
+`TestAttestCandidateMountsFakeVerifierNeverCarriesAcceptedSealRebuild`
+(red-first) then gated both downstream setup steps
+(`AcceptedSealRebuild`, `VerifierProjection`) on `!allowLegacyFakeWorkspace` in
+attestCandidateMounts. A fake-routed verifier over a sealed task now launches as
+an ordinary legacy verifier instead of receiving an unsatisfiable step it
+refuses every tick. Conservative: it matches the exact condition that produces
+the steps' required binds; the non-fake path is unchanged (both sibling guard
+tests stay green); the fake walking-skeleton never seals, so nothing else moves.
+
+Second defect found, DEFERRED to the carry-through slice (design work, not
+fixed here): the completion seal's device/inode/owner are recorded by the
+setuid publisher INSIDE the container (`completionsealpublish.go` `os.Lstat` of
+the `/mc/private/completion-seal` bind), so they are namespace-local
+(probe: `seal_dev=48 seal_ino=… seal_uid=10001`). The resident's
+`recheckAcceptedSeal` (task-skeleton.ts) compares those against the HOST-side
+lstat of `MC_HOME/seals/<run>` (host operator uid 501, host device), which on
+Docker Desktop differs — so even the non-fake path would refuse at
+re-attestation. The direct `TestAcceptedSealRebuildDockerBoundary` dodged this
+by publishing the seal host-side (`verbs.SealTaskCompletion` in-process). The
+conservative fix direction: `recheckAcceptedSeal` cannot trust the
+namespace-local recorded identity; it should verify the locally-derived
+canonical path + non-symlink dir + host-operator ownership, and rely on the
+in-image immutable manifest/pack-byte verification (the manifest digest is
+bound in `completion_seals`) as the integrity guarantee — mirroring how the
+task-root crossing already moved identity comparison to the resident's pre-bind
+boundary. This weakens a defense-in-depth check, so it needs a logged deviation
+(§6) and belongs in its own slice.
+
+Full mc fast lane green (verbs fresh, 19.8s). The production-Worker E2E baseline
+passes unchanged (probe reverted).
+
+NEXT (moved to PROGRESS.md): the carry-through slice — fix the
+`recheckAcceptedSeal` seal-identity crossing, route the E2E verifier non-fake,
+and assert the resident-driven rebuild receipt lands; then Verifier→Packager→land.

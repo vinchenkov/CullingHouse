@@ -483,18 +483,33 @@ deleted, not struck through. History is in `docs/ledger/`.
 The completion-seal Docker line is closed: D1 deployment-mirror, D5 first-task
 setup, D6 accepted-seal rebuild, D6 image completion-wrapper, the carrier/unit +
 legacy-route crossings, AND the production resident Worker seal (dace2c6) are
-all green. The resident-driven Verifier accepted-seal REBUILD is also wired: the
-seal-consumer attest arm (07615df) already emits the `/workspace` RO task-root
-entry the resident effector strips, so the previously-"owed" refusal never
-actually fired (it was assumed, not observed — the production E2E stops at
-`worked`). Locked in by `TestAttestCandidateMountsSealConsumerCarriesResident
-TaskRootBind`; the resident half is proven by effects.test.ts:415. The remaining
-D6 loop work is the live E2E carry-through (below).
+all green. The resident-driven Verifier accepted-seal REBUILD attest is proven
+on the NON-fake production path: `TestAttestCandidateMountsSealConsumerCarries
+ResidentTaskRootBind` shows it emits the `/workspace` RO task-root entry the
+resident effector strips; the resident half is proven by effects.test.ts:415.
 
-NEXT: Carry the production-Worker E2E (TestProductionWorkerCompletionSeal
-DockerBoundary) past `worked` through the resident-driven Verifier accepted-seal
-rebuild (record + continue on the same task), then on through
-Verifier→Packager→land. The Go attest + resident effector are both proven for
-the rebuild arm; this is the live Docker crossing that exercises them together.
-Keep committed-tree projections, structured Engine-API binds, and launchd in
-their named later slices.
+Two defects the live E2E surfaced (2026-07-18/19; the earlier "never observed"
+note was wrong — it IS observed, see ledger):
+1. FIXED: a fake-routed verifier over a sealed task took the legacy-workspace
+   path (only `workspace:source`, no task rows) yet still got an
+   `accepted_seal_rebuild` step — an incoherent plan the resident refused every
+   tick, churning the lease. Both downstream setup steps are now gated on
+   `!allowLegacyFakeWorkspace` (`TestAttestCandidateMountsFakeVerifierNever
+   CarriesAcceptedSealRebuild`).
+2. OPEN (carry-through slice): the completion seal's device/inode/owner are
+   recorded by the in-container setuid publisher (namespace-local, uid 10001),
+   but the resident's `recheckAcceptedSeal` compares them against the HOST-side
+   lstat of `MC_HOME/seals/<run>` — mismatch on Docker Desktop, so even the
+   non-fake path would refuse at re-attestation. The direct rebuild Docker test
+   dodged it by publishing host-side. Fix direction in the ledger.
+
+NEXT: The carry-through slice. (a) Fix `recheckAcceptedSeal` (resident/src/
+task-skeleton.ts) — it cannot trust the namespace-local recorded seal identity;
+verify the locally-derived canonical path + non-symlink dir + host-operator
+ownership and rely on the in-image immutable manifest/pack verification, with a
+logged §6 deviation (defense-in-depth weakening). (b) Route the E2E verifier
+non-fake (like the worker; the rebuild returns before agent launch, so no
+adapter is needed) and extend `TestProductionWorkerCompletionSealDockerBoundary`
+past `worked` to assert the `accepted_seal_rebuild_receipts` row lands. Then on
+through Verifier→Packager→land. Keep committed-tree projections, structured
+Engine-API binds, and launchd in their named later slices.

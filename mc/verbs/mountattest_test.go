@@ -483,6 +483,49 @@ func TestAttestCandidateMountsFakeLegacyWorkspaceRidesTheCarrier(t *testing.T) {
 	}
 }
 
+// A fake-routed verifier over a sealed task takes the legacy-workspace path,
+// which produces only the workspace:source bind — never the seal-consumer task
+// rows the resident's accepted-seal rebuild effector requires. Emitting the
+// rebuild step there would yield a plan the resident cannot satisfy: it refuses
+// on the missing /workspace task-root bind every tick, churning the lease
+// (observed live, 2026-07-19). The downstream setup steps must be gated on the
+// same non-fake condition that produces their required binds.
+func TestAttestCandidateMountsFakeVerifierNeverCarriesAcceptedSealRebuild(t *testing.T) {
+	root := t.TempDir()
+	mcHome := maMkdir(t, root, "mc-home")
+	workspace := maMkdir(t, root, "checkout")
+	allowlist := fmt.Sprintf("version = 1\n\n[[allow]]\npath = %q\ntarget = \"source\"\naccess = \"rw\"\n", workspace)
+	if err := os.WriteFile(filepath.Join(mcHome, "mount-allowlist"), []byte(allowlist), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	maStubSnapshot(t, root, "ws-fake")
+	subject := int64(7)
+	state := PrivateDispatchMountState{SelectedWorksource: "ws-fake", Worksources: []PrivateDispatchWorksource{{
+		WorksourceID: "ws-fake", Kind: "repo", Status: "active", ProfilePresent: true,
+		ProfileID: "default", WorkspaceRoot: workspace,
+		ArtifactRoots: []string{}, ReadonlyMounts: []string{}, DeniedPaths: []string{},
+	}}, SubjectAcceptedCompletionSeal: &substrate.DispatchAcceptedCompletionSeal{
+		RunID: "run-worker-seal", CompletionRequest: "0123456789abcdef", ObjectFormat: "sha1",
+		SealedSHA: strings.Repeat("c", 40), ClosureDigest: strings.Repeat("d", 64),
+		ManifestDigest: strings.Repeat("e", 64), Device: "17", Inode: "42", OwnerUID: os.Getuid(),
+	}}
+	cand := &preparedCandidate{spawn: &dispatch.Spawn{Role: dispatch.RoleVerifier, SubjectID: &subject}, mountState: state}
+
+	plan, r, err := attestCandidateMounts(mcHome, cand, true)
+	if err != nil || r != nil || plan == nil {
+		t.Fatalf("fake verifier attest = plan %+v refusal %+v err %v, want a plan", plan, r, err)
+	}
+	if plan.AcceptedSealRebuild != nil {
+		t.Fatalf("fake-lane plan carries a rebuild step the legacy workspace cannot satisfy: %+v", plan.AcceptedSealRebuild)
+	}
+	if len(plan.Entries) != 1 || plan.Entries[0].LogicalID != "workspace:source" {
+		t.Fatalf("fake verifier plan entries = %+v, want the lone legacy workspace bind", plan.Entries)
+	}
+	// The non-fake sibling still carries the step (guarded separately by
+	// TestAttestCandidateMountsSealConsumerCarriesResidentTaskRootBind); this
+	// test only removes the incoherent fake-lane emission.
+}
+
 // An absent sandbox profile is deployment configuration the candidate never
 // authored: deployment health, not a per-task confinement block
 // (takeover-review reclassification, 2026-07-16).
