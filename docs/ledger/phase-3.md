@@ -2465,3 +2465,82 @@ currently empty because `mc init` never sets that column.
 NEXT (moved to PROGRESS.md): give the Packager a production mount arm — most
 likely artifact-root-only, since it mutates no repository state — then carry the
 E2E through the packet decision and land.
+
+## 2026-07-19 (fourth correction) — the flake was never one failure, and never fd-3
+
+A decorrelated static read demolished the framing I had been carrying, and a
+three-line diagnostic change then produced the data to settle it.
+
+**`__dispatch-prepare failed` is not the fd-3 crossing.** `brokerDispatch`
+(`resident_control.go:46-61`) is strictly ordered: adopt fd 3 → resolve the
+deployment → `exchangeControlHello` → `brokerPrepareCommit`. The string
+"private helper __dispatch-prepare failed" is produced inside
+`brokerPrepareCommit`, so **reaching it requires the hello to have already
+succeeded**. Every time PROGRESS said "every measured flake is the AF_UNIX fd-3
+control crossing", the evidence said the opposite: the fd-3 handshake worked and
+the `docker exec` into the warm helper is what failed. Two different crossings.
+
+The two log lines are also two different events in two different ticks —
+`mc dispatch failed (exit 1)` is a child exit (`tick-loop.ts:55`), while
+`tick failed: resident control hello timeout` is an exception before any exit
+code (`tick-loop.ts:35`). They cannot co-occur in one tick, so reporting them
+as one population was wrong.
+
+**And KNOWN-FAILING (2)'s mechanism cannot be KNOWN-FAILING (3)'s.** KF(2) is a
+Bun unit test whose child exits immediately with `waitForAck=false`; PROGRESS
+itself records that "production mc waits for the ack, so the immediate-exit
+shape is test-only". Production blocks in `readCanonicalControlFrame`, so the
+reap-vs-poller race has no window. I had imported a neighbouring entry's
+mechanism as if it were evidence.
+
+**Why it stayed unknown for so long: the evidence was being destroyed, twice.**
+`private_dispatch.go` set `cmd.Stderr = io.Discard` and collapsed every nonzero
+exit into a bare "private helper <verb> failed"; the helper then printed
+"private prepare refused" without its own error. The fixture's own comment
+("diagnosable only by reproducing the prepare host-side") was describing a
+self-inflicted wound. Both layers now report (36604f7).
+
+**The payoff was immediate.** Running to reproduction, the same flake now names
+two DISTINCT causes that were previously one opaque string:
+
+- `exit status 124` — the container-side absolute deadline expiring.
+  `private_dispatch.go:201` fixes that deadline BEFORE `exec.CommandContext`
+  starts Docker, and the code's own comment says the consequence: a slow
+  `docker exec` startup leaves the helper only the remainder, "or exits 124
+  immediately when the deadline has already passed". `privateHelperSelfTimeout`
+  is 4s. So this is a fixed budget sized for an idle machine, not a race.
+- `exit status 1: mc: private prepare refused` — a real prepare refusal, whose
+  reason is now visible for the first time.
+
+**What is now known vs still open.** Known: the dominant symptom is downstream
+of a successful hello; at least two distinct causes exist; one of them is the 4s
+budget. Still open: the split between them, and what produces
+`tick failed: Failed to connect` (from `Bun.connect`, before the hello window
+opens — a likely third mode, and the only one that is genuinely fd-3-adjacent).
+A genuine fd-3 defect is NOT ruled out; only the specific mechanism cited for it
+is.
+
+**Also still present, and I had thought otherwise:** removing the host-side
+`sql.Open` did not remove the VirtioFS spine. `e2e_test.go:1199-1201` still puts
+the spine file on a host bind and `:1215` still binds it into the helper, so
+every helper spine read — and `__dispatch-prepare` is spine-read-heavy, building
+the dispatch mount projection — still crosses VirtioFS. That is a *latency*
+effect, entirely separate from the *correctness* (two-kernel WAL) effect that
+was removed, and it plausibly feeds the 4s deadline. It is also the variable
+that still distinguishes this test from `TestWalkingSkeleton`, which uses a
+named volume and is 10/10. The controlled experiment that discriminates latency
+from an fd-3 defect is to move this test's spine to a named volume.
+
+Ruled out by reading: tick overlap. `tick-loop.ts:22,29-32` has an in-flight
+guard that skips rather than overlaps, so the resident cannot amplify its own
+load.
+
+**Fourth correction in one session, same shape as the other three.** Each time,
+a single observation or a borrowed mechanism was promoted to a cause. What
+finally moved this forward was not a better theory but making the system report
+its own reasons — three lines that turned a mystery into two named causes. When
+a failure is undiagnosable, fixing the diagnosis is the work; theorising is not.
+
+NEXT (moved to PROGRESS.md): move this test's spine to a named volume (seed
+through the helper) as the controlled experiment on the 4s-deadline hypothesis;
+then the Packager production mount arm, then the packet decision and land.
