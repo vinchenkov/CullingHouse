@@ -10,7 +10,7 @@ Access does NOT fix it — the failure precedes any policy lookup. Symptom:
 `stat` works, reads return `Operation not permitted`, git says
 `Unable to read current working directory`.
 
-LAST GREEN SHA: 36604f7 (local; the operator pushes manually — decided 2026-07-14. Agents: do not push.)
+LAST GREEN SHA: 103d1a1 — five-leg fast lane + full Docker suite 7/7 (local; the operator pushes manually — decided 2026-07-14. Agents: do not push.)
 
 PHASES PASSING: Phase 0 COMPLETE (S1–S8 all green, no fallback ADRs; only operator-leg deferrals remain); Phase 1 COMPLETE (1a substrate 172; 1b walking skeleton reviewed-and-fixed — fake-harness 43, agent-runner 13, runner/image 40, resident 42, dispatch + cmd/mc suites; Docker e2e PASS ×4 total); Phase 2 COMPLETE for every unparked acceptance line (domain/§18 surface, deterministic split-brain convergence, bounded honesty + five mutants, tagged dispatch/metamorphic/twin-spine lifecycle properties; the initiative-wave CLI is no longer isolated — ADR-020 landed 2026-07-14 and closed the last Phase 2 acceptance line)
 KNOWN-FAILING: `TestOnboardConcurrentFreshHomeNeverDeletesTheWinner` (mc/verbs),
@@ -496,6 +496,18 @@ kept below. Operator legs that remain open are under `## Parked`, not here.
         projection is REFUSED, never that a clean one is ADMITTED — and the
         resident's fixture plan had 1 entry where the real one has 15. Both
         directions now pinned; E2E extended through the sealed verdict
+  - [x] The E2E spine returns to the lock domain (103d1a1), closing the
+        long-running `TestProductionWorkerCompletionSealDockerBoundary` flake.
+        The controlled A/B refuted its own latency hypothesis — passing runs are
+        ~5s in BOTH arms — and identified CORRUPTION: several containers sharing
+        one SQLite database across a VirtioFS bind, surfacing both as a
+        misaligned row read (a worksource string scanned from the integer
+        `subject` column, which is why it read as a domain refusal and sent four
+        corrections hunting fd-3) and as `database disk image is malformed (11)`.
+        Named volume 42/42 green (idle, interleaved under load, extended); host
+        bind 20/22. Seeding survives via a `withSeededSpine` hook that builds and
+        closes the spine in an unmounted temp dir and `docker cp`s it in before
+        any container opens it. a3928f1 removed one kernel but not the sharing
 - [ ] Phase 4 — E2E control loops (six scenario families)
 - [ ] Phase 5 — Real-subscription acceptance (operator-scheduled)
 - [ ] Release prep (after Phase 5): swap the repo's construction face for
@@ -541,64 +553,13 @@ helper-scope crossing (d3471f5) — and
 `accepted_seal_rebuild_receipts` row and its Verifier continuation. Full Docker
 suite 7/7 green at 485a7f2. Diagnoses in docs/ledger/phase-3.md (2026-07-19).
 
-NEXT: Move this test's spine to a Docker named volume — the controlled
-experiment that discriminates the 4s-deadline latency hypothesis from a real
-fd-3 defect. NOT a one-line swap: with a named volume there is NO host path to
-the spine (that is exactly why `withHostBindSpine()` was introduced), so the
-current host-side seeding — `verbs.OpenSpine` + raw SQL + `RegisterFirstTaskSetup`
-+ `RecordFirstTaskSetupClosure` at `e2e_test.go:891-929` — cannot run as written.
-Suggested route, which needs no new verb surface and no concurrent access: build
-the seeded spine.db host-side in a PLAIN temp dir (its own kernel, nothing
-shared), close it cleanly so WAL is checkpointed, then `docker cp` it into the
-named volume via a throwaway container BEFORE the helper starts. Seeding logic
-is then unchanged and no host process ever opens the spine the containers use. Then give the Packager a production mount
-arm (likely artifact-root-only — it mutates no repository state), then carry the
-E2E through the packet decision and land. `mountattest.go:267-278` health-refuses every repo-Worksource role except
-the standalone Worker and seal-consuming Verifier; that is LATENT today only
-because the E2E routes the Packager `fake/fake` (e2e_test.go:943), so it rides
-the legacy-workspace lane. It bites the moment a Packager is routed non-fake.
-
-KNOWN-FAILING (3): `TestProductionWorkerCompletionSealDockerBoundary`
-(mc/e2e, docker_e2e tag), INTERMITTENT ~2 in 10 — and PRE-EXISTING, not caused
-by the setup-record split. It always fails the same way and always BEFORE the
-Worker completes: `waitForTaskStatus(7,"worked")` times out at
-`status=seeded` while the resident loops on `mc dispatch failed (exit 1): mc:
-private helper __dispatch-prepare failed` / `tick failed: resident control hello
-timeout`. It never fails in the rebuild. Measured on both sides: 2/10 at
-485a7f2, 1/10 at the parent commit `d3471f5^` (rebuild wait shortened to 5s so
-each run is fast) — same population. `TestWalkingSkeleton` was 10/10, so this is
-not the general helper crossing but this test's configuration (production route
-+ `withHostBindSpine()`). Same load-sensitive resident-control family as
-KNOWN-FAILING (2) — but NOT its mechanism, and NOT fd-3 (ledger 2026-07-19,
-fourth correction). `brokerDispatch` (`resident_control.go:46-61`) reaches
-"private helper __dispatch-prepare failed" only AFTER `exchangeControlHello`
-returns nil, so that symptom is downstream of a successful fd-3 handshake — the
-failing crossing is the `docker exec` into the warm helper. KF(2)'s
-reap-vs-poller race also cannot apply: it needs `waitForAck=false`, and
-production blocks for the ack.
-Since 36604f7 the failure reports its own cause, and there are at least TWO:
-  - `exit status 124` — the container-side absolute deadline expiring.
-    `private_dispatch.go:201` fixes it BEFORE docker starts, and
-    `privateHelperSelfTimeout` is 4s, so a slow `docker exec` startup under load
-    yields an immediate 124. A fixed budget sized for an idle machine.
-  - `exit status 1: mc: private prepare refused` — a real prepare refusal.
-Still open: the split between them, and `tick failed: Failed to connect` (from
-`Bun.connect`, BEFORE the hello window — the only genuinely fd-3-adjacent mode).
-A real fd-3 defect is not ruled out; only the borrowed mechanism is.
-Rates (all pre-diagnostic, so they mix these causes): 2/10 at HEAD, 1/10 at the
-parent commit, 2/12 after the spine-read removal — flat, so that change was not
-the cure and was wrongly credited as one.
-NOTE the VirtioFS spine bind is STILL PRESENT (`e2e_test.go:1199,1215`): only
-the host-side `sql.Open` was removed (a two-kernel WAL *correctness* fault,
-Inv. 24 — demonstrated at 13 `Bus error` crashes per 400 writes vs 0
-single-kernel). Helper spine reads still cross VirtioFS, and
-`__dispatch-prepare` is spine-read-heavy — a *latency* effect that plausibly
-feeds the 4s deadline, and the variable that still distinguishes this test from
-`TestWalkingSkeleton` (named volume, 10/10). Fail-closed. Owner:
-whoever next touches the resident control crossing — not a blocker for the next
-slice. Repro: `cd mc && for i in $(seq 1 10); do mise exec -- go test -tags
-docker_e2e -count=1 -timeout 20m -run
-TestProductionWorkerCompletionSealDockerBoundary ./e2e/... || break; done`.
+Owed, not blocking: production's spine-volume OWNERSHIP is unspecified. Docker
+materializes a fresh named volume as root:root 0755, while the seal path runs
+agent containers `--user 10002:10002` and the completion wrapper drops to
+uid 10001 — and both write the spine plus its `-wal`/`-shm` siblings. Nothing
+outside `spikes/` creates the volume; the E2E fixture papers over it with a
+`chmod 0777` on the volume root. Belongs to the install.sh/onboarding
+deliverable (spec §17).
 
 Owed, not blocking: the clearing mechanism chosen in (b) (in-container replace,
 over the host exact-empty primitive or staging-then-swap) is a design the ADRs
@@ -608,3 +569,22 @@ sub-checklist. That checklist is live acceptance state while Phase 3 is open, so
 it compacts at the phase boundary (the precedent Phases 0–2 set), not before.
 Keep committed-tree projections, structured Engine-API binds, and launchd in
 their named later slices.
+
+NEXT: Carry S5's fail-closed bind-mount spine guard into `mc`. Phase 0 PROVED
+it (`spikes/05-sqlite-wal/RESULT.md` row 5: parse `/proc/self/mountinfo`,
+longest-prefix match the spine's directory, ALLOWLIST block-device-backed local
+filesystems — ext4/ext3/xfs/btrfs with a `/dev/` source — and refuse before
+`sql.Open` in every subcommand) and it was never implemented: `grep -ri
+"mountinfo|virtiofs|ext4" mc/` returns nothing. Its absence is what let the E2E
+fixture put the spine on a VirtioFS bind and corrupt it for four corrections
+(ledger 2026-07-19, fifth). Two pins from S5: a DENYLIST keyed on "virtiofs"
+would have accepted the bind (Docker Desktop surfaces it as `fuse.`), so the
+allowlist shape is load-bearing; and the guard is Linux-only — the darwin host
+`mc` has no `/proc`, and per §11.5 it never opens the spine anyway, so scope the
+guard to the in-container path rather than weakening it for darwin. Then give
+the Packager a production mount arm (likely artifact-root-only — it mutates no
+repository state), then carry the E2E through the packet decision and land.
+`mountattest.go:267-278` health-refuses every repo-Worksource role except the
+standalone Worker and seal-consuming Verifier; that is LATENT today only because
+the E2E routes the Packager `fake/fake` (e2e_test.go:943), so it rides the
+legacy-workspace lane. It bites the moment a Packager is routed non-fake.

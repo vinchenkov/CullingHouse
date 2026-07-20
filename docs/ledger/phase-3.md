@@ -2544,3 +2544,91 @@ a failure is undiagnosable, fixing the diagnosis is the work; theorising is not.
 NEXT (moved to PROGRESS.md): move this test's spine to a named volume (seed
 through the helper) as the controlled experiment on the 4s-deadline hypothesis;
 then the Packager production mount arm, then the packet decision and land.
+
+## 2026-07-19 (fifth correction) — the flake was corruption, and Phase 0 had already told us
+
+The named-volume experiment ran as a controlled A/B on one idle machine and then
+interleaved under 6-way CPU load. It refuted its own hypothesis and produced the
+cause.
+
+**Latency is refuted.** Passing runs take ~5s in BOTH arms. There is no
+steady-state VirtioFS penalty for the 4s helper deadline to absorb, so the
+"spine-read-heavy `__dispatch-prepare` crossing VirtioFS feeds the deadline"
+story — carried in PROGRESS since the fourth correction — is wrong. I nearly
+believed the opposite: the first named-volume run passed in 4.5s and I called
+that implausible for three container round-trips. Running the control is what
+corrected me — the old arm passes in ~5s too. **The pass duration was never the
+signal; only the failures were.**
+
+**The cause is corruption.** With the spine on a host bind, several containers
+(helper, agent, setup) open one SQLite database across VirtioFS, where WAL/shm
+coordination is unsound. Two signatures, both only ever on the bind arm:
+
+- `sql: Scan error on column index 2, name "subject": converting driver.Value
+  type string ("ws-e2e") to a int64` — a **misaligned row read**. Column index 2
+  of `SELECT role, tier, subject, ended_at FROM runs` is `subject`; a worksource
+  string surfaced there. No writer can produce that row: the only production
+  INSERT (`domain/lease.go:90`) is correctly ordered, and I checked it before
+  suspecting the storage.
+- `database disk image is malformed (11)` — SQLITE_CORRUPT outright.
+
+That first signature is why this cost so much. A torn read **presents as a
+domain refusal**, so every previous session read it as logic and went hunting
+fd-3, tick overlap, and deadline budgets. 36604f7 (make failures report their
+own cause) is what finally made it legible — the diagnostic change paid for
+itself one session later.
+
+| arm | runs | failures |
+| --- | --- | --- |
+| named volume | 42 (10 idle + 12 interleaved under load + 20 extended) | 0 |
+| host bind | 22 (10 idle + 12 interleaved under load) | 2, both the above |
+
+**a3928f1 was half a fix.** Removing the host-side `sql.Open` removed one
+kernel, but not the sharing. One kernel was never the requirement — a filesystem
+with correct shared-memory and locking semantics is. Inv. 24's lock domain was
+being violated BY THE FIXTURE, which abandoned the named volume purely so the
+test could seed host-side. That convenience cost four corrections.
+
+**Seeding did not actually need the bind.** The fixture now builds and seeds the
+spine in a plain temp dir that is never mounted, closes it (checkpointing the WAL
+away), and `docker cp`s the closed file into the volume through a never-started
+stager before any container opens it. No process ever shares the file. Seeding
+logic is unchanged; it moved into a `withSeededSpine` hook.
+
+**The finding that outlives the fix: Phase 0 already proved the guard, and it
+was never carried into `mc`.** S5's RESULT.md row 5 is "Fail-closed guard: DB on
+a bind-mounted (VirtioFS) path is REJECTED — PASS", with a `/proc/self/mountinfo`
+longest-prefix allowlist of block-device-backed local filesystems, running
+before `sql.Open` in every subcommand. S5's own note is that a denylist keyed on
+"virtiofs" would have ACCEPTED the bind, because Docker Desktop surfaces it as
+`fuse.` — so the allowlist shape is load-bearing. `grep -ri mountinfo|virtiofs|
+ext4 mc/` returns **nothing**: the guard exists only in the spike. Had it
+shipped, the fixture could not have created this spine at all, and none of the
+five corrections would have happened. This is not a live production break —
+production takes its spine from a named volume via resident config — so it is
+defense-in-depth that is absent, not an invariant broken today. It is the
+strongest candidate for the next slice.
+
+**Owed, found in passing:** the fixture chmods the volume root 0777 because
+Docker materializes a fresh volume as root:root 0755, while the seal path runs
+agent containers `--user 10002:10002` and the completion wrapper drops to 10001
+— and both write the spine plus its `-wal`/`-shm` siblings. Nothing outside the
+spikes creates the spine volume, so **production's spine-volume ownership is
+unspecified**; it belongs to the install.sh/onboarding deliverable (spec §17).
+
+**What is now closed vs still open.** Closed: KNOWN-FAILING (3), and with it the
+"every measured flake is the fd-3 crossing" framing. Open and NOT claimed fixed:
+the `exit status 124` mode and `tick failed: Failed to connect` were not
+observed in 42 post-fix runs, but 42 runs is weak evidence for modes that were
+always rare. If either recurs it is a separate defect, on a spine that is no
+longer corrupting.
+
+**Five corrections, one shape.** Every one promoted a single observation to a
+cause. What ended it was not a better theory but two mechanical habits: making
+the system report its own reasons, and **running the control**. The experiment
+that settles a question is worth more than the theory that motivated it — this
+one refuted its own hypothesis and was still the most valuable thing in the
+session.
+
+NEXT (moved to PROGRESS.md): carry S5's fail-closed bind-mount spine guard into
+`mc`; then the Packager production mount arm, then the packet decision and land.
