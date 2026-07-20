@@ -260,3 +260,116 @@ func gitDirOf(g landingGit, workspace string) string {
 	}
 	return filepath.Join(workspace, ".git")
 }
+
+// landingStorePins are the frozen facts the landing instruction carries. They
+// are INPUTS to match the sealed store against, never values read off it.
+type landingStorePins struct {
+	TaskID        int64
+	ObjectFormat  string
+	VerifiedSHA   string
+	LocalRepoUUID string
+}
+
+// landingStoreFacts is what the sealed stage establishes for the stages after
+// it: the reviewed commit and its tree, both proven to be the assignment's.
+type landingStoreFacts struct {
+	Head string
+	Tree string
+}
+
+// revalidateSealedTaskStore proves the RO task root holds exactly the sealed
+// artifact the immutable assignment named (ADR-017:741-743).
+//
+// NOT `inspectCompletableTaskStore`, deliberately. That function asks whether a
+// store is COMPLETABLE — its producer holds it RW and the identity facts are
+// OUTPUTS to be recorded. This asks whether a store IS the exact sealed
+// artifact already named: held RO, in a different effect class, with the
+// identity facts as INPUTS to match. The shapes rhyme and the direction of
+// proof is opposite, so sharing one function would mean a parameter that
+// selects which of two security questions is being asked. It also runs under
+// the LANDING fences rather than `sourceGitEnv()`, which lacks
+// GIT_NO_REPLACE_OBJECTS and a hooks override — and the sealed store is
+// attacker-shaped input to this class, not our own scratch space.
+// [owed: if a third consumer appears, unify the structural half deliberately]
+func revalidateSealedTaskStore(taskRoot string, pins landingStorePins) (landingStoreFacts, error) {
+	if pins.TaskID < 1 {
+		return landingStoreFacts{}, Domainf("sealed store pins name no task")
+	}
+	if err := validateSetupObjectFormat(pins.ObjectFormat); err != nil {
+		return landingStoreFacts{}, err
+	}
+	source := filepath.Join(taskRoot, "source")
+	gitDir := filepath.Join(taskRoot, "git")
+	g := landingGit{dir: source}
+
+	// The config must reproduce the generated fixed grammar EXACTLY, byte for
+	// byte, for the frozen format and uuid. Exact reproduction is what makes
+	// this a closed grammar rather than an allowlist: there is no room for an
+	// extra section, so no filter, hook path, or alternate can be declared.
+	body, err := os.ReadFile(filepath.Join(gitDir, "config"))
+	if err != nil {
+		return landingStoreFacts{}, Domainf("sealed store config is unreadable: %v", err)
+	}
+	if err := validateTaskGitConfig(body); err != nil {
+		return landingStoreFacts{}, Domainf("sealed store config is not the fixed grammar: %v", err)
+	}
+	if string(body) != string(generatedTaskGitConfig(pins.ObjectFormat, pins.LocalRepoUUID)) {
+		return landingStoreFacts{}, Domainf("sealed store config does not reproduce the frozen object format and repository UUID")
+	}
+	if fileNonEmpty(filepath.Join(gitDir, "objects", "info", "alternates")) {
+		return landingStoreFacts{}, Domainf("sealed store has object alternates; its closure would not be self-contained")
+	}
+
+	// NO separate `rev-parse --show-object-format` check here, and that is a
+	// deliberate removal rather than an omission. A draft had one. It was
+	// TAUTOLOGICAL: git derives the reported object format BY READING
+	// `extensions.objectFormat` from this same config file, which the exact
+	// reproduction above has already pinned byte for byte. Asking git to read a
+	// file we just compared against a generated constant is not a second
+	// opinion — it is the same opinion, laundered through a subprocess, and it
+	// would read as an independent fence to anyone auditing this list.
+	// Mutation confirmed it: disabling it left the suite green.
+
+	// The reviewed artifact must be pristine. Unlike the real repository's
+	// path-scoped fence, this side admits NO dirt at all: any modification here
+	// is a modification of the thing under review.
+	status, err := g.out("status", "--porcelain=v1", "--untracked-files=all")
+	if err != nil {
+		return landingStoreFacts{}, Domainf("sealed store status is unreadable: %v", err)
+	}
+	if status != "" {
+		return landingStoreFacts{}, Domainf("sealed store worktree is not clean; the reviewed artifact has been modified")
+	}
+
+	// Exactly one ref, the managed branch. This is also what keeps
+	// `refs/replace/*` out — a replacement could substitute different bytes for
+	// a reviewed object, and it lives under refs/ like any other ref.
+	branch := taskAssignmentBranch(pins.TaskID)
+	refs, err := g.out("for-each-ref", "--format=%(refname)")
+	if err != nil {
+		return landingStoreFacts{}, Domainf("sealed store refs are unreadable: %v", err)
+	}
+	if refs != "refs/heads/"+branch {
+		return landingStoreFacts{}, Domainf("sealed store does not hold exactly its managed branch %q", branch)
+	}
+	if head, err := g.out("symbolic-ref", "--quiet", "HEAD"); err != nil || head != "refs/heads/"+branch {
+		return landingStoreFacts{}, Domainf("sealed store HEAD is not its managed branch")
+	}
+
+	// The reviewed commit must be the exact verified SHA the assignment froze.
+	head, err := g.out("rev-parse", "--verify", "HEAD^{commit}")
+	if err != nil || len(head) != oidLen(pins.ObjectFormat) || !assignmentHex.MatchString(head) {
+		return landingStoreFacts{}, Domainf("sealed store HEAD is not a canonical commit")
+	}
+	if head != pins.VerifiedSHA {
+		return landingStoreFacts{}, Domainf("sealed store HEAD %q is not the frozen verified SHA %q", head, pins.VerifiedSHA)
+	}
+	tree, err := g.out("rev-parse", "--verify", "HEAD^{tree}")
+	if err != nil || len(tree) != oidLen(pins.ObjectFormat) || !assignmentHex.MatchString(tree) {
+		return landingStoreFacts{}, Domainf("sealed store tree is not canonical")
+	}
+	if err := fsckClean(gitDir); err != nil {
+		return landingStoreFacts{}, err
+	}
+	return landingStoreFacts{Head: head, Tree: tree}, nil
+}
