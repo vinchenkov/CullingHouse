@@ -3303,3 +3303,56 @@ Tally across 4a-4c: 25 fences, 8 vacuous. One in three.
 
 NEXT (in PROGRESS.md): 4d, the import — `pack-objects --revs --stdout` piped to
 `index-pack`, fsync and verify, no hardlink/alternate/speculative delete.
+
+## 2026-07-20 (4d) — the import, and dead code wearing the look of a fence
+
+The import is in (505e6d1). The `pack-objects | index-pack` pairing is the
+substance: it satisfies ADR-017:743-745's three prohibitions STRUCTURALLY rather
+than by discipline. Objects cross as a byte stream over a pipe, so there is no
+filesystem operation that could hardlink them; nothing writes
+`objects/info/alternates`, so there is no alternate to leave the real repository
+broken when the mount disappears; and index-pack only ever adds, so a crash
+leaves unreachable-but-valid objects that a retry deduplicates by hash — exactly
+the recovery ADR-017:745-746 describes. It creates no ref, because that is the
+next stage's durable marker and doing it here would make a crash mid-import
+indistinguishable from a completed one.
+
+Mutation found five vacuous. The one worth recording is a shape this ledger has
+not named before:
+
+**`if len(pack) == 0` was DEAD CODE WEARING THE LOOK OF A FENCE.** An empty rev
+range still emits a 32-byte pack — a 12-byte header plus a 20-byte trailer — so
+the length is never zero and the branch cannot execute. This is worse than a
+redundant fence. A redundant fence is a true check that something else also
+catches; this was a check that CANNOT FIRE, sitting where a reader would count
+it as coverage of the empty-closure case. And the empty-closure case is real:
+a reviewed commit equal to the frozen base imports nothing, and the stages after
+it would then create a ref and merge a no-op while reporting success. Replaced
+with a pack-header object-count parse, which is reachable and now tested both
+ways.
+
+Two others were measured and demoted rather than repaired: `--fix-thin` is a
+genuine no-op (pack-objects without `--thin` emits a self-contained pack, and
+index-pack accepted it into a repository lacking the base entirely) and is
+REMOVED; the sealed-store precheck is redundant with pack-objects' own rev
+validation and is retained only to fail fast naming which rev is missing.
+
+The last two are a category the taxonomy needed: **spec-mandated with no
+reachable failure.** ADR-017:744 says the import "fsyncs and verifies the
+imported objects", so the verification exists because the ADR requires it, not
+because a test can drive it — index-pack validates what it writes, so producing
+a store where it succeeded yet the objects are unreadable would mean corrupting
+the pack between write and read. Retained and labelled. The label matters: it
+tells the next reader not to go looking for the scenario that justifies it, and
+not to delete it when they fail to find one.
+
+Tally across 4a-4d: 32 fences, 13 vacuous. The rate is not falling, which is
+itself informative — it is not carelessness that produces them but the ordinary
+gap between "this check is correct" and "this check is reachable and load-bearing
+given every check around it".
+
+NEXT (in PROGRESS.md): 4e — CAS-create the ref with a zero old-value
+update-ref, re-check the SHA fence, `git merge --no-ff`. STOP at the merge.
+Verify there whether core.checkStat/core.trustctime actually matter for the
+read-tree/write-tree comparison; that claim has now been assumed twice and
+measured never.
