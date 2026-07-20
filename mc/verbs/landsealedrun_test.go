@@ -245,6 +245,39 @@ func TestLandSealedCarriesTheFrozenStoreFacts(t *testing.T) {
 	}
 }
 
+// A reviewed commit ALREADY reachable from the target must refuse, not merge
+// again. Legacy pinned this as "refuses an already-ancestor SHA instead of
+// deleting its inputs" (mc-land.test.ts:882); the sealed lane has no deletion,
+// so what matters is only that it refuses rather than producing a degenerate
+// second merge.
+//
+// This is also the concrete shape of the retry gap logged on 2026-07-20: with
+// no adoption path (ADR-017:750-753), a retry after a SUCCESSFUL landing must
+// fail closed. Here it refuses at the frozen-base binding — once the reviewed
+// commit is merged, it becomes the merge base itself, which is not the base the
+// assignment named. Fail-closed, and the message says so.
+func TestLandSealedRefusesAnAlreadyLandedReviewedCommit(t *testing.T) {
+	repo, taskRoot, pins := sealedLandingFixture(t)
+	first, err := landSealed(repo, taskRoot, coverOf(repo), pins)
+	if err != nil {
+		t.Fatalf("the first landing was refused: %v", err)
+	}
+
+	// Retry the same landing against the post-merge target.
+	pins.PreMergeSHA = first.MergeSHA
+	_, err = landSealed(repo, taskRoot, coverOf(repo), pins)
+	if err == nil {
+		t.Fatal("landing merged an already-landed reviewed commit a second time")
+	}
+	if !strings.Contains(err.Error(), "frozen base") {
+		t.Fatalf("refusal does not name the frozen-base binding: %v", err)
+	}
+	// The first merge is untouched: a refused retry must not move the target.
+	if tip, err := (landingGit{dir: repo}).out("rev-parse", "--verify", "refs/heads/main^{commit}"); err != nil || tip != first.MergeSHA {
+		t.Fatalf("target tip = %q (err %v), want the first merge %q", tip, err, first.MergeSHA)
+	}
+}
+
 // An internally inconsistent pins struct never reaches a repository. These
 // duplicate what the envelope validator already refuses; they are kept because
 // landSealed is directly reachable and they name the problem at the point of
