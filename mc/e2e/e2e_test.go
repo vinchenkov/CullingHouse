@@ -16,6 +16,7 @@
 package e2e
 
 import (
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -856,78 +857,78 @@ func TestSealedWorkerCompletionDockerBoundary(t *testing.T) {
 // resident's `agentRunnerRoutes` allowlist authorizes the shipped agent-runner
 // to execute it. Nothing here calls `mc dispatch`; the timer drives the spawn.
 func TestProductionWorkerCompletionSealDockerBoundary(t *testing.T) {
-	f := setup(t, withHostBindSpine())
 	const (
 		taskID      = int64(7)
 		setupRun    = "prod-setup-run"
 		sealRequest = "0011223344556677"
 	)
 
-	// Materialize the canonical task store the production Worker will seal,
-	// exactly as first-task setup would leave it, then fix the root to 0555.
-	taskRoot := filepath.Join(f.ws, ".mission-control", "tasks", "task-7")
-	for _, child := range []string{"source", "git"} {
-		if err := os.MkdirAll(filepath.Join(taskRoot, child), 0o700); err != nil {
+	// The canonical task store the production Worker will seal, and the spine
+	// state that must already exist for the resident's FIRST dispatch to
+	// resolve a 15-row Worker plan (never a precreate). Both are built by the
+	// seeding hook, which the fixture runs host-side against a plain temp path
+	// and then loads into the named volume: the spine the containers open is
+	// only ever opened by ONE kernel, and no helper spine read crosses
+	// VirtioFS.
+	var seeded verbs.SetupResult
+	f := setup(t, withSeededSpine(func(f *fixture, db *sql.DB) {
+		// Materialize the store exactly as first-task setup would leave it,
+		// then fix the root to 0555.
+		taskRoot := filepath.Join(f.ws, ".mission-control", "tasks", "task-7")
+		for _, child := range []string{"source", "git"} {
+			if err := os.MkdirAll(filepath.Join(taskRoot, child), 0o700); err != nil {
+				t.Fatal(err)
+			}
+		}
+		var err error
+		seeded, err = verbs.MaterializeFirstTaskStore(f.ws, taskRoot, verbs.FirstTaskSetupSpec{
+			TaskID: taskID, Mode: "fresh", TargetRef: "main", ObjectFormat: "sha1",
+			LocalRepoUUID: "0a1b2c3d-4e5f-6071-8293-a4b5c6d7e8f9",
+		})
+		if err != nil {
+			t.Fatalf("materialize production task store: %v", err)
+		}
+		if err := os.Chmod(taskRoot, 0o555); err != nil {
 			t.Fatal(err)
 		}
-	}
-	seeded, err := verbs.MaterializeFirstTaskStore(f.ws, taskRoot, verbs.FirstTaskSetupSpec{
-		TaskID: taskID, Mode: "fresh", TargetRef: "main", ObjectFormat: "sha1",
-		LocalRepoUUID: "0a1b2c3d-4e5f-6071-8293-a4b5c6d7e8f9",
-	})
-	if err != nil {
-		t.Fatalf("materialize production task store: %v", err)
-	}
-	if err := os.Chmod(taskRoot, 0o555); err != nil {
-		t.Fatal(err)
-	}
 
-	// Seed the resident's own spine as if first-task setup already completed:
-	// task 7 seeded and assigned, a durable receipt vouching the materialized
-	// skeleton identity, and a free lock. The next dispatch resolves the 15-row
-	// Worker plan (never a precreate), so the resident spawns the sealing Worker.
-	spine := filepath.Join(f.volume, "spine.db")
-	db, err := verbs.OpenSpine(spine)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := db.Exec(`INSERT INTO tasks (id,title,scope,priority,created_at,status,dispatch_retries,origin,worksource,target_ref)
-		VALUES (7,'production seal fixture','task',2,datetime('now'),'proposed',3,'user',?,'main')`, worksource); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := db.Exec(`UPDATE tasks SET status='seeded' WHERE id=7`); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := db.Exec(`INSERT INTO runs (id,tier,role,worksource,subject) VALUES (?, 'pipeline', 'worker', ?, 7)`, setupRun, worksource); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := db.Exec(`UPDATE lock SET run_id=?, worksource=?, subject=7, owner='worker', acquired_at=datetime('now'), hard_deadline_at=datetime('now', '+1 hour') WHERE id=1`, setupRun, worksource); err != nil {
-		t.Fatal(err)
-	}
-	info, err := os.Lstat(taskRoot)
-	if err != nil {
-		t.Fatal(err)
-	}
-	st, ok := info.Sys().(*syscall.Stat_t)
-	if !ok {
-		t.Fatal("task root lacks native filesystem identity")
-	}
-	if _, err := verbs.RegisterFirstTaskSetup(db, verbs.TaskSetupReceipt{RunID: setupRun, TaskID: taskID,
-		Root: verbs.TaskSetupIdentity{Device: strconv.FormatUint(uint64(st.Dev), 10), Inode: strconv.FormatUint(uint64(st.Ino), 10), OwnerUID: int(st.Uid)}}); err != nil {
-		t.Fatalf("register production skeleton receipt: %v", err)
-	}
-	if _, _, err := verbs.RecordFirstTaskSetupClosure(db, setupRun, f.ws, seeded); err != nil {
-		t.Fatalf("record production closure assignment: %v", err)
-	}
-	if _, err := db.Exec(`UPDATE runs SET ended_at=datetime('now'), outcome='setup-complete' WHERE id=?`, setupRun); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := db.Exec(`UPDATE lock SET run_id=NULL, worksource=NULL, subject=NULL, owner=NULL, acquired_at=NULL, hard_deadline_at=NULL WHERE id=1`); err != nil {
-		t.Fatal(err)
-	}
-	if err := db.Close(); err != nil {
-		t.Fatal(err)
-	}
+		// Task 7 seeded and assigned, a durable receipt vouching the
+		// materialized skeleton identity, and a free lock.
+		if _, err := db.Exec(`INSERT INTO tasks (id,title,scope,priority,created_at,status,dispatch_retries,origin,worksource,target_ref)
+			VALUES (7,'production seal fixture','task',2,datetime('now'),'proposed',3,'user',?,'main')`, worksource); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := db.Exec(`UPDATE tasks SET status='seeded' WHERE id=7`); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := db.Exec(`INSERT INTO runs (id,tier,role,worksource,subject) VALUES (?, 'pipeline', 'worker', ?, 7)`, setupRun, worksource); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := db.Exec(`UPDATE lock SET run_id=?, worksource=?, subject=7, owner='worker', acquired_at=datetime('now'), hard_deadline_at=datetime('now', '+1 hour') WHERE id=1`, setupRun, worksource); err != nil {
+			t.Fatal(err)
+		}
+		info, err := os.Lstat(taskRoot)
+		if err != nil {
+			t.Fatal(err)
+		}
+		st, ok := info.Sys().(*syscall.Stat_t)
+		if !ok {
+			t.Fatal("task root lacks native filesystem identity")
+		}
+		if _, err := verbs.RegisterFirstTaskSetup(db, verbs.TaskSetupReceipt{RunID: setupRun, TaskID: taskID,
+			Root: verbs.TaskSetupIdentity{Device: strconv.FormatUint(uint64(st.Dev), 10), Inode: strconv.FormatUint(uint64(st.Ino), 10), OwnerUID: int(st.Uid)}}); err != nil {
+			t.Fatalf("register production skeleton receipt: %v", err)
+		}
+		if _, _, err := verbs.RecordFirstTaskSetupClosure(db, setupRun, f.ws, seeded); err != nil {
+			t.Fatalf("record production closure assignment: %v", err)
+		}
+		if _, err := db.Exec(`UPDATE runs SET ended_at=datetime('now'), outcome='setup-complete' WHERE id=?`, setupRun); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := db.Exec(`UPDATE lock SET run_id=NULL, worksource=NULL, subject=NULL, owner=NULL, acquired_at=NULL, hard_deadline_at=NULL WHERE id=1`); err != nil {
+			t.Fatal(err)
+		}
+	}))
 
 	// Route the Worker to the non-fake production binding, authorize the
 	// agent-runner to stand in for it, and give it a behavior that reaches the
@@ -1099,14 +1100,55 @@ func TestProductionWorkerCompletionSealDockerBoundary(t *testing.T) {
 
 // setupOptions tunes the shared fixture for the tests that need it.
 type setupOptions struct {
-	// hostBindSpine binds a host directory at /mc/spine instead of a Docker
-	// named volume, so the test can seed the resident's own spine host-side
-	// with the verbs package (production task state) before the resident runs.
-	hostBindSpine bool
+	// seedSpine, when set, has the fixture build the spine HOST-SIDE in a
+	// plain temp directory that is never bind-mounted, run this hook against
+	// it with the verbs package (production task state the resident must find
+	// already present), and only then `docker cp` the closed file into the
+	// named volume — before any container opens it.
+	//
+	// The spine therefore stays in the named volume (Inv. 24's lock domain)
+	// and is never reachable across a VirtioFS bind, while the test still gets
+	// to seed it. The predecessor of this hook bound a host directory at
+	// /mc/spine instead; that put every helper spine read on VirtioFS, which
+	// is the latency the private helper's fixed 4s deadline could not absorb.
+	seedSpine func(f *fixture, db *sql.DB)
 }
 
-func withHostBindSpine() func(*setupOptions) {
-	return func(o *setupOptions) { o.hostBindSpine = true }
+func withSeededSpine(seed func(f *fixture, db *sql.DB)) func(*setupOptions) {
+	return func(o *setupOptions) { o.seedSpine = seed }
+}
+
+// initTunables is the shrunk provisioning tail (contract §7 fixture list),
+// shared by the delegated and host-side init calls so the two spines differ in
+// nothing but where they were built. The profile's workspace root is the HOST
+// path: the mount attest derives the plan's canonical source from it, and
+// /workspace/source is the derived container destination, never operator input.
+func initTunables(ws string) []string {
+	return []string{
+		"--worksource", worksource, "--workspace-root", ws,
+		"--timeout-minutes", "10", "--grace-minutes", "5",
+		"--heartbeat-interval-s", "1", "--spawn-grace-s", "5",
+		"--hard-deadline-minutes", "30",
+	}
+}
+
+// loadSpineIntoVolume copies a closed host-built spine into the named volume
+// before any container opens it, using a never-started stager container as the
+// `docker cp` target (a volume has no path of its own to copy into).
+//
+// It then widens the volume root. Docker materializes a fresh volume root as
+// root:root 0755, which is enough for the root helper but not for the
+// production seal path: those agent containers run with `--user 10002:10002`
+// and the completion wrapper drops to uid 10001, and BOTH write the spine —
+// including the -wal/-shm siblings SQLite creates in the directory.
+func (f *fixture) loadSpineIntoVolume(hostSpine string) {
+	f.t.Helper()
+	stager := f.volume + "-load"
+	f.docker("create", "--name", stager, "-v", f.volume+":/mc/spine", image, "true")
+	defer func() { exec.Command("docker", "rm", "-f", stager).Run() }()
+	f.docker("cp", hostSpine, stager+":"+spineDBPath)
+	f.docker("run", "--rm", "-v", f.volume+":/mc/spine", image,
+		"sh", "-ec", "chmod 0777 /mc/spine && chmod 0666 "+spineDBPath)
 }
 
 func setup(t *testing.T, opts ...func(*setupOptions)) *fixture {
@@ -1185,27 +1227,65 @@ func setup(t *testing.T, opts ...func(*setupOptions)) *fixture {
 		t.Fatalf("build image: %v\n%s", err, out)
 	}
 
-	// Spine volume + warm helper: the lock domain (Inv. 24, §11.5). The
-	// host-bind variant swaps the named volume for a world-writable host
-	// directory (Docker Desktop maps container writes to the host user, so the
-	// helper's root and the completion wrapper's uid 10001 can both write it),
-	// which lets the test seed production task state through the verbs package
-	// before the resident starts.
-	if o.hostBindSpine {
-		f.volume = filepath.Join(base, "spine")
-		if err := os.MkdirAll(f.volume, 0o777); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.Chmod(f.volume, 0o777); err != nil {
-			t.Fatal(err)
-		}
-	} else {
-		f.docker("volume", "create", f.volume)
-		t.Cleanup(func() {
-			// Volume removal must outlive (run after) container removal: LIFO.
-			exec.Command("docker", "volume", "rm", "-f", f.volume).Run()
-		})
+	// The Worksource: host git repo, one commit on main, relative worktree
+	// links (§6.2), .mc-worktrees/ ignored. It precedes the spine because a
+	// seeding hook materializes a task store inside it (see seedSpine).
+	f.git("init", "-q", "-b", "main")
+	f.git("config", "user.name", "e2e operator")
+	f.git("config", "user.email", "operator@e2e.invalid")
+	f.git("config", "worktree.useRelativePaths", "true")
+	if err := os.WriteFile(filepath.Join(f.ws, ".gitignore"), []byte(".mc-worktrees/\n"), 0o644); err != nil {
+		t.Fatal(err)
 	}
+	if err := os.WriteFile(filepath.Join(f.ws, "README.md"), []byte("walking skeleton worksource\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	f.git("add", ".gitignore", "README.md")
+	f.git("commit", "-q", "-m", "initial commit")
+
+	// Host-side mc env: helper delegation only — MC_SPINE deliberately unset
+	// (the spine never leaves the lock domain, §11.5). MC_HELPER is appended
+	// only after the helper exists, so a seeding init below runs DIRECT.
+	for _, e := range os.Environ() {
+		if strings.HasPrefix(e, "MC_SPINE=") || strings.HasPrefix(e, "MC_HELPER=") ||
+			strings.HasPrefix(e, "MC_RUN_JSON=") || strings.HasPrefix(e, "MC_TICK_INTERVAL_MS=") {
+			continue
+		}
+		f.env = append(f.env, e)
+	}
+
+	// Spine volume + warm helper: the lock domain (Inv. 24, §11.5).
+	f.docker("volume", "create", f.volume)
+	t.Cleanup(func() {
+		// Volume removal must outlive (run after) container removal: LIFO.
+		exec.Command("docker", "volume", "rm", "-f", f.volume).Run()
+	})
+
+	// Provision. The seeded variant provisions and seeds host-side against a
+	// plain temp path, then loads the closed file into the volume; the plain
+	// variant provisions through the helper once it is warm. Either way the
+	// resident and every container see only the named volume.
+	var initEffect map[string]any
+	if o.seedSpine != nil {
+		seedDir := filepath.Join(base, "seed")
+		if err := os.MkdirAll(seedDir, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		hostSpine := filepath.Join(seedDir, "spine.db")
+		initEffect = f.mcOK("", append([]string{"init", "--spine", hostSpine}, initTunables(f.ws)...)...)
+		db, err := verbs.OpenSpine(hostSpine)
+		if err != nil {
+			t.Fatalf("open host-built spine: %v", err)
+		}
+		o.seedSpine(f, db)
+		// Close before the copy: a clean close checkpoints the WAL away, so
+		// spine.db alone is the whole database.
+		if err := db.Close(); err != nil {
+			t.Fatalf("close host-built spine: %v", err)
+		}
+		f.loadSpineIntoVolume(hostSpine)
+	}
+
 	f.docker("run", "-d", "--rm", "--name", f.helper,
 		"--label", "mc-managed", "--label", "mc-tier=helper",
 		"-v", f.volume+":/mc/spine",
@@ -1229,26 +1309,11 @@ func setup(t *testing.T, opts ...func(*setupOptions)) *fixture {
 		exec.Command("docker", "rm", "-f", f.helper).Run()
 	})
 
-	// Host-side mc env: helper delegation only — MC_SPINE deliberately unset
-	// (the spine never leaves the lock domain, §11.5).
-	for _, e := range os.Environ() {
-		if strings.HasPrefix(e, "MC_SPINE=") || strings.HasPrefix(e, "MC_HELPER=") ||
-			strings.HasPrefix(e, "MC_RUN_JSON=") || strings.HasPrefix(e, "MC_TICK_INTERVAL_MS=") {
-			continue
-		}
-		f.env = append(f.env, e)
-	}
 	f.env = append(f.env, "MC_HELPER="+f.helper)
 
-	// Provision: shrunk tunables (contract §7 fixture list).
-	// The profile's workspace root is the HOST path: the mount attest derives
-	// the plan's canonical source from it; /workspace/source is the derived
-	// container destination, never operator input.
-	initEffect := f.mcOK("", "init", "--spine", spineDBPath,
-		"--worksource", worksource, "--workspace-root", f.ws,
-		"--timeout-minutes", "10", "--grace-minutes", "5",
-		"--heartbeat-interval-s", "1", "--spawn-grace-s", "5",
-		"--hard-deadline-minutes", "30")
+	if initEffect == nil {
+		initEffect = f.mcOK("", append([]string{"init", "--spine", spineDBPath}, initTunables(f.ws)...)...)
+	}
 
 	// The ADR-016 D1 deployment identity mirror: dispatch refuses to prepare
 	// without it matching meta.deployment_uuid. f.home is the host side of
@@ -1260,21 +1325,6 @@ func setup(t *testing.T, opts ...func(*setupOptions)) *fixture {
 	if err := os.WriteFile(filepath.Join(f.home, "deployment.uuid"), []byte(uuid+"\n"), 0o600); err != nil {
 		t.Fatalf("write deployment mirror: %v", err)
 	}
-
-	// The Worksource: host git repo, one commit on main, relative worktree
-	// links (§6.2), .mc-worktrees/ ignored.
-	f.git("init", "-q", "-b", "main")
-	f.git("config", "user.name", "e2e operator")
-	f.git("config", "user.email", "operator@e2e.invalid")
-	f.git("config", "worktree.useRelativePaths", "true")
-	if err := os.WriteFile(filepath.Join(f.ws, ".gitignore"), []byte(".mc-worktrees/\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(f.ws, "README.md"), []byte("walking skeleton worksource\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	f.git("add", ".gitignore", "README.md")
-	f.git("commit", "-q", "-m", "initial commit")
 
 	f.writeBehaviors()
 	f.writeResidentConfig(repoRoot)
