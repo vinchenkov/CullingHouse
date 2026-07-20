@@ -301,6 +301,11 @@ type VerdictArgs struct {
 	SHA        string
 	Correction string // required for correct
 	Deepening  string // genuine | churn — the §8 refinement judgment
+	// ProjectionDir is the fixed container path of the Verifier's disposable
+	// source. The CLI supplies it the way `mc complete` supplies its fixed
+	// task/seal roots; it is never taken from the agent's ambient CWD, which
+	// in an agent container is "/" and therefore not a repository at all.
+	ProjectionDir string
 }
 
 // VerifierVerdict is the Verifier terminal (ADR-001 D4): one transaction
@@ -336,7 +341,7 @@ func VerifierVerdict(db *sql.DB, id *RunIdentity, a VerdictArgs) (any, error) {
 	if a.Deepening != "" && a.Deepening != "genuine" && a.Deepening != "churn" {
 		return nil, Usagef("--deepening must be genuine|churn (§8)")
 	}
-	if err := fenceVerifierProjectionTree(db, a.Task, a.SHA); err != nil {
+	if err := fenceVerifierProjectionTree(db, a.Task, a.SHA, a.ProjectionDir); err != nil {
 		return nil, err
 	}
 
@@ -389,7 +394,7 @@ func VerifierVerdict(db *sql.DB, id *RunIdentity, a VerdictArgs) (any, error) {
 // must still reproduce that exact commit with no tracked/index drift before
 // the one-phase verdict is allowed to touch spine state. Legacy Phase-2 tasks
 // deliberately have no accepted pointer and retain their original terminal.
-func fenceVerifierProjectionTree(db *sql.DB, taskID int64, assertedSHA string) error {
+func fenceVerifierProjectionTree(db *sql.DB, taskID int64, assertedSHA, projectionDir string) error {
 	var sealed string
 	err := db.QueryRow(`SELECT s.sealed_sha FROM tasks t JOIN completion_seals s
 		ON s.run_id=t.accepted_completion_run_id AND s.completion_request_id=t.accepted_completion_request_id
@@ -403,13 +408,37 @@ func fenceVerifierProjectionTree(db *sql.DB, taskID int64, assertedSHA string) e
 	if assertedSHA != "" && assertedSHA != sealed {
 		return Domainf("verifier verdict SHA does not match the accepted sealed completion")
 	}
+	// The projection is addressed by its fixed path, never by the caller's
+	// working directory: an agent container's CWD is "/", where every git
+	// invocation below fails with "not a repository" — an error this fence
+	// previously reported as tracked-tree drift, so a CLEAN projection was
+	// refused exactly like a dirty one and the sealed verdict was unreachable.
+	if projectionDir == "" {
+		return Domainf("verifier disposable projection path was not supplied to the verdict fence")
+	}
 	projectionEnv := append(sourceGitEnv(), "GIT_OPTIONAL_LOCKS=0")
+	// The projection is operator-owned but read by the model uid, so Git's
+	// dubious-ownership guard applies. The image grants `safe.directory=*` in
+	// SYSTEM config, which sourceGitEnv deliberately switches off
+	// (GIT_CONFIG_NOSYSTEM=1) — so the exemption is re-granted here for this
+	// one exact path, per command. That keeps the sanitized-config posture
+	// (no system, no global, no arbitrary directory) while letting the fence
+	// read the tree it exists to check.
+	git := func(args ...string) ([]byte, error) {
+		return gitOutput(projectionDir, projectionEnv, nil,
+			append([]string{"-c", "safe.directory=" + projectionDir}, args...)...)
+	}
+	// Prove it is a work tree first, so a missing or unmounted projection is
+	// named as such instead of being indistinguishable from real drift.
+	if _, err := git("rev-parse", "--is-inside-work-tree"); err != nil {
+		return Domainf("verifier disposable projection is not a readable Git work tree at its fixed path")
+	}
 	for _, args := range [][]string{{"diff", "--quiet"}, {"diff", "--cached", "--quiet"}} {
-		if _, err := gitOutput("", projectionEnv, nil, args...); err != nil {
+		if _, err := git(args...); err != nil {
 			return Domainf("verifier disposable projection has tracked-tree drift from the sealed completion")
 		}
 	}
-	got, err := gitOutput("", projectionEnv, nil, "rev-parse", "--verify", "HEAD^{commit}")
+	got, err := git("rev-parse", "--verify", "HEAD^{commit}")
 	if err != nil || strings.TrimSpace(string(got)) != sealed {
 		return Domainf("verifier disposable projection does not reproduce the accepted sealed completion")
 	}

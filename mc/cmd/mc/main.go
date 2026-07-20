@@ -29,6 +29,10 @@ import (
 const (
 	completionTaskRoot = "/workspace"
 	completionSealRoot = "/mc/private/completion-seal"
+	// The Verifier's disposable projection is always overlaid here by the
+	// resident (effects.ts). The verdict fence addresses it by this fixed
+	// path — an agent container has no meaningful working directory.
+	verifierProjectionSource = "/workspace/source"
 )
 
 func main() {
@@ -1281,6 +1285,7 @@ func cmdVerifier(args []string) (any, error) {
 		return verbs.VerifierVerdict(db, id, verbs.VerdictArgs{
 			Task: task, Run: *run, Outcome: *outcome, Evidence: *evidence,
 			SHA: *sha, Correction: *correction, Deepening: *deepening,
+			ProjectionDir: verifierProjectionSource,
 		})
 	})
 }

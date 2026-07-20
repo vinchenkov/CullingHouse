@@ -952,6 +952,17 @@ func TestProductionWorkerCompletionSealDockerBoundary(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(f.base, "behaviors", "worker-seal.json"), []byte(sealBehavior), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	// The sealed Verifier reads its disposable projection and renders the
+	// verdict against the exact sealed HEAD. Evidence deliberately lands
+	// OUTSIDE the projected tree: the D6 verdict fence requires a clean
+	// index/tree, so a role output written into /workspace/source would be
+	// the very drift the fence refuses.
+	verifierSeal := `{"steps":[
+		{"do":"exec","command":"set -e; sha=$(git -C /workspace/source rev-parse HEAD); printf 'sealed gate pass\\n' > /tmp/verifier-evidence.txt; mc verifier verdict \"$MC_SUBJECT_ID\" --run \"$MC_RUN_ID\" --outcome pass --evidence /tmp/verifier-evidence.txt --sha \"$sha\""},
+		{"do":"succeed","output":"verified"}]}`
+	if err := os.WriteFile(filepath.Join(f.base, "behaviors", "verifier-seal.json"), []byte(verifierSeal), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	cfgBytes, err := os.ReadFile(filepath.Join(f.base, "resident.json"))
 	if err != nil {
 		t.Fatal(err)
@@ -961,7 +972,11 @@ func TestProductionWorkerCompletionSealDockerBoundary(t *testing.T) {
 		t.Fatal(err)
 	}
 	cfg["roleBehaviors"].(map[string]any)["worker"] = "/mc/behaviors/worker-seal.json"
-	cfg["agentRunnerRoutes"] = []string{"codex/chatgpt"}
+	cfg["roleBehaviors"].(map[string]any)["verifier"] = "/mc/behaviors/verifier-seal.json"
+	// Both non-fake routes stand in through the fake adapter (see the
+	// 2026-07-18 deviation); the Verifier's is what carries the disposable
+	// projection and the sealed verdict fence.
+	cfg["agentRunnerRoutes"] = []string{"codex/chatgpt", "claude-sdk/claude"}
 	out, err := json.MarshalIndent(cfg, "", "  ")
 	if err != nil {
 		t.Fatal(err)
@@ -1065,6 +1080,22 @@ func TestProductionWorkerCompletionSealDockerBoundary(t *testing.T) {
 	}
 	if row["id"] == workerRun {
 		t.Fatalf("rebuild run must be a distinct run from the sealing Worker %s", workerRun)
+	}
+
+	// The same resident carries straight on: a SECOND Verifier dispatch gets
+	// the disposable projection overlaid at /workspace/source, and its agent
+	// renders the sealed verdict. Reaching `verified` proves two crossings that
+	// only the real container exercises — the projection REPLACES the canonical
+	// source rows rather than duplicating them (Docker refuses a duplicate
+	// mount point outright), and the verdict fence addresses the projection by
+	// its fixed path with an explicit safe.directory grant (an agent
+	// container's CWD is "/", and sourceGitEnv switches the image's system
+	// config off, so the fence otherwise refused a CLEAN projection exactly
+	// like a dirty one).
+	f.waitForTaskStatus(taskID, "verified", 120*time.Second)
+	verified := f.mcOK("", "task", "get", strconv.FormatInt(taskID, 10))
+	if got, _ := verified["verified_sha"].(string); got != seeded.BaseSHA {
+		t.Fatalf("verified_sha = %q, want the accepted sealed commit %q", got, seeded.BaseSHA)
 	}
 }
 

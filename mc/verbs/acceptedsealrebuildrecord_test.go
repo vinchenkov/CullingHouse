@@ -95,21 +95,28 @@ func TestRecordAcceptedSealRebuildReattestsTheDerivedTaskRoot(t *testing.T) {
 
 func TestFenceVerifierProjectionTreeRequiresTheAcceptedSealedTrackedTree(t *testing.T) {
 	db, ws, result := asrReady(t)
-	cwd, err := os.Getwd()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Chdir(filepath.Join(ws, ".mission-control", "tasks", "task-7", "source")); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = os.Chdir(cwd) })
-	if err := fenceVerifierProjectionTree(db, 7, result.BaseSHA); err != nil {
+	// The projection is addressed by its fixed path. This test used to Chdir
+	// into it, which hid the production defect: an agent container's CWD is
+	// "/", so every git call failed as "not a repository" and the fence
+	// reported that as drift — refusing a CLEAN projection exactly like a
+	// dirty one, making the sealed verdict unreachable.
+	projection := filepath.Join(ws, ".mission-control", "tasks", "task-7", "source")
+	if err := fenceVerifierProjectionTree(db, 7, result.BaseSHA, projection); err != nil {
 		t.Fatalf("clean accepted tree refused: %v", err)
 	}
-	if err := os.WriteFile("README.md", []byte("projection drift\n"), 0o644); err != nil {
+	// A path that is not the projection is named as such, never as drift.
+	notARepo := t.TempDir()
+	err := fenceVerifierProjectionTree(db, 7, result.BaseSHA, notARepo)
+	if err == nil || !strings.Contains(err.Error(), "not a readable Git work tree") {
+		t.Fatalf("non-repository projection path = %v, want the work-tree refusal", err)
+	}
+	if err := fenceVerifierProjectionTree(db, 7, result.BaseSHA, ""); err == nil {
+		t.Fatal("an absent projection path reached the verifier terminal fence")
+	}
+	if err := os.WriteFile(filepath.Join(projection, "README.md"), []byte("projection drift\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := fenceVerifierProjectionTree(db, 7, result.BaseSHA); err == nil {
+	if err := fenceVerifierProjectionTree(db, 7, result.BaseSHA, projection); err == nil {
 		t.Fatal("tracked projection drift reached the verifier terminal fence")
 	}
 }

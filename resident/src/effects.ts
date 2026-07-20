@@ -464,9 +464,22 @@ async function spawn(effect: SpawnEffect, deps: TickDeps): Promise<void> {
     return;
   }
   const name = `mc-run-${run_id}`;
-  const planBinds = effect.mount_plan.entries.flatMap((entry) => [
-    "-v", `${entry.source}:${entry.destination}${entry.access === "ro" ? ":ro" : ""}`,
-  ]);
+  // A Verifier projection REPLACES the projected source tree, it does not sit
+  // beside it. The attested plan carries the canonical task table, which
+  // already names /workspace/source and both of its covers
+  // (mc/verbs/taskskeleton.go); emitting those alongside the overlay makes
+  // Docker refuse the whole create with `Duplicate mount point`, and were it
+  // to succeed it would hand the Verifier RW access to the very canonical
+  // store the disposable projection exists to keep it out of. Rows outside
+  // that subtree (the /workspace task root, /workspace/git, the covers under
+  // it) are untouched.
+  const projectedSource = "/workspace/source";
+  const planBinds = effect.mount_plan.entries
+    .filter((entry) => verifierProjection === undefined ||
+      (entry.destination !== projectedSource && !entry.destination.startsWith(`${projectedSource}/`)))
+    .flatMap((entry) => [
+      "-v", `${entry.source}:${entry.destination}${entry.access === "ro" ? ":ro" : ""}`,
+    ]);
 	if (completionSealRoot !== undefined) {
 		planBinds.push("-v", `${completionSealRoot}:/mc/private/completion-seal`);
 	}

@@ -447,6 +447,48 @@ describe("spawn effect", () => {
 		expect(rig.logs.some((line) => line.includes("accepted-seal rebuild recorded and continued"))).toBe(true);
   });
 
+  // The real attested plan for a sealed Verifier carries the full typed task
+  // table, which already names /workspace/source and both covers (see
+  // mc/verbs/taskskeleton.go). The projection must REPLACE those rows, not sit
+  // beside them: Docker refuses a duplicate mount point outright, and letting
+  // the canonical task source through RW would hand the Verifier the very store
+  // the disposable projection exists to keep it out of.
+  test("a Verifier projection replaces the canonical source rows instead of duplicating them", async () => {
+    const rig = makeRig();
+    rig.docker.enqueue(ok(""), ok(""), ok(""));
+    const taskRoot = "/host/workspace/.mission-control/tasks/task-42";
+    await applyEffect({
+      ...spawnEffect,
+      run_id: "run-42-verifier",
+      role: "verifier",
+      mount_plan: {
+        entries: [
+          { ...workspaceEntry, access: "ro", destination: "/workspace", logical_id: "task-root", source: taskRoot },
+          { ...workspaceEntry, access: "rw", destination: "/workspace/source", logical_id: "task:source", source: `${taskRoot}/source` },
+          { ...workspaceEntry, access: "ro", destination: "/workspace/source/.git", logical_id: "task:source-git-cover", source: `${taskRoot}/source/.git` },
+          { ...workspaceEntry, access: "ro", destination: "/workspace/source/.mission-control", logical_id: "task:source-mc-cover", source: `${taskRoot}/source/.mission-control` },
+          { ...workspaceEntry, access: "rw", destination: "/workspace/git", logical_id: "task:git", source: `${taskRoot}/git` },
+        ],
+        verifier_projection: verifierProjection,
+        version: 1,
+      },
+    }, rig.deps);
+
+    const projectionRoot = "/tmp/mc-home/runs/projections/run-42-verifier";
+    const create = rig.docker.calls[1]!;
+    // Exactly one bind per destination.
+    for (const dest of ["/workspace/source", "/workspace/source/.git", "/workspace/source/.mission-control"]) {
+      const bound = create.filter((arg) => arg.endsWith(`:${dest}`) || arg.endsWith(`:${dest}:ro`));
+      expect([dest, bound.length]).toEqual([dest, 1]);
+    }
+    // The canonical task source never reaches the Verifier; the projection does.
+    expect(create).toContain(`${projectionRoot}:/workspace/source`);
+    expect(create).not.toContain(`${taskRoot}/source:/workspace/source`);
+    // Rows outside the projected source tree are untouched.
+    expect(create).toContain(`${taskRoot}/git:/workspace/git`);
+    expect(create).toContain(`${taskRoot}:/workspace:ro`);
+  });
+
   test("a Verifier projection is set up before agent creation and covers canonical controls after its RW source", async () => {
     const rig = makeRig();
     rig.docker.enqueue(ok(""), ok(""), ok(""));
