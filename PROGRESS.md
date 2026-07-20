@@ -10,7 +10,7 @@ Access does NOT fix it — the failure precedes any policy lookup. Symptom:
 `stat` works, reads return `Operation not permitted`, git says
 `Unable to read current working directory`.
 
-LAST GREEN SHA: 505e6d1 — five-leg fast lane (Docker suite last 8/8 at 4a69d15; the operator pushes manually — decided 2026-07-14. Agents: do not push.)
+LAST GREEN SHA: 5c72585 — five-leg fast lane (Docker suite last 8/8 at 4a69d15; the operator pushes manually — decided 2026-07-14. Agents: do not push.)
 
 PHASES PASSING: Phase 0 COMPLETE (S1–S8 all green, no fallback ADRs; only operator-leg deferrals remain); Phase 1 COMPLETE (1a substrate 172; 1b walking skeleton reviewed-and-fixed — fake-harness 43, agent-runner 13, runner/image 40, resident 42, dispatch + cmd/mc suites; Docker e2e PASS ×4 total); Phase 2 COMPLETE for every unparked acceptance line (domain/§18 surface, deterministic split-brain convergence, bounded honesty + five mutants, tagged dispatch/metamorphic/twin-spine lifecycle properties; the initiative-wave CLI is no longer isolated — ADR-020 landed 2026-07-14 and closed the last Phase 2 acceptance line)
 KNOWN-FAILING: `TestOnboardConcurrentFreshHomeNeverDeletesTheWinner` (mc/verbs),
@@ -767,12 +767,24 @@ stream; nothing writes alternates; index-pack only adds). Empty closure refused
 via a pack-header object count. Idempotent, leaves pre-existing unreachable
 objects alone, creates NO ref.
 
-Remaining for step 4: (4e) CAS-create the ref with a zero old-value
-`update-ref`, re-check the SHA fence, `merge --no-ff`.
-STOP THERE — cleanup has no mount and no owner.
+Step 4e is DONE (5c72585) — STEP 4's STAGES ARE ALL BUILT. `createLandingRefCAS`
+(zero old-value CAS against absence, --no-deref, retry accepts only the same
+SHA) and `mergeSealedLanding` (SHA fence recheck, merge --no-ff, every
+merge-behaviour knob pinned, fixed identity, no hooks). Stops at the merge.
 
-MUTATION IS NOT OPTIONAL ON THIS LANE. Across 4a-4d, 32 fences written, 13
-vacuous — over one in three, every one with a green test under it. The rate is
+STILL NOT WIRED: there is no `mc __land-sealed` verb and no CLI entry yet — the
+five stages exist as functions with tests, nothing composes them and nothing
+calls them. That composition + `RequireHostScope` + reading /mc/landing.json is
+the remainder of step 4, and it is small next to the stages.
+
+The stat-cache question raised at 4c is CLOSED: core.checkStat/core.trustctime
+do not matter for read-tree/add -u/write-tree either. A FRESH index has no stat
+cache, so `add -u` must re-read every file — a disposable index is the defence,
+not those settings. Assumed twice, measured twice, wrong both times. They stay
+as cheap defence for a future PERSISTENT-index path, labelled live-nowhere.
+
+MUTATION IS NOT OPTIONAL ON THIS LANE. Across 4a-4e, 40 fences written, 16
+vacuous — two in five, every one with a green test under it. The rate is
 NOT falling with practice, which is the point: what produces them is the gap
 between "this check is correct" and "this check is reachable and load-bearing
 given every check around it". Mutate each new

@@ -3356,3 +3356,51 @@ update-ref, re-check the SHA fence, `git merge --no-ff`. STOP at the merge.
 Verify there whether core.checkStat/core.trustctime actually matter for the
 read-tree/write-tree comparison; that claim has now been assumed twice and
 measured never.
+
+## 2026-07-20 (4e) — step 4's stages are built, and a vacuous fence hid a real hole
+
+The CAS ref and the merge are in (5c72585), which completes step 4's STAGES.
+What remains of step 4 is composition: there is still no `mc __land-sealed`
+verb and no CLI entry, so the five stages exist as tested functions that nothing
+calls. That is small next to what is built, but it is not done, and PROGRESS
+says so plainly rather than letting "step 4 done" imply a reachable lander.
+
+**The probe promised at 4d settled the open stat-cache claim against me.**
+`core.checkStat`/`core.trustctime` do not matter for `read-tree` + `add -u` +
+`write-tree` either — the place the previous comment predicted they WOULD. The
+reason is structural and worth carrying forward: read-tree into a FRESH index
+produces no stat cache at all, so `add -u` has nothing to trust and must re-read
+every file. A disposable index is what defeats stat-cache evasion, not those two
+settings. Assumed twice, measured twice, wrong both times. They stay as cheap
+defence for any future path that reuses the PERSISTENT index, labelled as live
+nowhere today.
+
+**The finding that matters: a vacuous fence was hiding a real hole.** The
+symbolic-ref check in `createLandingRefCAS` survived mutation, and the obvious
+reading was "redundant with the existence check, label it and move on" — the
+disposition three earlier fences got. It was wrong. My scenario had placed the
+aliased branch at the wrong SHA, so the existence check refused first for an
+unrelated reason. Put the alias AT THE REVIEWED SHA and the hole opens: the
+existence check sees exactly the value it expects, returns "replay accepted",
+and landing proceeds believing it owns a ref that is really an alias onto an
+operator branch. The merge runs; the eventual cleanup deletes the operator's
+own work.
+
+So the fence was correct and load-bearing all along, and the test was proving
+nothing. That is the inverse of the 4b object-format case, where the fence
+genuinely was tautological and deleting it was right. The two are
+indistinguishable from the mutation result alone — both present as "survives
+mutation" — and the only way to tell them apart is to ask what scenario would
+make this fence the LAST line, then build it. Guessing "redundant" from the
+survival is how a real guard gets deleted.
+
+Also settled: the zero old-value in `update-ref <ref> <new> ""` is the fence,
+and the rev-parse pre-check is the convenience. The race between them is exactly
+what the CAS closes and is unreachable from the fast lane, so the MECHANISM is
+now pinned directly (a zero old-value refuses an existing ref) rather than left
+untested because the race is hard to stage.
+
+Tally across 4a-4e: 40 fences, 16 vacuous.
+
+NEXT (in PROGRESS.md): compose the stages into `mc __land-sealed` under
+RequireHostScope reading /mc/landing.json, then step 5 turns the lane on.
