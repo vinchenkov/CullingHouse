@@ -533,3 +533,44 @@ date/title; delete a line here when its slice lands.
   target takes; ADR-017:748-751 says only "the target ref". A future edit should
   state that landing's target is a bare local branch.
 - Needs your decision: no.
+
+## 2026-07-20 — the composed lander leaves the closure digest unverified and retry non-adopting
+
+- Where: Phase 3 step 4 composition (`mc/verbs/landsealedrun.go`), against
+  ADR-017:740-756.
+- Gap: two things the ADR names that the composed lane does NOT do.
+  (1) The landing instruction carries `pinned_closure_digest`, and ADR-017:741
+  lists "exact reachable closure/digest" among what landing revalidates. The
+  lane never checks it. (2) ADR-017:750-753 wants retry to ADOPT an already-made
+  merge when its action trailer, parents, tree, target preimage, worktree/index
+  state, and verified SHA all match, blocking only on ambiguity. The lane has no
+  adoption path: a retry after a successful merge refuses at the pre-merge SHA
+  fence, because the target has moved to the merge commit.
+- Choice: leave both unbuilt and log them, rather than invent semantics.
+  On (1) the digest is not merely unimplemented, it is UNDEFINED at landing
+  time. `task_assignments.closure_digest` is frozen at FIRST-TASK setup and
+  describes that pack; by landing, the task store has been rebuilt from the
+  accepted completion seal, so its pack is a different artifact with a different
+  digest. Verifying the carried digest against the landing-time store with the
+  existing `digestLandedPack` would therefore refuse every real landing. Which
+  of the two digests the field denotes is an operator/design question, and no
+  production producer populates it yet (grep: only tests), so nothing is being
+  broken by waiting. What the lane DOES bind is stronger than a digest over pack
+  bytes anyway: `revalidateSealedTaskStore` proves HEAD is the exact frozen
+  verified SHA under a sole-managed-branch, no-alternates, fsck-clean store, and
+  the import is bounded to base..verified.
+  On (2) adoption is a genuine slice of work (it needs the trailer parser and
+  the preimage comparison), and its absence is FAIL-CLOSED: a retry refuses
+  loudly instead of merging twice. Building it half-way is the failure mode the
+  outgoing NEXT warned about — a half-built lane converts a loud refusal into a
+  durable blocked row.
+- Why this is conservative: both preserve the fail-closed posture, neither
+  weakens an invariant, and both are purely additive later. Inventing a digest
+  semantics now would be the irreversible move, because a wrong pin would be
+  frozen into instructions before any producer exists to correct it.
+- Spec impact: ADR-017:741 should say WHICH closure digest landing revalidates,
+  or drop the digest from landing's revalidation list in favour of the verified
+  SHA binding that actually holds. ADR-016 D5's assignment already fixes the
+  first-task meaning of the field.
+- Needs your decision: no — but the digest question is named in PROGRESS's owed
+  list so it is not rediscovered.
