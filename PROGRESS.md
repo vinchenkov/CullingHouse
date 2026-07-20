@@ -541,11 +541,12 @@ helper-scope crossing (d3471f5) — and
 `accepted_seal_rebuild_receipts` row and its Verifier continuation. Full Docker
 suite 7/7 green at 485a7f2. Diagnoses in docs/ledger/phase-3.md (2026-07-19).
 
-NEXT: Move the sealed E2E's spine off the host bind onto a Docker named volume
-— seeding production task state THROUGH the helper (`docker exec mc …`) instead
-of host-side via the verbs package — which should also close KNOWN-FAILING (3).
-Then carry the E2E through the packet decision and land. The Packager leg is
-NOT blocked: it reaches `packaged` on its own.
+NEXT: Give the Packager a production mount arm (likely artifact-root-only — it
+mutates no repository state), then carry the E2E through the packet decision and
+land. `mountattest.go:267-278` health-refuses every repo-Worksource role except
+the standalone Worker and seal-consuming Verifier; that is LATENT today only
+because the E2E routes the Packager `fake/fake` (e2e_test.go:943), so it rides
+the legacy-workspace lane. It bites the moment a Packager is routed non-fake.
 
 KNOWN-FAILING (3): `TestProductionWorkerCompletionSealDockerBoundary`
 (mc/e2e, docker_e2e tag), INTERMITTENT ~2 in 10 — and PRE-EXISTING, not caused
@@ -558,19 +559,20 @@ timeout`. It never fails in the rebuild. Measured on both sides: 2/10 at
 each run is fast) — same population. `TestWalkingSkeleton` was 10/10, so this is
 not the general helper crossing but this test's configuration (production route
 + `withHostBindSpine()`). Same load-sensitive resident-control family as
-KNOWN-FAILING (2). ROOT CAUSE FOUND (2026-07-19): this test alone uses
-`withHostBindSpine()` (`e2e_test.go:1198`), putting the spine on a VirtioFS host
-bind, and `acceptedSealRebuildReceipt` (`:1483`) then opens it HOST-side with
-`sql.Open` while the resident's containers write. That splits one WAL database
-across two kernels — exactly what Inv. 24 forbids
-(`specs/mission-control-spec.md:69`) and what `docs/phase1b-contract.md:30`
-names as "WAL across the VirtioFS/VM kernel boundary". Every other e2e test
-uses a named volume, which is why `TestWalkingSkeleton` is 10/10. Evidence:
-container writers + concurrent host readers on that bind produce 13 `Bus error`
-crashes per 400 writes, vs 0 when all writers sit behind one kernel. (An
-earlier entry claimed this was refuted; that probe kept every writer inside one
-container and so never tested the mechanism — withdrawn.) Fix: named volume,
-seed through the helper. Fail-closed. Owner:
+KNOWN-FAILING (2), and ROOT CAUSE STILL UNKNOWN. Every measured flake is the
+same shape — `mc dispatch failed: mc: private helper __dispatch-prepare failed`
+with `resident control hello timeout` / `Failed to connect`, i.e. the AF_UNIX
+fd-3 control crossing, NOT the spine. Rates: 2/10 at HEAD, 1/10 at the parent
+commit, 2/12 after the spine-access change below — statistically flat, so that
+change is not the cure and was wrongly credited as one (ledger 2026-07-19,
+third correction). A SEPARATE and now-eliminated mode was one observed
+`SQLITE_PROTOCOL` from a Packager spine write: the E2E used to open the
+host-bound spine with `sql.Open` while containers wrote, splitting one WAL
+database across two kernels — forbidden by Inv. 24 (`spec:69`), named as
+unsound by `phase1b-contract:30`, and demonstrated at 13 `Bus error` crashes
+per 400 writes vs 0 single-kernel. That access is gone (the E2E now reads the
+rebuild outcome through the lock domain), so mode (b) cannot recur; mode (a) is
+untouched and open. Fail-closed. Owner:
 whoever next touches the resident control crossing — not a blocker for the next
 slice. Repro: `cd mc && for i in $(seq 1 10); do mise exec -- go test -tags
 docker_e2e -count=1 -timeout 20m -run

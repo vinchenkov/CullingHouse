@@ -2386,3 +2386,82 @@ unless the probe reproduces the mechanism.
 NEXT (moved to PROGRESS.md): move the sealed E2E's spine to a named volume
 (seed through the helper), which should also close KNOWN-FAILING (3); then
 carry the E2E through the packet decision and land.
+
+## 2026-07-19 (third correction) — two flake modes, and I attributed one's cause to both
+
+The entry above declared "ROOT CAUSE FOUND" for KNOWN-FAILING (3) and pinned it
+on the fixture's spine placement. **That over-claimed.** Measured after removing
+the offending access: 2 failures in 12 runs, against 2 in 10 before —
+statistically identical. The spine placement is not what makes this test flake.
+
+**There are two distinct failure modes under this fixture, and I merged them.**
+
+*(a) The dominant one, and the only one that ever appeared in a measured flake
+run:* `mc dispatch failed (exit 1): mc: private helper __dispatch-prepare
+failed`, accompanied by `resident control hello timeout` and `tick failed:
+Failed to connect`. That is the AF_UNIX fd-3 resident control crossing — the
+mechanism KNOWN-FAILING (2) already describes — and it remains **unexplained**.
+Every flake measured (2/10 at HEAD, 1/10 at the parent commit, 2/12 after the
+change) was this shape.
+
+*(b) A single observed `SQLITE_PROTOCOL` from a Packager's spine write.* The
+two-kernel mechanism behind it is real and independently demonstrated
+(container writers + concurrent host readers on the VirtioFS bind: 13 `Bus
+error` crashes per 400 writes, versus 0 single-kernel). But one observation of
+(b) does not make it the cause of the (a) population.
+
+**The change is kept anyway, on its own merits, not as a flake fix.** The E2E no
+longer opens the host-bound spine with `sql.Open` alongside the running
+resident — an access Inv. 24 forbids outright (`spec:69`) and
+`phase1b-contract:30` names as unsound. The substitute is exact rather than
+weaker: `ContinueAcceptedSealRebuild` refuses without the durable receipt, so a
+Verifier run carrying the `accepted-seal-rebuilt` outcome proves the receipt
+exists, and that outcome is readable through the lock domain via `mc run list`.
+Removing a known-unsound access is correct regardless of what it does to the
+flake rate; crediting it with the cure was the error.
+
+So KNOWN-FAILING (3) returns to **root cause unknown**, with mode (b) now
+eliminated by construction and mode (a) still open, owned by whoever next
+touches the resident control crossing.
+
+**The pattern, three times in one session.** Each mistake had the same shape:
+one observation promoted to a cause. The unrecognized error string read as our
+guard; the probe that did not test its own mechanism; and now a fix credited
+with an improvement it never produced. The discipline that catches all three is
+identical and cheap — state the population, measure before and after, and say
+"unexplained" when the numbers do not move.
+
+## 2026-07-19 — Packager arm and packet-output claims, checked
+
+A follow-up review checked two claims from the earlier Packager report.
+
+**The Packager's missing production mount arm: real, but LATENT.**
+`mountattest.go:267-278` health-refuses every repo-Worksource role except the
+standalone-task Worker and the seal-consuming Verifier — and that function's own
+doc comment (`:233-236`) already names "the sealed views Packager/Refiner read"
+as deliberately unbuilt. The refusal is gated on repo Worksources only
+(`:254-256` returns early otherwise), so the earlier "every production-lane
+role" phrasing was too broad. It does not bite today because the production-seal
+E2E routes `| packager | fake | fake |` (`e2e_test.go:943`), so the Packager
+takes the legacy-workspace branch and gets the operator Worksource RW at
+`/workspace/source` — never the sealed task store. It bites the moment a
+Packager is routed non-fake, which carrying the E2E through Packager→land
+requires.
+
+**The packet-output concern: REFUTED.** The E2E's fake Packager writes no file
+at all — its behavior (`e2e_test.go:1290-1292`) only passes a string to
+`--outputs`, and nothing on the `mc complete` path stats it
+(`complete.go:215-230` is a bare `UPDATE runs SET output_path`; `domain.Birth`
+stores it as `render_path`). Even had it written, `mc-land`'s `task_untracked`
+check runs inside the registered task worktree discovered from git
+(`mc-land:430-435`), and the `.mc-worktrees/task-N.packet.md` convention is a
+deliberate SIBLING of that directory (`e2e_test.go:1281-1284`) precisely so it
+is never seen. So there is no pending land refusal and no worktree dirt.
+`/workspace/artifacts` is indeed absent from the 15-row task table
+(`taskskeleton.go:63-79`) — but correctly so: artifact roots are a separate
+request family from the profile's `ArtifactRoots` (`mountattest.go:216-222`),
+currently empty because `mc init` never sets that column.
+
+NEXT (moved to PROGRESS.md): give the Packager a production mount arm — most
+likely artifact-root-only, since it mutates no repository state — then carry the
+E2E through the packet decision and land.

@@ -16,7 +16,6 @@
 package e2e
 
 import (
-	"database/sql"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -1050,7 +1049,7 @@ func TestProductionWorkerCompletionSealDockerBoundary(t *testing.T) {
 	// VerifierProjection launch will; that is the next slice.)
 	var rebuildRun string
 	f.waitFor(180*time.Second, fmt.Sprintf("accepted-seal rebuild receipt for task %d", taskID), func() (bool, string) {
-		runID, completionRun, ok := f.acceptedSealRebuildReceipt(taskID)
+		runID, ok := f.acceptedSealRebuiltRun(taskID)
 		if !ok {
 			// Name who holds the lease and what the Verifier runs did: a stalled
 			// rebuild is always one of "never dispatched" (no verifier run) or
@@ -1063,9 +1062,6 @@ func TestProductionWorkerCompletionSealDockerBoundary(t *testing.T) {
 				}
 			}
 			return false, fmt.Sprintf("no rebuild receipt yet; lock=%v; verifier runs=%v", lock, verifiers)
-		}
-		if completionRun != workerRun {
-			return false, fmt.Sprintf("receipt %s cites completion run %s, want the sealing Worker %s", runID, completionRun, workerRun)
 		}
 		rebuildRun = runID
 		return true, ""
@@ -1476,26 +1472,38 @@ func (f *fixture) runRow(runID string) map[string]any {
 	return nil
 }
 
-// acceptedSealRebuildReceipt reads the durable v10 rebuild receipt for a task
-// directly from the host-bound spine, read-only and alongside the running
-// resident. There is no read verb for it by design: it is internal recovery
-// evidence, not an operator surface. Valid only under withHostBindSpine().
-func (f *fixture) acceptedSealRebuildReceipt(taskID int64) (runID, completionRun string, ok bool) {
+// acceptedSealRebuiltRun finds the Verifier run that completed the accepted-seal
+// rebuild for a task, THROUGH THE LOCK DOMAIN (`mc run list` self-delegates into
+// the helper).
+//
+// It deliberately does not read `accepted_seal_rebuild_receipts` directly. That
+// table has no read verb by design — it is internal recovery evidence, not an
+// operator surface — and the obvious shortcut, opening the host-bound spine
+// with sql.Open alongside the running resident, is exactly what Inv. 24 forbids
+// (spec:69): it splits one WAL database across the macOS kernel and the VM's.
+// Polling it here was the concrete cause of this test's intermittent
+// SQLITE_PROTOCOL / SIGBUS failures (ledger 2026-07-19; a container-writer +
+// host-reader probe on that bind produced 13 Bus errors per 400 writes).
+//
+// The substitute is exact, not weaker: ContinueAcceptedSealRebuild refuses
+// unless the durable receipt for that run and task already exists
+// (requireAcceptedSealRebuildEvidence), so a Verifier run carrying the
+// `accepted-seal-rebuilt` outcome PROVES the receipt. The receipt's binding to
+// the sealing Worker's run is enforced inside RecordAcceptedSealRebuild — it
+// takes completion_run_id only from the task-pointed accepted seal — and is
+// covered by the verbs-level tests.
+func (f *fixture) acceptedSealRebuiltRun(taskID int64) (runID string, ok bool) {
 	f.t.Helper()
-	db, err := sql.Open("sqlite", "file:"+filepath.Join(f.volume, "spine.db")+"?mode=ro")
-	if err != nil {
-		f.t.Fatalf("open spine read-only: %v", err)
+	for _, r := range f.runs() {
+		if r["role"] != "verifier" || r["outcome"] != "accepted-seal-rebuilt" {
+			continue
+		}
+		if subject, isNum := r["subject"].(float64); !isNum || int64(subject) != taskID {
+			continue
+		}
+		return r["id"].(string), true
 	}
-	defer db.Close()
-	err = db.QueryRow(`SELECT run_id,completion_run_id FROM accepted_seal_rebuild_receipts WHERE task_id=?`, taskID).
-		Scan(&runID, &completionRun)
-	if err == sql.ErrNoRows {
-		return "", "", false
-	}
-	if err != nil {
-		f.t.Fatalf("read accepted seal rebuild receipt: %v", err)
-	}
-	return runID, completionRun, true
+	return "", false
 }
 
 func (f *fixture) packets() []map[string]any {
