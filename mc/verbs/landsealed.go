@@ -4,6 +4,7 @@ import (
 	"encoding/binary"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 )
@@ -58,14 +59,27 @@ func landingGitEnv() []string {
 //
 // core.checkStat and core.trustctime are the stat-cache pair legacy pinned: a
 // repository can set them so git's dirty detection skips a same-length edit,
-// hiding operator bytes from the fence meant to protect them. MEASURED, not
-// assumed: against `git diff --name-only HEAD -- <paths>` (the 4c fence) git
-// 2.50 detects a same-length, mtime-restored edit even with
-// `checkStat=minimal` and `trustctime=false` set in the repository, so these
-// two are NOT load-bearing for that fence today and mutating either away
-// leaves its test green. They are retained for the read-tree/write-tree
-// comparison the merge stage will use, where the stat cache IS consulted, and
-// documented here so nobody counts them as live for the dirty fence.
+// hiding operator bytes from the fence meant to protect them.
+//
+// MEASURED TWICE, and NOT load-bearing in either place, contrary to what an
+// earlier version of this comment predicted:
+//
+//   - `git diff --name-only HEAD -- <paths>` (the 4c dirty fence) detects a
+//     same-length, mtime-restored edit with `checkStat=minimal` and
+//     `trustctime=false` set in the repository and these overrides removed.
+//   - so does `read-tree HEAD` + `add -u` + `write-tree` on a disposable
+//     index, which this comment previously claimed was the place they WOULD
+//     matter.
+//
+// The reason is structural rather than configurational, and worth knowing
+// before relying on either flag: `read-tree` into a FRESH index produces no
+// stat cache at all, so `add -u` has nothing to trust and must re-read every
+// file. A disposable index is what defeats stat-cache evasion, not these two
+// settings.
+//
+// Retained as cheap defence in depth for any future path that reuses the
+// repository's PERSISTENT index, where the cache genuinely is consulted — and
+// labelled so the next reader does not count them as live anywhere today.
 func landingFixedConfig() []string {
 	return []string{
 		"-c", "core.hooksPath=/dev/null",
@@ -621,4 +635,111 @@ func packObjectCount(pack []byte) (uint32, error) {
 		return 0, Domainf("landing produced something that is not a pack")
 	}
 	return binary.BigEndian.Uint32(pack[8:12]), nil
+}
+
+// The fixed landing identity (ADR-017:752's "fixed metadata"). Pinned so the
+// merge commit is byte-reproducible on replay and no environment can forge it.
+const (
+	landingIdentityName  = "mission control"
+	landingIdentityEmail = "mc@mission-control.invalid"
+)
+
+// createLandingRefCAS creates `refs/heads/mc/task-<id>` at the reviewed commit,
+// compare-and-swap against ABSENCE (ADR-017:748-750).
+//
+// The zero old-value is the whole mechanism: `update-ref <ref> <new> ""` means
+// "create this, and fail if it exists at all". That makes the ref a durable
+// stage marker — its existence at the reviewed SHA proves the import completed
+// — while making it impossible to clobber a ref someone else put there.
+//
+// `--no-deref` matters: without it a symbolic ref planted at this name would be
+// followed, and the CAS would land on whatever operator branch it aliases.
+//
+// Retry accepts an existing ref ONLY at the same SHA (ADR-017:749). A crash
+// after creation therefore replays into an accept, while any other value
+// refuses and is left exactly as found.
+func createLandingRefCAS(g landingGit, branch, verifiedSHA string) error {
+	ref := "refs/heads/" + branch
+	// A symbolic ref here is never ours to write through, and `update-ref
+	// --no-deref` would REPLACE it rather than refuse, so it is checked first.
+	if _, err := g.out("symbolic-ref", "-q", ref); err == nil {
+		return Domainf("landing ref %q is a symbolic ref; refusing to write through it", ref)
+	}
+	if existing, err := g.out("rev-parse", "--verify", "-q", ref); err == nil && existing != "" {
+		if existing == verifiedSHA {
+			return nil // Response-loss replay of a completed create.
+		}
+		return Domainf("landing ref %q already exists at %s, not the reviewed %s", ref, existing, verifiedSHA)
+	}
+	// The zero old-value is the ATOMIC fence: `update-ref <ref> <new> ""` fails
+	// at the ref lock with "reference already exists". The rev-parse check above
+	// is a message-improving convenience with a TOCTOU window, NOT the guard —
+	// a concurrent creator landing between the two is exactly what this closes.
+	// That race is not reachable from the fast lane, so the mechanism is pinned
+	// directly by TestUpdateRefZeroOldValueRefusesAnExistingRef.
+	if _, err := g.run("update-ref", "--no-deref", ref, verifiedSHA, ""); err != nil {
+		return Domainf("landing could not compare-and-create %q: %v", ref, err)
+	}
+	return nil
+}
+
+// mergeSealedLanding performs ADR-017:751's required `git merge --no-ff` in the
+// primary checkout, after rechecking the SHA fence.
+//
+// It STOPS at the merge. Cleanup — deleting the task ref, emptying the task
+// root — is ADR-017:757-759's "later trusted action" that may only run after
+// the spine records success, and it has neither a mount nor an owner yet.
+func mergeSealedLanding(g landingGit, target, verifiedSHA, preMergeSHA, landingID string, taskID int64) error {
+	ref := "refs/heads/" + target
+	// Recheck the SHA fence immediately before merging (ADR-017:750). Between
+	// the repository stage and here the operator may have committed, and the
+	// pre-merge SHA the plan froze would no longer describe what we merge into.
+	tip, err := g.out("rev-parse", "--verify", ref+"^{commit}")
+	if err != nil {
+		return Domainf("landing target %q is unreadable at merge time: %v", target, err)
+	}
+	if tip != preMergeSHA {
+		return Domainf("landing target moved from %s to %s since the fence; refusing to merge", preMergeSHA, tip)
+	}
+
+	message := "Land task " + strconv.FormatInt(taskID, 10) + "\n\n" +
+		"MC-Landing-Id: " + landingID + "\n" +
+		"MC-Landing-Task: task " + strconv.FormatInt(taskID, 10) + "\n" +
+		"MC-Landing-Verified-SHA: " + verifiedSHA + "\n" +
+		"MC-Landing-Target-Preimage: " + preMergeSHA + "\n"
+
+	// Every merge-behaviour knob is pinned rather than inherited: autoStash
+	// would move operator bytes, renames/directoryRenames would relocate a
+	// reviewed edit onto a path nobody reviewed, and mergeOptions on the target
+	// branch is a repository-controlled argument injection point.
+	args := append(landingFixedConfig(),
+		"-c", "merge.autoStash=false",
+		"-c", "merge.log=false",
+		"-c", "merge.branchdesc=false",
+		"-c", "merge.renames=false",
+		"-c", "merge.directoryRenames=false",
+		"-c", "merge.ours.driver=false",
+		"-c", "commit.gpgSign=false",
+		"-c", "merge.gpgSign=false",
+		// Mutually redundant with the GIT_AUTHOR_*/GIT_COMMITTER_* env below —
+		// measured: either alone fixes the identity, so mutating one away leaves
+		// the suite green. Both are kept because they fail differently: the env
+		// is what git actually consults for a merge commit, while these survive
+		// a refactor that routes through `g.run()`, which builds its environment
+		// from landingGitEnv() alone and would silently drop the identity.
+		"-c", "user.name="+landingIdentityName,
+		"-c", "user.email="+landingIdentityEmail,
+		"merge", "--no-ff", "--no-autostash", "--no-gpg-sign", "--no-log",
+		"--cleanup=verbatim", "-s", "ort", "-m", message, verifiedSHA,
+	)
+	env := append(landingGitEnv(),
+		"GIT_AUTHOR_NAME="+landingIdentityName,
+		"GIT_AUTHOR_EMAIL="+landingIdentityEmail,
+		"GIT_COMMITTER_NAME="+landingIdentityName,
+		"GIT_COMMITTER_EMAIL="+landingIdentityEmail,
+	)
+	if _, err := gitOutput(g.dir, env, nil, args...); err != nil {
+		return Domainf("landing merge failed: %v", err)
+	}
+	return nil
 }
