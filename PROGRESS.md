@@ -582,6 +582,27 @@ kept below. Operator legs that remain open are under `## Parked`, not here.
         landing refuses it loudly instead of it going silently unlandable. All
         INERT: `Decide` does not consult the predicate and `Approve` still
         refuses a sealed task
+  - [x] Sealed landing, steps 1-2 of the mount lane (7fee4e4, 8273616). The
+        `/repo` plane was a PROTOCOL error — `mountplan.go`'s typed arm knew
+        one table — so nothing downstream could be built. It now knows two,
+        pinned as a PARTITION (`dispatchprivate.go`'s task-precreate
+        fabrication guard keys off `validTaskPlanDestination` alone, so a
+        landing cell drifting into the task grammar would silently widen it).
+        `landingPlanRows()` is ADR-017:699-702 verbatim; `/repo/source` is the
+        system's only RW grant of a real repository (:699), which is why the
+        setup class's RO row at :691 cannot share its table. The table
+        produces TWO roots, not four: :700's cover is a GENERATED per-run
+        directory (as effects.ts:576 does for setup), so it has no attest-time
+        identity, like `/mc/landing.json` — both are `ResidentMaterialized`
+        and excluded from the bindable grammar. `resolveLandingRoots` fences
+        both anchors as unaliased operator-owned canonical dirs, sealed root
+        at 0555. INERT, asserted by a PAIR: a landing cell denies through
+        ordinary jurisdiction AND plans once the producer supplies. Nothing
+        touches `dispatchMountHostSnapshot`, so the jurisdiction digest has
+        not moved. OWED to step 3: because the cover is not a plan entry, the
+        plan cannot express that sealed bytes are unreachable through the RW
+        source alias — the landing instruction must carry that obligation and
+        the helper boundary must validate it (deviation logged 2026-07-20)
 - [ ] Phase 4 — E2E control loops (six scenario families)
 - [ ] Phase 5 — Real-subscription acceptance (operator-scheduled)
 - [ ] Release prep (after Phase 5): swap the repo's construction face for
@@ -645,22 +666,23 @@ Keep committed-tree projections, structured Engine-API binds, and launchd in
 their named later slices.
 
 NEXT: Sealed landing, the rest of the lane. The branch-home question is settled
-(read the assignment; see the checklist and docs/ledger/phase-3.md 2026-07-20)
-and steps 1-2 are in. Build the remaining pieces INERT, in this order, and turn
-the lane on only at the end — a half-built lane converts today's loud `Approve`
-refusal into durable blocked rows, which is the Inv. 25 hole rebuilt one layer
-up:
+(read the assignment) and the mount grammar + typed-root producer are IN
+(7fee4e4, 8273616 — see the checklist and docs/ledger/phase-3.md 2026-07-20).
+Build the remaining pieces INERT, in this order, and turn the lane on only at
+the end — a half-built lane converts today's loud `Approve` refusal into
+durable blocked rows, which is the Inv. 25 hole rebuilt one layer up.
 
-1. Landing mount plan: `landingPlanRows()` for ADR-017:686-703's four rows
-   (`/repo/source` RW, the other three RO), and a `validLandingPlanDestination`
-   in `mountplan.go` — today `validTaskPlanDestination` rejects all `/repo/...`
-   as a PROTOCOL error, so that file must learn the landing grammar first.
-2. Producers for the four typed kinds `KindLandingWorksource`,
-   `KindLandingMissionControlCover`, `KindLandingTaskRoot`, `KindLandingEnvelope`
-   (`boundary/typedkind.go:110-113`), which today all hit "typed kind has no
-   authorized root". NOTE: `mountattest.go:161` keys the jurisdiction digest off
-   `kind.String()`, so populating them CHANGES the snapshot digest — expect it
-   and pin it.
+Steps 1-2 are DONE. Two facts they leave for step 3:
+   - The landing instruction MUST carry the `.mission-control` cover
+     obligation, validated at the helper boundary. The cover is
+     resident-generated, so it is not a plan entry, so the plan cannot
+     express that sealed bytes are unreachable through the RW `/repo/source`
+     alias. A landing container run without the cover hands the sealed root
+     out RW through that alias.
+   - `mountattest.go:161` keys the jurisdiction digest off `kind.String()`.
+     No landing kind is in `TypedRoots` yet, so the digest has NOT moved. It
+     moves when step 5 wires the producer in — that is the commit to pin it.
+
 3. The landing envelope as a fourth closed-union arm in `setupenvelope.go`,
    refusing cross-arm field bleed both directions, plus the `Landing` field on
    `PrivateDispatchMountPlan` and its helper-boundary validation (mutually

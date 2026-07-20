@@ -2923,3 +2923,63 @@ it loudly instead of it becoming silently unlandable forever.
 NEXT (in PROGRESS.md): the landing mount plan — destination grammar, the four
 typed kinds' producers, the envelope arm, the carrier — then the lander, then
 the wiring that turns the lane on.
+
+## 2026-07-20 — the landing lane's mount grammar and typed roots (steps 1-2)
+
+**The `/repo` plane existed only as a protocol error.** `mountplan.go`'s typed
+arm asked one question — `validTaskPlanDestination` — and every ADR-017 landing
+cell answered no, which surfaced as `Domainf("... outside the closed D6 task
+table")`. That is a confused-planner diagnosis, correct for a broker inventing a
+destination and wrong for a class the ADR defines. Nothing downstream of the
+grammar could be written until it knew two tables.
+
+It now knows two, and they are pinned as a PARTITION rather than a union. That
+distinction earns its test: `dispatchprivate.go`'s task-precreate fabrication
+guard keys off `validTaskPlanDestination` ALONE (a precreate plan may not
+fabricate a not-yet-existing task mount row), so a landing cell drifting into
+the task grammar would silently widen that guard without touching its own code.
+
+**The four-row table produces two roots.** The outgoing `NEXT:` planned
+producers for all four typed kinds. Re-reading the ADR against the resident
+killed that: :700 calls `/repo/source/.mission-control` a GENERATED empty
+directory, the same word :692 uses for the setup class's cover — and
+`effects.ts:576` shows what "generated" means operationally, a per-run
+`<run-id>.setup-cover` the resident mkdirs immediately before launch. Dispatch
+attest captures device/inode/owner evidence and creates nothing; it runs before
+the resident. So the cover has no identity to capture, exactly like
+`/mc/landing.json`. Both rows are marked `ResidentMaterialized` — the table
+stays ADR-017's faithful four — and excluded from the bindable grammar.
+
+The consequence is worth writing down because it is a real hole with a named
+owner, not a tidy factoring. Because the cover is not a plan entry, the PLAN
+cannot express that the sealed bytes are unreachable through the RW
+`/repo/source` alias (:700). The plan authorizes the grant; only the realized
+mount table establishes containment. This weakens nothing that exists — the
+RO-alias property was already a Docker-lane obligation for precisely the reason
+that a plan-level `:ro` assertion cannot prove it — but it moves the resident's
+obligation to PLACE the cover onto the landing instruction, where the helper
+boundary can validate it. Step 3 must carry it. A landing container that runs
+without the cover hands the sealed root out RW through the source alias.
+
+**`/repo/source` is the only RW grant of a real repository in the system**
+(:699, "intentionally including its primary checkout"), which is why the setup
+class's identically-spelled RO row (:691) cannot share a table with it — the
+separation at :686-687 is load-bearing exactly here. So both landing anchors
+must be unaliased operator-owned directories at their own exact canonical path:
+an aliased Worksource would place the strongest grant in the system somewhere
+the operator never registered. The sealed root additionally keeps its 0555
+shape fence (:418).
+
+**Inertness is asserted by a PAIR of tests that must both hold.** One proves a
+landing cell denies (`denied_root`) through the ordinary jurisdiction, because
+no landing kind enters `TypedRoots` anywhere in production; the other proves it
+plans once the producer supplies its roots. Either alone is satisfiable by a
+lane in the wrong state. Nothing is wired into `dispatchMountHostSnapshot`, so
+the jurisdiction snapshot digest — keyed off `kind.String()` at
+`mountattest.go:161`, and the thing the outgoing `NEXT:` warned would move —
+has not moved yet. It moves when step 5 turns the lane on, and that is the
+commit that must pin it.
+
+NEXT (in PROGRESS.md): step 3, the landing envelope arm and the `Landing`
+carrier field — carrying the cover obligation named above — then the lander,
+then the wiring.
