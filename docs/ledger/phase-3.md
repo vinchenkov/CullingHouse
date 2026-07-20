@@ -2632,3 +2632,62 @@ session.
 
 NEXT (moved to PROGRESS.md): carry S5's fail-closed bind-mount spine guard into
 `mc`; then the Packager production mount arm, then the packet decision and land.
+
+## 2026-07-20 (Claude) — the lock-domain guard, and what it caught on arrival
+
+**Carried S5's guard into `mc` (`substrate/lockdomain*.go`).** Phase 0 proved it
+and it was never implemented. `substrate.Open` and the onboard read-only
+inspection — the only two spine opens in the codebase — now refuse before
+`sql.Open` unless the spine's directory sits on a block-device-backed local
+filesystem.
+
+**The allowlist shape earned its keep immediately.** On its first Docker run the
+guard refused two probes with the exact string S5 predicted:
+`fstype=fakeowner source=/run/host_mark/private`. Not `virtiofs`. A denylist
+keyed on the obvious name would have accepted both.
+
+**Structure: pure decision, platform-split entry point.** The mountinfo parse and
+the accept/refuse rule are platform-neutral, so the darwin fast lane proves them
+against captured mountinfo text (13 cases); only the `/proc/self/mountinfo` read
+is behind `//go:build linux`. Off Linux the guard accepts, and that is scope, not
+weakening: per Inv. 24/§11.5 a native darwin process cannot open the spine at
+all. `lockdomain_other.go` records the argument and warns off the env-var escape
+hatch a future session will be tempted by. `check.sh` gained a `GOOS=linux` vet,
+because the guard's only production implementation now lives on a platform the
+fast lane otherwise never compiles — the invisible-rot shape the tagged vets
+already guard against.
+
+**What it caught: two E2E probes still outside the lock domain.**
+`TestVerifierProjectionDockerBoundary` and
+`TestSealedWorkerCompletionDockerBoundary` both bound a host directory at
+`/mc/spine`. The second was worse — it held the database open on the darwin
+host across that bind WHILE a container wrote it. The precise two-kernel
+sharing Inv. 24 forbids, inside the suite meant to be proving the boundary.
+`a3928f1` removed one kernel from the shared fixture; these two were never
+touched. Both now use a per-probe named volume, and the one that asserts on
+what the container committed copies the database back OUT instead of sharing
+it.
+
+**The probe found a hole in the guard that the fixtures never would have.**
+Writing `TestSpineLockDomainGuardDockerBoundary` — which pins BOTH directions
+against a real container's real `/proc/self/mountinfo` — surfaced that the
+guard judged only the spine's DIRECTORY. A single file bound over `spine.db`
+*inside* a legitimate named volume therefore passed: the directory reports
+ext4 while the database itself is on VirtioFS. Now both paths are checked. The
+unit test first asserts the directory alone passes, so the case cannot quietly
+stop being meaningful.
+
+**Why both arms of that probe exist.** Every other Docker test proves
+ACCEPTANCE implicitly — they would all fail if the guard refused a named
+volume. So acceptance can keep passing indefinitely while the refusal rots into
+a no-op, and nothing goes red. That is exactly how the sealed verdict became
+unreachable while both suites stayed green (6657541): every test of that fence
+asserted only that a DIRTY projection is refused, never that a clean one is
+admitted. The lesson generalizes — a fence needs both directions pinned, and
+the direction the rest of the suite exercises for free is the one that needs
+the explicit test.
+
+Full Docker suite 8/8; five-leg fast lane green.
+
+NEXT (moved to PROGRESS.md): the Packager production mount arm, then carry the
+E2E through the packet decision and land.

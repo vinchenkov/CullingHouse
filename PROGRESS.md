@@ -10,7 +10,7 @@ Access does NOT fix it — the failure precedes any policy lookup. Symptom:
 `stat` works, reads return `Operation not permitted`, git says
 `Unable to read current working directory`.
 
-LAST GREEN SHA: 103d1a1 — five-leg fast lane + full Docker suite 7/7 (local; the operator pushes manually — decided 2026-07-14. Agents: do not push.)
+LAST GREEN SHA: 34fc63b — five-leg fast lane + full Docker suite 8/8 (local; the operator pushes manually — decided 2026-07-14. Agents: do not push.)
 
 PHASES PASSING: Phase 0 COMPLETE (S1–S8 all green, no fallback ADRs; only operator-leg deferrals remain); Phase 1 COMPLETE (1a substrate 172; 1b walking skeleton reviewed-and-fixed — fake-harness 43, agent-runner 13, runner/image 40, resident 42, dispatch + cmd/mc suites; Docker e2e PASS ×4 total); Phase 2 COMPLETE for every unparked acceptance line (domain/§18 surface, deterministic split-brain convergence, bounded honesty + five mutants, tagged dispatch/metamorphic/twin-spine lifecycle properties; the initiative-wave CLI is no longer isolated — ADR-020 landed 2026-07-14 and closed the last Phase 2 acceptance line)
 KNOWN-FAILING: `TestOnboardConcurrentFreshHomeNeverDeletesTheWinner` (mc/verbs),
@@ -508,6 +508,21 @@ kept below. Operator legs that remain open are under `## Parked`, not here.
         bind 20/22. Seeding survives via a `withSeededSpine` hook that builds and
         closes the spine in an unmounted temp dir and `docker cp`s it in before
         any container opens it. a3928f1 removed one kernel but not the sharing
+  - [x] S5's fail-closed lock-domain guard is in `mc` (b1c6187, 34fc63b):
+        `substrate.Open` and the onboard read-only inspection — the only two
+        spine opens — refuse before `sql.Open` unless the spine's directory AND
+        the spine file sit on a block-device-backed local filesystem. The parse
+        and decision are pure (13 fast-lane cases); only the
+        `/proc/self/mountinfo` read is `//go:build linux`, and accepting off
+        Linux is scope, not weakening (Inv. 24/§11.5: darwin cannot open the
+        spine at all). `check.sh` gained a `GOOS=linux` vet so the guard's only
+        production implementation cannot rot invisibly. On its first Docker run
+        it refused the two probes still binding a host dir at `/mc/spine`, with
+        S5's exact predicted `fstype=fakeowner` — one of which held the DB open
+        on the host while a container wrote it; both now use per-probe named
+        volumes with copy-back. `TestSpineLockDomainGuardDockerBoundary` pins
+        BOTH directions against a real container's real mountinfo (writing it
+        found the directory-only hole a single-file bind slipped through)
 - [ ] Phase 4 — E2E control loops (six scenario families)
 - [ ] Phase 5 — Real-subscription acceptance (operator-scheduled)
 - [ ] Release prep (after Phase 5): swap the repo's construction face for
@@ -570,21 +585,9 @@ it compacts at the phase boundary (the precedent Phases 0–2 set), not before.
 Keep committed-tree projections, structured Engine-API binds, and launchd in
 their named later slices.
 
-NEXT: Carry S5's fail-closed bind-mount spine guard into `mc`. Phase 0 PROVED
-it (`spikes/05-sqlite-wal/RESULT.md` row 5: parse `/proc/self/mountinfo`,
-longest-prefix match the spine's directory, ALLOWLIST block-device-backed local
-filesystems — ext4/ext3/xfs/btrfs with a `/dev/` source — and refuse before
-`sql.Open` in every subcommand) and it was never implemented: `grep -ri
-"mountinfo|virtiofs|ext4" mc/` returns nothing. Its absence is what let the E2E
-fixture put the spine on a VirtioFS bind and corrupt it for four corrections
-(ledger 2026-07-19, fifth). Two pins from S5: a DENYLIST keyed on "virtiofs"
-would have accepted the bind (Docker Desktop surfaces it as `fuse.`), so the
-allowlist shape is load-bearing; and the guard is Linux-only — the darwin host
-`mc` has no `/proc`, and per §11.5 it never opens the spine anyway, so scope the
-guard to the in-container path rather than weakening it for darwin. Then give
-the Packager a production mount arm (likely artifact-root-only — it mutates no
-repository state), then carry the E2E through the packet decision and land.
-`mountattest.go:267-278` health-refuses every repo-Worksource role except the
-standalone Worker and seal-consuming Verifier; that is LATENT today only because
-the E2E routes the Packager `fake/fake` (e2e_test.go:943), so it rides the
-legacy-workspace lane. It bites the moment a Packager is routed non-fake.
+NEXT: Give the Packager a production mount arm (likely artifact-root-only — it
+mutates no repository state), then carry the E2E through the packet decision and
+land. `mountattest.go:267-278` health-refuses every repo-Worksource role except
+the standalone Worker and seal-consuming Verifier; that is LATENT today only
+because the E2E routes the Packager `fake/fake` (e2e_test.go:943), so it rides
+the legacy-workspace lane. It bites the moment a Packager is routed non-fake.
