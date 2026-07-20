@@ -3404,3 +3404,75 @@ Tally across 4a-4e: 40 fences, 16 vacuous.
 
 NEXT (in PROGRESS.md): compose the stages into `mc __land-sealed` under
 RequireHostScope reading /mc/landing.json, then step 5 turns the lane on.
+
+## 2026-07-20 — step 4 composed: the lander exists, and the fence order was buildable after all
+
+The five stages from 4a-4e became one lane (`landSealed`), an envelope
+entrypoint (`RunSealedLanding`), and a host-scope verb (`mc __land-sealed`).
+Step 4 is DONE.
+
+**The ordering question, and why the first answer was wrong.** Reading the
+stage signatures suggested the ADR's order was unbuildable. `landingMergeBase`
+and `reviewedLandingPaths` both resolve `verifiedSHA` in the repository they are
+handed, and the real repository does not have the reviewed commit until the
+import — so the reviewed-path dirty fence appeared to be forced AFTER the
+import, inverting ADR-017:741-743. That deviation was drafted and nearly logged,
+with the justification that a refused landing would leave only unreachable
+objects, which ADR-017:745-747 explicitly tolerates.
+
+It was avoidable. The reviewed set is a diff from the FROZEN BASE to the
+reviewed commit, and the sealed store holds `base..verified` by construction —
+so the set can be derived there, where no import is needed, and the fence then
+runs in the real checkout before anything crosses. `fenceReviewedPathsCleanAt`
+is the additive split; 4c's own tests never move. The lesson is the one 4c
+already taught in a different costume: the constraint that looked structural was
+an artifact of which repository the derivation was pointed at. A refusal now
+writes nothing at all, which is strictly better than a tolerated mess, and the
+test asserts BOTH the refusal and the absence of the objects — so the order
+cannot silently invert later.
+
+**The cover obligation is closed.** Step 3 recorded it as OWED: a landing
+container run without the `.mission-control` cover hands the sealed root out RW
+through the source alias, defeating the separate RO `/repo/task` row. The lane
+now proves the declared cover was realized — absent, populated, symlinked, and
+foreign-path all refuse. A bind that silently did not happen is invisible from
+inside the container except by what is visible underneath it, which is exactly
+what this checks.
+
+**Mutation, again, and the same two-in-five rate.** Nine fences, four survived
+the first sweep. Three were REDUNDANT and are now labelled with what actually
+catches them — the taxonomy's "keep if it fails faster or names the problem
+better" arm. The fourth was neither redundant nor weak: it was a WRONG SCENARIO.
+Setting the frozen base to the reviewed commit to make "base is not the merge
+base" empties the sealed diff, so path derivation refused first and the base
+binding was never reached; the test passed for a reason unrelated to the thing
+it named. The real scenario is a rewritten target — the operator amends the tip,
+the merge base slides back to c1 while the assignment still names c2 — and it
+needs a TWO-COMMIT fixture, because with one commit a rewritten target shares no
+history at all and `landingMergeBase`'s own fence fires instead. Three fences
+deep, three different refusals, only one of them the one under test.
+
+That is a fourth failure mode to sit alongside TAUTOLOGICAL / REDUNDANT / DEAD:
+a fence can be live and load-bearing while its test never reaches it, because an
+EARLIER fence refuses the scenario first. Mutation is what distinguishes it from
+a healthy fence; nothing in the passing suite does. When a survivor appears, ask
+which fence actually refused before assuming the scenario was too weak.
+
+One DEAD guard was removed rather than kept: `fenceReviewedPathsCleanAt` does
+not re-check for an empty path set, because `reviewedLandingPaths` is its only
+producer and already refuses one.
+
+**What the lane deliberately does not do**, both logged in
+IMPLEMENTATION-NOTES (2026-07-20): it does not verify `pinned_closure_digest`
+(the field is UNDEFINED at landing time — the assignment's digest describes the
+first-task pack, but the store has since been rebuilt from the accepted seal, so
+checking it would refuse every real landing), and it has no retry ADOPTION path
+(ADR-017:750-753), so a retry after a successful merge refuses at the pre-merge
+fence rather than adopting. Both are fail-closed and purely additive later.
+
+It STOPS at the merge, which ADR-017:756-758 and legacy's own ordering violation
+both independently argue for. Still inert end to end: nothing produces a landing
+instruction and no resident arm invokes the verb.
+
+NEXT (outgoing): Sealed landing, the rest of the lane — step 4's composition
+(`mc __land-sealed`, RequireHostScope, reading the landing instruction).
