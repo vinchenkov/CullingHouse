@@ -511,7 +511,10 @@ func cmdInit(args []string) (any, error) {
 
 func cmdTask(args []string) (any, error) {
 	if len(args) == 0 {
-		return nil, verbs.Usagef("usage: mc task add|get|block|unblock|setup-register|setup-continue|accepted-seal-record|accepted-seal-continue …")
+		// setup-record/accepted-seal-record are listed as the operator-facing
+		// spelling; each is a host attest frame that reaches this switch only
+		// as its path-free `-attested` half (setup_record_frame.go).
+		return nil, verbs.Usagef("usage: mc task add|get|block|unblock|setup-register|setup-record|setup-continue|accepted-seal-record|accepted-seal-continue …")
 	}
 	switch args[0] {
 	case "setup-register":
