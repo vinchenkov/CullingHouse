@@ -263,13 +263,26 @@ func deriveDispatchMountRequests(state PrivateDispatchMountState, role string, s
 		}
 		return requests, selected, nil, nil
 	}
+	// Two roles read the accepted seal, and they differ only in what setup
+	// authority rides along. The Verifier CONSUMES it — its plan carries the
+	// rebuild step that materializes the canonical store inside trusted setup.
+	// The Packager only READS the store that rebuild already produced: it
+	// renders the packet "from the durable record only" and is "read-only
+	// w.r.t. workspace" (spec §57), inheriting both canonical children through
+	// the RO task-root bind (ADR-017:637,640) so its packet can embed
+	// repository evidence while every representative write fails (:1218).
+	// Neither binds a mutable canonical view (ADR-016:765).
 	sealConsumer := baseRole(role) == "verifier" && subjectID != nil && state.SubjectAcceptedCompletionSeal != nil
-	if !sealConsumer && (baseRole(role) != "worker" || subjectID == nil || selected.WorkspaceRoot == "") {
-		// The only realizable production repo arm today is the standalone-task
-		// Worker over an existing exact skeleton. A projection-consuming or
-		// seal-consuming role's mount source is materialized by later setup
-		// slices; until they exist the arm is deployment health, never a
-		// guessed bind and never a per-task confinement block.
+	sealedViewReader := baseRole(role) == "packager" && subjectID != nil &&
+		state.SubjectAcceptedCompletionSeal != nil && selected.WorkspaceRoot != ""
+	readOnlyView := sealConsumer || sealedViewReader
+	if !readOnlyView && (baseRole(role) != "worker" || subjectID == nil || selected.WorkspaceRoot == "") {
+		// Every remaining production repo arm — a projection-consuming role, a
+		// Packager or Refiner with no accepted seal to read, an Editor — has a
+		// mount source that later setup slices materialize. Until they exist the
+		// arm is deployment health, never a guessed bind and never a per-task
+		// confinement block. phase3-contract:249: no downstream role starts
+		// until the accepted seal exists.
 		r, err := refusalForMountError(&boundary.MountError{
 			Code: boundary.CodeRuntimeUnappliable,
 			Msg:  "no realizable Git mount arm for this role: task-local skeletons exist only for standalone-task Workers until the setup slices land",
@@ -287,10 +300,11 @@ func deriveDispatchMountRequests(state PrivateDispatchMountState, role string, s
 			Kind: row.Kind, Destination: row.Dest,
 			RequireEmptyDir: row.MustBeEmptyDir,
 		}
-		if sealConsumer {
+		if readOnlyView {
 			// The pre-verifier rebuild owns the same canonical store and may
 			// change it only inside trusted setup. The eventual verifier gets
 			// every task row RO; its disposable source is a later D6 setup arm.
+			// The Packager never writes the canonical store at all.
 			request.Access = boundary.AccessRO
 		}
 		if row.WantBytes != nil {
@@ -803,6 +817,21 @@ func attestCandidateMounts(home string, cand *preparedCandidate, allowLegacyFake
 	if err != nil {
 		r, aerr := adaptMountError(err, refusal.AuthorityDeployment, nil)
 		return nil, r, aerr
+	}
+	if snapshot.TaskPrecreate != nil && baseRole(string(cand.spawn.Role)) != "worker" {
+		// captureDispatchMountSnapshot decides precreate-vs-resolve from the task
+		// root's presence alone; the role is not in that predicate. First-task
+		// setup and its recovery are Worker-only authorities (ADR-016 D6): they
+		// run a mutating setup container and claim the skeleton. A reader that
+		// arrives before its store exists — a Packager over an unrendered task,
+		// a seal-consuming Verifier whose canonical root vanished — has nothing
+		// to read, and must health-refuse rather than silently acquire setup
+		// authority it is not entitled to.
+		r, err := refusalForMountError(&boundary.MountError{
+			Code: boundary.CodeRuntimeUnappliable,
+			Msg:  "first-task setup is a Worker-only authority: this role has no materialized task store to read",
+		}, refusal.AuthorityDeployment, nil)
+		return nil, &r, err
 	}
 	if snapshot.TaskPrecreate != nil {
 		ordinary := requests[:0]

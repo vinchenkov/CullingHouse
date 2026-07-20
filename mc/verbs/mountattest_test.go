@@ -753,6 +753,198 @@ func TestAttestCandidateMountsSealConsumerCarriesResidentTaskRootBind(t *testing
 	}
 }
 
+// maPackagerCandidate is a Packager over the same materialized task-7
+// skeleton, carrying the frozen accepted Worker completion seal. By the time
+// dispatch reaches `verified → Packager` the Verifier's rebuild has already
+// materialized the canonical store, so the Packager's arm is a pure reader of
+// that sealed view — no setup step of its own.
+func maPackagerCandidate(t *testing.T, subject int64) (string, *preparedCandidate, string) {
+	t.Helper()
+	mcHome, cand, ws := maRepoCandidate(t, dispatch.RolePackager, &subject)
+	cand.mountState.SubjectAcceptedCompletionSeal = &substrate.DispatchAcceptedCompletionSeal{
+		RunID: "run-worker-seal", CompletionRequest: "0123456789abcdef",
+		ObjectFormat: "sha1", SealedSHA: strings.Repeat("c", 40),
+		ClosureDigest: strings.Repeat("d", 64), ManifestDigest: strings.Repeat("e", 64),
+		Device: "17", Inode: "42", OwnerUID: os.Getuid(),
+	}
+	return mcHome, cand, ws
+}
+
+// The Packager renders the packet from the durable record and is "read-only
+// w.r.t. workspace" (spec §57). ADR-017 realizes that as the canonical task
+// root and BOTH children RO — "inherited through the RO task-root bind for
+// Packager/Refiner" (ADR-017:637,640), "Packager and Refiner receive canonical
+// source/control RO and fail representative writes while their separate record
+// outputs remain writable" (:1218). So the arm is the seal-consumer row shape
+// with every row RO, and NO setup step: the Packager never drives precreate,
+// never publishes a completion seal, and never rebuilds — it reads the store
+// the Verifier's rebuild already materialized.
+func TestAttestCandidateMountsPackagerCarriesSealedViewReadOnly(t *testing.T) {
+	subject := int64(7)
+	mcHome, cand, ws := maPackagerCandidate(t, subject)
+
+	plan, r, err := attestCandidateMounts(mcHome, cand, false)
+	if err != nil || r != nil {
+		t.Fatalf("packager attest = refusal %+v err %v, want the sealed-view plan", r, err)
+	}
+	if plan == nil || len(plan.Entries) != 15 {
+		t.Fatalf("plan = %+v, want the 15 task-local rows", plan)
+	}
+	// A Packager carries no setup authority of any kind. Each of these steps
+	// would hand a read-only renderer a mutating container class.
+	if plan.AcceptedSealRebuild != nil || plan.VerifierProjection != nil ||
+		plan.CompletionSeal != nil || plan.TaskPrecreate != nil {
+		t.Fatalf("packager plan carries a setup step: rebuild %+v projection %+v seal %+v precreate %+v",
+			plan.AcceptedSealRebuild, plan.VerifierProjection, plan.CompletionSeal, plan.TaskPrecreate)
+	}
+	taskRoot := filepath.Join(ws, ".mission-control", "tasks", "task-7")
+	var root *PrivateDispatchMountEntry
+	for i := range plan.Entries {
+		if plan.Entries[i].Access != "ro" {
+			t.Fatalf("packager entry %+v is not RO; the Packager never receives a mutable canonical view (ADR-016:765)", plan.Entries[i])
+		}
+		if plan.Entries[i].LogicalID == "task-root" {
+			root = &plan.Entries[i]
+		}
+	}
+	if root == nil {
+		t.Fatal("packager plan carries no task-root entry")
+	}
+	if root.Destination != "/workspace" || root.Source != taskRoot || root.Mode != 0o555 {
+		t.Fatalf("task-root entry = %+v, want /workspace RO at the canonical mode-0555 skeleton", *root)
+	}
+	// Both canonical children are the evidence the packet embeds; ADR-017:637/640
+	// names them explicitly, so pin that they are present and RO rather than
+	// letting a future row-table edit silently drop them.
+	byDest := map[string]PrivateDispatchMountEntry{}
+	for _, e := range plan.Entries {
+		byDest[e.Destination] = e
+	}
+	for _, dest := range []string{"/workspace/source", "/workspace/git"} {
+		got, ok := byDest[dest]
+		if !ok {
+			t.Fatalf("packager plan omits %s; ADR-017:637,640 inherit both canonical children through the RO task-root bind", dest)
+		}
+		if got.Access != "ro" || got.Source != filepath.Join(taskRoot, filepath.Base(dest)) {
+			t.Fatalf("%s entry = %+v, want the canonical child RO", dest, got)
+		}
+	}
+}
+
+// phase3-contract:249 — "No downstream role starts until the accepted seal
+// exists". A Packager over a task with no accepted completion seal has no
+// sealed view to read, so its arm is deployment health, never a guessed bind
+// onto a canonical store whose provenance is unproven.
+func TestAttestCandidateMountsPackagerWithoutAcceptedSealIsDeploymentHealth(t *testing.T) {
+	subject := int64(7)
+	mcHome, cand, _ := maPackagerCandidate(t, subject)
+	cand.mountState.SubjectAcceptedCompletionSeal = nil
+
+	plan, r, err := attestCandidateMounts(mcHome, cand, false)
+	if err != nil {
+		t.Fatalf("attest err: %v", err)
+	}
+	if plan != nil || r == nil {
+		t.Fatalf("sealless packager = plan %+v refusal %+v, want a deployment-health refusal", plan, r)
+	}
+	if r.Code != boundary.CodeRuntimeUnappliable || r.Authority != refusal.AuthorityDeployment {
+		t.Fatalf("refusal = %+v, want deployment-health runtime_unappliable", r)
+	}
+	if class, cerr := refusal.Classify(*r); cerr != nil || class != refusal.ClassHealth {
+		t.Fatalf("classify = %v/%v, want health", class, cerr)
+	}
+}
+
+// captureDispatchMountHostSnapshot decides precreate-vs-resolve from the task
+// root's presence alone, with no role in the predicate. A Packager is a pure
+// reader: it must never be handed the first-task setup step, which would run a
+// mutating setup container for a role whose whole contract is to render from
+// the durable record. An absent root means there is nothing to read, so the
+// arm refuses.
+func TestAttestCandidateMountsReaderOverAbsentRootNeverDrivesSetup(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		build func(*testing.T, int64) (string, *preparedCandidate, string)
+	}{
+		{"packager", maPackagerCandidate},
+		{"seal-consuming verifier", maSealConsumerCandidate},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			subject := int64(7)
+			mcHome, cand, ws := tc.build(t, subject)
+			taskRoot := filepath.Join(ws, ".mission-control", "tasks", "task-7")
+			// The skeleton root is the canonical mode-0555 directory; make it
+			// writable only so the fixture can unlink it.
+			if err := os.Chmod(taskRoot, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.RemoveAll(taskRoot); err != nil {
+				t.Fatal(err)
+			}
+
+			plan, r, err := attestCandidateMounts(mcHome, cand, false)
+			if err != nil {
+				t.Fatalf("attest err: %v", err)
+			}
+			if plan != nil && plan.TaskPrecreate != nil {
+				t.Fatalf("%s plan carries a first-task setup step: %+v", tc.name, plan.TaskPrecreate)
+			}
+			if plan != nil || r == nil {
+				t.Fatalf("%s over an absent root = plan %+v refusal %+v, want a health refusal", tc.name, plan, r)
+			}
+			if r.Authority != refusal.AuthorityDeployment {
+				t.Fatalf("refusal = %+v, want deployment authority", r)
+			}
+		})
+	}
+}
+
+// The Worker keeps its first-task setup authority: the guard above must fence
+// readers only, never the one role ADR-016 D6 entitles to materialize the
+// skeleton.
+func TestAttestCandidateMountsWorkerOverAbsentRootStillDrivesSetup(t *testing.T) {
+	subject := int64(7)
+	mcHome, cand, ws := maRepoCandidate(t, dispatch.RoleWorker, &subject)
+	taskRoot := filepath.Join(ws, ".mission-control", "tasks", "task-7")
+	if err := os.Chmod(taskRoot, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.RemoveAll(taskRoot); err != nil {
+		t.Fatal(err)
+	}
+
+	plan, r, err := attestCandidateMounts(mcHome, cand, false)
+	if err != nil || r != nil {
+		t.Fatalf("worker attest = refusal %+v err %v, want the precreate plan", r, err)
+	}
+	if plan == nil || plan.TaskPrecreate == nil {
+		t.Fatalf("worker plan = %+v, want the first-task setup step", plan)
+	}
+	if plan.TaskPrecreate.TaskID != subject {
+		t.Fatalf("precreate step = %+v, want task %d", plan.TaskPrecreate, subject)
+	}
+}
+
+// The receipt gate is not role-specific: a Packager over a materialized but
+// unattested skeleton must refuse exactly as the Worker arm does, so the new
+// arm cannot become a way around requireTaskSetupReceiptVouch.
+func TestAttestCandidateMountsPackagerRefusesSkeletonWithoutSetupReceipt(t *testing.T) {
+	subject := int64(7)
+	mcHome, cand, _ := maPackagerCandidate(t, subject)
+	cand.mountState.SubjectTaskSetupRoots = nil
+
+	plan, r, err := attestCandidateMounts(mcHome, cand, false)
+	if err != nil {
+		t.Fatalf("attest err: %v", err)
+	}
+	if plan != nil || r == nil {
+		t.Fatalf("unattested packager skeleton = plan %+v refusal %+v, want a health refusal", plan, r)
+	}
+	if r.Code != boundary.CodeRuntimeUnappliable || r.Authority != refusal.AuthorityDeployment {
+		t.Fatalf("refusal = %+v, want deployment-health runtime_unappliable", r)
+	}
+}
+
 func TestAttestCandidateMountsRefusesSkeletonWithoutSetupReceipt(t *testing.T) {
 	subject := int64(7)
 	mcHome, cand, _ := maRepoCandidate(t, dispatch.RoleWorker, &subject)
