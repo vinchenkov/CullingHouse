@@ -457,6 +457,48 @@ func validatePrivateMountPlan(plan *PrivateDispatchMountPlan) error {
 			return Domainf("dispatch: private verifier projection evidence is invalid")
 		}
 	}
+	if step := plan.Landing; step != nil {
+		// Landing is its own effect class. Sharing an attestation with a setup
+		// step would authorize a mutating setup container AND the system's only
+		// RW real-repository grant from one token; carrying an entry would put
+		// an agent-plane mount in a class with no agent process (ADR-017:711).
+		if plan.TaskPrecreate != nil || plan.CompletionSeal != nil ||
+			plan.AcceptedSealRebuild != nil || plan.VerifierProjection != nil {
+			return Domainf("dispatch: private landing cannot share a plan with a setup step")
+		}
+		if len(plan.Entries) != 0 {
+			return Domainf("dispatch: private landing carries agent-plane mount entries (ADR-017:711)")
+		}
+		if step.TaskID < 1 || step.TaskID > maxJavaScriptSafeInteger ||
+			!validLowercaseHex(step.LandingID, 16) ||
+			step.Branch != taskAssignmentBranch(step.TaskID) ||
+			step.TargetRef == "" || !validStructuralText(step.TargetRef, maxPrivateScalarBytes) ||
+			(step.ObjectFormat != "sha1" && step.ObjectFormat != "sha256") ||
+			!validLowercaseHex(step.VerifiedSHA, oidLen(step.ObjectFormat)) ||
+			!validLowercaseHex(step.PreMergeSHA, oidLen(step.ObjectFormat)) ||
+			!validLowercaseHex(step.PinnedBaseSHA, oidLen(step.ObjectFormat)) ||
+			!validLowercaseHex(step.ClosureDigest, 64) ||
+			!assignmentUUID.MatchString(step.LocalRepoUUID) {
+			return Domainf("dispatch: private landing identity evidence is invalid")
+		}
+		if step.CoverDest != landingCoverDest {
+			return Domainf("dispatch: private landing carries no `.mission-control` cover obligation (ADR-017:700)")
+		}
+		ws := step.WorksourceRoot
+		if !validStructuralText(ws.Canonical, maxPrivateScalarBytes) ||
+			!path.IsAbs(ws.Canonical) || path.Clean(ws.Canonical) != ws.Canonical ||
+			!validDecimalText(ws.Device) || !validDecimalText(ws.Inode) || ws.OwnerUID < 0 {
+			return Domainf("dispatch: private landing Worksource evidence is invalid")
+		}
+		root := step.TaskRoot
+		if !validStructuralText(root.Canonical, maxPrivateScalarBytes) ||
+			root.Canonical != path.Join(ws.Canonical, ".mission-control", "tasks",
+				"task-"+strconv.FormatInt(step.TaskID, 10)) ||
+			!validDecimalText(root.Device) || !validDecimalText(root.Inode) ||
+			root.OwnerUID != ws.OwnerUID {
+			return Domainf("dispatch: private landing task root evidence is invalid")
+		}
+	}
 	prior := ""
 	logicalIDs := map[string]bool{}
 	for i, e := range plan.Entries {

@@ -17,6 +17,14 @@ const (
 	SetupOperationFirstTaskClosure    = "first-task-closure-extraction"
 	SetupOperationAcceptedSealRebuild = "accepted-seal-rebuild"
 	SetupOperationVerifierProjection  = "verifier-disposable-source"
+	// SetupOperationSealedLanding is the landing class (ADR-017:697-702). It
+	// shares this envelope's frame — schema, strict decode, fixed container
+	// destinations — and nothing else: landing runs a different program, holds
+	// no lease, opens no Run, and is the only class that receives a real
+	// Worksource repository RW. Its file is `/mc/landing.json`, not
+	// `/mc/setup.json`. The union stays closed by refusing cross-arm authority
+	// in BOTH directions.
+	SetupOperationSealedLanding = "sealed-landing"
 )
 
 // SetupEnvelope is /mc/setup.json: the frozen, credential-free, host-path-free
@@ -48,14 +56,61 @@ type SetupEnvelope struct {
 	SealInode           string `json:"seal_inode,omitempty"`
 	SealOwnerUID        int64  `json:"seal_owner_uid,omitempty"`
 	ProjectionRoot      string `json:"projection_root,omitempty"`
+
+	// The sealed landing arm (ADR-017:702). Its nine enumerated facts map onto
+	// these fields plus the four reused above (TaskID, TargetRef,
+	// PinnedBaseSHA, PinnedClosureDigest, PinnedLocalRepoUUID, Branch):
+	//
+	//   exact task            → TaskID
+	//   local/real branch     → Branch
+	//   verified SHA          → VerifiedSHA
+	//   target ref            → TargetRef
+	//   pre-merge SHA         → PreMergeSHA (the target preimage, frozen at
+	//                           attest so retry can match ADR-017:755)
+	//   closure digest        → PinnedClosureDigest
+	//   landing action id     → LandingID (ADR-016:831's 16 lowercase hex)
+	//   expected Git topology → carried STRUCTURALLY, not as a blob: the
+	//                           branch, verified/pre-merge/base SHAs, closure
+	//                           digest and repository UUID above are the
+	//                           topology the lander revalidates
+	//                           (ADR-017:741-743). The ADR does not specify a
+	//                           serialization; inventing an opaque one would
+	//                           add a parser without adding a fence.
+	//   cleanup path          → NOT carried. ADR-017:757-759 defers cleanup to
+	//                           "a later trusted landing/setup action" after
+	//                           the spine records success, and its only target
+	//                           inside this container is TaskRoot, which is
+	//                           already here and mounted RO. Deviation logged.
+	//
+	// CoverRoot is the obligation, not decoration: without the generated empty
+	// RO cover the sealed task bytes are reachable through the RW
+	// `/repo/source` alias, which is the single thing ADR-017:700 exists to
+	// prevent. It is carried explicitly so the helper boundary can refuse a
+	// landing instruction that omits it.
+	LandingID   string `json:"landing_id,omitempty"`
+	VerifiedSHA string `json:"verified_sha,omitempty"`
+	PreMergeSHA string `json:"pre_merge_sha,omitempty"`
+	CoverRoot   string `json:"cover_root,omitempty"`
 }
 
 func validateSetupEnvelope(env SetupEnvelope) error {
 	if env.SchemaVersion != 1 {
 		return Domainf("setup envelope schema version %d is unsupported", env.SchemaVersion)
 	}
-	if env.RunID == "" || env.TaskID < 1 {
-		return Domainf("setup envelope names no live run/task")
+	if env.TaskID < 1 {
+		return Domainf("setup envelope names no task")
+	}
+	// Every setup arm runs under a live claimed run. Landing does not: it holds
+	// no lease and opens no Run (§7), so a run id there means some caller
+	// conflated the two classes.
+	if env.RunID == "" && env.Operation != SetupOperationSealedLanding {
+		return Domainf("setup envelope names no live run")
+	}
+	// Landing authority never bleeds INTO a setup arm. Stated once here so a
+	// fifth arm inherits the refusal instead of forgetting it.
+	if env.Operation != SetupOperationSealedLanding &&
+		(env.LandingID != "" || env.VerifiedSHA != "" || env.PreMergeSHA != "" || env.CoverRoot != "") {
+		return Domainf("setup envelope carries sealed landing authority")
 	}
 	if err := validateSetupObjectFormat(env.ObjectFormat); err != nil {
 		return err
@@ -122,6 +177,40 @@ func validateSetupEnvelope(env SetupEnvelope) error {
 			len(env.ManifestDigest) != 64 || !assignmentHex.MatchString(env.ManifestDigest) ||
 			!decimalIdentity.MatchString(env.SealDevice) || !decimalIdentity.MatchString(env.SealInode) || env.SealOwnerUID < 0 {
 			return Domainf("verifier projection envelope does not reproduce an immutable accepted receipt")
+		}
+	case SetupOperationSealedLanding:
+		if env.RunID != "" {
+			return Domainf("sealed landing envelope names a run; landing holds no lease and opens no Run (§7)")
+		}
+		if env.Mode != "" || env.WorktreeName != "" || env.SealRoot != "" || env.ProjectionRoot != "" ||
+			env.CompletionRunID != "" || env.CompletionRequest != "" || env.SealedSHA != "" ||
+			env.ClosureDigest != "" || env.ManifestDigest != "" || env.SealDevice != "" ||
+			env.SealInode != "" || env.SealOwnerUID != 0 {
+			return Domainf("sealed landing envelope carries setup authority")
+		}
+		// The destinations are the landing table's own cells, never a host
+		// path: the resident composes the `/repo` plane and the envelope only
+		// restates where it put things.
+		if env.SourceRepo != landingSourceDest || env.TaskRoot != landingTaskRootDest ||
+			env.CoverRoot != landingCoverDest {
+			return Domainf("sealed landing envelope carries paths outside its fixed container destinations")
+		}
+		if len(env.LandingID) != 16 || !assignmentHex.MatchString(env.LandingID) {
+			return Domainf("sealed landing envelope carries no 16-hex landing action identity (ADR-016:831)")
+		}
+		if env.Branch != taskAssignmentBranch(env.TaskID) {
+			return Domainf("sealed landing envelope branch does not match the task id")
+		}
+		if env.TargetRef == "" {
+			return Domainf("sealed landing envelope has no target ref")
+		}
+		oid := oidLen(env.ObjectFormat)
+		if len(env.VerifiedSHA) != oid || !assignmentHex.MatchString(env.VerifiedSHA) ||
+			len(env.PreMergeSHA) != oid || !assignmentHex.MatchString(env.PreMergeSHA) ||
+			len(env.PinnedBaseSHA) != oid || !assignmentHex.MatchString(env.PinnedBaseSHA) ||
+			len(env.PinnedClosureDigest) != 64 || !assignmentHex.MatchString(env.PinnedClosureDigest) ||
+			!assignmentUUID.MatchString(env.PinnedLocalRepoUUID) {
+			return Domainf("sealed landing envelope does not reproduce the frozen closure assignment")
 		}
 	default:
 		return Domainf("setup envelope operation %q is outside the closed union", env.Operation)

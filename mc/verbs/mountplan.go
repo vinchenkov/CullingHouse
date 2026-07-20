@@ -197,11 +197,46 @@ type PrivateDispatchVerifierProjection struct {
 // carry, and the only mount authority the resident may consume. Entries are
 // sorted by destination (the declared key of a semantically unordered set).
 // The alphabetical field order is load-bearing — see the entry type.
+// PrivateDispatchLanding is the sealed §7 landing instruction (ADR-017:699-702).
+// It carries the two HOST-backed anchors of the landing table plus the cover
+// obligation — never the `/repo` rows themselves, which the resident composes
+// (landingplan.go). Landing is mutually exclusive with every setup step and
+// with every plan entry: it runs a different program, and ADR-017:711 says no
+// agent or model process is present.
+//
+// The task root is DERIVED from the Worksource root and the task id rather
+// than named, so a carrier cannot point the reviewed-repository RO row at an
+// arbitrary directory and hand the lander a foreign closure to import.
+// Field order is alphabetical because the containing plan is replayed through
+// canonical JSON.
+type PrivateDispatchLanding struct {
+	Branch string `json:"branch"`
+	// ClosureDigest, PinnedBaseSHA, LocalRepoUUID and Branch come from the
+	// immutable task assignment; VerifiedSHA and PreMergeSHA are the landing
+	// facts the §7 approve fence guarantees and the target preimage frozen at
+	// attest. Together they are the "expected Git topology" of ADR-017:702.
+	ClosureDigest string `json:"closure_digest"`
+	// CoverDest is the `.mission-control` cover obligation. A landing container
+	// run without it hands the sealed root out RW through the source alias.
+	CoverDest      string                      `json:"cover_dest"`
+	LandingID      string                      `json:"landing_id"`
+	LocalRepoUUID  string                      `json:"local_repo_uuid"`
+	ObjectFormat   string                      `json:"object_format"`
+	PinnedBaseSHA  string                      `json:"pinned_base_sha"`
+	PreMergeSHA    string                      `json:"pre_merge_sha"`
+	TargetRef      string                      `json:"target_ref"`
+	TaskID         int64                       `json:"task_id"`
+	TaskRoot       PrivateDispatchPathIdentity `json:"task_root"`
+	VerifiedSHA    string                      `json:"verified_sha"`
+	WorksourceRoot PrivateDispatchPathIdentity `json:"worksource_root"`
+}
+
 type PrivateDispatchMountPlan struct {
 	AcceptedSealRebuild *PrivateDispatchAcceptedSealRebuild `json:"accepted_seal_rebuild,omitempty"`
 	CompletionSeal      *PrivateDispatchCompletionSeal      `json:"completion_seal,omitempty"`
 	Entries             []PrivateDispatchMountEntry         `json:"entries"`
 	JurisdictionDigest  string                              `json:"jurisdiction_digest,omitempty"`
+	Landing             *PrivateDispatchLanding             `json:"landing,omitempty"`
 	TaskPrecreate       *PrivateDispatchTaskPrecreate       `json:"task_precreate,omitempty"`
 	VerifierProjection  *PrivateDispatchVerifierProjection  `json:"verifier_projection,omitempty"`
 	Version             int                                 `json:"version"`

@@ -457,3 +457,49 @@ date/title; delete a line here when its slice lands.
   plan carrier is agent-plane-only — true in `effects.ts` since Phase 1b, stated
   in no document, and re-derived twice now. ADR-016 D5 or D1 should say it.
 - Needs your decision: no.
+
+## 2026-07-20 — the landing envelope carries eight of ADR-017:702's nine facts
+- Where: Phase 3, sealed landing step 3 (`verbs/setupenvelope.go`,
+  `verbs/mountplan.go`, `verbs/dispatchprivate.go`)
+- Gap: ADR-017:702 enumerates what `/mc/landing.json` carries: "exact task,
+  local/real branch, verified SHA, target ref, pre-merge SHA, closure digest,
+  landing action identity, expected Git topology, and cleanup path". Two of the
+  nine have no realizable form in this slice.
+- Choice, "expected Git topology": carried STRUCTURALLY rather than as its own
+  serialized field. The topology the lander revalidates (ADR-017:741-743) is the
+  branch, the verified/pre-merge/base SHAs, the closure digest and the local
+  repository UUID — every one of which the envelope already carries as its own
+  fenced field. The ADR specifies no serialization, so inventing an opaque blob
+  would add a parser at the most dangerous boundary in the system without adding
+  a fence. This is the conservative option under §6(c): a later slice that finds
+  a topology fact not already covered adds that field, and nothing has to be
+  un-invented first.
+- Choice, "cleanup path": NOT carried. ADR-017:757-759 defers cleanup to "a
+  later trusted landing/setup action" *after the spine records success* — it is
+  not this container's operation. Its only in-container target is the task root,
+  which the envelope already carries as `TaskRoot` and which is mounted RO.
+  Carrying a path for an operation this class cannot perform would be authority
+  without a consumer. PROGRESS's step 4 stops at the merge for the same reason:
+  cleanup has no mount and no owner yet.
+- Also decided: the landing arm refuses a run id. Landing holds no lease and
+  opens no Run (§7, and `LandReport` takes no run), so the envelope preamble's
+  "names no live run/task" check split — TaskID is required of every arm, RunID
+  of every arm *but* landing, which refuses it. This is cross-arm bleed in the
+  direction that is easy to miss: the setup arms all have a run, so a landing
+  envelope quietly carrying one would look ordinary.
+- Also logged, not fixed: the two sides of this crossing disagree about
+  canonical decimals. The envelope's `decimalIdentity` refuses a leading zero;
+  the helper boundary's `validDecimalText` accepts one. Landing inherits the
+  looser predicate rather than tightening it, because `validDecimalText` also
+  gates task precreate, the completion seal, the accepted-seal rebuild and the
+  verifier projection — tightening it inside this slice is exactly the
+  shared-predicate mistake the 2026-07-20 review above reversed. Not a hole at
+  this layer: the resident compares these against `strconv.FormatUint` output,
+  which never emits a leading zero, so a leading-zero identity fails the later
+  comparison instead of passing. Pinned by
+  `TestPrivateMountPlanLandingInheritsTheSharedDecimalGrammar` so it is visible
+  rather than silent. Owner: whoever next unifies the private-scalar grammar.
+- Spec impact: ADR-017:702 should say that the topology is the enumerated
+  identity fields rather than a distinct payload, and that the cleanup path
+  belongs to the cleanup action's own instruction, not the landing container's.
+- Needs your decision: no.

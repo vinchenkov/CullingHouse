@@ -69,6 +69,29 @@ func landingMountRows() []landingMountRow {
 	}
 }
 
+// The fixed container destinations of the landing table, derived from the
+// table itself so a row edit propagates to every validator rather than
+// drifting away from a hand-copied string literal. The landing envelope and
+// the plan's landing instruction are both validated against these.
+var (
+	landingSourceDest   = landingDest(boundary.KindLandingWorksource)
+	landingCoverDest    = landingDest(boundary.KindLandingMissionControlCover)
+	landingTaskRootDest = landingDest(boundary.KindLandingTaskRoot)
+	landingEnvelopeDest = landingDest(boundary.KindLandingEnvelope)
+)
+
+// landingDest returns the fixed container destination of one landing row, or
+// "" for a kind the table does not contain. An empty result never validates
+// anything: every caller compares it against a non-empty carried path.
+func landingDest(kind boundary.TypedKind) string {
+	for _, row := range landingMountRows() {
+		if row.Kind == kind {
+			return row.Dest
+		}
+	}
+	return ""
+}
+
 // validLandingDestination reports whether one container path is a cell of the
 // closed landing table. It is the grammar the landing INSTRUCTION is validated
 // against — never a plan grammar; see the file comment.
