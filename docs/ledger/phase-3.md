@@ -2816,3 +2816,36 @@ the real fix a test-breaking change.
 
 NEXT (in PROGRESS.md): sealed landing, starting red-first with the
 `LandingPending`/`tasks.branch` hole.
+
+## 2026-07-20 (later) — closing the silent archive, red-first
+
+Step 1 of the sealed-landing NEXT:, taken immediately because it is small and
+the hole is live. `domain.Approve` classified a task by `tasks.branch`: branch
+present ⇒ hold for landing, branch absent ⇒ artifact-plane deliverable, archive
+synchronously. A sealed task is branchless in `tasks` BY CONSTRUCTION — its
+branch lives in `task_assignments.branch`, because the only writer of
+`tasks.branch` is the `--status worked --branch` terminal that D6 deliberately
+closes to assigned tasks. So every sealed task took the archive arm.
+
+The red test made the failure mode legible in one line: `want DomainError
+"landing-fence", got commit`. "Got commit" IS the bug — the transaction
+succeeded, the task archived, and nothing anywhere errored.
+
+The fence refuses an assigned task at approve with `landing-fence`, naming
+ADR-017:1226-1240 as what is missing. Nothing is stranded: the seal, the packet
+and the task all survive for the landing slice. Deliberately NOT chosen: the
+alternative repair of projecting `task_assignments.branch` into `tasks.branch`
+at acceptance, which would make the task landing-pending and let `mc-land` fail
+it into `blocked`. That is louder still, but it asserts a ref exists in the
+real repo when it does not — fabricating state to get a better error message.
+The refusal fabricates nothing and is a one-line revert once landing exists.
+
+The fence keys on the assignment, not the status, so legacy Phase-2 branchless
+rows keep their original synchronous archive. That direction has its own test:
+the failure this whole session kept finding is a check that stopped running or
+started running too widely, and a fence with only its positive arm pinned is
+the same hazard wearing different clothes.
+
+NEXT (in PROGRESS.md): the design question this forces — project the sealed
+branch at acceptance, or teach `LandingPending()` to read the assignment — and
+then sealed landing itself.

@@ -4,7 +4,9 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"mc/domain"
@@ -154,6 +156,21 @@ func mkRun(t *testing.T, db *sql.DB, id, role string, subject int64) {
 	mustExec(t, db,
 		`INSERT INTO runs (id, tier, role, worksource, subject) VALUES (?, 'pipeline', ?, 'ws', ?)`,
 		id, role, subject)
+}
+
+// mkAssignment inserts the ADR-016 D5 first-task closure assignment, the row
+// that makes a standalone task "assigned" — i.e. sealed, with its reviewed
+// commit in the task-local store and its branch name here rather than in
+// tasks.branch.
+func mkAssignment(t *testing.T, db *sql.DB, taskID int64) {
+	t.Helper()
+	mustExec(t, db, `
+		INSERT INTO task_assignments
+			(task_id, target_ref, branch, task_root_key, object_format,
+			 base_sha, local_repo_uuid, closure_digest)
+		VALUES (?, 'main', ?, 'task-root', 'sha1', ?, '0a1b2c3d-4e5f', ?)`,
+		taskID, fmt.Sprintf("mc/task-%d", taskID),
+		strings.Repeat("a", 40), strings.Repeat("b", 64))
 }
 
 // mkPacket inserts a packet for a packaged task.

@@ -809,6 +809,55 @@ func TestApprove(t *testing.T) {
 		}
 	})
 
+	// An assigned (sealed) standalone task keeps its reviewed commit in the
+	// task-local bare store, and its branch name in `task_assignments.branch` —
+	// NOT in `tasks.branch`, whose only writer (complete.go:163) is the
+	// `--status worked --branch` terminal that D6 closes to assigned tasks.
+	// Before this fence, Approve saw branch=NULL, classified the task as an
+	// artifact-plane deliverable, and ARCHIVED it: the operator approved a
+	// merge, the task vanished, and main was never touched (Inv. 25 says
+	// merging always requires approval; it was silently the case that approval
+	// never produced a merge). Sealed landing (ADR-017:1226-1240) is
+	// unimplemented, so the honest answer is a loud refusal, not a silent
+	// archive that strands the work.
+	t.Run("assigned_sealed_task_refuses_rather_than_archiving", func(t *testing.T) {
+		db := openSpine(t)
+		id := mkTask(t, db, "task", "packaged")
+		mkPacket(t, db, id)
+		mkAssignment(t, db, id)
+		wantCode(t, db, domain.CodeLandingFence, func(ctx context.Context, q domain.Q) error {
+			_, err := domain.Approve(ctx, q, id)
+			return err
+		})
+		if got := taskStr(t, db, id, "decision"); got != "<NULL>" {
+			t.Fatalf("refused approve wrote decision %q", got)
+		}
+		if got := oneInt(t, db, `SELECT archived FROM tasks WHERE id = ?`, id); got != 0 {
+			t.Fatalf("sealed task archived on approve without ever landing (the silent-archive hole)")
+		}
+		if got := oneInt(t, db, `SELECT archived FROM review_packets WHERE task_id = ?`, id); got != 0 {
+			t.Fatalf("packet archived with the sealed task")
+		}
+	})
+
+	// The fence keys on the assignment, not on the status: a legacy Phase-2 row
+	// with no assignment keeps its original branchless archive, so historical
+	// and non-repository artifact work is not swept into the refusal.
+	t.Run("unassigned_legacy_task_still_archives", func(t *testing.T) {
+		db := openSpine(t)
+		id := mkTask(t, db, "task", "packaged")
+		mkPacket(t, db, id)
+		var archived bool
+		mustTx(t, db, func(ctx context.Context, q domain.Q) error {
+			var err error
+			archived, err = domain.Approve(ctx, q, id)
+			return err
+		})
+		if !archived {
+			t.Fatalf("legacy branchless approve stopped archiving; the fence over-reached")
+		}
+	})
+
 	t.Run("non_packaged_rejected_both_layers", func(t *testing.T) {
 		db := openSpine(t)
 		id := mkTask(t, db, "task", "worked")

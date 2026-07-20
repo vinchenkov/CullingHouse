@@ -556,6 +556,14 @@ kept below. Operator legs that remain open are under `## Parked`, not here.
         Controlled A/B run per 6657541's lesson: arm disabled ⇒ stalls at
         `verified`, never reaches `packaged` (126s timeout); arm enabled ⇒ PASS
         in 5.2s. The test deliberately STOPS at `packaged` — see the next line
+  - [x] The silent-archive hole is closed (step 1 of sealed landing):
+        `domain.Approve` now refuses a task carrying an immutable closure
+        assignment with `landing-fence`, instead of seeing `branch = NULL`,
+        classifying it as an artifact-plane deliverable, and archiving it. The
+        seal, the packet, and the task all survive for the landing slice. The
+        fence keys on the ASSIGNMENT, not the status, so legacy Phase-2
+        branchless rows keep their original synchronous archive (pinned by its
+        own test, so the fence cannot over-reach)
 - [ ] Phase 4 — E2E control loops (six scenario families)
 - [ ] Phase 5 — Real-subscription acceptance (operator-scheduled)
 - [ ] Release prep (after Phase 5): swap the repo's construction face for
@@ -641,9 +649,12 @@ seal pipeline never joins it — two facts, the second worse:
    calls it an artifact-plane deliverable, and archives it. The operator
    approves a merge, the task vanishes, main is untouched, nothing errors.
 
-Start with (2) red-first — it is small, it is a live correctness hole, and it
-forces the design question (project the sealed branch into `tasks.branch` at
-acceptance, or teach `LandingPending()` to read the assignment) that (1) then
-builds on. The E2E stops at `packaged` on purpose: driving `packet decide
---approve` today would encode the silent archive as expected behavior. Full
-diagnosis in IMPLEMENTATION-NOTES.md (2026-07-20).
+Step 1 of (2) is DONE (`domain.Approve` refuses an assigned task with
+`landing-fence` rather than archiving it). What remains is the design question
+it forces and then all of (1): decide whether the sealed branch is projected
+into `tasks.branch` at acceptance or whether `LandingPending()` learns to read
+`task_assignments`, then build the sealed landing itself — the closure import,
+the CAS-created real ref, the landing envelope, and producers for the four
+typed mount kinds. The E2E stops at `packaged` on purpose and should be carried
+through approve → land only once landing actually merges. Full diagnosis in
+IMPLEMENTATION-NOTES.md (2026-07-20).

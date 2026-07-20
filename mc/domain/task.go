@@ -414,6 +414,26 @@ func Approve(ctx context.Context, q Q, taskID int64) (bool, error) {
 		return false, Errf(CodeLandingFence,
 			"branch-carrying task %d requires verified_sha and target_ref before approval (§7 landing fence)", taskID)
 	}
+	// An assigned (sealed) standalone task is branchless in `tasks` by
+	// construction: its branch lives in `task_assignments.branch`, because the
+	// only writer of `tasks.branch` is the `--status worked --branch` terminal
+	// that ADR-016 D6 closes to assigned tasks. Without this fence the
+	// branchless arm below would classify it as an artifact-plane deliverable
+	// and archive it — the operator approves a merge, the task disappears, and
+	// main is never touched, silently. Sealed landing (ADR-017:1226-1240) is
+	// not implemented, so refuse loudly and strand nothing: the seal, the
+	// packet, and the task all survive for the landing slice to pick up.
+	if !r.Branch.Valid || r.Branch.String == "" {
+		var assigned int
+		if err := q.QueryRowContext(ctx,
+			`SELECT EXISTS(SELECT 1 FROM task_assignments WHERE task_id = ?)`, taskID).Scan(&assigned); err != nil {
+			return false, err
+		}
+		if assigned != 0 {
+			return false, Errf(CodeLandingFence,
+				"task %d carries a sealed closure assignment and cannot be approved until sealed landing exists (ADR-017:1226-1240); approving it now would archive it without ever merging", taskID)
+		}
+	}
 	if _, err := q.ExecContext(ctx, `
 		UPDATE tasks SET decision = 'approved', decided_at = datetime('now')
 		WHERE id = ?`, taskID); err != nil {
