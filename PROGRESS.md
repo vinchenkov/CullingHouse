@@ -10,7 +10,7 @@ Access does NOT fix it — the failure precedes any policy lookup. Symptom:
 `stat` works, reads return `Operation not permitted`, git says
 `Unable to read current working directory`.
 
-LAST GREEN SHA: bf3904b — five-leg fast lane (Docker suite last 8/8 at 4a69d15; the operator pushes manually — decided 2026-07-14. Agents: do not push.)
+LAST GREEN SHA: 55c2949 — five-leg fast lane (Docker suite last 8/8 at 4a69d15; the operator pushes manually — decided 2026-07-14. Agents: do not push.)
 
 PHASES PASSING: Phase 0 COMPLETE (S1–S8 all green, no fallback ADRs; only operator-leg deferrals remain); Phase 1 COMPLETE (1a substrate 172; 1b walking skeleton reviewed-and-fixed — fake-harness 43, agent-runner 13, runner/image 40, resident 42, dispatch + cmd/mc suites; Docker e2e PASS ×4 total); Phase 2 COMPLETE for every unparked acceptance line (domain/§18 surface, deterministic split-brain convergence, bounded honesty + five mutants, tagged dispatch/metamorphic/twin-spine lifecycle properties; the initiative-wave CLI is no longer isolated — ADR-020 landed 2026-07-14 and closed the last Phase 2 acceptance line)
 KNOWN-FAILING: `TestOnboardConcurrentFreshHomeNeverDeletesTheWinner` (mc/verbs),
@@ -582,27 +582,31 @@ kept below. Operator legs that remain open are under `## Parked`, not here.
         landing refuses it loudly instead of it going silently unlandable. All
         INERT: `Decide` does not consult the predicate and `Approve` still
         refuses a sealed task
-  - [x] Sealed landing, steps 1-2 of the mount lane (7fee4e4, 8273616). The
-        `/repo` plane was a PROTOCOL error — `mountplan.go`'s typed arm knew
-        one table — so nothing downstream could be built. It now knows two,
-        pinned as a PARTITION (`dispatchprivate.go`'s task-precreate
-        fabrication guard keys off `validTaskPlanDestination` alone, so a
-        landing cell drifting into the task grammar would silently widen it).
-        `landingPlanRows()` is ADR-017:699-702 verbatim; `/repo/source` is the
-        system's only RW grant of a real repository (:699), which is why the
-        setup class's RO row at :691 cannot share its table. The table
-        produces TWO roots, not four: :700's cover is a GENERATED per-run
-        directory (as effects.ts:576 does for setup), so it has no attest-time
-        identity, like `/mc/landing.json` — both are `ResidentMaterialized`
-        and excluded from the bindable grammar. `resolveLandingRoots` fences
-        both anchors as unaliased operator-owned canonical dirs, sealed root
-        at 0555. INERT, asserted by a PAIR: a landing cell denies through
-        ordinary jurisdiction AND plans once the producer supplies. Nothing
-        touches `dispatchMountHostSnapshot`, so the jurisdiction digest has
-        not moved. OWED to step 3: because the cover is not a plan entry, the
-        plan cannot express that sealed bytes are unreachable through the RW
-        source alias — the landing instruction must carry that obligation and
-        the helper boundary must validate it (deviation logged 2026-07-20)
+  - [x] Sealed landing, the landing mount table and host anchors
+        (7fee4e4..55c2949, after adversarial review reversed the first draft).
+        THE `/repo` PLANE IS NOT PLAN-ADDRESSABLE: `effects.ts:90-95` has
+        refused every plan entry outside `/workspace` since Phase 1b, so the
+        D5 plan is an agent-plane carrier and landing — like the whole setup
+        class — is composed by the resident. The first draft taught
+        `mountplan.go`/`dispatchprivate.go` the `/repo` grammar; that bought
+        no capability and silently moved two guards those predicates share
+        (agent/landing class separation, and the task-precreate fabrication
+        guard, which let a precreate plan carry RW to the real Worksource
+        checkout). Reverted; both defects regression-guarded.
+        SURVIVING: `landingMountRows()` is ADR-017:699-702 verbatim
+        (`/repo/source` is the system's only RW grant of a real repository,
+        :699, which is why setup's RO row at :691 cannot share its table);
+        `validLandingDestination` is the CLASS grammar for validating the
+        landing instruction; `resolveLandingRoots` resolves the two
+        host-backed anchors (the other two rows are `Generated` per run by the
+        resident) as unaliased operator-owned canonical dirs, sealed root at
+        0555, RW anchor refusing group/world-writable and requiring a real
+        `.git`. INERT: no production caller, nothing in
+        `dispatchMountHostSnapshot`, jurisdiction digest unmoved.
+        OWED to step 3: the landing instruction must carry BOTH the resolved
+        anchors and the `.mission-control` cover obligation, validated at the
+        helper boundary — a landing container run without the cover hands the
+        sealed root out RW through the source alias
 - [ ] Phase 4 — E2E control loops (six scenario families)
 - [ ] Phase 5 — Real-subscription acceptance (operator-scheduled)
 - [ ] Release prep (after Phase 5): swap the repo's construction face for
@@ -672,16 +676,21 @@ Build the remaining pieces INERT, in this order, and turn the lane on only at
 the end — a half-built lane converts today's loud `Approve` refusal into
 durable blocked rows, which is the Inv. 25 hole rebuilt one layer up.
 
-Steps 1-2 are DONE. Two facts they leave for step 3:
+Steps 1-2 are DONE (the mount table, its class grammar, and the host-anchor
+resolver). Three facts they leave for step 3, the first of which reshapes it:
+   - THE `/repo` PLANE IS NOT PLAN-ADDRESSABLE. `effects.ts:90-95` refuses
+     every plan entry outside `/workspace`. So landing's mounts do NOT ride
+     the ADR-016 D5 carrier as entries; the landing INSTRUCTION carries them
+     and the resident composes the binds, exactly as setup does today
+     (`effects.ts:598-603`). Do not re-teach the plan grammar `/repo` — that
+     was the first draft's error and it moved two unrelated guards
+     (docs/ledger/phase-3.md, IMPLEMENTATION-NOTES 2026-07-20).
    - The landing instruction MUST carry the `.mission-control` cover
-     obligation, validated at the helper boundary. The cover is
-     resident-generated, so it is not a plan entry, so the plan cannot
-     express that sealed bytes are unreachable through the RW `/repo/source`
-     alias. A landing container run without the cover hands the sealed root
-     out RW through that alias.
+     obligation, validated at the helper boundary. A landing container run
+     without the cover hands the sealed root out RW through the source alias.
    - `mountattest.go:161` keys the jurisdiction digest off `kind.String()`.
-     No landing kind is in `TypedRoots` yet, so the digest has NOT moved. It
-     moves when step 5 wires the producer in — that is the commit to pin it.
+     No landing kind is in `TypedRoots`, so the digest has NOT moved. If step
+     5 puts the landing anchors there, that is the commit to pin it.
 
 3. The landing envelope as a fourth closed-union arm in `setupenvelope.go`,
    refusing cross-arm field bleed both directions, plus the `Landing` field on

@@ -2983,3 +2983,57 @@ commit that must pin it.
 NEXT (in PROGRESS.md): step 3, the landing envelope arm and the `Landing`
 carrier field — carrying the cover obligation named above — then the lander,
 then the wiring.
+
+**The review reversed it.** The slice above was audited by a spawned
+adversarial reviewer against ADR-017 and the resident, and its deciding
+criterion did not survive. The slice asked "does a host identity exist at
+attest time?"; the question that governs is "is the `/repo` plane
+plan-addressable at all?" — and `resident/src/effects.ts:90-95` has refused
+every plan entry outside `/workspace` since Phase 1b. The D5 plan is an
+AGENT-plane carrier. Every `/repo` row of the sibling setup class is composed
+by the resident from paths it derives itself. Landing produces ZERO plan
+cells, not two, and both seam widenings are reverted (55c2949).
+
+The widening bought no capability — the resident would have refused the spawn
+the moment step 5 turned the lane on — and cost two guards, because both
+predicates gate more than their names suggest. `validatePrivateMountPlan`
+began accepting plans mixing agent-table `/workspace` rows with landing
+`/repo` rows, which ADR-017:686-687 forbids and nothing else enforces; and the
+task-precreate fabrication guard, keyed off `validTaskPlanDestination` alone,
+began admitting a precreate plan carrying RW to the real Worksource checkout.
+Both were live on the HELPER BOUNDARY — a re-validator of incoming plans, not
+a producer — so the slice was not as inert as its own tests asserted. Its
+inertness pair tested the planner and stopped there.
+
+Two lessons worth carrying forward. Widening a predicate that several guards
+share is never a local change; the diff touched one line and moved two fences
+it never named. And "the producer is inert" says nothing about a validator:
+inertness has to be asserted at every seam that reads the predicate, not at
+the one the slice was thinking about.
+
+The table and the host-anchor resolver survive, repurposed as the landing
+CLASS's grammar for validating the landing INSTRUCTION — the division
+`/mc/setup.json` has had since D5. `Generated` replaces `ResidentMaterialized`
+(ADR-017's own word at :700, :702). The review also confirmed the parts that
+held: ADR fidelity of all four rows, planner inertness, the unmoved
+jurisdiction digest, and it refuted the case-insensitive-volume and bind-mount
+attacks (authorization compares inodes via `SameFile`, so a case-variant
+spelling still matches).
+
+Four resolver defects came with it, all now mutation-verified. The RW anchor
+had NO shape fence — it now refuses group/world-writable, though not an exact
+mode, since a real repository is commonly 0755 — and no check that it is a
+"real Git Worksource root" (:699), so landing would have imported a closure
+and created a ref in a non-repository. The task-root arm's ownership and kind
+fences were unreachable, because a foreign uid tripped the Worksource arm
+first. And the canonical-ancestry fence was VACUOUS: mutating it to `if false`
+left the suite green, because the symlink checks caught every shape it was
+meant to refuse. That is the fourth fence this phase found passing for the
+wrong reason, after 6657541, 83ed9e9 and the v11 trigger. The smell is stable
+enough to name: a negative test whose scenario is reachable by an EARLIER
+fence proves nothing about the fence it is written under, and only mutation
+finds it.
+
+NEXT (in PROGRESS.md): step 3, the landing envelope arm and the landing
+instruction on the carrier — which is where the cover obligation and the
+resolved anchors both belong — then the lander, then the wiring.
