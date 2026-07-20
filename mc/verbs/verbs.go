@@ -18,10 +18,13 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
 	"time"
+
+	"modernc.org/sqlite"
 
 	"mc/domain"
 )
@@ -78,10 +81,24 @@ func inTx(db *sql.DB, fn func(ctx context.Context, q Q) error) error {
 
 // classify maps untyped errors (substrate aborts, constraint failures) to
 // DomainError; typed errors pass through.
+//
+// A driver-level fault is NOT a domain rejection and must not be reported as
+// one. Reporting SQLite's own errors under `domain-rejection` tells an agent —
+// and an operator reading a log — that the spine refused the request on the
+// merits, when in fact the storage layer failed. That laundering cost a real
+// diagnosis cycle on 2026-07-19: SQLite's `locking protocol (15)`
+// (SQLITE_PROTOCOL, raised by a wal-index handshake failure) was read as a
+// Mission Control guard and chased as a design blocker. These faults keep the
+// driver's message but carry their own code so they are legible as
+// infrastructure.
 func classify(err error) error {
 	switch err.(type) {
 	case *DomainError, *UsageError:
 		return err
+	}
+	var serr *sqlite.Error
+	if errors.As(err, &serr) {
+		return &DomainError{Code: domain.CodeSpineFault, Msg: err.Error()}
 	}
 	return &DomainError{Msg: err.Error()}
 }

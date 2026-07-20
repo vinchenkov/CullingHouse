@@ -67,6 +67,11 @@ const (
 	CodeNotInitiative      = "not-initiative"
 	CodeArchived           = "archived"
 	CodeWorksourceInactive = "worksource-inactive"
+	// CodeSpineFault is NOT a rule refusal: the storage layer itself failed
+	// (a SQLite driver error — locking, I/O, corruption). It is separated so
+	// an agent or operator can tell "the spine refused you" from "the spine
+	// broke", which reading them alike once cost a whole diagnosis cycle.
+	CodeSpineFault = "spine-fault"
 )
 
 // DomainError is a domain rejection: exit 1 at the CLI (phase1b-contract §2),

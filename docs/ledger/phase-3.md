@@ -2321,3 +2321,68 @@ run would also have caught it; one sample is not a defect.
 
 NEXT (moved to PROGRESS.md): carry the E2E through the packet decision and
 land, and treat the intermittent SQLITE_PROTOCOL as part of KNOWN-FAILING (3).
+
+## 2026-07-19 (second correction) — the VirtioFS diagnosis is RIGHT; my refutation was a bad experiment
+
+The correction above claimed the split-kernel/VirtioFS explanation was refuted
+by a direct probe. **That claim is withdrawn.** The probe tested the wrong
+thing, and a decorrelated review (a spawned agent reading the driver source and
+the spec) reached the correct diagnosis independently.
+
+**What the bad probe did.** It ran six concurrent SQLite writers *all inside a
+single container* against a WAL database on the VirtioFS bind, got 240/240
+clean, and concluded WAL-over-VirtioFS was fine. But every writer was behind
+ONE kernel — the VM's. Inv. 24's claim is not about VirtioFS bandwidth or
+concurrency; it is that a HOST process and CONTAINER processes on one WAL
+database are arbitrated by TWO kernels that cannot see each other's locks. The
+probe never involved a host opener, so it could not have reproduced the failure
+it claimed to rule out. Refuting a hypothesis requires reproducing its
+mechanism, not merely exercising nearby machinery.
+
+**The corrected probe.** Container-side writers plus concurrent host-side
+readers on the same bind-mounted WAL database: **13 container-side `Bus error`
+crashes in 400 writes**, against 0 in the single-kernel run. SIGBUS on the
+mmap'd wal-index is the same family as `SQLITE_PROTOCOL` — the wal-index
+handshake failing across the boundary — and it is a *harder* failure than the
+error we were chasing.
+
+**The citations were there the whole time.** `specs/mission-control-spec.md:69`
+(Inv. 24): SQLite "is only safe when one operating-system kernel arbitrates its
+locks, so the spine lives on a runtime-local named volume … never on a shared
+host path … making the spine reachable to the host as a plain local file would
+split it across two kernels and corrupt it." And
+`docs/phase1b-contract.md:30` names the mechanism outright: "Host processes
+must not open it (also technically unsound: WAL across the VirtioFS/VM kernel
+boundary)."
+
+`withHostBindSpine()` (`e2e_test.go:1198-1212`) puts the spine on a host bind,
+and `acceptedSealRebuildReceipt` (`:1483-1499`) then opens it host-side with
+`sql.Open` while the resident and its containers write — polled in a `waitFor`
+loop. That is the forbidden configuration, in the shipped test, by
+construction. Every other e2e test uses a named volume, which is why
+`TestWalkingSkeleton` is 10/10 while this one flakes.
+
+So KNOWN-FAILING (3) is no longer "root cause unknown". The cause is the
+fixture's spine placement violating Inv. 24, and the fix is to return the
+sealed E2E's spine to a named volume — seeding production task state *through
+the helper* (`docker exec mc …`) instead of host-side through the verbs
+package. That is a real slice: the current seeding calls
+`MaterializeFirstTaskStore`, `RegisterFirstTaskSetup`,
+`RecordFirstTaskSetupClosure` and raw SQL against a host-opened spine.
+
+**Landed now, because it is what cost the cycle** (`classify`, `verbs.go:82`):
+a SQLite driver error was being reported to agents and operators as
+`domain-rejection` — indistinguishable from "the spine refused your request on
+the merits". Driver faults now carry `spine-fault` instead. The message is
+unchanged; only its classification is honest.
+
+**Two lessons, both mine.** First: an unrecognized error string was promoted to
+a diagnosis on one observation — one grep would have shown it is not our text.
+Second, and worse: the correction to that mistake was itself asserted from an
+experiment that did not test the stated mechanism. A refutation deserves at
+least the scrutiny of the claim it overturns; "I ran a probe" is not evidence
+unless the probe reproduces the mechanism.
+
+NEXT (moved to PROGRESS.md): move the sealed E2E's spine to a named volume
+(seed through the helper), which should also close KNOWN-FAILING (3); then
+carry the E2E through the packet decision and land.

@@ -541,10 +541,11 @@ helper-scope crossing (d3471f5) — and
 `accepted_seal_rebuild_receipts` row and its Verifier continuation. Full Docker
 suite 7/7 green at 485a7f2. Diagnoses in docs/ledger/phase-3.md (2026-07-19).
 
-NEXT: Carry the E2E through the packet decision and land. The Packager leg is
-NOT blocked — it reaches `packaged` on its own (the earlier `locking protocol
-(15)` reading was wrong: that is SQLite's `SQLITE_PROTOCOL`, a transient spine
-locking error, not a Mission Control guard; corrected in the ledger).
+NEXT: Move the sealed E2E's spine off the host bind onto a Docker named volume
+— seeding production task state THROUGH the helper (`docker exec mc …`) instead
+of host-side via the verbs package — which should also close KNOWN-FAILING (3).
+Then carry the E2E through the packet decision and land. The Packager leg is
+NOT blocked: it reaches `packaged` on its own.
 
 KNOWN-FAILING (3): `TestProductionWorkerCompletionSealDockerBoundary`
 (mc/e2e, docker_e2e tag), INTERMITTENT ~2 in 10 — and PRE-EXISTING, not caused
@@ -557,13 +558,19 @@ timeout`. It never fails in the rebuild. Measured on both sides: 2/10 at
 each run is fast) — same population. `TestWalkingSkeleton` was 10/10, so this is
 not the general helper crossing but this test's configuration (production route
 + `withHostBindSpine()`). Same load-sensitive resident-control family as
-KNOWN-FAILING (2). An intermittent SQLite `SQLITE_PROTOCOL` (result code 15)
-from an agent container's spine write belongs to this same family. One tempting
-explanation is refuted: this test alone puts the spine on a VirtioFS host bind
-(`withHostBindSpine()`) where every other e2e test uses a Docker named volume,
-but a direct probe ran 240/240 concurrent WAL inserts on that bind with no
-error, so broken WAL locking across the bind is NOT the cause. Root cause
-remains unknown. Fail-closed. Owner:
+KNOWN-FAILING (2). ROOT CAUSE FOUND (2026-07-19): this test alone uses
+`withHostBindSpine()` (`e2e_test.go:1198`), putting the spine on a VirtioFS host
+bind, and `acceptedSealRebuildReceipt` (`:1483`) then opens it HOST-side with
+`sql.Open` while the resident's containers write. That splits one WAL database
+across two kernels — exactly what Inv. 24 forbids
+(`specs/mission-control-spec.md:69`) and what `docs/phase1b-contract.md:30`
+names as "WAL across the VirtioFS/VM kernel boundary". Every other e2e test
+uses a named volume, which is why `TestWalkingSkeleton` is 10/10. Evidence:
+container writers + concurrent host readers on that bind produce 13 `Bus error`
+crashes per 400 writes, vs 0 when all writers sit behind one kernel. (An
+earlier entry claimed this was refuted; that probe kept every writer inside one
+container and so never tested the mechanism — withdrawn.) Fix: named volume,
+seed through the helper. Fail-closed. Owner:
 whoever next touches the resident control crossing — not a blocker for the next
 slice. Repro: `cd mc && for i in $(seq 1 10); do mise exec -- go test -tags
 docker_e2e -count=1 -timeout 20m -run
