@@ -1,9 +1,11 @@
 package verbs
 
 import (
+	"encoding/binary"
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 )
 
 // The sealed lander (ADR-017:738-761), step 4 of the landing lane.
@@ -495,4 +497,128 @@ func fenceReviewedPathsClean(g landingGit, workspace, target, base, verifiedSHA 
 		}
 	}
 	return nil
+}
+
+// inodeOf extracts an inode number from a FileInfo, for the hardlink fence.
+func inodeOf(info os.FileInfo) (uint64, bool) {
+	st, ok := info.Sys().(*syscall.Stat_t)
+	if !ok {
+		return 0, false
+	}
+	return uint64(st.Ino), true
+}
+
+// importSealedClosure imports the reviewed closure into the real object store
+// (ADR-017:743-747).
+//
+// The shape is `pack-objects --revs --stdout` in the SEALED store, piped to
+// `index-pack --stdin` in the REAL one. That pairing is what satisfies the
+// ADR's three prohibitions structurally rather than by discipline:
+//
+//   - no HARDLINK, because objects arrive as a byte stream over a pipe; there
+//     is no filesystem operation that could link them. A hardlinked import
+//     would leave the sealed root's bytes mutable through the real repository
+//     and defeat the RO mount.
+//   - no ALTERNATE, because nothing writes objects/info/alternates. An
+//     alternate would break the real repository the moment the landing
+//     container exits and the mount disappears.
+//   - no SPECULATIVE DELETION, because index-pack only ever adds. A crash here
+//     leaves unreachable but valid objects, which is explicitly acceptable:
+//     retry re-imports the same closure and git deduplicates by hash.
+//
+// The pack is bounded to `verified` minus `base` — the reviewed closure only,
+// not the whole history the real repository already has.
+//
+// It creates NO ref. Ref creation is the next stage's durable import marker
+// (ADR-017:748); doing it here would make a crash mid-import indistinguishable
+// from a completed one.
+func importSealedClosure(sealedRepo, realRepo, base, verifiedSHA string) error {
+	sealed := landingGit{dir: sealedRepo}
+	// Prove the sealed store actually holds the reviewed commit and the frozen
+	// base before building anything.
+	//
+	// REDUNDANT and retained: `pack-objects --revs` rejects an unknown rev on
+	// its own, so mutating these two away leaves the suite green. They are kept
+	// because they fail FAST with a message naming which of the two revs is
+	// missing, where pack-objects reports a generic bad-revision error from a
+	// subprocess. Not counted as a live fence.
+	if _, err := sealed.out("cat-file", "-e", verifiedSHA+"^{commit}"); err != nil {
+		return Domainf("sealed store does not hold the reviewed commit %s", verifiedSHA)
+	}
+	if _, err := sealed.out("cat-file", "-e", base+"^{commit}"); err != nil {
+		return Domainf("sealed store does not hold the frozen base %s", base)
+	}
+
+	// `--revs` reads the rev range from stdin: everything reachable from the
+	// reviewed commit, minus everything reachable from the base.
+	revs := verifiedSHA + "\n^" + base + "\n"
+	pack, err := gitOutput(sealedRepo, landingGitEnv(), []byte(revs),
+		append(landingFixedConfig(), "pack-objects", "--revs", "--stdout", "--delta-base-offset")...)
+	if err != nil {
+		return Domainf("landing could not build the reviewed closure pack: %v", err)
+	}
+	// The pack must actually CONTAIN objects. Checking `len(pack) == 0` does
+	// not establish that and never fires: MEASURED, an empty rev range still
+	// produces a 32-byte pack — a 12-byte header plus a 20-byte trailer — so a
+	// length test is dead code wearing the look of a fence. The object count is
+	// in the header, so read it.
+	//
+	// This is reachable: a reviewed commit equal to the frozen base has an
+	// empty closure, and importing nothing and proceeding to create a ref and
+	// merge would land a no-op change while reporting success.
+	count, err := packObjectCount(pack)
+	if err != nil {
+		return err
+	}
+	if count == 0 {
+		return Domainf("the reviewed closure is empty; %s adds nothing to %s", verifiedSHA, base)
+	}
+
+	// index-pack fsyncs the pack and its index; core.fsync covers the loose and
+	// derived metadata git writes alongside. ADR-017:744 wants the imported
+	// objects durable before the ref that points at them exists.
+	fsync := []string{"-c", "core.fsync=objects,derived-metadata,index", "-c", "core.fsyncMethod=fsync"}
+	args := append(append(landingFixedConfig(), fsync...), "index-pack", "--stdin")
+	if _, err := gitOutput(realRepo, landingGitEnv(), pack, args...); err != nil {
+		return Domainf("landing could not index the reviewed closure into the real store: %v", err)
+	}
+
+	// Verify, in the REAL store, that the whole closure is now readable. The
+	// pack having been written is not the same claim, and ADR-017:744 asks for
+	// verification explicitly ("then fsyncs and verifies the imported
+	// objects").
+	//
+	// NO REACHABLE FAILURE in the fast lane: index-pack validates the pack it
+	// writes, so producing a store where it succeeded yet the objects are
+	// unreadable would mean corrupting the pack between write and read.
+	// Mutating either check away leaves the suite green. Retained because the
+	// ADR mandates the verification, not because a test drives it — recorded
+	// here so the next reader does not mistake it for a fence with a scenario.
+	real := landingGit{dir: realRepo}
+	if _, err := real.out("cat-file", "-e", verifiedSHA+"^{commit}"); err != nil {
+		return Domainf("the reviewed commit is not readable in the real store after import: %v", err)
+	}
+	listed, err := real.out("rev-list", "--objects", verifiedSHA, "--not", base)
+	if err != nil {
+		return Domainf("the imported closure is not traversable in the real store: %v", err)
+	}
+	for _, line := range strings.Split(listed, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) == 0 {
+			continue
+		}
+		if _, err := real.out("cat-file", "-e", fields[0]); err != nil {
+			return Domainf("imported closure object %s is not readable in the real store", fields[0])
+		}
+	}
+	return nil
+}
+
+// packObjectCount reads the object count from a pack header. The format is
+// fixed: "PACK" magic, a 4-byte version, then a 4-byte big-endian count.
+func packObjectCount(pack []byte) (uint32, error) {
+	if len(pack) < 12 || string(pack[0:4]) != "PACK" {
+		return 0, Domainf("landing produced something that is not a pack")
+	}
+	return binary.BigEndian.Uint32(pack[8:12]), nil
 }
