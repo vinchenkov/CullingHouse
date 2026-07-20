@@ -16,7 +16,7 @@ func landingEnvelope() SetupEnvelope {
 		TaskID: 7, ObjectFormat: "sha1",
 		LandingID:           "0011223344556677",
 		Branch:              taskAssignmentBranch(7),
-		TargetRef:           "refs/heads/main",
+		TargetRef:           "main",
 		VerifiedSHA:         strings.Repeat("a", 40),
 		PreMergeSHA:         strings.Repeat("b", 40),
 		PinnedBaseSHA:       strings.Repeat("c", 40),

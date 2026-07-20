@@ -28,7 +28,7 @@ func landingPlanFixture() *PrivateDispatchMountPlan {
 			ObjectFormat:  "sha1",
 			PinnedBaseSHA: strings.Repeat("c", 40),
 			PreMergeSHA:   strings.Repeat("b", 40),
-			TargetRef:     "refs/heads/main",
+			TargetRef:     "main",
 			TaskID:        7,
 			TaskRoot: PrivateDispatchPathIdentity{
 				Canonical: path.Join(ws, ".mission-control", "tasks", "task-7"),

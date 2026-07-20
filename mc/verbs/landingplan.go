@@ -34,6 +34,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"syscall"
 
 	"mc/boundary"
@@ -107,6 +108,49 @@ func landingDest(kind boundary.TypedKind) string {
 		}
 	}
 	return ""
+}
+
+// validLandingTargetBranch reports whether a landing target is a bare local
+// branch name the lander may merge into.
+//
+// `tasks.target_ref` is free-form text (schema.sql:786) and the first-task
+// setup arm treats it as a rev to resolve, where "HEAD" is a legitimate value.
+// Landing cannot inherit that looseness: it constructs `refs/heads/<target>`
+// in the REAL operator repository, so a `refs/`-prefixed value would yield
+// `refs/heads/refs/heads/main`, "HEAD" is meaningless as a merge destination,
+// and an option- or glob-shaped name turns a ref into an argument or a
+// pattern. This restates git's own check-ref-format rules for a branch name
+// rather than shelling out, because it runs at the helper boundary where no
+// git process may be spawned on caller-supplied bytes.
+func validLandingTargetBranch(name string) bool {
+	if name == "" || len(name) > 255 || name == "HEAD" || name == "@" {
+		return false
+	}
+	// A leading '-' makes the name an option wherever it is passed positionally.
+	if strings.HasPrefix(name, "-") || strings.HasPrefix(name, "refs/") {
+		return false
+	}
+	if strings.HasPrefix(name, "/") || strings.HasSuffix(name, "/") ||
+		strings.Contains(name, "//") || strings.HasSuffix(name, ".") ||
+		strings.HasSuffix(name, ".lock") || strings.Contains(name, "..") ||
+		strings.Contains(name, "@{") {
+		return false
+	}
+	for _, r := range name {
+		if r < 0x20 || r == 0x7f {
+			return false
+		}
+		if strings.ContainsRune(" ~^:?*[\\", r) {
+			return false
+		}
+	}
+	// No path component may begin with '.' or end in '.lock'.
+	for _, part := range strings.Split(name, "/") {
+		if part == "" || strings.HasPrefix(part, ".") || strings.HasSuffix(part, ".lock") {
+			return false
+		}
+	}
+	return true
 }
 
 // validLandingDestination reports whether one container path is a cell of the

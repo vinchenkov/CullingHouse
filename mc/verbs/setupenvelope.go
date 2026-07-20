@@ -201,8 +201,11 @@ func validateSetupEnvelope(env SetupEnvelope) error {
 		if env.Branch != taskAssignmentBranch(env.TaskID) {
 			return Domainf("sealed landing envelope branch does not match the task id")
 		}
-		if env.TargetRef == "" {
-			return Domainf("sealed landing envelope has no target ref")
+		if !validLandingTargetBranch(env.TargetRef) {
+			return Domainf("sealed landing envelope target %q is not a bare local branch name", env.TargetRef)
+		}
+		if env.TargetRef == env.Branch {
+			return Domainf("sealed landing envelope targets its own task branch")
 		}
 		oid := oidLen(env.ObjectFormat)
 		if len(env.VerifiedSHA) != oid || !assignmentHex.MatchString(env.VerifiedSHA) ||

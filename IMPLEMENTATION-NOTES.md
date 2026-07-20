@@ -503,3 +503,33 @@ date/title; delete a line here when its slice lands.
   identity fields rather than a distinct payload, and that the cleanup path
   belongs to the cleanup action's own instruction, not the landing container's.
 - Needs your decision: no.
+
+## 2026-07-20 — the landing target is a bare branch name, correcting a guess
+- Where: Phase 3, sealed landing step 4 prep (`verbs/landingplan.go`,
+  `verbs/setupenvelope.go`, `verbs/dispatchprivate.go`)
+- Gap: step 3 validated the landing target as merely non-empty, and its fixture
+  used `refs/heads/main`. That shape was GUESSED, not read off the spine.
+  `tasks.target_ref` is free-form text (schema.sql:786, length 1..512) and its
+  real values are bare names like `main`; the first-task setup arm additionally
+  treats it as a rev to resolve, where even `HEAD` is legitimate. Landing cannot
+  inherit that looseness — it constructs `refs/heads/<target>` in the REAL
+  operator repository, so `refs/heads/main` would yield
+  `refs/heads/refs/heads/main`, `HEAD` is meaningless as a merge destination,
+  and option- or glob-shaped names turn a ref into an argument or a pattern.
+- Choice: a closed bare-local-branch grammar (`validLandingTargetBranch`)
+  enforced on BOTH sides of the crossing, plus a refusal when the target equals
+  the task's own sealed branch — landing merges the task branch INTO the
+  target, so identity would make ADR-017:748's CAS ref creation create the very
+  ref it then merges from. The grammar restates git's check-ref-format rules for
+  a branch in pure Go rather than shelling out, because the helper boundary must
+  not spawn a git process on caller-supplied bytes.
+- Why this is conservative: it only ever REFUSES MORE. Nothing produces a
+  landing instruction yet, so tightening is free in the fail-closed direction,
+  and doing it now means step 4's lander is written against the real shape
+  instead of inheriting a fixture's invention. The looser sibling arms are
+  untouched — `target_ref` stays free-form for first-task setup, where a rev is
+  correct.
+- Spec impact: none, but worth noting the ADRs never say what form the landing
+  target takes; ADR-017:748-751 says only "the target ref". A future edit should
+  state that landing's target is a bare local branch.
+- Needs your decision: no.
