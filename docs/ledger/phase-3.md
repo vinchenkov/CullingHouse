@@ -2279,3 +2279,45 @@ diagnosis of the lock refusal and a sealed-appropriate output location.
 
 NEXT (moved to PROGRESS.md): diagnose the Packager's `locking protocol (15)`,
 then carry the E2E on through Packager→land.
+
+## 2026-07-19 (correction, same session) — the Packager is not blocked
+
+The previous entry recorded the Packager as refusing with `locking protocol
+(15)` and set NEXT to "diagnose that refusal". Both were wrong, and the entry
+above should be read with this correction attached.
+
+**`locking protocol` is not a Mission Control domain code.** The string appears
+nowhere in the Go source. It is SQLite result code 15, `SQLITE_PROTOCOL` — a
+transient locking failure from the spine, surfaced through the CLI's generic
+domain-rejection envelope. Reading it as a §18 guard, as the previous entry
+did, invented a design blocker that does not exist.
+
+**The Packager leg works.** Re-running the E2E, a Packager container executed
+the same `mc complete --status packaged` and returned exit 0 with
+`{"outputs":"/workspace/source/.mc-worktrees/task-7.packet.md","status":
+"packaged","task_id":7}`. So the sealed pipeline reaches `packaged` unaided,
+and the legacy `--outputs` path the previous entry flagged as unwritable is in
+fact accepted on this route. There is no sealed-Packager gap to build.
+
+**A hypothesis, tested and NOT supported.** `SQLITE_PROTOCOL` plus the fact
+that this test alone uses `withHostBindSpine()` (a VirtioFS host bind, where
+every other e2e test uses a Docker named volume) suggested that SQLite WAL's
+shared-memory locking was broken across the bind — which would have explained
+both this error and the long-standing `__dispatch-prepare failed` flake in one
+root cause. A direct probe refutes it: six concurrent writers, 40 inserts each,
+against a WAL database on that same VirtioFS bind mount completed 240/240 with
+no error. WAL concurrency over the bind is fine. The shared-spine-locking
+theory needs a different mechanism, and the honest state is that the cause of
+these intermittent SQLite locking failures is still unknown.
+
+So the intermittent `SQLITE_PROTOCOL` here is one more instance of the
+already-recorded KNOWN-FAILING (3) family — spine/helper access failing
+transiently under this test's configuration — not a distinct Packager defect.
+
+**Lesson worth keeping:** an unrecognized error string got promoted to a
+diagnosis on a single observation. The check that would have caught it costs
+one grep — if the message is not in our source, it is not our guard. A second
+run would also have caught it; one sample is not a defect.
+
+NEXT (moved to PROGRESS.md): carry the E2E through the packet decision and
+land, and treat the intermittent SQLITE_PROTOCOL as part of KNOWN-FAILING (3).
