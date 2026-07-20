@@ -3,12 +3,7 @@ package verbs
 import (
 	"context"
 	"database/sql"
-	"os"
-	"path/filepath"
-	"strconv"
-	"syscall"
 
-	"mc/boundary"
 	"mc/domain"
 )
 
@@ -50,70 +45,14 @@ func RecordAcceptedSealRebuild(db *sql.DB, runID, workspaceRoot string, result S
 	if runID == "" {
 		return AcceptedSealRebuildReceipt{}, Domainf("accepted-seal rebuild record run is absent")
 	}
-	if err := validateSetupResult(result); err != nil {
-		return AcceptedSealRebuildReceipt{}, err
-	}
 	root, err := attestAcceptedSealRebuildRoot(db, runID, workspaceRoot)
 	if err != nil {
 		return AcceptedSealRebuildReceipt{}, err
 	}
-	if err := crossCheckLandedStore(root, result); err != nil {
+	if _, err := HostAttestAcceptedSealRebuild(root.Receipt.TaskID, workspaceRoot, result); err != nil {
 		return AcceptedSealRebuildReceipt{}, err
 	}
-
-	var out AcceptedSealRebuildReceipt
-	err = inTx(db, func(ctx context.Context, q Q) error {
-		taskID, err := liveAcceptedSealRebuildTask(ctx, q, runID)
-		if err != nil {
-			return err
-		}
-		if taskID != root.Receipt.TaskID {
-			return Domainf("accepted-seal rebuild root names a different task")
-		}
-		seal, err := taskPointedAcceptedSeal(ctx, q, taskID)
-		if err != nil {
-			return err
-		}
-		if result.ObjectFormat != seal.ObjectFormat || result.BaseSHA != seal.SealedSHA || result.ClosureDigest != seal.ClosureDigest {
-			return Domainf("accepted-seal rebuild result does not reproduce the task-pointed accepted seal")
-		}
-		want := AcceptedSealRebuildReceipt{
-			RunID: runID, TaskID: taskID, CompletionRunID: seal.RunID,
-			CompletionRequestID: seal.CompletionRequest, ObjectFormat: result.ObjectFormat,
-			BaseSHA: result.BaseSHA, ClosureDigest: result.ClosureDigest,
-			ManifestDigest: seal.ManifestDigest, Root: root.Receipt.Root,
-			LocalRepoUUID: result.LocalRepoUUID, ObjectCount: result.ObjectCount, FsckClean: result.FsckClean,
-		}
-		var existing AcceptedSealRebuildReceipt
-		err = q.QueryRowContext(ctx, `SELECT run_id,task_id,completion_run_id,completion_request_id,object_format,sealed_sha,closure_digest,manifest_digest,root_device,root_inode,root_owner_uid,local_repo_uuid,object_count,fsck_clean
-			FROM accepted_seal_rebuild_receipts WHERE run_id=?`, runID).Scan(
-			&existing.RunID, &existing.TaskID, &existing.CompletionRunID, &existing.CompletionRequestID,
-			&existing.ObjectFormat, &existing.BaseSHA, &existing.ClosureDigest, &existing.ManifestDigest,
-			&existing.Root.Device, &existing.Root.Inode, &existing.Root.OwnerUID,
-			&existing.LocalRepoUUID, &existing.ObjectCount, &existing.FsckClean)
-		if err == sql.ErrNoRows {
-			if _, err := q.ExecContext(ctx, `INSERT INTO accepted_seal_rebuild_receipts
-				(run_id,task_id,completion_run_id,completion_request_id,object_format,sealed_sha,closure_digest,manifest_digest,root_device,root_inode,root_owner_uid,local_repo_uuid,object_count,fsck_clean)
-				VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-				want.RunID, want.TaskID, want.CompletionRunID, want.CompletionRequestID,
-				want.ObjectFormat, want.BaseSHA, want.ClosureDigest, want.ManifestDigest,
-				want.Root.Device, want.Root.Inode, want.Root.OwnerUID, want.LocalRepoUUID,
-				want.ObjectCount, want.FsckClean); err != nil {
-				return err
-			}
-			out = want
-			return nil
-		}
-		if err != nil {
-			return err
-		}
-		if existing != want {
-			return Domainf("accepted-seal rebuild lost-response record differs from its durable receipt")
-		}
-		out = existing
-		return nil
-	})
-	return out, err
+	return RecordAcceptedSealRebuildAttested(db, runID, root.Receipt.TaskID, root.Receipt.Root, result)
 }
 
 // ContinueAcceptedSealRebuild ends exactly the live Verifier setup run after
@@ -184,36 +123,11 @@ func attestAcceptedSealRebuildRoot(db *sql.DB, runID, workspaceRoot string) (Fir
 	if err != nil {
 		return FirstTaskSetupRoot{}, err
 	}
-	workspace, err := boundary.ResolveSource(workspaceRoot)
+	root, identity, err := attestTaskRootByID("accepted-seal rebuild", receipt.TaskID, workspaceRoot)
 	if err != nil {
 		return FirstTaskSetupRoot{}, err
 	}
-	if !workspace.IsDir || workspace.Canonical != filepath.Clean(workspaceRoot) {
-		return FirstTaskSetupRoot{}, Domainf("accepted-seal rebuild Worksource root is not its exact canonical directory")
-	}
-	root := filepath.Join(workspace.Canonical, ".mission-control", "tasks", "task-"+strconv.FormatInt(receipt.TaskID, 10))
-	info, err := os.Lstat(root)
-	if os.IsNotExist(err) {
-		return FirstTaskSetupRoot{}, Domainf("accepted-seal rebuild registered root is absent")
-	}
-	if err != nil {
-		return FirstTaskSetupRoot{}, Domainf("accepted-seal rebuild registered root is unreadable: %v", err)
-	}
-	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 || info.Mode().Perm() != 0o555 {
-		return FirstTaskSetupRoot{}, Domainf("accepted-seal rebuild registered root is not the fixed non-symlink mode-0555 directory")
-	}
-	st, ok := info.Sys().(*syscall.Stat_t)
-	if !ok || int(st.Uid) != os.Getuid() {
-		return FirstTaskSetupRoot{}, Domainf("accepted-seal rebuild registered root identity changed")
-	}
-	receipt.Root = TaskSetupIdentity{Device: strconv.FormatUint(uint64(st.Dev), 10), Inode: strconv.FormatUint(st.Ino, 10), OwnerUID: int(st.Uid)}
-	resolved, err := boundary.ResolveSource(root)
-	if err != nil {
-		return FirstTaskSetupRoot{}, err
-	}
-	if resolved.Canonical != root {
-		return FirstTaskSetupRoot{}, Domainf("accepted-seal rebuild registered root does not resolve to its constructed path")
-	}
+	receipt.Root = identity
 	err = inTx(db, func(ctx context.Context, q Q) error {
 		taskID, err := liveAcceptedSealRebuildTask(ctx, q, runID)
 		if err != nil {
@@ -222,16 +136,7 @@ func attestAcceptedSealRebuildRoot(db *sql.DB, runID, workspaceRoot string) (Fir
 		if taskID != receipt.TaskID {
 			return Domainf("accepted-seal rebuild root names a different task")
 		}
-		var found int
-		if err := q.QueryRowContext(ctx, `SELECT COUNT(*) FROM task_setup_receipts
-			WHERE task_id=? AND root_device=? AND root_inode=? AND root_owner_uid=?`,
-			receipt.TaskID, receipt.Root.Device, receipt.Root.Inode, receipt.Root.OwnerUID).Scan(&found); err != nil {
-			return err
-		}
-		if found == 0 {
-			return Domainf("accepted-seal rebuild root does not reproduce a registered task root receipt")
-		}
-		return nil
+		return requireRegisteredTaskRoot(ctx, q, receipt.TaskID, receipt.Root)
 	})
 	if err != nil {
 		return FirstTaskSetupRoot{}, err

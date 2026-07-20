@@ -604,9 +604,13 @@ async function runFirstTaskSetup(
 	}
 	// The SetupResult passes through byte-exactly: the resident never
 	// reinterprets evidence, and the host verb re-verifies the landed store.
+	// --task is what the host frame derives its task-root path from; it is an
+	// input, not an authority — the spine half refuses unless it equals the
+	// live lease's task and the attested identity reproduces the receipt.
 	const recorded = await deps.runMc([
 		"task", "setup-record",
 		"--run", run_id,
+		"--task", String(step.task_id),
 		"--workspace", step.workspace_root,
 		"--result", result,
 	]);
@@ -664,7 +668,8 @@ async function runAcceptedSealRebuild(
 	if (run.exitCode !== 0) throw new Error(`accepted-seal setup container exited ${run.exitCode}: ${run.stderr.trim()}`);
 	if (run.stdout.trim() === "") throw new Error("accepted-seal setup container returned no SetupResult");
 	const recorded = await deps.runMc([
-		"task", "accepted-seal-record", "--run", runId, "--workspace", workspaceRoot, "--result", run.stdout,
+		"task", "accepted-seal-record", "--run", runId, "--task", String(step.task_id),
+		"--workspace", workspaceRoot, "--result", run.stdout,
 	]);
 	if (recorded.exitCode !== 0) throw new Error(`accepted-seal setup record refused (exit ${recorded.exitCode}): ${recorded.stderr.trim()}`);
 	const continued = await deps.runMc(["task", "accepted-seal-continue", "--run", runId]);

@@ -209,6 +209,7 @@ describe("spawn effect", () => {
     expect(rig.mc.calls).toEqual([[
       "task", "setup-record",
       "--run", "run-42-worker",
+      "--task", "42",
       "--workspace", "/host/workspace",
       "--result", setupResultJson + "\n",
     ], [
@@ -437,7 +438,7 @@ describe("spawn effect", () => {
 			],
 		]);
 		expect(rig.mc.calls).toEqual([
-			["task", "accepted-seal-record", "--run", "run-42-verifier", "--workspace", "/host/workspace", "--result", setupResultJson + "\n"],
+			["task", "accepted-seal-record", "--run", "run-42-verifier", "--task", "42", "--workspace", "/host/workspace", "--result", setupResultJson + "\n"],
 			["task", "accepted-seal-continue", "--run", "run-42-verifier"],
 		]);
 		expect(rig.fakeFs.events).toContain("write:/tmp/mc-home/runs/run-42-verifier.setup.json");

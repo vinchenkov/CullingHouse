@@ -50,6 +50,15 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return runLocal(args, stdin, stdout, stderr)
 	}
 
+	// The two setup-record verbs read host files AND write the spine, so they
+	// cross as a host attest frame plus a path-free spine frame rather than as
+	// one delegated invocation (see setup_record_frame.go).
+	if args[0] == "task" && len(args) > 1 {
+		if _, ok := recordFrameVerbs[args[1]]; ok {
+			return runSetupRecordFrame(args, stdin, stdout, stderr)
+		}
+	}
+
 	// Self-delegation: host-side mc with no direct spine path but a named
 	// warm helper delegates the whole invocation into the lock domain.
 	if shouldDelegateToHelper() {
@@ -65,27 +74,33 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 func runLocal(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	out, err := dispatchVerb(args, stdin)
 	if err != nil {
-		fmt.Fprintln(stderr, "mc:", err)
-		exitCode := 1
-		errorCode := "domain-rejection"
-		var usage *verbs.UsageError
-		if errors.As(err, &usage) {
-			exitCode = 2
-			errorCode = "usage"
-		} else {
-			var domainErr *verbs.DomainError
-			if errors.As(err, &domainErr) && domainErr.Code != "" {
-				errorCode = domainErr.Code
-			}
-		}
-		writeErrorEnvelope(stdout, stderr, errorCode, err.Error())
-		return exitCode
+		return writeVerbError(stdout, stderr, err)
 	}
 	if err := writeJSON(stdout, out); err != nil {
 		fmt.Fprintln(stderr, "mc:", err)
 		return 2
 	}
 	return 0
+}
+
+// writeVerbError is the one place a verb failure becomes the contract's exit
+// code plus error envelope (§2: 1 domain rejection, 2 usage or environment).
+func writeVerbError(stdout, stderr io.Writer, err error) int {
+	fmt.Fprintln(stderr, "mc:", err)
+	exitCode := 1
+	errorCode := "domain-rejection"
+	var usage *verbs.UsageError
+	if errors.As(err, &usage) {
+		exitCode = 2
+		errorCode = "usage"
+	} else {
+		var domainErr *verbs.DomainError
+		if errors.As(err, &domainErr) && domainErr.Code != "" {
+			errorCode = domainErr.Code
+		}
+	}
+	writeErrorEnvelope(stdout, stderr, errorCode, err.Error())
+	return exitCode
 }
 
 func delegate(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
@@ -519,33 +534,17 @@ func cmdTask(args []string) (any, error) {
 		receipt := verbs.TaskSetupReceipt{RunID: *runID, TaskID: *taskID,
 			Root: verbs.TaskSetupIdentity{Device: *device, Inode: *inode, OwnerUID: *ownerUID}}
 		return withSpine(func(db *sql.DB) (any, error) { return verbs.RegisterFirstTaskSetup(db, receipt) })
-	case "setup-record":
-		fs := newFlags("mc task setup-record")
-		runID := fs.String("run", "", "pipeline run id")
-		workspace := fs.String("workspace", "", "worksource workspace root")
-		result := fs.String("result", "", "setup result JSON from the setup container")
-		if err := parse(fs, args[1:]); err != nil {
-			return nil, err
-		}
-		idn, err := verbs.LoadIdentity()
+	case "setup-record-attested":
+		runID, taskID, root, res, err := attestedRecordFlags("mc task setup-record-attested", args[1:])
 		if err != nil {
 			return nil, err
 		}
-		if err := verbs.RequireHostScope(idn, "mc task setup-record"); err != nil {
-			return nil, err
-		}
-		dec := json.NewDecoder(strings.NewReader(*result))
-		dec.DisallowUnknownFields()
-		var res verbs.SetupResult
-		if err := dec.Decode(&res); err != nil {
-			return nil, verbs.Usagef("setup result is invalid: %v", err)
-		}
 		return withSpine(func(db *sql.DB) (any, error) {
-			root, rows, err := verbs.RecordFirstTaskSetupClosure(db, *runID, *workspace, res)
+			receipt, err := verbs.RecordFirstTaskSetupClosureAttested(db, runID, taskID, root, res)
 			if err != nil {
 				return nil, err
 			}
-			return map[string]any{"task_id": root.Receipt.TaskID, "rows": len(rows)}, nil
+			return map[string]any{"task_id": receipt.TaskID}, nil
 		})
 	case "setup-continue":
 		fs := newFlags("mc task setup-continue")
@@ -563,29 +562,13 @@ func cmdTask(args []string) (any, error) {
 		return withSpine(func(db *sql.DB) (any, error) {
 			return verbs.ContinueFirstTaskSetup(db, *runID)
 		})
-	case "accepted-seal-record":
-		fs := newFlags("mc task accepted-seal-record")
-		runID := fs.String("run", "", "Verifier pipeline run id")
-		workspace := fs.String("workspace", "", "worksource workspace root")
-		result := fs.String("result", "", "accepted-seal setup result JSON from the setup container")
-		if err := parse(fs, args[1:]); err != nil {
-			return nil, err
-		}
-		idn, err := verbs.LoadIdentity()
+	case "accepted-seal-record-attested":
+		runID, taskID, root, res, err := attestedRecordFlags("mc task accepted-seal-record-attested", args[1:])
 		if err != nil {
 			return nil, err
 		}
-		if err := verbs.RequireHostScope(idn, "mc task accepted-seal-record"); err != nil {
-			return nil, err
-		}
-		dec := json.NewDecoder(strings.NewReader(*result))
-		dec.DisallowUnknownFields()
-		var res verbs.SetupResult
-		if err := dec.Decode(&res); err != nil {
-			return nil, verbs.Usagef("accepted-seal setup result is invalid: %v", err)
-		}
 		return withSpine(func(db *sql.DB) (any, error) {
-			receipt, err := verbs.RecordAcceptedSealRebuild(db, *runID, *workspace, res)
+			receipt, err := verbs.RecordAcceptedSealRebuildAttested(db, runID, taskID, root, res)
 			if err != nil {
 				return nil, err
 			}

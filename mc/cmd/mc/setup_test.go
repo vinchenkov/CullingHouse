@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -95,5 +96,42 @@ func TestAcceptedSealRecordRejectsMalformedResult(t *testing.T) {
 	}
 	if e, _ := res.json["error"].(map[string]any); e == nil || e["code"] != "usage" {
 		t.Fatalf("want a usage error envelope, got %v", res.json)
+	}
+}
+
+// The setup-record crossing must attest the Worksource on the HOST even when
+// every ordinary verb self-delegates into the helper container. The helper
+// carries spine and MC_HOME binds and no Worksource, so a delegated whole-verb
+// invocation resolved a host path it could not see and refused on a loop
+// (`mc: source "<ws>" does not exist`). Naming an unreachable helper proves
+// which side ran: a host frame reaches its own filesystem attest and returns a
+// domain refusal about the task root; a delegated one never gets that far.
+func TestSetupRecordAttestsTheWorksourceOnTheHostNotInTheHelper(t *testing.T) {
+	result := `{"base_sha":"` + strings.Repeat("a", 40) + `","object_format":"sha1",` +
+		`"local_repo_uuid":"3f2504e0-4f89-11d3-9a0c-0305e82c3301","closure_digest":"` +
+		strings.Repeat("b", 64) + `","object_count":3,"fsck_clean":true}`
+
+	for _, verb := range []string{"setup-record", "accepted-seal-record"} {
+		t.Run(verb, func(t *testing.T) {
+			// macOS hands out /var/folders/… temp dirs behind a symlink; the
+			// attest requires the Worksource to be its own canonical spelling.
+			ws, err := filepath.EvalSymlinks(t.TempDir())
+			if err != nil {
+				t.Fatal(err)
+			}
+			res := runMC(t, []string{"MC_HELPER=mc-helper-that-does-not-exist"}, "",
+				"task", verb, "--run", "r", "--task", "7", "--workspace", ws, "--result", result)
+			if res.code != 1 {
+				t.Fatalf("%s exit = %d json=%v stderr=%q", verb, res.code, res.json, res.stderr)
+			}
+			e, _ := res.json["error"].(map[string]any)
+			if e == nil {
+				t.Fatalf("%s: want a domain error envelope from the host attest, got %v", verb, res.json)
+			}
+			msg, _ := e["message"].(string)
+			if !strings.Contains(msg, "registered root is absent") {
+				t.Fatalf("%s: want the host-side task-root refusal, got %q", verb, msg)
+			}
+		})
 	}
 }

@@ -112,27 +112,17 @@ func crossCheckLandedStore(root FirstTaskSetupRoot, result SetupResult) error {
 // the exact pinned closure. It is the first (and only) production caller of the
 // closure machinery.
 func RecordFirstTaskSetupClosure(db *sql.DB, runID, workspaceRoot string, result SetupResult) (FirstTaskSetupRoot, map[boundary.TypedKind]boundary.ProtectedID, error) {
-	if err := validateSetupResult(result); err != nil {
-		return FirstTaskSetupRoot{}, nil, err
-	}
 	root, err := AttestFirstTaskSetupRoot(db, runID, workspaceRoot)
 	if err != nil {
 		return FirstTaskSetupRoot{}, nil, err
 	}
-	if err := crossCheckLandedStore(root, result); err != nil {
-		return FirstTaskSetupRoot{}, nil, err
-	}
-	inspRoot, rows, err := InspectFirstTaskSetup(db, runID, workspaceRoot)
+	hostRoot, rows, err := HostAttestFirstTaskSetupClosure(root.Receipt.TaskID, workspaceRoot, result)
 	if err != nil {
 		return FirstTaskSetupRoot{}, nil, err
 	}
-	if _, err := RegisterFirstTaskAssignment(db, runID, FirstTaskAssignment{
-		ObjectFormat:  result.ObjectFormat,
-		BaseSHA:       result.BaseSHA,
-		LocalRepoUUID: result.LocalRepoUUID,
-		ClosureDigest: result.ClosureDigest,
-	}); err != nil {
+	receipt, err := RecordFirstTaskSetupClosureAttested(db, runID, hostRoot.Receipt.TaskID, hostRoot.Receipt.Root, result)
+	if err != nil {
 		return FirstTaskSetupRoot{}, nil, err
 	}
-	return inspRoot, rows, nil
+	return FirstTaskSetupRoot{Receipt: receipt, Canonical: hostRoot.Canonical}, rows, nil
 }
