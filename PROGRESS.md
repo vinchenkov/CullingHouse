@@ -10,7 +10,7 @@ Access does NOT fix it — the failure precedes any policy lookup. Symptom:
 `stat` works, reads return `Operation not permitted`, git says
 `Unable to read current working directory`.
 
-LAST GREEN SHA: 224b58a — five-leg fast lane (Docker suite last 8/8 at 4a69d15; the operator pushes manually — decided 2026-07-14. Agents: do not push.)
+LAST GREEN SHA: 505e6d1 — five-leg fast lane (Docker suite last 8/8 at 4a69d15; the operator pushes manually — decided 2026-07-14. Agents: do not push.)
 
 PHASES PASSING: Phase 0 COMPLETE (S1–S8 all green, no fallback ADRs; only operator-leg deferrals remain); Phase 1 COMPLETE (1a substrate 172; 1b walking skeleton reviewed-and-fixed — fake-harness 43, agent-runner 13, runner/image 40, resident 42, dispatch + cmd/mc suites; Docker e2e PASS ×4 total); Phase 2 COMPLETE for every unparked acceptance line (domain/§18 surface, deterministic split-brain convergence, bounded honesty + five mutants, tagged dispatch/metamorphic/twin-spine lifecycle properties; the initiative-wave CLI is no longer isolated — ADR-020 landed 2026-07-14 and closed the last Phase 2 acceptance line)
 KNOWN-FAILING: `TestOnboardConcurrentFreshHomeNeverDeletesTheWinner` (mc/verbs),
@@ -760,13 +760,22 @@ path set, the path-scoped dirty fence (unrelated dirt permitted, reviewed-path
 dirt refused — both pinned), untracked/ignored collision at created paths, and
 the ancestor-component fence.
 
-Remaining for step 4, in order: (4d) the import (`pack-objects --revs --stdout` | `index-pack`, fsync + verify,
-no hardlink/alternate/speculative delete); (4e) CAS-create the ref with a zero
-old-value `update-ref`, re-check the SHA fence, `merge --no-ff`.
+Step 4d is DONE (505e6d1): `importSealedClosure` — pack-objects piped to
+index-pack, bounded to verified-minus-base. No hardlink/alternate/speculative
+delete, all three STRUCTURAL rather than disciplinary (objects cross as a byte
+stream; nothing writes alternates; index-pack only adds). Empty closure refused
+via a pack-header object count. Idempotent, leaves pre-existing unreachable
+objects alone, creates NO ref.
+
+Remaining for step 4: (4e) CAS-create the ref with a zero old-value
+`update-ref`, re-check the SHA fence, `merge --no-ff`.
 STOP THERE — cleanup has no mount and no owner.
 
-MUTATION IS NOT OPTIONAL ON THIS LANE. Across 4a-4c, 25 fences written, 8
-vacuous — one in three, every one with a green test under it. Mutate each new
+MUTATION IS NOT OPTIONAL ON THIS LANE. Across 4a-4d, 32 fences written, 13
+vacuous — over one in three, every one with a green test under it. The rate is
+NOT falling with practice, which is the point: what produces them is the gap
+between "this check is correct" and "this check is reachable and load-bearing
+given every check around it". Mutate each new
 fence to `false` and confirm its subtest dies before committing.
 
 AND WHEN A FENCE SURVIVES MUTATION, MEASURE GIT RATHER THAN ADJUST THE TEST.
@@ -777,9 +786,18 @@ scenarios, and each took one scratch-repo probe to settle:
   - `git diff --name-only HEAD` detects a same-length mtime-restored edit even
     under `checkStat=minimal` + `trustctime=false`, so those overrides are NOT
     what defeat the stat-cache evasion on that command. They ARE expected to
-    matter for 4e's read-tree/write-tree comparison — verify there rather than
-    assuming it twice.
+    matter for 4e's read-tree/write-tree comparison — VERIFY THERE with a
+    probe; that claim has now been assumed twice and measured never.
   - git resolves symref chains transitively (4a).
+  - an EMPTY rev range still emits a 32-byte pack, so `len(pack)==0` can never
+    fire (4d) — check the pack header's object count instead.
+Watch for three distinct shapes, they have different remedies: TAUTOLOGICAL
+(re-reads the same source of truth) -> delete it; REDUNDANT (a later fence
+catches everything it does) -> keep if it fails faster or names the problem
+better, and LABEL it; DEAD (cannot fire at all) -> it is not a fence, replace
+it with one that can. A fourth exists: SPEC-MANDATED with no reachable failure
+(ADR-017:744's post-import verify) -> retain and label, so the next reader
+neither hunts for the missing scenario nor deletes it for lacking one.
 Probes go in the session scratchpad, not /tmp (there is a deny rule on `rm`).
 
 4. The lander itself: `mc __land-sealed` under `RequireHostScope`, staged per
