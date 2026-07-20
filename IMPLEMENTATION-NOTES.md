@@ -574,3 +574,55 @@ date/title; delete a line here when its slice lands.
   first-task meaning of the field.
 - Needs your decision: no — but the digest question is named in PROGRESS's owed
   list so it is not rediscovered.
+
+## 2026-07-20 — two timing findings the corpus gap analysis surfaced
+
+- Where: Phase 3 step 4, assessing legacy `mc-land.test.ts:683` and `:413`
+  (hostile state introduced BETWEEN preflight and merge) against
+  `mergeSealedLanding`.
+- Gap: the merge stage rechecks ONLY the SHA fence (ADR-017:750). Two
+  consequences, one a TOCTOU and one operational.
+
+  (1) EXECUTABLE CONFIG IS NOT RECHECKED AT MERGE TIME. `refuseExecutableLandingConfig`
+  runs in the repository stage. A merge driver inserted into repository-local
+  config AFTER that stage — paired with an in-tree `.gitattributes` naming it,
+  which `core.attributesFile=/dev/null` and `GIT_ATTR_NOSYSTEM=1` do NOT
+  suppress — would be consulted by the merge. `-c merge.ours.driver=false` pins
+  only the `ours` driver, not an arbitrary named one. Legacy pinned exactly this
+  as `:683`. Reachability is narrow (it needs a concurrent writer to the
+  operator repository during the landing window; the landing container carries
+  no agent process), but it is not zero, and the whole class is fenced elsewhere.
+
+  (2) A CONFLICTED MERGE HEAD-OF-LINE-BLOCKS. Verified empirically, not
+  reasoned: `TestLandSealedLeavesAConflictedMergeInPlace` shows a conflicting
+  `merge --no-ff` leaves `MERGE_HEAD` behind, and the next attempt refuses at
+  the operator-merge-in-flight fence with "merge already in progress". A
+  conflict is genuinely reachable despite the reviewed-path dirty fence and the
+  pinned target tip, because the target may have ADVANCED from the frozen base
+  to the pre-merge SHA touching the same paths the reviewed change touches. So a
+  single conflicting landing wedges the lane until a human clears the checkout.
+- Choice: neither fixed in this slice; both recorded, and (2) pinned by a
+  CHARACTERIZING test so the behaviour cannot drift silently in either
+  direction. For (1) the obvious repair is to re-run the executable-config and
+  index-visibility fences immediately before the merge, mirroring what
+  ADR-017:750 already does for the SHA — cheap, and it narrows the window to
+  the merge invocation itself without pretending to close it (git reads config
+  when it runs; only config isolation would truly close it, and the merge needs
+  the repository's own config). For (2) the legacy answer is "abort only what we
+  started" (`:368`): on merge failure, abort iff `MERGE_HEAD` is our verified
+  SHA. That restores the pre-merge state and unwedges the lane, and it is
+  careful not to touch an operator merge — but it IS a mutation on a failure
+  path, which is exactly the kind of thing this lane has otherwise avoided.
+- Why this is conservative: both are fail-closed today. (1) leaves a narrow
+  TOCTOU rather than an open door, and (2) refuses loudly rather than merging
+  into a conflicted tree. Fixing (2) means adding a mutating failure path, which
+  deserves its own slice and its own adversarial review rather than being
+  smuggled into the composition commit.
+- Spec impact: ADR-017:750 specifies only the SHA recheck at merge time; if the
+  other preflight fences are meant to be rechecked there it should say so.
+  ADR-016:569-576 wants infra failure to record health and leave the tuple
+  pending, which is the natural home for the conflict outcome — but `mc land
+  report` has two statuses and no backoff, already noted as an owed decision.
+- Needs your decision: yes for (2) → parked in PROGRESS. A conflicted landing
+  wedging the single landing slot is an operator-visible behaviour, and whether
+  the lander may mutate on a failure path is not mine to settle.

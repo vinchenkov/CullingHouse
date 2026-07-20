@@ -289,6 +289,47 @@ func TestLandSealedRefusesAnAlreadyLandedReviewedCommit(t *testing.T) {
 	}
 }
 
+// CHARACTERIZING, not aspirational: this records what the lane does today when
+// the merge CONFLICTS, because the answer was not obvious and matters
+// operationally.
+//
+// A conflict is reachable even though the reviewed paths are fenced clean and
+// the target tip is pinned: the target may have ADVANCED from the frozen base
+// to the pre-merge SHA touching the very paths the reviewed change touches.
+// Base has "operator", the target commits one edit to README.md, the reviewed
+// change commits a different one — every earlier stage passes and `merge --no-ff`
+// cannot resolve it.
+//
+// The lane has no abort path (cleanup has no mount and no owner), so it returns
+// the error and LEAVES the conflicted state behind. That state then trips the
+// operator-merge-in-flight fence on the next attempt, which refuses rather than
+// disturbing what it finds — so a conflicted landing head-of-line-blocks until
+// a human intervenes. Whether that is right is a decision, logged 2026-07-20;
+// this test exists so the behaviour cannot change silently either way.
+func TestLandSealedLeavesAConflictedMergeInPlace(t *testing.T) {
+	repo, taskRoot, pins := sealedLandingFixture(t)
+	writeFile(t, filepath.Join(repo, "README.md"), "operator\nconflicting\n")
+	srcGit(t, repo, "add", "-A")
+	srcGit(t, repo, "commit", "-qm", "operator edits the same reviewed path")
+	pins.PreMergeSHA = srcGit(t, repo, "rev-parse", "HEAD")
+
+	if _, err := landSealed(repo, taskRoot, coverOf(repo), pins); err == nil {
+		t.Fatal("a conflicting merge reported success")
+	}
+	// The conflicted state is left behind, and the next attempt refuses at the
+	// merge-in-flight fence rather than disturbing it.
+	if _, err := os.Lstat(filepath.Join(repo, ".git", "MERGE_HEAD")); err != nil {
+		t.Skipf("no MERGE_HEAD left behind (%v); the conflict shape changed — re-derive the finding", err)
+	}
+	_, err := landSealed(repo, taskRoot, coverOf(repo), pins)
+	if err == nil {
+		t.Fatal("a retry ran against a conflicted checkout")
+	}
+	if !strings.Contains(err.Error(), "merge already in progress") {
+		t.Fatalf("retry refused for some other reason than the in-flight merge: %v", err)
+	}
+}
+
 // An internally inconsistent pins struct never reaches a repository. These
 // duplicate what the envelope validator already refuses; they are kept because
 // landSealed is directly reachable and they name the problem at the point of
