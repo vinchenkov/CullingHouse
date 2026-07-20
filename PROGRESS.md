@@ -541,9 +541,17 @@ helper-scope crossing (d3471f5) — and
 `accepted_seal_rebuild_receipts` row and its Verifier continuation. Full Docker
 suite 7/7 green at 485a7f2. Diagnoses in docs/ledger/phase-3.md (2026-07-19).
 
-NEXT: Move this test's spine to a Docker named volume (seed through the helper)
-— the controlled experiment that discriminates the 4s-deadline latency
-hypothesis from a real fd-3 defect. Then give the Packager a production mount
+NEXT: Move this test's spine to a Docker named volume — the controlled
+experiment that discriminates the 4s-deadline latency hypothesis from a real
+fd-3 defect. NOT a one-line swap: with a named volume there is NO host path to
+the spine (that is exactly why `withHostBindSpine()` was introduced), so the
+current host-side seeding — `verbs.OpenSpine` + raw SQL + `RegisterFirstTaskSetup`
++ `RecordFirstTaskSetupClosure` at `e2e_test.go:891-929` — cannot run as written.
+Suggested route, which needs no new verb surface and no concurrent access: build
+the seeded spine.db host-side in a PLAIN temp dir (its own kernel, nothing
+shared), close it cleanly so WAL is checkpointed, then `docker cp` it into the
+named volume via a throwaway container BEFORE the helper starts. Seeding logic
+is then unchanged and no host process ever opens the spine the containers use. Then give the Packager a production mount
 arm (likely artifact-root-only — it mutates no repository state), then carry the
 E2E through the packet decision and land. `mountattest.go:267-278` health-refuses every repo-Worksource role except
 the standalone Worker and seal-consuming Verifier; that is LATENT today only
