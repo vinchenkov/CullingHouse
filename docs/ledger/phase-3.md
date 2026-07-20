@@ -3258,3 +3258,48 @@ NEXT (in PROGRESS.md): 4c, the reviewed-path set and the path-scoped dirty
 fence. That is where the bulk of the 24 portable legacy tests land — the
 stat-cache evasions, the untracked-collision walk, and the directory-rename
 inference cases all attach to the reviewed path set.
+
+## 2026-07-20 (4c) — the fence set is fine; my model of git was not
+
+The reviewed path set and the path-scoped dirty fence are in (224b58a). The
+scoping is the substance: a global dirty check makes landing usable only against
+a pristine tree, so unrelated dirt is permitted and reviewed-path dirt refused,
+with both directions pinned. The merge base is bound to the assignment's frozen
+base, which lets the target ADVANCE freely while a rewritten target refuses
+loudly — the "diverged target stays in the lane and refuses loudly" property
+this lane was built for.
+
+Mutation found four vacuous fences. One was the familiar shape (no criss-cross
+history existed anywhere in the suite, so the merge-base uniqueness check had
+nothing to kill it; built one). **The other three were something different and
+worth naming: they were wrong ASSUMPTIONS ABOUT GIT, not weak test scenarios.**
+
+- `--no-renames` on `diff-tree`: I carried over legacy's rename-inference
+  concern and assumed a repository could switch detection on via `diff.renames`.
+  It cannot — `diff-tree` is plumbing and ignores that config; with it set true
+  both source and destination paths are still reported. The flag is inert.
+- `core.checkStat`/`core.trustctime`: I asserted in a comment that these
+  overrides are what defeat the stat-cache evasion. They are not, for the 4c
+  fence: git 2.50 detects a same-length, mtime-restored edit through `git diff
+  --name-only HEAD` with the hostile config in force and our overrides removed.
+  The property is real; the explanation was invented.
+- (4a's symref transitivity was the same species.)
+
+Each took ONE scratch-repo probe to settle — under a minute, versus two wrong
+test drafts in 4a before I stopped theorising. The rule now in PROGRESS: when a
+fence survives mutation, measure git rather than adjust the test. A fence that
+survives is telling you something is true that you did not know, and the useful
+response is to find out what.
+
+The cost of getting this wrong is not a failing test — it is a comment that
+tells the next reader a flag is load-bearing when it is not, so they keep it
+through a refactor for a reason that was never real, or drop the flag that IS
+load-bearing because it looked like the same kind of decoration. Both overrides
+are retained here, but labelled: expected to matter for 4e's read-tree/write-tree
+comparison, where the stat cache genuinely is consulted. That claim is now
+written down as something to VERIFY at 4e, not to assume a third time.
+
+Tally across 4a-4c: 25 fences, 8 vacuous. One in three.
+
+NEXT (in PROGRESS.md): 4d, the import — `pack-objects --revs --stdout` piped to
+`index-pack`, fsync and verify, no hardlink/alternate/speculative delete.

@@ -10,7 +10,7 @@ Access does NOT fix it — the failure precedes any policy lookup. Symptom:
 `stat` works, reads return `Operation not permitted`, git says
 `Unable to read current working directory`.
 
-LAST GREEN SHA: f5a0129 — five-leg fast lane (Docker suite last 8/8 at 4a69d15; the operator pushes manually — decided 2026-07-14. Agents: do not push.)
+LAST GREEN SHA: 224b58a — five-leg fast lane (Docker suite last 8/8 at 4a69d15; the operator pushes manually — decided 2026-07-14. Agents: do not push.)
 
 PHASES PASSING: Phase 0 COMPLETE (S1–S8 all green, no fallback ADRs; only operator-leg deferrals remain); Phase 1 COMPLETE (1a substrate 172; 1b walking skeleton reviewed-and-fixed — fake-harness 43, agent-runner 13, runner/image 40, resident 42, dispatch + cmd/mc suites; Docker e2e PASS ×4 total); Phase 2 COMPLETE for every unparked acceptance line (domain/§18 surface, deterministic split-brain convergence, bounded honesty + five mutants, tagged dispatch/metamorphic/twin-spine lifecycle properties; the initiative-wave CLI is no longer isolated — ADR-020 landed 2026-07-14 and closed the last Phase 2 acceptance line)
 KNOWN-FAILING: `TestOnboardConcurrentFreshHomeNeverDeletesTheWinner` (mc/verbs),
@@ -754,17 +754,33 @@ It runs under the landing fences, not `sourceGitEnv()`. Mutation found three
 vacuous fences — one tautological (removed), one with a non-isolating test
 (fixed), one with no test at all (added).
 
-Remaining for step 4, in order: (4c) the reviewed-path set + the path-scoped
-dirty fence — this is where the bulk of the 24 portable legacy tests land;
-(4d) the import (`pack-objects --revs --stdout` | `index-pack`, fsync + verify,
+Step 4c is DONE (224b58a): single merge base bound to the assignment's frozen
+base (target may ADVANCE, but a rewritten target refuses loudly), the reviewed
+path set, the path-scoped dirty fence (unrelated dirt permitted, reviewed-path
+dirt refused — both pinned), untracked/ignored collision at created paths, and
+the ancestor-component fence.
+
+Remaining for step 4, in order: (4d) the import (`pack-objects --revs --stdout` | `index-pack`, fsync + verify,
 no hardlink/alternate/speculative delete); (4e) CAS-create the ref with a zero
 old-value `update-ref`, re-check the SHA fence, `merge --no-ff`.
 STOP THERE — cleanup has no mount and no owner.
 
-MUTATION IS NOT OPTIONAL ON THIS LANE. Across 4a and 4b, 17 fences were written
-and 4 were vacuous — roughly one in four, and every one of them had a green
-test sitting under it. Mutate each new fence to `false` and confirm its subtest
-dies before committing.
+MUTATION IS NOT OPTIONAL ON THIS LANE. Across 4a-4c, 25 fences written, 8
+vacuous — one in three, every one with a green test under it. Mutate each new
+fence to `false` and confirm its subtest dies before committing.
+
+AND WHEN A FENCE SURVIVES MUTATION, MEASURE GIT RATHER THAN ADJUST THE TEST.
+In 4c three of four survivors were wrong ASSUMPTIONS about git, not weak
+scenarios, and each took one scratch-repo probe to settle:
+  - `diff-tree` is plumbing and IGNORES `diff.renames`, so `--no-renames` is
+    inert there (kept as intent against a future `-M`, not a fence).
+  - `git diff --name-only HEAD` detects a same-length mtime-restored edit even
+    under `checkStat=minimal` + `trustctime=false`, so those overrides are NOT
+    what defeat the stat-cache evasion on that command. They ARE expected to
+    matter for 4e's read-tree/write-tree comparison — verify there rather than
+    assuming it twice.
+  - git resolves symref chains transitively (4a).
+Probes go in the session scratchpad, not /tmp (there is a deny rule on `rm`).
 
 4. The lander itself: `mc __land-sealed` under `RequireHostScope`, staged per
    ADR-017:740-756 — revalidate branch/SHA/closure digest/repo UUID + dirty
