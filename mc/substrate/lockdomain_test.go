@@ -6,6 +6,9 @@ package substrate
 
 import (
 	"errors"
+	"io"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -96,7 +99,17 @@ func TestLockDomainAcceptsOnlyBlockDeviceBackedLocalFilesystems(t *testing.T) {
 			name:    "unparseable mountinfo refuses",
 			info:    "garbage without a separator\n",
 			dir:     "/mc/spine",
-			wantErr: "no mount",
+			wantErr: "unparseable",
+		},
+		{
+			// Skipping a line we cannot read would silently promote the parent
+			// mount, and on a Linux host that parent is an ext4 root that
+			// PASSES — the guard would approve the very mount it failed to
+			// parse. One bad line poisons the whole table.
+			name:    "one unreadable line refuses even when a valid parent would pass",
+			info:    mountinfo(`1 0 254:1 / / rw - ext4 /dev/vda1 rw`, `truncated /mc/spine line`),
+			dir:     "/mc/spine",
+			wantErr: "unparseable",
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -177,3 +190,85 @@ func TestLockDomainRefusesWhenMountinfoCannotBeRead(t *testing.T) {
 type errReader struct{}
 
 func (errReader) Read([]byte) (int, error) { return 0, errors.New("mountinfo unavailable") }
+
+// ── Wiring ───────────────────────────────────────────────────────────────
+//
+// The tests above prove the DECISION. These prove the decision is actually
+// CONSULTED, which is a separate claim and the one most at risk: the fast lane
+// runs on darwin, where platformMountinfo is inert, so deleting the
+// GuardLockDomain call from substrate.Open would turn nothing red. That is
+// exactly how the D6 verdict fence rotted — every test asserted the refusal
+// path and none asserted the admission path, so a fence that had stopped
+// working kept passing (6657541).
+
+// withMountinfo points the guard at a fixed mount table for the duration of a
+// test, standing in for the /proc the fast lane's platform does not have.
+func withMountinfo(t *testing.T, info string) {
+	t.Helper()
+	prev := openMountinfo
+	openMountinfo = func() (io.ReadCloser, error) {
+		return io.NopCloser(strings.NewReader(info)), nil
+	}
+	t.Cleanup(func() { openMountinfo = prev })
+}
+
+func TestOpenRefusesASpineOutsideTheLockDomain(t *testing.T) {
+	dir, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Sanity, on a path this test then abandons: with no hostile mount table
+	// the open succeeds, so the refusal below is attributable to the guard and
+	// not to something about temp directories.
+	db, err := Open(filepath.Join(dir, "control.db"))
+	if err != nil {
+		t.Fatalf("Open = %v, want success before the mount table says otherwise", err)
+	}
+	db.Close()
+
+	// Name the real directory, so the refusal is the fakeowner verdict rather
+	// than an incidental "no mount contains it".
+	withMountinfo(t, mountinfo(mountOverlayRoot,
+		`1500 1000 0:77 /Users/op `+dir+` rw - fakeowner /run/host_mark/Users rw`))
+
+	spine := filepath.Join(dir, "spine.db")
+	if _, err := Open(spine); err == nil || !strings.Contains(err.Error(), "fakeowner") {
+		t.Fatalf("Open(%s) = %v, want the lock-domain guard to refuse before sql.Open", spine, err)
+	}
+	// Refusing BEFORE sql.Open is the point: no database file may appear.
+	if _, statErr := os.Stat(spine); !os.IsNotExist(statErr) {
+		t.Fatalf("refused Open still created %s (stat err %v)", spine, statErr)
+	}
+}
+
+// A spine file that is itself a symlink into a bind must be judged on the
+// bind, not on the blameless directory holding the link.
+func TestGuardResolvesTheSpineFileNotJustItsDirectory(t *testing.T) {
+	volume, bind := t.TempDir(), t.TempDir()
+	target := filepath.Join(bind, "real.db")
+	if err := os.WriteFile(target, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(volume, "spine.db")
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatal(err)
+	}
+	resolvedVolume, err := filepath.EvalSymlinks(volume)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolvedBind, err := filepath.EvalSymlinks(bind)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The directory holding the link is a legitimate volume; the link's target
+	// is not. A guard that rejoined the basename to the resolved directory
+	// would see only the first line and accept.
+	withMountinfo(t, mountinfo(mountOverlayRoot,
+		`1234 1000 254:1 / `+resolvedVolume+` rw - ext4 /dev/vda1 rw`,
+		`1500 1000 0:77 /Users/op `+resolvedBind+` rw - fakeowner /run/host_mark/Users rw`))
+	if err := GuardLockDomain(link); err == nil || !strings.Contains(err.Error(), "fakeowner") {
+		t.Fatalf("GuardLockDomain(symlink into a bind) = %v, want the target's mount refused", err)
+	}
+}

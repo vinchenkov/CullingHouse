@@ -113,15 +113,42 @@ func longestPrefixMount(entries []mountEntry, dir string) *mountEntry {
 	return best
 }
 
+// resolveExistingAncestor resolves symlinks in path, walking up to the nearest
+// existing ancestor when the path has not been created yet. A spine is
+// provisioned into a directory that may not exist, and the mount that will
+// hold it is the one governing its nearest existing ancestor.
+func resolveExistingAncestor(path string) string {
+	for {
+		if resolved, err := filepath.EvalSymlinks(path); err == nil {
+			return resolved
+		}
+		parent := filepath.Dir(path)
+		if parent == path {
+			return path
+		}
+		path = parent
+	}
+}
+
 // parseMountInfo reads the mountinfo format: space-separated fields, a
 // variable-length optional-fields run, then a single " - " separator, then
-// fstype and source. Lines that do not parse are skipped rather than guessed
-// at; if that leaves no containing mount, checkLockDomain refuses.
+// fstype and source.
+//
+// A line that does not parse is an ERROR, not a line to skip. Skipping is a
+// false-accept generator: drop the line describing the bind at /mc/spine and
+// the longest remaining prefix becomes its parent — which on a Linux host is
+// an ext4 root that passes. The guard would then approve the very mount it
+// could not read. If this kernel's mountinfo is a shape we do not understand,
+// the honest answer is refusal.
 func parseMountInfo(r io.Reader) ([]mountEntry, error) {
 	var out []mountEntry
 	scanner := bufio.NewScanner(r)
 	for scanner.Scan() {
-		fields := strings.Fields(scanner.Text())
+		line := scanner.Text()
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		fields := strings.Fields(line)
 		sep := -1
 		for i, f := range fields {
 			if f == "-" {
@@ -129,9 +156,10 @@ func parseMountInfo(r io.Reader) ([]mountEntry, error) {
 				break
 			}
 		}
-		// Need fields 1..5 before the separator, and fstype+source after it.
-		if sep < 5 || len(fields) < sep+3 {
-			continue
+		// Fields 1..6 precede the separator (mountinfo's fixed head), and
+		// fstype+source follow it.
+		if sep < 6 || len(fields) < sep+3 {
+			return nil, fmt.Errorf("unparseable mountinfo line %q", line)
 		}
 		out = append(out, mountEntry{
 			mountPoint: unescapeOctal(fields[4]),
@@ -167,14 +195,24 @@ func unescapeOctal(s string) string {
 	return b.String()
 }
 
+// openMountinfo yields the mount table to decide from. It is a package
+// variable ONLY so the package's own tests can pin that the guard is actually
+// wired into the spine openers — the fast lane runs on darwin, where the
+// platform source is inert, so deleting a call site would otherwise turn no
+// test red. It is unexported and settable from nowhere outside this package:
+// there is deliberately no env var, no flag, and no exported setter.
+var openMountinfo = platformMountinfo
+
 // GuardLockDomain refuses a spine path that is not inside the lock domain. It
 // is called before every open of the spine — substrate.Open and the onboard
 // read-only inspection alike — so no code path can reach sql.Open on a
 // bind-mounted database.
 //
-// The check is on the spine's DIRECTORY, not the file: SQLite's -wal and -shm
-// siblings live beside it and are equally lock-bearing, and the guard must
-// also refuse a spine that does not exist yet.
+// It checks the spine's DIRECTORY and the spine FILE. The directory because
+// SQLite's -wal and -shm siblings live beside the database and are equally
+// lock-bearing, and because the guard must also judge a spine that does not
+// exist yet; the file because Docker will bind a single file over an
+// otherwise-legitimate volume.
 func GuardLockDomain(spinePath string) error {
 	if spinePath == "" {
 		return nil // "no spine configured" is the caller's error to report.
@@ -186,6 +224,22 @@ func GuardLockDomain(spinePath string) error {
 	// Resolve symlinks so a link into a bind cannot launder the path past the
 	// longest-prefix match. A directory that does not exist yet is judged at
 	// its nearest existing ancestor, which is the mount that will hold it.
+	//
+	// The FILE is resolved separately and not merely rejoined to the resolved
+	// directory. A spine file that is itself a symlink into a bind would
+	// otherwise be judged on its directory's blameless mount while sql.Open
+	// follows the link onto the bind — the exact laundering this resolution
+	// exists to stop, one path component further down.
 	resolved := resolveExistingAncestor(dir)
-	return guardLockDomainAt(resolved, filepath.Join(resolved, filepath.Base(spinePath)))
+	file := resolveExistingAncestor(filepath.Join(resolved, filepath.Base(spinePath)))
+
+	r, err := openMountinfo()
+	if err != nil {
+		return lockDomainRefusal(resolved, "cannot read the mount table (%v)", err)
+	}
+	if r == nil {
+		return nil // platform without /proc — see lockdomain_other.go.
+	}
+	defer r.Close()
+	return checkLockDomain(r, resolved, file)
 }

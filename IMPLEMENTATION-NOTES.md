@@ -296,3 +296,28 @@ date/title; delete a line here when its slice lands.
 - Also: `mc task setup-record`'s success envelope no longer carries `rows` (the 15-row walk is host-side and its count is not a spine fact). Nothing consumed it — the resident checks only the exit code, and the D5 boundary test uses the Go API, which still returns the rows.
 - Spec impact: ADR-016 D5/D6 should say that a setup-record crossing is a host attest frame plus a path-free spine frame, and that filesystem identity is observed only on the host — the same rule the accepted-seal recheck entry (2026-07-19) asks for at the seal crossing.
 - Needs your decision: no.
+
+## 2026-07-20 — the lock-domain guard's filesystem allowlist excludes ZFS and friends
+- Where: Phase 3, `mc/substrate/lockdomain.go` (Inv. 24 guard, carried from
+  spike S5 row 5)
+- Gap: S5 proved the guard shape and named four filesystems —
+  ext4/ext3/xfs/btrfs with a `/dev/` source — but neither the spike nor the
+  spec says what to do about single-kernel filesystems outside that list.
+  On a Linux HOST (spec §12: no helper, `mc` runs natively) a ZFS root
+  reports `fstype=zfs source=rpool/ROOT/...`: no `/dev/` source, so the
+  guard refuses it. Same for f2fs and bcachefs. All are single-kernel and
+  perfectly SQLite-safe, so this is a false refuse — and by design there is
+  no escape hatch, so such a host has no way forward.
+- Choice: keep the four. It (a) preserves the fail-closed posture — the
+  cost of a wrong ACCEPT here is spine corruption, the cost of a wrong
+  REFUSE is a startup error naming the mount; (b) deviates least from the
+  spike's proven text; and (c) is trivially reversible — widening a
+  map literal, with the existing table tests as the harness. The primary
+  target is this macOS machine (handoff §4.3), where the spine is inside
+  the Docker Desktop VM on ext4 and the question does not arise.
+- Spec impact: none yet. If Linux-host support becomes a real target, the
+  allowlist needs a considered answer for pooled/COW filesystems whose
+  source is not a `/dev/` node — note that the `/dev/` requirement is doing
+  independent work (it is what rejects a bind of somebody else's ext4), so
+  widening cannot just drop it.
+- Needs your decision: no
