@@ -731,6 +731,26 @@ and the first-task setup arm legitimately resolves it as a rev (even "HEAD"),
 so landing needed its own grammar rather than the shared looseness. Write the
 lander against the bare form.
 
+Step 4a is DONE (4d17602): the fenced git wrapper (`landingGit` — env
+CONSTRUCTED not inherited, so hostile GIT_* cannot reach git; every call
+through one entry point) and the repository stage
+(`revalidateLandingRepository` — core.worktree, bare, symlink-resolved toplevel
+identity, executable merge drivers/content filters at local+worktree scope,
+non-symbolic existing target, HEAD on target, index visibility flags, operator
+merge in flight). It returns the target tip = the pre-merge SHA for the next
+stage, and applies NO dirty fence by design (ADR-017:742 scopes that to the
+reviewed paths, unknown until the closure stage; pinned by its own test).
+All eight fences mutation-tested; the symbolic-target one is REDUNDANT with the
+HEAD fence (git resolves symref chains transitively) — retained, documented,
+test relabelled.
+
+Remaining for step 4, in order: (4b) the sealed task-store side — reuse
+`inspectCompletableTaskStore`; (4c) the reviewed-path set + the path-scoped
+dirty fence; (4d) the import (`pack-objects --revs --stdout` | `index-pack`,
+fsync + verify, no hardlink/alternate/speculative delete); (4e) CAS-create the
+ref with a zero old-value `update-ref`, re-check the SHA fence, `merge --no-ff`.
+STOP THERE — cleanup has no mount and no owner.
+
 4. The lander itself: `mc __land-sealed` under `RequireHostScope`, staged per
    ADR-017:740-756 — revalidate branch/SHA/closure digest/repo UUID + dirty
    fence; import the exact closure (`pack-objects --revs --stdout` piped to

@@ -3164,3 +3164,53 @@ NEXT (in PROGRESS.md): step 4 proper — the lander, against the bare-branch
 form. Take the fenced git wrapper first: the ledger's earlier pin (every git
 call through one wrapper, not legacy's accidental isolation) is the foundation
 every later stage sits on.
+
+## 2026-07-20 (later still) — step 4a, and the sixth vacuous fence
+
+The sealed lander's foundation is in (4d17602): the fenced git wrapper and the
+real-repository stage.
+
+The wrapper is a TYPE rather than a helper on purpose. Its environment is
+constructed, never derived from `os.Environ()`, which is what makes a hostile
+`GIT_DIR`/`GIT_INDEX_FILE`/`GIT_ALTERNATE_OBJECT_DIRECTORIES` or a forged
+`GIT_AUTHOR_*` structurally unable to reach git — as opposed to legacy's shape,
+where the merge overrides those four vars and everything else runs bare. The
+legacy lander's isolation is accidental: its long tail of plumbing calls
+(receipt scan, symbolic-ref, merge-base, diff-tree, worktree list, the cat-file
+inside its xargs blocks) runs with the operator's live config and hooks in
+scope, and only the fact that they are read-only keeps a hook from firing.
+Routing everything through one entry point makes ADR-017:704-711 a property of
+the program instead of a property of the commands someone remembered.
+
+The repository stage deliberately applies NO dirty fence. ADR-017:742 scopes
+that to the REVIEWED paths, which are unknown until the closure stage, and a
+global check would refuse an operator who merely has unrelated work in
+progress — legacy permits that explicitly and it is the difference between a
+usable system and one that lands only on a pristine tree. Pinned by its own
+test so a later slice does not helpfully add one.
+
+**The finding: the sixth vacuous fence this phase.** All eight fences were
+mutated to `false` individually. Seven died. The symbolic-target fence did not,
+and two successive drafts of its test case failed to make it die. The reason is
+a git semantic, not a test bug: git resolves symref chains TRANSITIVELY, so with
+`refs/heads/T` symbolic, `symbolic-ref --short HEAD` reports the name at the end
+of the chain and can never equal T. The HEAD-on-target fence therefore refuses
+every input the symbolic fence would, and no scenario reaches the symbolic one
+independently. Retained — it runs first, so it is the production refuser and its
+message names the real problem, and it states the invariant directly rather than
+relying on a coincidence of git's resolution order — but documented as redundant,
+with the test case relabelled for what it actually exercises.
+
+Worth noting how the first draft failed differently from the second. Draft one
+left HEAD on `main`, so the case was refused by the HEAD fence for the obvious
+reason. Draft two moved HEAD onto the aliased name specifically to isolate the
+symbolic fence — and was STILL refused by the HEAD fence, for a reason I had
+assumed away rather than measured. The fix was to stop reasoning about git's
+behaviour and run it: three commands in a scratch repo settled it. The running
+tally of this smell is now six, and the cheapest instrument remains the same —
+mutate the fence, and when the suite stays green, go and measure the tool rather
+than adjust the test.
+
+NEXT (in PROGRESS.md): 4b the sealed task-store side (reuse
+`inspectCompletableTaskStore`), then the reviewed-path set and path-scoped dirty
+fence, then the import, then CAS ref + merge. Stop at the merge.
