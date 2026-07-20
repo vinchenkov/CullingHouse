@@ -466,6 +466,21 @@ func fenceReviewedPathsClean(g landingGit, workspace, target, base, verifiedSHA 
 	if err != nil {
 		return err
 	}
+	return fenceReviewedPathsCleanAt(g, workspace, target, paths)
+}
+
+// fenceReviewedPathsCleanAt is the fence itself, over an already-derived path
+// set. The split exists because the composed lane derives the reviewed set from
+// the SEALED store, not from the real repository: the real repository cannot
+// name the reviewed commit until the import has happened, so deriving the set
+// there would force the dirty fence AFTER the import and invert
+// ADR-017:741-743's order. The two-argument form above is retained for the
+// single-repository case its own tests cover.
+//
+// It deliberately does NOT re-check that the set is non-empty. `reviewedLandingPaths`
+// is the only producer of a path set and already refuses an empty one, so a
+// guard here could never fire — a DEAD fence, which is not a fence.
+func fenceReviewedPathsCleanAt(g landingGit, workspace, target string, paths []string) error {
 
 	// Tracked modifications at reviewed paths, worktree AND index against HEAD.
 	// The fixed config overrides core.checkStat/core.trustctime, so a repo that

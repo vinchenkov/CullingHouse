@@ -50,7 +50,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	}
 	// The launch-time identity recheck reads HOST files by definition: it must
 	// run locally even when every ordinary verb self-delegates into the helper.
-	if args[0] == "__mount-recheck" || args[0] == "__task-parent-recheck" || args[0] == "__completion-seal-recheck" || args[0] == "__task-skeleton-recover" || args[0] == "__setup-first-task" || args[0] == "__setup-accepted-seal" || args[0] == "__setup-verifier-projection" {
+	if args[0] == "__mount-recheck" || args[0] == "__task-parent-recheck" || args[0] == "__completion-seal-recheck" || args[0] == "__task-skeleton-recover" || args[0] == "__setup-first-task" || args[0] == "__setup-accepted-seal" || args[0] == "__setup-verifier-projection" || args[0] == "__land-sealed" {
 		return runLocal(args, stdin, stdout, stderr)
 	}
 
@@ -276,6 +276,26 @@ func dispatchVerb(args []string, stdin io.Reader) (any, error) {
 			return nil, err
 		}
 		return map[string]any{"ok": true}, verbs.RunVerifierProjectionSetup(env)
+	case "__land-sealed":
+		// The landing class, not a setup class: it holds no lease, opens no Run,
+		// and its envelope is refused if it names one. It is host scope for the
+		// same reason the setup executors are — it reads the `/repo` plane the
+		// resident composed, which the helper has no bind for.
+		if len(rest) != 1 {
+			return nil, verbs.Usagef("usage: mc __land-sealed <landing-file>")
+		}
+		id, err := verbs.LoadIdentity()
+		if err != nil {
+			return nil, err
+		}
+		if err := verbs.RequireHostScope(id, "mc __land-sealed"); err != nil {
+			return nil, err
+		}
+		env, err := verbs.ReadSetupEnvelope(rest[0])
+		if err != nil {
+			return nil, err
+		}
+		return verbs.RunSealedLanding(env)
 	case "onboard":
 		return cmdOnboard(rest)
 	case "init":
