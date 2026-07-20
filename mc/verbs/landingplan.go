@@ -6,19 +6,29 @@ package verbs
 // makes that separation load-bearing rather than cosmetic, and the sharpest
 // edge is access: setup's `/repo/source` is RO (:691) while landing's is RW
 // (:699) — "the only grant in the system that gets a real Worksource
-// repository RW, intentionally including its primary checkout". The sealed
-// task bytes stay reachable only through the RO `/repo/task` row, never
-// through that RW alias, which is what the nested `.mission-control` cover
-// buys (:700).
+// repository RW, intentionally including its primary checkout".
 //
-// This slice ships the GRAMMAR only, per the sealed-landing build order in
-// PROGRESS.md: the rows and the destination predicate exist so `mountplan.go`
-// stops classifying every `/repo/...` cell as a confused-planner protocol
-// error. No producer resolves a landing kind to an authorized typed root yet
-// (boundary/typedkind.go's four landing kinds have no jurisdiction entry), so
-// every landing request still DENIES — fail-closed, and deliberately inert
-// until the lane is turned on as a whole. A half-built lane is the failure
-// mode this order exists to avoid.
+// THE `/repo` PLANE IS NOT PLAN-ADDRESSABLE. The ADR-016 D5 mount plan is an
+// AGENT-plane carrier: `resident/src/effects.ts:90-95` admits only
+// `/workspace` destinations and refuses the whole spawn otherwise. Every
+// `/repo` row of the sibling setup class is composed by the resident from
+// paths it derives itself (effects.ts:598-603), and landing follows it. So
+// none of the rows below is ever a `PrivateDispatchMountEntry`, and neither
+// `planMounts` nor `validatePrivateMountPlan` knows this table: teaching them
+// a plane the carrier structurally cannot reach buys no capability and costs a
+// defence-in-depth layer, because the same predicate also gates the
+// task-precreate fabrication guard and the agent/landing class separation.
+// A first draft of this slice did exactly that; the review that caught it is
+// in docs/ledger/phase-3.md (2026-07-20).
+//
+// What this file therefore is: the landing class's own destination grammar
+// and host-anchor resolver, which the landing INSTRUCTION carries — the same
+// division `/mc/setup.json` has had since the D5 slice, where the envelope
+// pins fixed container destinations (`setupenvelope.go:100,116`) and the
+// resident binds them.
+//
+// The lane is built INERT and turned on only at the end (PROGRESS.md): a
+// half-built lane converts a loud `Approve` refusal into durable blocked rows.
 
 import (
 	"os"
@@ -29,52 +39,52 @@ import (
 	"mc/boundary"
 )
 
-// landingPlanRow is one host-bind row of the closed landing table: the typed
-// kind it claims, its fixed container destination, its access, and its shape.
-// Unlike taskPlanRow there is no task-root-relative path: landing's rows are
+// landingMountRow is one row of the closed landing table: the typed kind it
+// claims, its fixed container destination, its access, and its shape. Unlike
+// taskPlanRow there is no task-root-relative path — landing's rows are
 // anchored to two different host roots (the real Worksource and the sealed
-// task root), so the producer resolves each one separately.
-type landingPlanRow struct {
+// task root) — and "Plan" is deliberately absent from the name, because a
+// plan is the one thing these rows never become.
+type landingMountRow struct {
 	Kind           boundary.TypedKind
 	Dest           string
 	Access         boundary.Access
 	IsDir          bool
 	MustBeEmptyDir bool
-	// ResidentMaterialized marks a row whose host source does not exist until
-	// the resident writes it, so dispatch never plans it as a bind entry — the
-	// same division `/mc/setup.json` already has, where the plan carries a
-	// setup INSTRUCTION and the resident writes the file and binds it. The row
-	// stays in this table because the table is ADR-017's, not the planner's.
-	ResidentMaterialized bool
+	// Generated marks a row the resident MAKES per run rather than one that
+	// exists on the host beforehand — ADR-017's own word at :700 and :702.
+	// A generated row has no identity for `resolveLandingRoots` to resolve;
+	// the landing instruction must still name it, and the resident must still
+	// place it.
+	Generated bool
 }
 
-// landingPlanRows returns the complete landing mount table (ADR-017:699-702).
-// The order is the ADR's; planMounts re-sorts entries by destination.
-func landingPlanRows() []landingPlanRow {
-	return []landingPlanRow{
+// landingMountRows returns the complete landing mount table (ADR-017:699-702).
+func landingMountRows() []landingMountRow {
+	return []landingMountRow{
 		{Kind: boundary.KindLandingWorksource, Dest: "/repo/source", Access: boundary.AccessRW, IsDir: true},
-		{Kind: boundary.KindLandingMissionControlCover, Dest: "/repo/source/.mission-control", Access: boundary.AccessRO, IsDir: true, MustBeEmptyDir: true, ResidentMaterialized: true},
+		{Kind: boundary.KindLandingMissionControlCover, Dest: "/repo/source/.mission-control", Access: boundary.AccessRO, IsDir: true, MustBeEmptyDir: true, Generated: true},
 		{Kind: boundary.KindLandingTaskRoot, Dest: "/repo/task", Access: boundary.AccessRO, IsDir: true},
-		{Kind: boundary.KindLandingEnvelope, Dest: "/mc/landing.json", Access: boundary.AccessRO, ResidentMaterialized: true},
+		{Kind: boundary.KindLandingEnvelope, Dest: "/mc/landing.json", Access: boundary.AccessRO, Generated: true},
 	}
 }
 
-// resolveLandingRoots binds the landing kinds that HAVE a host source to their
-// authorized typed roots (ADR-021 D10): the real registered Worksource root
-// and the sealed task-local root of the subject task.
-//
-// The other two rows are GENERATED per run by the resident — an empty cover
-// directory and the envelope file — so no identity exists to capture when
-// attest runs, and they deliberately receive no authorized root. Requesting
-// one therefore still denies, fail-closed.
-//
-// That split has a consequence worth stating plainly: because the cover is
-// not a plan entry, the plan cannot itself prove that the sealed bytes are
-// unreachable through the RW `/repo/source` alias (ADR-017:700). The plan
-// authorizes the grant; the realized mount table is what establishes
-// containment, which is why the RO-alias property is a Docker-lane
-// obligation. The resident's obligation to place the cover belongs to the
-// landing instruction (the envelope slice), not here.
+// validLandingDestination reports whether one container path is a cell of the
+// closed landing table. It is the grammar the landing INSTRUCTION is validated
+// against — never a plan grammar; see the file comment.
+func validLandingDestination(dest string) bool {
+	for _, row := range landingMountRows() {
+		if row.Dest == dest {
+			return true
+		}
+	}
+	return false
+}
+
+// resolveLandingRoots resolves the landing rows that HAVE a host source: the
+// real registered Worksource root and the sealed task-local root of the
+// subject task. The other two rows are generated per run by the resident, so
+// there is nothing to resolve for them.
 //
 // Like resolveTaskLocalSkeleton this resolves and validates; it creates
 // nothing. Absence refuses source_missing and every trust/shape failure
@@ -97,15 +107,24 @@ func resolveLandingRoots(workspaceRoot string, taskID int64, ownerUID int) (map[
 			Msg:  "landing Worksource is not its exact canonical directory",
 		}
 	}
-	wsID, err := resolveLandingRow(ws.Canonical, ownerUID, false, "landing Worksource root")
+	wsID, err := resolveLandingAnchor(ws.Canonical, ownerUID, 0, "landing Worksource root")
 	if err != nil {
 		return nil, err
+	}
+	// ADR-017:699 grants RW to a "real Git Worksource root". A directory with
+	// no administrative Git entry is not one, and landing into it would import
+	// a closure and create a ref in a non-repository.
+	if _, err := os.Lstat(filepath.Join(ws.Canonical, ".git")); err != nil {
+		return nil, &boundary.MountError{
+			Code: boundary.CodeRuntimeUnappliable,
+			Msg:  "landing Worksource root carries no administrative .git entry; it is not a real Git Worksource (ADR-017:699)",
+		}
 	}
 	taskRoot := filepath.Join(ws.Canonical, ".mission-control", "tasks", "task-"+strconv.FormatInt(taskID, 10))
 	// The sealed task root carries the reviewed repository. Landing reads it
 	// RO, and the 0555 operator-owned shape is the same fence the agent plan
 	// applies to it (ADR-017:418).
-	rootID, err := resolveLandingRow(taskRoot, ownerUID, true, "landing task root")
+	rootID, err := resolveLandingAnchor(taskRoot, ownerUID, 0o555, "landing task root")
 	if err != nil {
 		return nil, err
 	}
@@ -115,10 +134,20 @@ func resolveLandingRoots(workspaceRoot string, taskID int64, ownerUID int) (map[
 	}, nil
 }
 
-// resolveLandingRow proves one landing anchor is a real, operator-owned,
-// unaliased directory at its constructed path, and (for the sealed root) that
-// it carries the exact mode the sealing side left it at.
-func resolveLandingRow(path string, ownerUID int, sealedMode bool, name string) (boundary.ProtectedID, error) {
+// resolveLandingAnchor proves one landing anchor is a real, operator-owned,
+// unaliased directory at its constructed path. wantMode pins an exact
+// permission set (the sealed root's 0555); zero means "no exact mode", which
+// still refuses group/other WRITE — a real repository root is commonly 0755
+// and may not be forced to 0700, but a non-owner able to plant content in the
+// tree that is about to receive the system's only RW repository grant is not
+// a trusted anchor.
+//
+// NOTE: the trust decision reads this Lstat's info while the recorded
+// ProtectedID comes from a second stat inside boundary.ResolveSource. That
+// split is the pattern taskskeleton.go:141-145 already uses, and exploiting it
+// needs write access to an operator-owned tree; it is recorded here rather
+// than fixed so the two stay consistent.
+func resolveLandingAnchor(path string, ownerUID int, wantMode os.FileMode, name string) (boundary.ProtectedID, error) {
 	info, err := os.Lstat(path)
 	if os.IsNotExist(err) {
 		return boundary.ProtectedID{}, &boundary.MountError{
@@ -147,10 +176,17 @@ func resolveLandingRow(path string, ownerUID int, sealedMode bool, name string) 
 			Code: boundary.CodeRuntimeUnappliable, Msg: name + " is not owned by the operator",
 		}
 	}
-	if sealedMode && info.Mode().Perm() != 0o555 {
+	perm := info.Mode().Perm()
+	if wantMode != 0 && perm != wantMode {
 		return boundary.ProtectedID{}, &boundary.MountError{
 			Code: boundary.CodeRuntimeUnappliable,
 			Msg:  name + " is not the operator-owned mode-0555 sealed task root (ADR-017:418)",
+		}
+	}
+	if wantMode == 0 && perm&0o022 != 0 {
+		return boundary.ProtectedID{}, &boundary.MountError{
+			Code: boundary.CodeRuntimeUnappliable,
+			Msg:  name + " is group- or world-writable; a non-owner can plant content in the RW landing anchor",
 		}
 	}
 	id, err := boundary.ResolveSource(path)

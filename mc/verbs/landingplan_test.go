@@ -3,27 +3,29 @@ package verbs
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"mc/boundary"
 	"mc/refusal"
 )
 
-// The landing table is ADR-017:699-702. These tests pin the GRAMMAR only —
-// no producer resolves a landing kind to an authorized typed root yet, so
-// every landing request must still DENY rather than plan. That inertness is
-// asserted here too, so turning the lane on cannot happen by accident.
+// The landing table is ADR-017:699-702. These tests pin the table, its
+// destination grammar, and the host-anchor resolver — and, load-bearingly,
+// that NONE of it is reachable from the ADR-016 D5 mount plan. See
+// landingplan.go: the plan carrier is an agent-plane mechanism and the
+// `/repo` plane is composed by the resident.
 
-func TestLandingPlanRowsAreTheClosedADR017Table(t *testing.T) {
-	rows := landingPlanRows()
+func TestLandingMountRowsAreTheClosedADR017Table(t *testing.T) {
+	rows := landingMountRows()
 	if len(rows) != 4 {
 		t.Fatalf("the landing table has exactly 4 rows (ADR-017:699-702), got %d", len(rows))
 	}
-	want := []landingPlanRow{
+	want := []landingMountRow{
 		{Kind: boundary.KindLandingWorksource, Dest: "/repo/source", Access: boundary.AccessRW, IsDir: true},
-		{Kind: boundary.KindLandingMissionControlCover, Dest: "/repo/source/.mission-control", Access: boundary.AccessRO, IsDir: true, MustBeEmptyDir: true, ResidentMaterialized: true},
+		{Kind: boundary.KindLandingMissionControlCover, Dest: "/repo/source/.mission-control", Access: boundary.AccessRO, IsDir: true, MustBeEmptyDir: true, Generated: true},
 		{Kind: boundary.KindLandingTaskRoot, Dest: "/repo/task", Access: boundary.AccessRO, IsDir: true},
-		{Kind: boundary.KindLandingEnvelope, Dest: "/mc/landing.json", Access: boundary.AccessRO, ResidentMaterialized: true},
+		{Kind: boundary.KindLandingEnvelope, Dest: "/mc/landing.json", Access: boundary.AccessRO, Generated: true},
 	}
 	for i, w := range want {
 		if rows[i] != w {
@@ -37,7 +39,7 @@ func TestLandingPlanRowsAreTheClosedADR017Table(t *testing.T) {
 // gets a real Worksource repository RW". Every other landing row is RO.
 func TestLandingGrantsExactlyOneWritableRow(t *testing.T) {
 	var writable []string
-	for _, row := range landingPlanRows() {
+	for _, row := range landingMountRows() {
 		if row.Access == boundary.AccessRW {
 			writable = append(writable, row.Dest)
 		}
@@ -47,121 +49,107 @@ func TestLandingGrantsExactlyOneWritableRow(t *testing.T) {
 	}
 }
 
-func TestValidLandingPlanDestinationIsClosed(t *testing.T) {
-	for _, dest := range []string{"/repo/source", "/repo/task"} {
-		if !validLandingPlanDestination(dest) {
-			t.Fatalf("%q is a bindable landing cell", dest)
+func TestValidLandingDestinationIsClosed(t *testing.T) {
+	for _, row := range landingMountRows() {
+		if !validLandingDestination(row.Dest) {
+			t.Fatalf("%q is a landing cell", row.Dest)
 		}
 	}
-	// The two GENERATED rows are resident-materialized and never plan entries:
-	// the cover is a per-run empty directory and the envelope a per-run file,
-	// neither of which exists when attest captures host identity evidence.
-	// Admitting the envelope would also make /mc plan-addressable.
 	for _, dest := range []string{
-		"/repo/source/.mission-control",
-		"/mc/landing.json", "/mc/setup.json", "/mc/session", "/mc",
+		"/mc/setup.json", "/mc/session", "/mc",
 		"/repo", "/repo/", "/repo/source/", "/repo/source/.git",
 		"/repo/task/source", "/repo/task/git", "/repo/seal", "/repo/projection",
-		"/repo/source/.mission-control/tasks", "/reposource", "",
+		"/repo/source/.mission-control/tasks", "/reposource", "/workspace", "",
 	} {
-		if validLandingPlanDestination(dest) {
-			t.Fatalf("%q is outside the bindable landing table", dest)
+		if validLandingDestination(dest) {
+			t.Fatalf("%q is outside the landing table", dest)
 		}
 	}
 }
 
-// Step 5 of the sealed-landing lane turns two lanes on that must partition by
-// construction. The destination grammars are the first place that can rot:
-// dispatchprivate.go keys the task-precreate fabrication guard off
-// validTaskPlanDestination alone, so a landing cell leaking into the task
-// grammar would silently widen it.
-func TestLandingAndTaskDestinationGrammarsArePartitioned(t *testing.T) {
-	for _, row := range landingPlanRows() {
+// THE LOAD-BEARING ONE. The ADR-016 D5 plan is an AGENT-plane carrier:
+// resident/src/effects.ts:90-95 refuses any destination outside `/workspace`,
+// so a landing row can never be a plan entry. Both Go seams must agree, and
+// must keep agreeing — a first draft of this slice taught them the `/repo`
+// grammar, which bought no capability (the resident would have refused the
+// spawn) and silently widened two guards that share these predicates: the
+// task-precreate fabrication guard and the agent/landing class separation.
+func TestNoLandingCellIsPlanAddressable(t *testing.T) {
+	for _, row := range landingMountRows() {
 		if validTaskPlanDestination(row.Dest) {
-			t.Fatalf("landing cell %q must not be a task-table cell", row.Dest)
+			t.Fatalf("landing cell %q must never be a plannable destination", row.Dest)
+		}
+		plan := &PrivateDispatchMountPlan{Version: 1, Entries: []PrivateDispatchMountEntry{{
+			LogicalID: row.Kind.String(), Source: "/w/anything", Destination: row.Dest,
+			Kind: "dir", Access: string(row.Access), Device: "1", Inode: "2", OwnerUID: 501, Mode: 0o755,
+		}}}
+		err := validatePrivateMountPlan(plan)
+		if err == nil {
+			t.Fatalf("the helper boundary must refuse landing cell %q as a plan entry", row.Dest)
+		}
+		if !strings.Contains(err.Error(), "outside the ordinary namespace") {
+			t.Fatalf("landing cell %q refused for the wrong reason: %v", row.Dest, err)
 		}
 	}
+	// The task table is likewise not a landing grammar cell: the two classes
+	// partition, which is what lets each guard key off one predicate alone.
 	for _, row := range taskPlanRows(7) {
-		if validLandingPlanDestination(row.Dest) {
+		if validLandingDestination(row.Dest) {
 			t.Fatalf("task cell %q must not be a landing-table cell", row.Dest)
 		}
 	}
 }
 
-// `/repo/source/.mission-control` is the ONE named landing edge: the cover
-// shadows the real path so the sealed task bytes stay reachable only through
-// RO `/repo/task`, never through the RW source alias (ADR-017:700).
-func TestLandingNamedEdgeIsOnlyTheMissionControlCover(t *testing.T) {
-	if !mountOverlapPermitted("/repo/source", "/repo/source/.mission-control") {
-		t.Fatal("the landing cover is a named parent-before-child edge")
-	}
-	for _, child := range []string{
-		"/repo/source/.git", "/repo/source/inner",
-		"/repo/source/.mission-control/tasks",
-	} {
-		if mountOverlapPermitted("/repo/source", child) {
-			t.Fatalf("%q is not a named landing edge", child)
-		}
-	}
-	// The task root admits no children in this table, and `/repo` is not a
-	// bind at all, so it grants no root edge the way `/workspace` does.
-	if mountOverlapPermitted("/repo/task", "/repo/task/source") {
-		t.Fatal("the sealed task root is bound whole and RO; it opens no child edge")
-	}
-	if mountOverlapPermitted("/repo", "/repo/source") {
-		t.Fatal("/repo is not a bind and grants no root edge")
-	}
-}
-
-// The grammar change's whole point: `/repo/...` stops being a PROTOCOL error
-// (a confused planner) and becomes an ordinary jurisdiction DENIAL, because
-// no landing kind has an authorized typed root yet. Fail-closed, and the
-// refusal is the recoverable kind rather than a wedged dispatch.
-func TestPlanMountsLandingCellIsDeniedNotAProtocolError(t *testing.T) {
+// planMounts treats a `/repo` cell as a confused planner, which is correct:
+// nothing may ask the agent-plane carrier for a resident-composed plane.
+func TestPlanMountsRefusesEveryLandingCell(t *testing.T) {
 	ws, _ := tsBuild(t)
 	in := mtInputs(t, ws, 7)
 	source := filepath.Join(ws, "landing-source")
 	if err := os.Mkdir(source, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	_, r, err := planMounts([]mountRequest{{
-		Source: source, Access: boundary.AccessRW, Authority: refusal.AuthorityDeployment,
-		Kind: boundary.KindLandingWorksource, Destination: "/repo/source",
-	}}, in)
-	if err != nil {
-		t.Fatalf("a landing cell is inside the closed table, not a protocol error: %v", err)
-	}
-	if r == nil || r.Code != boundary.CodeDeniedRoot {
-		t.Fatalf("the landing lane is inert: want denied_root, got %+v", r)
-	}
-}
-
-// The envelope stays unplannable at the seam as well as in the grammar.
-func TestPlanMountsRejectsTheLandingEnvelopeAsABind(t *testing.T) {
-	ws, _ := tsBuild(t)
-	in := mtInputs(t, ws, 7)
-	envelope := filepath.Join(ws, "landing.json")
-	if err := os.WriteFile(envelope, []byte("{}"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	_, _, err := planMounts([]mountRequest{{
-		Source: envelope, Access: boundary.AccessRO, Authority: refusal.AuthorityDeployment,
-		Kind: boundary.KindLandingEnvelope, Destination: "/mc/landing.json",
-	}}, in)
-	if err == nil {
-		t.Fatal("the resident materializes /mc/landing.json; dispatch may not plan it as a bind")
+	for _, row := range landingMountRows() {
+		_, _, err := planMounts([]mountRequest{{
+			Source: source, Access: row.Access, Authority: refusal.AuthorityDeployment,
+			Kind: row.Kind, Destination: row.Dest,
+		}}, in)
+		if err == nil {
+			t.Fatalf("a %q plan request is a protocol error, not a plannable row", row.Dest)
+		}
 	}
 }
 
-// --- the producer (step 2 of the lane) --------------------------------------
+// The precreate fabrication guard keys off validTaskPlanDestination ALONE.
+// Its coverage of a landing cell is asserted rather than assumed: the draft
+// that widened the shared predicate let a precreate plan — the one class that
+// by construction has no materialized task yet — carry RW to the real
+// Worksource checkout.
+func TestTaskPrecreatePlanCannotCarryALandingCell(t *testing.T) {
+	plan := &PrivateDispatchMountPlan{
+		Version: 1,
+		TaskPrecreate: &PrivateDispatchTaskPrecreate{
+			ChildMode: 0o700, TaskID: 7, WorkspaceRoot: "/w",
+			TasksParent: PrivateDispatchPathIdentity{Canonical: "/w/.mission-control/tasks", Device: "1", Inode: "9", OwnerUID: 501},
+			Setup:       &PrivateDispatchTaskSetup{Mode: "fresh", ObjectFormat: "sha1", TargetRef: "refs/heads/main"},
+		},
+		Entries: []PrivateDispatchMountEntry{{
+			LogicalID: "landing-worksource", Source: "/w", Destination: "/repo/source",
+			Kind: "dir", Access: "rw", Device: "1", Inode: "2", OwnerUID: 501, Mode: 0o755,
+		}},
+	}
+	if err := validatePrivateMountPlan(plan); err == nil {
+		t.Fatal("a precreate plan must not authorize RW to the real Worksource checkout")
+	}
+}
+
+// --- the host-anchor resolver ------------------------------------------------
 
 // Only the two rows with a real host source resolve. The cover and the
-// envelope are GENERATED per run by the resident, so they have no identity to
-// capture at attest and deliberately get no authorized root: requesting one
-// still denies. That is what keeps `/repo` containment a step-6 Docker
-// obligation rather than a plan-level claim the plan cannot back.
+// envelope are GENERATED per run by the resident (ADR-017:700,:702), so there
+// is no identity to resolve for them.
 func TestResolveLandingRootsResolvesOnlyTheHostBackedRows(t *testing.T) {
-	ws, root := tsBuild(t)
+	ws, root := lrBuild(t)
 	roots, err := resolveLandingRoots(ws, 7, os.Getuid())
 	if err != nil {
 		t.Fatalf("resolve: %v", err)
@@ -175,46 +163,105 @@ func TestResolveLandingRootsResolvesOnlyTheHostBackedRows(t *testing.T) {
 	if got := roots[boundary.KindLandingTaskRoot].Canonical; got != root {
 		t.Fatalf("landing task root = %q, want %q", got, root)
 	}
-	for _, kind := range []boundary.TypedKind{
-		boundary.KindLandingMissionControlCover, boundary.KindLandingEnvelope,
-	} {
-		if _, ok := roots[kind]; ok {
-			t.Fatalf("%v is resident-generated and has no attest-time root", kind)
+	for _, row := range landingMountRows() {
+		if !row.Generated {
+			continue
+		}
+		if _, ok := roots[row.Kind]; ok {
+			t.Fatalf("%v is resident-generated and has no host anchor", row.Kind)
 		}
 	}
 }
 
 func TestResolveLandingRootsRefusesAbsentTaskRoot(t *testing.T) {
 	ws := grWorkspace(t)
+	if err := os.Mkdir(filepath.Join(ws, ".git"), 0o700); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := resolveLandingRoots(ws, 7, os.Getuid()); err == nil {
 		t.Fatal("landing has nothing to land without the sealed task root")
 	}
 }
 
-// The sealed task root is the reviewed repository. Landing reads it RO, so
-// its 0555 operator-owned shape is the same fence the agent plan applies —
-// a writable or foreign-owned root is never landed from.
-func TestResolveLandingRootsRefusesUntrustedTaskRoot(t *testing.T) {
-	ws, root := tsBuild(t)
+// ADR-017:699 grants RW to a "real Git Worksource root". A directory with no
+// administrative Git entry is not one, and landing would import a closure and
+// create a ref in a non-repository.
+func TestResolveLandingRootsRefusesANonRepositoryWorksource(t *testing.T) {
+	ws, _ := lrBuild(t)
+	if err := os.Remove(filepath.Join(ws, ".git")); err != nil {
+		t.Fatal(err)
+	}
+	_, err := resolveLandingRoots(ws, 7, os.Getuid())
+	if err == nil || !strings.Contains(err.Error(), "administrative .git entry") {
+		t.Fatalf("want the not-a-real-Git-Worksource refusal, got %v", err)
+	}
+}
+
+// The RW anchor takes no exact-mode fence (a real repository is commonly
+// 0755), but a non-owner able to plant content in the tree about to receive
+// the system's only RW repository grant is not a trusted anchor.
+func TestResolveLandingRootsRefusesAWritableByOthersWorksource(t *testing.T) {
+	for _, mode := range []os.FileMode{0o775, 0o757} {
+		ws, _ := lrBuild(t)
+		if err := os.Chmod(ws, mode); err != nil {
+			t.Fatal(err)
+		}
+		_, err := resolveLandingRoots(ws, 7, os.Getuid())
+		if err == nil || !strings.Contains(err.Error(), "group- or world-writable") {
+			t.Fatalf("mode %o: want the writable-anchor refusal, got %v", mode, err)
+		}
+	}
+}
+
+// Each arm is exercised separately so a fence deleted from one is not masked
+// by the other refusing first.
+func TestResolveLandingRootsFencesTheTaskRootSeparately(t *testing.T) {
+	ws, root := lrBuild(t)
 	if err := os.Chmod(root, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := resolveLandingRoots(ws, 7, os.Getuid()); err == nil {
-		t.Fatal("a writable task root is not the sealed reviewed repository")
+	_, err := resolveLandingRoots(ws, 7, os.Getuid())
+	if err == nil || !strings.Contains(err.Error(), "mode-0555 sealed task root") {
+		t.Fatalf("a writable task root is not the sealed reviewed repository, got %v", err)
 	}
 	if err := os.Chmod(root, 0o555); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := resolveLandingRoots(ws, 7, os.Getuid()+4242); err == nil {
-		t.Fatal("a task root owned by someone else is refused")
+
+	// The ownership fence on the TASK ROOT specifically. Passing a foreign uid
+	// would trip the Worksource arm first and prove nothing about this one, so
+	// the task root is made foreign-looking by asking for the uid that owns
+	// the Worksource while the task root reports another. That is not possible
+	// without privileges, so instead the Worksource arm is satisfied and the
+	// task root replaced by a file — the next fence down in the same arm.
+	if err := os.Chmod(root, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.RemoveAll(root); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(root, []byte("not a directory"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, err = resolveLandingRoots(ws, 7, os.Getuid())
+	if err == nil || !strings.Contains(err.Error(), "landing task root is not a directory") {
+		t.Fatalf("want the task-root kind refusal, got %v", err)
+	}
+}
+
+func TestResolveLandingRootsRefusesForeignOwnedAnchors(t *testing.T) {
+	ws, _ := lrBuild(t)
+	_, err := resolveLandingRoots(ws, 7, os.Getuid()+4242)
+	if err == nil || !strings.Contains(err.Error(), "landing Worksource root is not owned by the operator") {
+		t.Fatalf("want the Worksource ownership refusal, got %v", err)
 	}
 }
 
 // `/repo/source` is the ONE real-repository RW grant in the system. An
 // aliased path reaching it would put that grant somewhere the operator never
-// registered, so both anchors must be their own exact canonical path.
+// registered.
 func TestResolveLandingRootsRefusesAliasedAnchors(t *testing.T) {
-	ws, root := tsBuild(t)
+	ws, root := lrBuild(t)
 	alias := filepath.Join(t.TempDir(), "alias")
 	if err := os.Symlink(ws, alias); err != nil {
 		t.Skipf("symlink unavailable: %v", err)
@@ -237,13 +284,48 @@ func TestResolveLandingRootsRefusesAliasedAnchors(t *testing.T) {
 	if err := os.Symlink(elsewhere, root); err != nil {
 		t.Skipf("symlink unavailable: %v", err)
 	}
-	if _, err := resolveLandingRoots(ws, 7, os.Getuid()); err == nil {
-		t.Fatal("a symlinked task root must not be landed from")
+	_, err := resolveLandingRoots(ws, 7, os.Getuid())
+	if err == nil || !strings.Contains(err.Error(), "landing task root is a symlink") {
+		t.Fatalf("a symlinked task root must not be landed from, got %v", err)
+	}
+}
+
+// The canonical-resolution fence catches what the symlink check cannot: a
+// path whose FINAL component is real but whose ancestry resolves elsewhere.
+// Without its own case this fence is vacuous — the symlink checks reach every
+// other aliased shape first.
+func TestResolveLandingRootsRefusesANonCanonicalAncestry(t *testing.T) {
+	ws, root := lrBuild(t)
+	// Replace the `tasks` PARENT with a symlink to a sibling directory holding
+	// a real, correctly-shaped task root. Every component of the constructed
+	// path exists and the leaf is not itself a symlink, so only the canonical
+	// comparison can refuse it.
+	tasks := filepath.Dir(root)
+	if err := os.Chmod(root, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.RemoveAll(tasks); err != nil {
+		t.Fatal(err)
+	}
+	real := filepath.Join(ws, "real-tasks")
+	if err := os.MkdirAll(filepath.Join(real, "task-7"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(filepath.Join(real, "task-7"), 0o700) })
+	if err := os.Chmod(filepath.Join(real, "task-7"), 0o555); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(real, tasks); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+	_, err := resolveLandingRoots(ws, 7, os.Getuid())
+	if err == nil || !strings.Contains(err.Error(), "does not resolve to its constructed path") {
+		t.Fatalf("want the canonical-ancestry refusal, got %v", err)
 	}
 }
 
 func TestResolveLandingRootsRefusesNonCanonicalTaskID(t *testing.T) {
-	ws, _ := tsBuild(t)
+	ws, _ := lrBuild(t)
 	for _, id := range []int64{0, -1} {
 		if _, err := resolveLandingRoots(ws, id, os.Getuid()); err == nil {
 			t.Fatalf("task id %d is not a canonical positive decimal", id)
@@ -251,83 +333,13 @@ func TestResolveLandingRootsRefusesNonCanonicalTaskID(t *testing.T) {
 	}
 }
 
-// The producer is what turns the inert grammar into a plannable cell: with
-// the landing roots in jurisdiction, the RW `/repo/source` request that
-// TestPlanMountsLandingCellIsDeniedNotAProtocolError sees denied now plans.
-// Both tests must hold at once — that is the difference between the lane
-// existing and the lane being ON.
-func TestPlanMountsAuthorizesLandingRowsOnceTheProducerSupplies(t *testing.T) {
+// lrBuild is tsBuild plus the administrative `.git` entry that makes the
+// workspace a real Git Worksource root (ADR-017:699).
+func lrBuild(t *testing.T) (string, string) {
+	t.Helper()
 	ws, root := tsBuild(t)
-	in := mtInputs(t, ws, 7)
-	roots, err := resolveLandingRoots(ws, 7, os.Getuid())
-	if err != nil {
+	if err := os.Mkdir(filepath.Join(ws, ".git"), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	typedRoots := map[boundary.TypedKind][]boundary.ProtectedID{}
-	for kind, id := range roots {
-		typedRoots[kind] = []boundary.ProtectedID{id}
-	}
-	home := filepath.Join(t.TempDir(), "home")
-	if err := os.MkdirAll(home, 0o750); err != nil {
-		t.Fatal(err)
-	}
-	j, err := boundary.ResolveJurisdiction(boundary.JurisdictionInput{
-		Home: home, TypedRoots: typedRoots,
-	}, os.Getuid())
-	if err != nil {
-		t.Fatal(err)
-	}
-	in.Jurisdiction = j
-
-	entries, r, err := planMounts([]mountRequest{
-		{Source: ws, Access: boundary.AccessRW, Authority: refusal.AuthorityDeployment,
-			Kind: boundary.KindLandingWorksource, Destination: "/repo/source"},
-		{Source: root, Access: boundary.AccessRO, Authority: refusal.AuthorityDeployment,
-			Kind: boundary.KindLandingTaskRoot, Destination: "/repo/task"},
-	}, in)
-	if err != nil || r != nil {
-		t.Fatalf("plan: refusal=%+v err=%v", r, err)
-	}
-	if len(entries) != 2 {
-		t.Fatalf("want 2 landing entries, got %d", len(entries))
-	}
-	if entries[0].Destination != "/repo/source" || entries[0].Access != "rw" {
-		t.Fatalf("the real repository is the one RW grant: %+v", entries[0])
-	}
-	if entries[1].Destination != "/repo/task" || entries[1].Access != "ro" {
-		t.Fatalf("the sealed task root is read-only: %+v", entries[1])
-	}
-
-	// The kinds do not cross: the RW worksource grant may not be claimed by
-	// the task-root kind, nor may a landing kind reach a task-table cell.
-	_, r, err = planMounts([]mountRequest{
-		{Source: ws, Access: boundary.AccessRW, Authority: refusal.AuthorityDeployment,
-			Kind: boundary.KindLandingTaskRoot, Destination: "/repo/task"},
-	}, in)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if r == nil || r.Code != boundary.CodeDeniedRoot {
-		t.Fatalf("a landing kind claiming the other row's root is denied, got %+v", r)
-	}
-}
-
-func TestValidatePrivateMountPlanAcceptsLandingDestinations(t *testing.T) {
-	plan := &PrivateDispatchMountPlan{Version: 1, Entries: []PrivateDispatchMountEntry{
-		{LogicalID: "landing-worksource", Source: "/w/repo", Destination: "/repo/source",
-			Kind: "dir", Access: "rw", Device: "1", Inode: "2", OwnerUID: 501, Mode: 0o755},
-		{LogicalID: "landing-task-root", Source: "/w/task", Destination: "/repo/task",
-			Kind: "dir", Access: "ro", Device: "1", Inode: "4", OwnerUID: 501, Mode: 0o555},
-	}}
-	if err := validatePrivateMountPlan(plan); err != nil {
-		t.Fatalf("the helper boundary must accept the landing cells: %v", err)
-	}
-	// ...but not any other /mc or /repo path a broker invents.
-	plan.Entries = append(plan.Entries, PrivateDispatchMountEntry{
-		LogicalID: "landing-envelope", Source: "/w/landing.json", Destination: "/repo/task/source",
-		Kind: "dir", Access: "rw", Device: "1", Inode: "5", OwnerUID: 501, Mode: 0o755,
-	})
-	if err := validatePrivateMountPlan(plan); err == nil {
-		t.Fatal("a fabricated landing child must be refused at the helper boundary")
-	}
+	return ws, root
 }
