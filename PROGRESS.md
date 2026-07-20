@@ -10,7 +10,7 @@ Access does NOT fix it — the failure precedes any policy lookup. Symptom:
 `stat` works, reads return `Operation not permitted`, git says
 `Unable to read current working directory`.
 
-LAST GREEN SHA: 4a69d15 — five-leg fast lane + full Docker suite 8/8 (local; the operator pushes manually — decided 2026-07-14. Agents: do not push.)
+LAST GREEN SHA: bf3904b — five-leg fast lane (Docker suite last 8/8 at 4a69d15; the operator pushes manually — decided 2026-07-14. Agents: do not push.)
 
 PHASES PASSING: Phase 0 COMPLETE (S1–S8 all green, no fallback ADRs; only operator-leg deferrals remain); Phase 1 COMPLETE (1a substrate 172; 1b walking skeleton reviewed-and-fixed — fake-harness 43, agent-runner 13, runner/image 40, resident 42, dispatch + cmd/mc suites; Docker e2e PASS ×4 total); Phase 2 COMPLETE for every unparked acceptance line (domain/§18 surface, deterministic split-brain convergence, bounded honesty + five mutants, tagged dispatch/metamorphic/twin-spine lifecycle properties; the initiative-wave CLI is no longer isolated — ADR-020 landed 2026-07-14 and closed the last Phase 2 acceptance line)
 KNOWN-FAILING: `TestOnboardConcurrentFreshHomeNeverDeletesTheWinner` (mc/verbs),
@@ -44,7 +44,9 @@ immediate-exit shape is test-only. Repro (under load):
 suite runs. Owner: whoever next touches the resident control crossing — not a
 Phase 3 blocker.
 
-Note the spine is now schema v10 (substrate.CurrentSchemaVersion): `mc onboard home` migrates older spines in place (v1→…→v10); scratch MC_HOME spines need no action. v4 closed the D2 BLOB hole; v5 is the task_setup_receipts table; v6 is the task-keyed immutable `task_assignments` table (first-task closure assignment: base/target SHA, object format, sole branch, path-free task-root key, local repo UUID, closure digest — a retry reuses it, never rebases; ADR-016 D5). v7 is the immutable run-keyed completion-seal state record; v8 binds every newly published seal to an immutable manifest digest; v9 makes each worked task point to its exact accepted completion run/request; v10 is the immutable verifier-run-fenced accepted-seal rebuild receipt. Only accepted, manifest-bound seals can rebuild the canonical task store, while cleanup is durable history.
+Note the spine is now schema v11 (substrate.CurrentSchemaVersion): `mc onboard home` migrates older spines in place (v1→…→v11); scratch MC_HOME spines need no action. v4 closed the D2 BLOB hole; v5 is the task_setup_receipts table; v6 is the task-keyed immutable `task_assignments` table (first-task closure assignment: base/target SHA, object format, sole branch, path-free task-root key, local repo UUID, closure digest — a retry reuses it, never rebases; ADR-016 D5). v7 is the immutable run-keyed completion-seal state record; v8 binds every newly published seal to an immutable manifest digest; v9 makes each worked task point to its exact accepted completion run/request; v10 is the immutable verifier-run-fenced accepted-seal rebuild receipt; v11
+widens the §7 approve landing fence to cover the second branch home (an
+assignment arms it, not just `tasks.branch`). Only accepted, manifest-bound seals can rebuild the canonical task store, while cleanup is durable history.
 Note the mc fast lane now shells to host `git` (git 2.50 on this machine): the first-task setup extraction/materialize/record/envelope tests build real temp repos. Production runs the identical Go inside the network=none setup container against the pinned image git; the host never invokes it.
 FAST SUITE: mc/check.sh (gofmt + vet on the untagged build AND on the nightly/docker_e2e/test_fake_routing tagged builds — they must compile every commit, added 2026-07-14 after a tagged suite rotted invisibly — + go test ./...; includes substrate + promoted dispatch) + runner/fake-harness/check.sh + runner/agent-runner/check.sh + runner/image/check.sh + resident/check.sh. Docker e2e (phase-completion lane): cd mc && mise exec -- go test -tags docker_e2e -timeout 15m ./e2e/...
 
@@ -564,6 +566,22 @@ kept below. Operator legs that remain open are under `## Parked`, not here.
         fence keys on the ASSIGNMENT, not the status, so legacy Phase-2
         branchless rows keep their original synchronous archive (pinned by its
         own test, so the fence cannot over-reach)
+  - [x] Sealed landing, steps 1–2 of the lane (8490c97, bf3904b). The
+        branch-home question is ANSWERED: read the assignment, never project it
+        into `tasks.branch`. Projecting arms `LandingPending()`, which emits the
+        frozen four-scalar `KindLand`, which routes to legacy `mc-land`, which
+        hard-fails `missing branch` and writes a durable `blocked_reason` — so
+        it converts "unimplemented" into a task-level block wearing a
+        Git-sounding reason, unwindable only by a backfill rather than a revert
+        (§6(c) decides it). Landed: the §7 approve fence widened so an
+        assignment arms it too, as the v10→v11 migration, with its over-reach
+        direction pinned; and `dispatch.Task.Sealed` + a `task_assignments`
+        LEFT JOIN in `loadRecords` + `SealedLandingPending`. The two lanes
+        partition by construction, a both-homes row is refused by both, and an
+        assignment whose frozen `target_ref` drifted stays IN the lane so
+        landing refuses it loudly instead of it going silently unlandable. All
+        INERT: `Decide` does not consult the predicate and `Approve` still
+        refuses a sealed task
 - [ ] Phase 4 — E2E control loops (six scenario families)
 - [ ] Phase 5 — Real-subscription acceptance (operator-scheduled)
 - [ ] Release prep (after Phase 5): swap the repo's construction face for
@@ -626,35 +644,53 @@ it compacts at the phase boundary (the precedent Phases 0–2 set), not before.
 Keep committed-tree projections, structured Engine-API binds, and launchd in
 their named later slices.
 
-NEXT: Sealed landing (ADR-017:1226-1240). Scoping the E2E past `packaged` found
-that the ENTIRE landing path is still the legacy `.mc-worktrees` model and the
-seal pipeline never joins it — two facts, the second worse:
+NEXT: Sealed landing, the rest of the lane. The branch-home question is settled
+(read the assignment; see the checklist and docs/ledger/phase-3.md 2026-07-20)
+and steps 1-2 are in. Build the remaining pieces INERT, in this order, and turn
+the lane on only at the end — a half-built lane converts today's loud `Approve`
+refusal into durable blocked rows, which is the Inv. 25 hole rebuilt one layer
+up:
 
-1. `mc-land` can only merge a ref that ALREADY exists in the real repo
-   (`mc-land:278-295` hard-fails `missing branch`; the resident binds one
-   mount, the real repo root RW, `effects.ts:696-711`; the `Land` payload is
-   four scalars, `dispatch.go:303-308`). A sealed task's reviewed commit lives
-   only in the task-local bare store. ADR-017:1226-1240 specifies the
-   replacement — import the reviewed closure, CAS-create the real ref,
-   SHA-fence, merge in the primary checkout, exact-clean — and NOTHING
-   implements it. Its four typed mount kinds are declared with zero producers
-   (`boundary/typedkind.go:110-113`), referenced only by a string-table test.
-2. **A sealed task never reaches landing-pending, so approving one archives it
-   silently as if it had landed.** `LandingPending()` needs `tasks.branch != ""`
-   (`dispatch.go:129-132`); `tasks.branch` has exactly ONE writer
-   (`complete.go:163`), reachable only through the `--status worked --branch`
-   terminal that `complete.go:128-134` closes to assigned tasks by design. The
-   sealed branch lives in `task_assignments.branch`, a table `LandingPending()`
-   never reads. So `domain.Approve` (`task.go:422-427`) sees a branchless task,
-   calls it an artifact-plane deliverable, and archives it. The operator
-   approves a merge, the task vanishes, main is untouched, nothing errors.
+1. Landing mount plan: `landingPlanRows()` for ADR-017:686-703's four rows
+   (`/repo/source` RW, the other three RO), and a `validLandingPlanDestination`
+   in `mountplan.go` — today `validTaskPlanDestination` rejects all `/repo/...`
+   as a PROTOCOL error, so that file must learn the landing grammar first.
+2. Producers for the four typed kinds `KindLandingWorksource`,
+   `KindLandingMissionControlCover`, `KindLandingTaskRoot`, `KindLandingEnvelope`
+   (`boundary/typedkind.go:110-113`), which today all hit "typed kind has no
+   authorized root". NOTE: `mountattest.go:161` keys the jurisdiction digest off
+   `kind.String()`, so populating them CHANGES the snapshot digest — expect it
+   and pin it.
+3. The landing envelope as a fourth closed-union arm in `setupenvelope.go`,
+   refusing cross-arm field bleed both directions, plus the `Landing` field on
+   `PrivateDispatchMountPlan` and its helper-boundary validation (mutually
+   exclusive with every setup step).
+4. The lander itself: `mc __land-sealed` under `RequireHostScope`, staged per
+   ADR-017:740-756 — revalidate branch/SHA/closure digest/repo UUID + dirty
+   fence; import the exact closure (`pack-objects --revs --stdout` piped to
+   `index-pack`, no hardlink/alternate/speculative delete); CAS-create the real
+   ref with a zero old-value `update-ref`; re-check the SHA fence; `merge
+   --no-ff`. STOP there — cleanup has no mount and no owner (see Parked).
+   Fast-lane it against real temp repos; the adversarial corpus is
+   `runner/image/mc-land.test.ts`'s 39 tests retargeted at the sealed shape.
+5. Turn it on, together: `Approve` holds instead of refusing; `LandReport`
+   accepts an assignment-carrying row (`land.go:37-39` today refuses "no
+   branch"); the resident's sealed arm in `effects.ts:696`; and `Decide`/
+   `nextLanding` consulting `SealedLandingPending`.
+6. Docker lane at phase completion: the RO-alias property (that the nested
+   `.mission-control` cover really shadows the real path, so sealed bytes are
+   reachable only through RO `/repo/task` — a daemon property a plan-level
+   `:ro` assertion cannot prove, and the one today's `land()` violates
+   outright), the realized mount table, network=none/uid/caps in force, import
+   durability across VirtioFS, the five ADR-017:758-760 crash cuts, and the E2E
+   carried past `packaged` through approve -> merge -> archived.
 
-Step 1 of (2) is DONE (`domain.Approve` refuses an assigned task with
-`landing-fence` rather than archiving it). What remains is the design question
-it forces and then all of (1): decide whether the sealed branch is projected
-into `tasks.branch` at acceptance or whether `LandingPending()` learns to read
-`task_assignments`, then build the sealed landing itself — the closure import,
-the CAS-created real ref, the landing envelope, and producers for the four
-typed mount kinds. The E2E stops at `packaged` on purpose and should be carried
-through approve → land only once landing actually merges. Full diagnosis in
-IMPLEMENTATION-NOTES.md (2026-07-20).
+Owed decisions, none blocking, all named in docs/ledger/phase-3.md: the landing
+failure taxonomy has no spine channel and no retry bound (ADR-016:569-576 wants
+infra failure to record health and leave the tuple pending, but `mc land report`
+has two statuses and step (0c) has no backoff — a permanently unappliable
+landing head-of-line-blocks the single landing slot); "the canonical landing
+row" is derived, not stored (recommend keeping it derived); the envelope's
+"expected Git topology" has no specified serialization; frozen vs current
+`target_ref` (use the assignment's, refuse on divergence); and sealed landing
+for an initiative child is undefined and should be explicitly refused.

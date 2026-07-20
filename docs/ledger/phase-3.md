@@ -2849,3 +2849,77 @@ the same hazard wearing different clothes.
 NEXT (in PROGRESS.md): the design question this forces — project the sealed
 branch at acceptance, or teach `LandingPending()` to read the assignment — and
 then sealed landing itself.
+
+## 2026-07-20 (Claude) — the branch-home question, answered; the fence, widened
+
+The outgoing `NEXT:` left one design question gating the whole sealed landing
+slice: project `task_assignments.branch` into `tasks.branch` at acceptance, or
+teach the landing predicate to read the assignment. A four-reader fan-out
+mapped ADR-017's landing design, the legacy `.mc-worktrees` path, the
+branch/`LandingPending`/`Approve` data surface, and the four producerless typed
+mount kinds, then synthesized a recommendation.
+
+**Answer: read the assignment; do not project.** The previous session had
+already rejected projection on the grounds that it fabricates state — asserting
+a ref exists in the real repo when it does not. The mapping adds the sharper
+reason, which is reversibility. `tasks.branch != ""` is not a name, it is an
+assertion that a mergeable ref exists in the real Worksource. Projecting arms
+`LandingPending()`, which emits the frozen four-scalar `KindLand`, which routes
+to legacy `mc-land`, which hard-fails `missing branch` because a sealed task's
+commit lives only in the task-local bare store — and that failure writes
+`blocked_reason` on the task. So projection converts "unimplemented" into a
+durable task-level block wearing a Git-sounding reason, and unwinding it needs
+a backfill rather than a revert. AGENTS.md §6(c) decides it. Reading costs one
+LEFT JOIN whose revert is a deletion.
+
+Projection also does not buy the join it appears to buy: a sealed landing needs
+a different container, mount table, and envelope, so the lane selector must
+consult `task_assignments` regardless. Projection adds a denormalization and
+keeps the join.
+
+**The plan's step order was wrong in one place, and it is the same hazard this
+phase keeps producing.** The synthesis put "`Approve` holds a sealed task
+instead of refusing" second. But until dispatch is wired — nine steps later — a
+held task sits `approved`/`packaged` with nothing that can ever merge it. That
+is the Inv. 25 hole from 2026-07-20 rebuilt one layer up: the operator approves,
+nothing errors, nothing merges, and this time the task does not even vanish to
+make it noticeable. The loud refusal is strictly safer than that intermediate,
+so the relaxation moves to sit beside the dispatch wiring and everything built
+before it is inert by construction.
+
+Two steps landed.
+
+**The approve landing fence now covers both branch homes (schema v11).** The §7
+fence keys on `NEW.branch`, so it skipped exactly the rows the sealed lane will
+consume — the substrate would accept an approved sealed task with no verified
+SHA at all. `domain.Approve` refuses it in Go, but the substrate is the layer
+that has to hold when a new writer reaches the column another way, and this
+slice adds writers. Either home now arms the fence; a row with neither is an
+artifact-plane deliverable with no landing facts to require, pinned by its own
+case so the fence cannot over-reach onto the Phase-2 rows.
+
+Writing that test found all three negative cases aborting on the paired
+`decision`/`decided_at` CHECK rather than on the fence — they would have passed
+against the unwidened trigger. They now set both columns and assert the abort
+REASON. This is the third time this phase that a test asserted only "refused"
+and would have stayed green through the defect; `wantAbort` without a reason is
+now a known smell here.
+
+The resident's duplicated `SPINE_SCHEMA_VERSION` moved to 11 with it. That pin
+is a hand-maintained cross-language literal, it has rotted before (v5 against a
+v10 spine, caught only in Docker), and the fast lane still cannot catch it.
+Worth deriving at some point; logged, not fixed.
+
+**Dispatch reads the second branch home, inert.** `dispatch.Task` gains
+`Sealed *SealedAssignment`, `loadRecords` LEFT JOINs `task_assignments`
+(task-keyed PK, so no fan-out), and `SealedLandingPending` is the sealed twin
+of `LandingPending`. Two non-conjuncts are deliberate: a row carrying BOTH
+homes is refused by both predicates rather than served down the wrong lane
+(that structural exclusivity is what lets one `KindLand` step serve both, so it
+is asserted rather than assumed); and an assignment whose frozen `target_ref`
+has drifted from the task's current one STAYS in the lane, so landing refuses
+it loudly instead of it becoming silently unlandable forever.
+
+NEXT (in PROGRESS.md): the landing mount plan — destination grammar, the four
+typed kinds' producers, the envelope arm, the carrier — then the lander, then
+the wiring that turns the lane on.
