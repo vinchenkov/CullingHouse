@@ -2203,3 +2203,79 @@ was run anything — it read statically, by its task prompt. The two confirmed
 minors were both ordering/validation drift invisible to the passing suites,
 which is exactly what static reading is good at and what the green lane was
 never going to catch.
+
+## 2026-07-19 (later still) — the sealed pipeline reaches `verified`
+
+Two production defects stood between the accepted-seal rebuild and a Verifier
+verdict. Both were invisible to every existing test and reachable only by
+driving the real resident against real containers.
+
+**Method note, because it is the reusable part.** The E2E's own failure output
+could not see either bug: the agent containers are `--rm`, so their logs were
+gone before anything could read them. What worked was attaching
+`docker logs -f` from a `docker events --filter event=start` stream, so a
+short-lived container still left its complete output behind. That capture is
+what turned "the Verifier run was reaped" into an exact refusal string. Two
+earlier attempts failed and are worth not repeating: polling `docker ps` + `docker
+logs` loses the race with removal, and dropping `--rm` changes semantics — the
+surviving container trips `requireAcceptedSealProducerAbsent`, which is a
+designed fail-closed check, so the run refuses for a different reason.
+
+**Defect 1 — the projection duplicated the canonical source instead of
+replacing it.** The attested plan for a sealed Verifier carries the full typed
+task table, which already names `/workspace/source` and both covers
+(`taskskeleton.go:65-67`). The resident then pushed its projection overlay at
+the same three destinations, and Docker refused the create outright with
+`Duplicate mount point: /workspace/source`. The containment reading matters
+more than the crash: had Docker allowed it, the Verifier would have held the
+canonical task store RW — exactly what the disposable projection exists to
+prevent. The resident now drops plan rows inside the projected subtree and
+leaves everything outside it (`/workspace`, `/workspace/git`) alone.
+
+The resident's unit test could not have caught this: its fixture plan had ONE
+entry, the `/workspace` task root. The real plan has fifteen. The test now uses
+a representative multi-row plan.
+
+**Defect 2 — the verdict fence resolved the projection by ambient CWD.** The
+image sets no `WORKDIR` and the resident passes no `-w`, so an agent container's
+CWD is `/`. `fenceVerifierProjectionTree` ran `git diff --quiet` with `dir=""`,
+which in `/` fails as "not a repository" — and the fence reported that error as
+tracked-tree drift. So it refused a CLEAN projection exactly as it refused a
+dirty one, and the sealed verdict was unreachable on every real path. A second
+layer sat behind it: `sourceGitEnv()` sets `GIT_CONFIG_NOSYSTEM=1`, which
+switches off the image's `git config --system safe.directory '*'`
+(`runner/image/Dockerfile:41`), so the operator-owned projection read by the
+model uid also tripped Git's dubious-ownership guard.
+
+The fence now takes the fixed projection path from the CLI — the idiom
+`mc complete` already uses for its fixed task/seal roots — re-grants
+`safe.directory` for that one exact path per command (so the sanitized-config
+posture is kept; no system, no global, no wildcard), and names a missing or
+unmounted projection distinctly from real drift.
+
+**Why the suites were green through all of it.** The fence's unit test
+`os.Chdir`'d into the projection, manufacturing the single CWD production never
+has. And every test of this fence — unit and Docker — asserted only that a
+DIRTY projection is refused. An always-erroring fence satisfies that assertion
+perfectly. The missing direction, "a clean projection is ADMITTED", is the one
+that would have failed from the day the fence was written. It is now pinned in
+both the unit test and the E2E, along with the absent-path and non-repository
+arms.
+
+A one-sided fence test is the generalizable lesson here: for any gate, assert
+the admit direction too, or the gate can be broken in the safe direction
+forever without a single red test.
+
+**State.** The E2E is extended through the sealed verdict and asserts
+`verified_sha` equals the accepted sealed commit, so both fixes have end-to-end
+cover rather than unit cover alone. Five-leg fast lane green; Docker suite 7/7.
+
+**Next blocker, already located.** With the Verifier through, the resident
+dispatches a Packager, whose scripted `mc complete --status packaged` refuses
+with `locking protocol (15)`. Its behavior also still writes its packet to
+`/workspace/source/.mc-worktrees/…`, a legacy-workspace path that does not
+exist in a sealed task's mount table — so the Packager leg needs both a
+diagnosis of the lock refusal and a sealed-appropriate output location.
+
+NEXT (moved to PROGRESS.md): diagnose the Packager's `locking protocol (15)`,
+then carry the E2E on through Packager→land.

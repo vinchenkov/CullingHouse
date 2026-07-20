@@ -10,7 +10,7 @@ Access does NOT fix it — the failure precedes any policy lookup. Symptom:
 `stat` works, reads return `Operation not permitted`, git says
 `Unable to read current working directory`.
 
-LAST GREEN SHA: ac6e0fa (local; the operator pushes manually — decided 2026-07-14. Agents: do not push.)
+LAST GREEN SHA: 6657541 (local; the operator pushes manually — decided 2026-07-14. Agents: do not push.)
 
 PHASES PASSING: Phase 0 COMPLETE (S1–S8 all green, no fallback ADRs; only operator-leg deferrals remain); Phase 1 COMPLETE (1a substrate 172; 1b walking skeleton reviewed-and-fixed — fake-harness 43, agent-runner 13, runner/image 40, resident 42, dispatch + cmd/mc suites; Docker e2e PASS ×4 total); Phase 2 COMPLETE for every unparked acceptance line (domain/§18 surface, deterministic split-brain convergence, bounded honesty + five mutants, tagged dispatch/metamorphic/twin-spine lifecycle properties; the initiative-wave CLI is no longer isolated — ADR-020 landed 2026-07-14 and closed the last Phase 2 acceptance line)
 KNOWN-FAILING: `TestOnboardConcurrentFreshHomeNeverDeletesTheWinner` (mc/verbs),
@@ -479,6 +479,23 @@ kept below. Operator legs that remain open are under `## Parked`, not here.
         PASS-WITH-MINORS — 4 majors refuted (no authority laundering via the
         new `--task`, no lost check, no widened principal set), 5 minors, all
         closed or already logged (ac6e0fa)
+  - [x] The sealed pipeline reaches `verified` (6657541): driving the
+        production E2E past the rebuild surfaced two defects reachable only
+        through the real resident and real containers. (1) The Verifier
+        projection DUPLICATED the canonical source rows instead of replacing
+        them — Docker refused the create, and had it not, the Verifier would
+        have held the canonical task store RW, defeating the disposable
+        projection. (2) The D6 verdict fence resolved the projection by ambient
+        CWD (an agent container's is `/`), so every git call failed as "not a
+        repository" and that error was reported as drift — a CLEAN projection
+        was refused exactly like a dirty one, making the sealed verdict
+        unreachable; `GIT_CONFIG_NOSYSTEM=1` also disabled the image's
+        `safe.directory=*`. The fence now takes the fixed path from the CLI and
+        re-grants safe.directory for that one path. Both suites were green
+        throughout because every test of this fence asserted only that a DIRTY
+        projection is REFUSED, never that a clean one is ADMITTED — and the
+        resident's fixture plan had 1 entry where the real one has 15. Both
+        directions now pinned; E2E extended through the sealed verdict
 - [ ] Phase 4 — E2E control loops (six scenario families)
 - [ ] Phase 5 — Real-subscription acceptance (operator-scheduled)
 - [ ] Release prep (after Phase 5): swap the repo's construction face for
@@ -524,7 +541,8 @@ helper-scope crossing (d3471f5) — and
 `accepted_seal_rebuild_receipts` row and its Verifier continuation. Full Docker
 suite 7/7 green at 485a7f2. Diagnoses in docs/ledger/phase-3.md (2026-07-19).
 
-NEXT: Carry the E2E on past the rebuild receipt through Verifier→Packager→land.
+NEXT: Diagnose the Packager's `locking protocol (15)` refusal, then carry the
+E2E on through Packager→land.
 
 KNOWN-FAILING (3): `TestProductionWorkerCompletionSealDockerBoundary`
 (mc/e2e, docker_e2e tag), INTERMITTENT ~2 in 10 — and PRE-EXISTING, not caused
