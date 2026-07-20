@@ -269,9 +269,12 @@ func loadRecords(ctx context.Context, q Q) (dispatch.Records, error) {
 	rec := dispatch.Records{}
 	rows, err := q.QueryContext(ctx, `
 		SELECT t.id, t.title, t.scope, t.initiative_id, t.priority, t.created_at, t.status,
-		       blocked, dispatch_retries, decision, decided_at, archived,
-		       worksource, branch, verified_sha, target_ref, plan_reviewed, w.status
-		FROM tasks t JOIN worksources w ON w.id = t.worksource`)
+		       t.blocked, t.dispatch_retries, t.decision, t.decided_at, t.archived,
+		       t.worksource, t.branch, t.verified_sha, t.target_ref, t.plan_reviewed, w.status,
+		       a.branch, a.target_ref, a.task_root_key, a.object_format,
+		       a.base_sha, a.local_repo_uuid, a.closure_digest
+		FROM tasks t JOIN worksources w ON w.id = t.worksource
+		LEFT JOIN task_assignments a ON a.task_id = t.id`)
 	if err != nil {
 		return rec, err
 	}
@@ -286,12 +289,27 @@ func loadRecords(ctx context.Context, q Q) (dispatch.Records, error) {
 			planReviewed                int
 			decision, decidedAt         sql.NullString
 			branch, verifiedSHA, target sql.NullString
+			// The second branch home (ADR-016 D5). Every column is NOT NULL in
+			// `task_assignments`, so NULL here means only "no assignment row",
+			// which is exactly the sealed-lane discriminator.
+			aBranch, aTarget, aRootKey sql.NullString
+			aFormat, aBase, aUUID      sql.NullString
+			aDigest                    sql.NullString
 		)
 		if err := rows.Scan(&t.ID, &t.Title, &scope, &initiativeID, &t.Priority,
 			&createdAt, &status, &blocked, &t.DispatchRetries, &decision,
 			&decidedAt, &archived, &t.Worksource, &branch, &verifiedSHA,
-			&target, &planReviewed, &t.WorksourceStatus); err != nil {
+			&target, &planReviewed, &t.WorksourceStatus,
+			&aBranch, &aTarget, &aRootKey, &aFormat, &aBase, &aUUID, &aDigest); err != nil {
 			return rec, err
+		}
+		if aBranch.Valid {
+			t.Sealed = &dispatch.SealedAssignment{
+				Branch: aBranch.String, TargetRef: aTarget.String,
+				TaskRootKey: aRootKey.String, ObjectFormat: aFormat.String,
+				BaseSHA: aBase.String, LocalRepoUUID: aUUID.String,
+				ClosureDigest: aDigest.String,
+			}
 		}
 		t.Scope = dispatch.Scope(scope)
 		t.Status = dispatch.Status(status)

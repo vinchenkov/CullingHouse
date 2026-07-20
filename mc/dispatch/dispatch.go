@@ -112,6 +112,54 @@ type Task struct {
 	Branch      string
 	VerifiedSHA string
 	TargetRef   string
+
+	// Sealed is the immutable first-task closure assignment (ADR-016 D5) when
+	// this task has one, and nil otherwise. It is the SECOND branch home: a
+	// sealed standalone task is branchless in `tasks` by construction, so
+	// `Branch` above is empty for it and this carries the branch instead.
+	// Non-nil is what puts a row in the sealed landing lane.
+	Sealed *SealedAssignment
+}
+
+// SealedAssignment is the `task_assignments` row as dispatch reads it: the
+// frozen closure pin a sealed task was assigned at its first setup, which a
+// retry reuses and never rebases (ADR-016 D5). Every column is immutable from
+// insert, so this is evidence, not state.
+//
+// TargetRef here is the ref frozen AT ASSIGNMENT, which may have drifted from
+// the task's current TargetRef. Landing must refuse on divergence rather than
+// silently prefer one — see SealedLandingPending.
+type SealedAssignment struct {
+	Branch        string
+	TargetRef     string
+	TaskRootKey   string
+	ObjectFormat  string
+	BaseSHA       string
+	LocalRepoUUID string
+	ClosureDigest string
+}
+
+// SealedLandingPending reports whether this row is owed a SEALED §10 step (0c)
+// landing: the same conjuncts as LandingPending, but keyed on the assignment
+// instead of `tasks.branch`, plus the two landing facts the §7 approve fence
+// guarantees.
+//
+// The two lanes partition by construction — `tasks.branch`'s only writer is
+// the `--status worked --branch` terminal that ADR-016 D6 closes to assigned
+// tasks — so no row satisfies both. A row that somehow carries both branch
+// homes is incoherent and belongs to neither lane; it is refused here rather
+// than landed down the wrong one.
+//
+// Deliberately NOT a conjunct: agreement between the assignment's frozen
+// TargetRef and the task's current one. A diverged row stays in the lane so
+// the landing step can refuse it LOUDLY; excluding it here would make it
+// silently unlandable forever, which is the failure mode this slice exists to
+// remove.
+func (t Task) SealedLandingPending() bool {
+	return t.Sealed != nil && t.Branch == "" &&
+		t.Decision == DecisionApproved && !t.Archived && !t.Blocked &&
+		t.Status == StatusPackaged &&
+		t.VerifiedSHA != "" && t.TargetRef != ""
 }
 
 // LandingPending reports whether this row is owed the §10 step (0c) land
