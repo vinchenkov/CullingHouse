@@ -10,7 +10,7 @@ Access does NOT fix it — the failure precedes any policy lookup. Symptom:
 `stat` works, reads return `Operation not permitted`, git says
 `Unable to read current working directory`.
 
-LAST GREEN SHA: 34fc63b — five-leg fast lane + full Docker suite 8/8 (local; the operator pushes manually — decided 2026-07-14. Agents: do not push.)
+LAST GREEN SHA: 83ed9e9 — five-leg fast lane + full Docker suite 8/8 (local; the operator pushes manually — decided 2026-07-14. Agents: do not push.)
 
 PHASES PASSING: Phase 0 COMPLETE (S1–S8 all green, no fallback ADRs; only operator-leg deferrals remain); Phase 1 COMPLETE (1a substrate 172; 1b walking skeleton reviewed-and-fixed — fake-harness 43, agent-runner 13, runner/image 40, resident 42, dispatch + cmd/mc suites; Docker e2e PASS ×4 total); Phase 2 COMPLETE for every unparked acceptance line (domain/§18 surface, deterministic split-brain convergence, bounded honesty + five mutants, tagged dispatch/metamorphic/twin-spine lifecycle properties; the initiative-wave CLI is no longer isolated — ADR-020 landed 2026-07-14 and closed the last Phase 2 acceptance line)
 KNOWN-FAILING: `TestOnboardConcurrentFreshHomeNeverDeletesTheWinner` (mc/verbs),
@@ -522,7 +522,15 @@ kept below. Operator legs that remain open are under `## Parked`, not here.
         on the host while a container wrote it; both now use per-probe named
         volumes with copy-back. `TestSpineLockDomainGuardDockerBoundary` pins
         BOTH directions against a real container's real mountinfo (writing it
-        found the directory-only hole a single-file bind slipped through)
+        found the directory-only hole a single-file bind slipped through).
+        Spawned adversarial review (83ed9e9): no bypasses, darwin's no-op
+        unreachable from a real spine, 4 attacks refuted; 3 findings closed —
+        a symlinked spine FILE laundered past the guard (major), an
+        unparseable mountinfo line was skipped into a false accept, and the
+        WIRING was unpinned (darwin's inert platform hid call-site deletion,
+        the same rot as 6657541). Logged not fixed: the allowlist refuses
+        ZFS/f2fs/bcachefs, so a Linux host on ZFS has no path forward
+        (IMPLEMENTATION-NOTES 2026-07-20; macOS is the primary target)
 - [ ] Phase 4 — E2E control loops (six scenario families)
 - [ ] Phase 5 — Real-subscription acceptance (operator-scheduled)
 - [ ] Release prep (after Phase 5): swap the repo's construction face for

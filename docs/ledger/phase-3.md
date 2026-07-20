@@ -2691,3 +2691,53 @@ Full Docker suite 8/8; five-leg fast lane green.
 
 NEXT (moved to PROGRESS.md): the Packager production mount arm, then carry the
 E2E through the packet decision and land.
+
+### Same session — the review of the guard
+
+Spawned adversarial review of `b1c6187..34fc63b`. It refuted more than it
+confirmed, which is the useful outcome: no spine opener in the module bypasses
+the guard (it enumerated all of them, including the resident's TypeScript,
+which never touches sqlite), the darwin no-op is unreachable from any real
+spine because `helperSpinePath()` is a fixed constant rather than env-driven,
+and the literal-`-`-in-optional-fields, `..`, relative-path, and
+not-yet-created-spine attacks all hold up.
+
+Three findings landed:
+
+1. **Major, symlinked spine file.** `GuardLockDomain` resolved symlinks on the
+   DIRECTORY and then rejoined the un-resolved basename. So `/mc/spine` could
+   be a legitimate ext4 volume while `/mc/spine/spine.db` was a symlink onto a
+   bind — longest-prefix saw only the volume, and `sql.Open` followed the link.
+   The comment directly above that line claimed to prevent this laundering; it
+   did, one path component too high.
+2. **Unparseable lines were skipped**, which generates false accepts rather
+   than avoiding them: drop the line describing the bind and the longest
+   remaining prefix becomes its parent, which on a Linux host is an ext4 root
+   that passes. The guard would approve the mount it could not read. One bad
+   line now poisons the whole table.
+3. **The wiring was unpinned.** The decision function was well covered, but
+   deleting the guard call from `substrate.Open` turned no test red — the fast
+   lane is darwin, where the platform source is inert. This is the *third*
+   appearance of one failure shape in this phase: a check that has stopped
+   running looks exactly like a check that is passing. substrate now reads its
+   mount table through an unexported package variable so the refusal is proven
+   THROUGH `substrate.Open`; `onboard.go`, the one deliberate bypass, gets a
+   source-level drift guard in the shape `boundary/typedkind_internal_test.go`
+   already established.
+
+**Found separately, before the review returned:** the equal-length tie-break in
+`longestPrefixMount` kept the FIRST matching entry. mountinfo is ordered and
+mounting twice at the same point shadows rather than replaces, so a bind
+stacked directly over the named volume — same path, same length — was judged on
+the volume's ext4 line while every read and write went to the bind (6abedb8).
+The review independently confirmed it in the reviewed range.
+
+**Worth keeping.** Four of the five real defects in this guard were false
+ACCEPTS, and every one of them was a place where the guard looked at something
+adjacent to the thing being opened: the directory instead of the file, the
+parent instead of the unreadable line, the first mount instead of the
+effective one, the link instead of its target. For a fail-closed check, "what
+exactly am I judging, and is it the same object the caller will use?" is the
+question that finds bugs.
+
+NEXT (unchanged, in PROGRESS.md): the Packager production mount arm.
