@@ -474,13 +474,16 @@ func validatePrivateMountPlan(plan *PrivateDispatchMountPlan) error {
 			return Domainf("dispatch: private mount entry %d path shape is invalid", i)
 		}
 		// Plan destinations are a closed set: the derived artifact/reference
-		// class namespaces plus ADR-017 D6's task-table cells (which include
-		// the legacy fake /workspace/source and the /workspace task root).
-		// The runtime/system planes (/mc, /app/src, /home/agent, /etc) are
-		// never plan-addressable, whatever the broker claims.
+		// class namespaces, ADR-017 D6's task-table cells (which include the
+		// legacy fake /workspace/source and the /workspace task root), and the
+		// three bindable cells of the landing effect class. The runtime/system
+		// planes (/mc, /app/src, /home/agent, /etc) are never plan-addressable,
+		// whatever the broker claims — landing's own /mc/landing.json included,
+		// which is why validLandingPlanDestination excludes it.
 		if !strings.HasPrefix(e.Destination, "/workspace/artifacts/") &&
 			!strings.HasPrefix(e.Destination, "/workspace/references/") &&
-			!validTaskPlanDestination(e.Destination) {
+			!validTaskPlanDestination(e.Destination) &&
+			!validLandingPlanDestination(e.Destination) {
 			return Domainf("dispatch: private mount entry %d destination is outside the ordinary namespace", i)
 		}
 		if plan.TaskPrecreate != nil && validTaskPlanDestination(e.Destination) {

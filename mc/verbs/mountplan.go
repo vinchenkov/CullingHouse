@@ -273,9 +273,12 @@ func planMounts(requests []mountRequest, in mountPlanInputs) ([]PrivateDispatchM
 		if req.Kind != boundary.KindNone {
 			// The typed arm: the destination is the row's fixed table cell,
 			// never derived, and an out-of-table cell is a confused planner —
-			// a protocol error, not a plannable row.
-			if !validTaskPlanDestination(req.Destination) {
-				return nil, nil, Domainf("typed mount request %d destination %q is outside the closed D6 task table", i, req.Destination)
+			// a protocol error, not a plannable row. Two closed tables are in
+			// scope: D6's standalone-task table and the landing effect class.
+			// They partition (landingplan_test.go pins it), so admitting both
+			// here widens no cell of either.
+			if !validTaskPlanDestination(req.Destination) && !validLandingPlanDestination(req.Destination) {
+				return nil, nil, Domainf("typed mount request %d destination %q is outside the closed D6 task and landing tables", i, req.Destination)
 			}
 			id, err := boundary.ResolveSource(req.Source)
 			if err != nil {
@@ -372,6 +375,22 @@ func validTaskPlanDestination(dest string) bool {
 	return leaf == "commondir" || leaf == "gitdir" || leaf == "config.worktree"
 }
 
+// validLandingPlanDestination reports whether one destination is a cell of the
+// closed ADR-017 landing table that dispatch may carry as a BIND. The
+// resident-materialized envelope is deliberately excluded: admitting it would
+// make `/mc` plan-addressable for the first time, and the resident writes that
+// file from the plan's landing instruction exactly as it writes
+// `/mc/setup.json`. The table itself keeps the envelope row — see
+// landingPlanRows.
+func validLandingPlanDestination(dest string) bool {
+	for _, row := range landingPlanRows() {
+		if !row.ResidentMaterialized && row.Dest == dest {
+			return true
+		}
+	}
+	return false
+}
+
 // validTaskWorktreeName accepts exactly `mc-task-<canonical positive
 // decimal>` — the pinned administrative worktree name of a task-local
 // repository.
@@ -406,6 +425,13 @@ func mountOverlapPermitted(parent, child string) bool {
 		return child == "/workspace/source/.git" || child == "/workspace/source/.mission-control"
 	case "/workspace/git":
 		return validTaskPlanDestination(child)
+	case "/repo/source":
+		// The landing table's ONE named edge. The cover shadows the real
+		// `.mission-control` path so the sealed task bytes are reachable only
+		// through RO `/repo/task`, never through this RW alias (ADR-017:700).
+		// `/repo` is not a bind, so it grants no root edge the way
+		// `/workspace` does, and the RO `/repo/task` is bound whole.
+		return child == "/repo/source/.mission-control"
 	}
 	return false
 }
