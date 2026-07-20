@@ -44,22 +44,37 @@ type mountEntry struct {
 	source     string // the field after fstype
 }
 
-// checkLockDomain reports whether dir sits on a filesystem inside the lock
-// domain, deciding from mountinfo content. It is pure so the decision is
-// provable on every host, not only where /proc exists.
-func checkLockDomain(mountinfo io.Reader, dir string) error {
+// checkLockDomain reports whether every given path sits on a filesystem inside
+// the lock domain, deciding from mountinfo content. It is pure so the decision
+// is provable on every host, not only where /proc exists.
+//
+// Callers pass BOTH the spine's directory and the spine file itself. The
+// directory alone is not enough: Docker will happily bind a single file over
+// `/mc/spine/spine.db` inside an otherwise-legitimate named volume, which puts
+// the database on VirtioFS while its directory still reports ext4. Checking
+// the file path catches that, because a single-file bind appears in mountinfo
+// as a mount point equal to the file.
+func checkLockDomain(mountinfo io.Reader, paths ...string) error {
 	entries, err := parseMountInfo(mountinfo)
 	if err != nil {
-		return lockDomainRefusal(dir, "cannot read /proc/self/mountinfo (%v)", err)
+		return lockDomainRefusal(paths[0], "cannot read /proc/self/mountinfo (%v)", err)
 	}
-	best := longestPrefixMount(entries, dir)
-	if best == nil {
-		return lockDomainRefusal(dir, "no mount in /proc/self/mountinfo contains it")
-	}
-	if !allowedFstypes[best.fstype] || !strings.HasPrefix(best.source, "/dev/") {
-		return lockDomainRefusal(dir,
-			"its mount %s is fstype=%s source=%s, which is not a block-device-backed local filesystem",
-			best.mountPoint, best.fstype, best.source)
+	for _, path := range paths {
+		best := longestPrefixMount(entries, path)
+		if best == nil {
+			// Only the directory must be accounted for; a spine file that does
+			// not exist yet has no mount line of its own and rides its
+			// directory's, which was already checked.
+			if path == paths[0] {
+				return lockDomainRefusal(path, "no mount in /proc/self/mountinfo contains it")
+			}
+			continue
+		}
+		if !allowedFstypes[best.fstype] || !strings.HasPrefix(best.source, "/dev/") {
+			return lockDomainRefusal(path,
+				"its mount %s is fstype=%s source=%s, which is not a block-device-backed local filesystem",
+				best.mountPoint, best.fstype, best.source)
+		}
 	}
 	return nil
 }
@@ -165,5 +180,5 @@ func GuardLockDomain(spinePath string) error {
 	// longest-prefix match. A directory that does not exist yet is judged at
 	// its nearest existing ancestor, which is the mount that will hold it.
 	resolved := resolveExistingAncestor(dir)
-	return guardLockDomainAt(resolved)
+	return guardLockDomainAt(resolved, filepath.Join(resolved, filepath.Base(spinePath)))
 }

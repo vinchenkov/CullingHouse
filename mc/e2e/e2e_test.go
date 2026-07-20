@@ -326,6 +326,8 @@ func TestVerifierProjectionDockerBoundary(t *testing.T) {
 	if got, err := os.ReadFile(filepath.Join(projection, ".git")); err != nil || string(got) != "gitdir: ../git/worktrees/mc-task-42\n" {
 		t.Fatalf("projection .git pointer = (%q, %v), want fixed relative task control", got, err)
 	}
+	// Built host-side in a directory nothing bind-mounts, then loaded into a
+	// named volume: the container opens it inside one kernel (Inv. 24).
 	spineDir := filepath.Join(f.base, "verdict-spine")
 	if err := os.MkdirAll(spineDir, 0o777); err != nil {
 		t.Fatal(err)
@@ -368,6 +370,7 @@ func TestVerifierProjectionDockerBoundary(t *testing.T) {
 	if err := db.Close(); err != nil {
 		t.Fatal(err)
 	}
+	spineVolume := f.probeSpineVolume("verdict", spine)
 	runJSON := filepath.Join(f.base, "verify-42.run.json")
 	if err := os.WriteFile(runJSON, []byte("{\"run_id\":\"verify-42\",\"tier\":\"pipeline\",\"role\":\"verifier\"}\n"), 0o644); err != nil {
 		t.Fatal(err)
@@ -378,7 +381,7 @@ func TestVerifierProjectionDockerBoundary(t *testing.T) {
 		"-v", taskRoot+":/workspace:ro", "-v", projection+":/workspace/source",
 		"-v", filepath.Join(taskRoot, "source", ".git")+":/workspace/source/.git:ro",
 		"-v", filepath.Join(taskRoot, "source", ".mission-control")+":/workspace/source/.mission-control:ro",
-		"-v", spineDir+":/mc/spine", "-v", runJSON+":/mc/run.json:ro", "-e", "MC_SPINE=/mc/spine/spine.db",
+		"-v", spineVolume+":/mc/spine", "-v", runJSON+":/mc/run.json:ro", "-e", "MC_SPINE=/mc/spine/spine.db",
 		image, "sh", "-ec", "printf drift > /workspace/source/README.md; mc verifier verdict 42 --run verify-42 --outcome pass --evidence d6-evidence --sha "+seal.SealedSHA)
 	t.Cleanup(func() { _ = exec.Command("docker", "rm", "-f", agent).Run() })
 	mounts := f.dockerOutput("inspect", "--format", "{{range .Mounts}}{{.Source}}|{{.Destination}}|{{.RW}}\\n{{end}}", agent)
@@ -395,6 +398,67 @@ func TestVerifierProjectionDockerBoundary(t *testing.T) {
 	output, err := exec.Command("docker", "start", "-a", agent).CombinedOutput()
 	if err == nil || !strings.Contains(string(output), "tracked-tree drift") {
 		t.Fatalf("dirty disposable verdict = (%v, %q), want tracked-tree fence refusal", err, output)
+	}
+}
+
+// TestSpineLockDomainGuardDockerBoundary pins BOTH directions of the Inv. 24
+// lock-domain guard against the real kernel that enforces it.
+//
+// The guard's only production implementation is Linux-only, so the fast lane
+// proves its decision function against captured mountinfo text and nothing
+// more; this is where the actual /proc/self/mountinfo of the actual container
+// gets a vote. Both arms are here on purpose. Every other Docker test proves
+// ACCEPTANCE implicitly (they would all fail if the guard refused a named
+// volume), so acceptance alone can pass while the refusal has quietly rotted
+// into a no-op — the exact failure that made the sealed verdict unreachable
+// while both suites stayed green (6657541).
+//
+// The refusal arm also pins the S5 finding in production: Docker Desktop
+// surfaces a host bind as `fakeowner`, not `virtiofs`, so a denylist keyed on
+// the obvious name would accept the very mount that corrupted the spine.
+func TestSpineLockDomainGuardDockerBoundary(t *testing.T) {
+	f := setup(t)
+
+	// Refused: a host directory bound at /mc/spine, the shape the E2E fixture
+	// used until this guard landed.
+	bindDir := filepath.Join(f.base, "bound-spine")
+	if err := os.MkdirAll(bindDir, 0o777); err != nil {
+		t.Fatal(err)
+	}
+	out, err := exec.Command("docker", "run", "--rm", "--network", "none",
+		"-v", bindDir+":/mc/spine", "-e", "MC_SPINE=/mc/spine/spine.db",
+		image, "mc", "lock", "get").CombinedOutput()
+	if err == nil {
+		t.Fatalf("bind-mounted spine was ACCEPTED: %q — Inv. 24's guard is not enforcing", out)
+	}
+	for _, want := range []string{"Inv. 24", "fakeowner", "not a block-device-backed local filesystem"} {
+		if !strings.Contains(string(out), want) {
+			t.Fatalf("bind refusal %q does not name %q", out, want)
+		}
+	}
+
+	// Refused: a SINGLE FILE bound over spine.db inside an otherwise-legitimate
+	// named volume. The directory still reports ext4; only the database itself
+	// is on VirtioFS. This is the arm a directory-only guard would pass.
+	fileBind := filepath.Join(f.base, "bound-spine.db")
+	if err := os.WriteFile(fileBind, nil, 0o666); err != nil {
+		t.Fatal(err)
+	}
+	out, err = exec.Command("docker", "run", "--rm", "--network", "none",
+		"-v", f.volume+":/mc/spine", "-v", fileBind+":"+spineDBPath,
+		"-e", "MC_SPINE="+spineDBPath, image, "mc", "lock", "get").CombinedOutput()
+	if err == nil {
+		t.Fatalf("single-file-bound spine was ACCEPTED: %q — the guard is checking only the directory", out)
+	}
+	if !strings.Contains(string(out), "Inv. 24") || !strings.Contains(string(out), spineDBPath) {
+		t.Fatalf("single-file bind refusal %q does not name Inv. 24 and the spine file", out)
+	}
+
+	// Accepted: the named volume the production topology actually uses.
+	if out := f.dockerOutput("run", "--rm", "--network", "none",
+		"-v", f.volume+":/mc/spine", "-e", "MC_SPINE="+spineDBPath,
+		image, "mc", "lock", "get"); !strings.Contains(out, "run_id") {
+		t.Fatalf("named-volume spine read = %q, want the lock row — the guard must not refuse the lock domain", out)
 	}
 }
 
@@ -730,6 +794,9 @@ func TestSealedWorkerCompletionDockerBoundary(t *testing.T) {
 	if err := os.Chmod(taskRoot, 0o555); err != nil {
 		t.Fatal(err)
 	}
+	// Seeded host-side in a directory nothing bind-mounts, then handed to the
+	// container through a named volume and read back out of it — the host and
+	// the container never hold this database open at the same time (Inv. 24).
 	spineDir := filepath.Join(f.base, "completion-spine")
 	if err := os.MkdirAll(spineDir, 0o777); err != nil {
 		t.Fatal(err)
@@ -742,7 +809,6 @@ func TestSealedWorkerCompletionDockerBoundary(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
 	if _, err := db.Exec(`INSERT INTO tasks (id,title,scope,priority,created_at,status,dispatch_retries,origin,worksource,target_ref)
 		VALUES (7,'D6 completion fixture','task',2,datetime('now'),'proposed',3,'user','ws-completion','main')`); err != nil {
 		t.Fatal(err)
@@ -791,6 +857,12 @@ func TestSealedWorkerCompletionDockerBoundary(t *testing.T) {
 	if err := os.WriteFile(runJSON, []byte(`{"run_id":"worker-seal","tier":"pipeline","role":"worker"}`+"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	// Hand the spine over: a clean close checkpoints the WAL away, and the
+	// host holds no handle while the container writes.
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	spineVolume := f.probeSpineVolume("completion", spine)
 	output := f.dockerOutput("run", "--rm", "--name", "mc-complete-"+workerRun, "--network", "none",
 		"--label", "mc-managed=true", "--label", "mc-tier=pipeline", "--label", "mc-run-id="+workerRun,
 		// The completion-only setuid wrapper is its deliberate D6 exception to
@@ -798,12 +870,19 @@ func TestSealedWorkerCompletionDockerBoundary(t *testing.T) {
 		"--user", "10002:10002", "--cap-drop", "ALL",
 		"--cpus", "1", "--memory", "1024m", "--pids-limit", "128",
 		"-v", taskRoot+":/workspace", "-v", sealRoot+":/mc/private/completion-seal",
-		"-v", spineDir+":/mc/spine", "-v", runJSON+":/mc/run.json:ro", "-e", "MC_SPINE=/mc/spine/spine.db",
+		"-v", spineVolume+":/mc/spine", "-v", runJSON+":/mc/run.json:ro", "-e", "MC_SPINE=/mc/spine/spine.db",
 		image, "mc", "complete", "7", "--run", workerRun, "--seal-request", requestID)
 	var result map[string]any
 	if err := json.Unmarshal([]byte(output), &result); err != nil {
 		t.Fatalf("completion result %q: %v", output, err)
 	}
+	// Take the database back out of the volume to assert on what the
+	// in-container publisher durably committed.
+	db, err = verbs.OpenSpine(f.readBackSpine(spineVolume, "completion"))
+	if err != nil {
+		t.Fatalf("reopen completion spine after the container wrote it: %v", err)
+	}
+	defer db.Close()
 	if result["status"] != "worked" || int64(result["task_id"].(float64)) != taskID {
 		t.Fatalf("completion result = %v, want accepted worked task", result)
 	}
@@ -1143,12 +1222,59 @@ func initTunables(ws string) []string {
 // including the -wal/-shm siblings SQLite creates in the directory.
 func (f *fixture) loadSpineIntoVolume(hostSpine string) {
 	f.t.Helper()
-	stager := f.volume + "-load"
-	f.docker("create", "--name", stager, "-v", f.volume+":/mc/spine", image, "true")
+	f.loadSpineIntoNamedVolume(f.volume, hostSpine)
+}
+
+func (f *fixture) loadSpineIntoNamedVolume(volume, hostSpine string) {
+	f.t.Helper()
+	stager := volume + "-load"
+	f.docker("create", "--name", stager, "-v", volume+":/mc/spine", image, "true")
 	defer func() { exec.Command("docker", "rm", "-f", stager).Run() }()
 	f.docker("cp", hostSpine, stager+":"+spineDBPath)
-	f.docker("run", "--rm", "-v", f.volume+":/mc/spine", image,
+	f.docker("run", "--rm", "-v", volume+":/mc/spine", image,
 		"sh", "-ec", "chmod 0777 /mc/spine && chmod 0666 "+spineDBPath)
+}
+
+// probeSpineVolume gives a single-container probe its own lock domain.
+//
+// A probe that binds a host directory at /mc/spine puts the database on
+// VirtioFS, which mc now refuses outright (Inv. 24, substrate.GuardLockDomain)
+// — and refused for good reason: that bind is what corrupted the spine in the
+// production E2E. The host-built spine is closed by the caller, copied into a
+// fresh named volume, and only then opened by the container.
+//
+// The volume name is derived from the fixture's so the cleanup sweep that
+// already removes `f.volume` prefixes finds it too.
+func (f *fixture) probeSpineVolume(name, hostSpine string) string {
+	f.t.Helper()
+	volume := f.volume + "-" + name
+	exec.Command("docker", "volume", "rm", "-f", volume).Run()
+	f.docker("volume", "create", volume)
+	f.t.Cleanup(func() { exec.Command("docker", "volume", "rm", "-f", volume).Run() })
+	f.loadSpineIntoNamedVolume(volume, hostSpine)
+	return volume
+}
+
+// readBackSpine copies a probe's spine OUT of its volume so host-side
+// assertions can read what the container wrote.
+//
+// The host must never open the volume's database directly — that is the
+// two-kernel sharing Inv. 24 forbids, and it is precisely what the old
+// bind-mounted probes did while a container held the same file. Copying the
+// whole directory (not just spine.db) carries any -wal/-shm siblings along, so
+// the copy is the complete database even if a writer exited without
+// checkpointing.
+func (f *fixture) readBackSpine(volume, name string) string {
+	f.t.Helper()
+	dir := filepath.Join(f.base, name+"-readback")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		f.t.Fatal(err)
+	}
+	stager := volume + "-read"
+	f.docker("create", "--name", stager, "-v", volume+":/mc/spine", image, "true")
+	defer func() { exec.Command("docker", "rm", "-f", stager).Run() }()
+	f.docker("cp", stager+":/mc/spine/.", dir)
+	return filepath.Join(dir, "spine.db")
 }
 
 func setup(t *testing.T, opts ...func(*setupOptions)) *fixture {

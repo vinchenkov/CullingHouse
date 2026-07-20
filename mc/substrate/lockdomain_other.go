@@ -21,7 +21,7 @@ package substrate
 // Do NOT "fix" this by adding an env-var escape hatch on the Linux side. The
 // Linux path is exactly where a real spine is opened by more than one process,
 // which is the only place the invariant can actually be violated.
-func guardLockDomainAt(string) error { return nil }
+func guardLockDomainAt(...string) error { return nil }
 
 // resolveExistingAncestor is identity off Linux: nothing consumes its result.
 func resolveExistingAncestor(dir string) string { return dir }

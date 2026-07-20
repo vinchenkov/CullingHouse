@@ -120,6 +120,33 @@ func TestLockDomainAcceptsOnlyBlockDeviceBackedLocalFilesystems(t *testing.T) {
 	}
 }
 
+// The directory is not the whole story. Docker will bind a single file over
+// spine.db inside an otherwise-legitimate named volume, which leaves the
+// directory reporting ext4 while the database itself sits on VirtioFS — the
+// corruption this guard exists to prevent, wearing a passing directory.
+func TestLockDomainRefusesASingleFileBindInsideAnAllowedVolume(t *testing.T) {
+	info := mountinfo(mountOverlayRoot, mountNamedVolume,
+		`1700 1234 0:79 /Users/op/spine.db /mc/spine/spine.db rw - fakeowner /run/host_mark/Users rw`)
+
+	if err := checkLockDomain(strings.NewReader(info), "/mc/spine"); err != nil {
+		t.Fatalf("the volume DIRECTORY alone = %v; this fixture is only meaningful if the directory passes", err)
+	}
+	err := checkLockDomain(strings.NewReader(info), "/mc/spine", "/mc/spine/spine.db")
+	if err == nil || !strings.Contains(err.Error(), "fakeowner") {
+		t.Fatalf("checkLockDomain(dir+file) = %v, want the single-file bind refused", err)
+	}
+}
+
+// A spine that does not exist yet has no mount line of its own; it rides its
+// directory's, which is checked first. Absence must not read as a refusal, or
+// provisioning a fresh spine becomes impossible.
+func TestLockDomainAdmitsANotYetCreatedSpineInsideAnAllowedVolume(t *testing.T) {
+	info := mountinfo(mountOverlayRoot, mountNamedVolume)
+	if err := checkLockDomain(strings.NewReader(info), "/mc/spine", "/mc/spine/spine.db"); err != nil {
+		t.Fatalf("checkLockDomain(fresh spine in the lock domain) = %v, want accept", err)
+	}
+}
+
 // A read that fails is not a pass. The guard has no /proc to consult only on a
 // platform where mc never opens the spine at all, and that exemption is made at
 // the call site (GuardLockDomain), never by swallowing a read error here.
