@@ -3037,3 +3037,95 @@ finds it.
 NEXT (in PROGRESS.md): step 3, the landing envelope arm and the landing
 instruction on the carrier — which is where the cover obligation and the
 resolved anchors both belong — then the lander, then the wiring.
+
+## 2026-07-20 — step 3 lands, and the legacy lander's corpus is triaged for step 4
+
+Step 3 is in (`28c5df5`): the `sealed-landing` envelope arm and the `Landing`
+instruction on the carrier, both inert. The shape follows the reversal's
+lesson literally — nothing here teaches the plan grammar `/repo`. The envelope
+restates the container destinations the RESIDENT will bind, and the plan
+instruction carries only the two HOST-backed anchors plus the cover
+obligation. Destinations are derived from `landingMountRows()` through named
+constants rather than copied literals, so the table stays the single source.
+
+Three things worth keeping:
+
+**Landing refuses a run id.** It holds no lease and opens no Run (§7;
+`LandReport` takes no run), so the envelope preamble's combined "names no live
+run/task" check had to split — TaskID required of every arm, RunID of every arm
+but landing, which refuses it outright. This is the bleed direction that hides:
+all three setup arms legitimately carry a run, so a landing envelope quietly
+carrying one reads as ordinary. The landing-only fields are refused by every
+setup arm from ONE hoisted preamble check, so a fifth arm inherits the refusal
+instead of forgetting it — the failure mode of per-arm bleed lists is that the
+newest arm is the one nobody updates.
+
+**Two of ADR-017:702's nine facts have no realizable form yet**, both logged.
+"Expected Git topology" is carried structurally (the branch, the
+verified/pre-merge/base SHAs, the closure digest, the repo UUID) because the
+ADR specifies no serialization and an opaque blob would add a parser at the
+most dangerous boundary in the system without adding a fence. "Cleanup path" is
+absent because ADR-017:757-759 defers cleanup to a LATER trusted action after
+the spine records success — carrying it would be authority with no consumer.
+
+**A shared-predicate asymmetry was found and deliberately NOT fixed.** The
+envelope's `decimalIdentity` refuses a leading zero; the helper boundary's
+`validDecimalText` accepts one. `validDecimalText` also gates task precreate,
+the completion seal, the accepted-seal rebuild and the verifier projection, so
+tightening it inside this slice is exactly what 55c2949 reversed. Landing
+inherits the looser predicate and the gap is pinned by a named test with an
+owner. Not a hole at this layer: the resident compares against
+`strconv.FormatUint` output, which never emits a leading zero.
+
+### The legacy `mc-land` corpus, triaged (input to step 4)
+
+A read-only scout mapped `runner/image/mc-land.test.ts`'s 38 tests and the
+615-line `runner/image/mc-land` script. The corpus is more portable than
+expected: **24 of 38 are generic Git-landing mechanics** that carry over
+essentially unchanged — the stat-cache/`checkStat` evasions, the
+`--assume-unchanged`/`--skip-worktree` index-visibility fences, untracked
+collision walks, directory-rename inference not relocating reviewed paths, the
+operator-owned-vs-ours `MERGE_HEAD` distinction (abort only what we started),
+executable merge-driver and content-filter refusal, `mergeOptions` isolation
+including the `main=evil` exact-key case, `core.worktree` redirect refusal,
+forged-receipt rejection, and `GIT_NO_REPLACE_OBJECTS`. Those are the tests
+worth retargeting first; they encode adversarial Git knowledge that would be
+expensive to rediscover.
+
+**10 depend on the legacy shape** — a linked worktree and a branch living in
+the SAME repo — and need real rework, not a path swap: everything scoped to the
+task worktree's own index/config (`--worktree` filters, `--worktree
+core.worktree`), and the whole `mc/task-*` branch-NAMESPACE fence, which exists
+only because the branch is caller-supplied and shares the operator's ref
+namespace. The sealed shape fences that differently: the branch comes from the
+immutable assignment, not from argv.
+
+**Two structural mismatches matter for step 4:**
+
+1. *There is no import.* Legacy never imports objects, because branch and
+   worktree already live in the real store; it SYMLINKS `objects/`, `refs/`,
+   `worktrees/`, `packed-refs` and `shallow` from the real common dir into a
+   temp isolated view (`mc-land:134-143`). ADR-017:743-745 replaces that with an
+   explicit verified import — no hardlink, no alternate, no speculative delete —
+   plus fsync and verification, none of which exists anywhere today. And legacy
+   never CAS-creates a ref at all (:748-750's durable import marker has no
+   analogue); its only durable marker is the merge commit. Ref *deletion* is
+   already CAS (`update-ref --no-deref -d … "$sha"`, :607) and that idea carries.
+
+2. *Legacy's cleanup ordering violates ADR-017:756-758.* It removes the worktree
+   (:596) and deletes the branch (:607) INSIDE the same invocation, BEFORE the
+   resident's `mc land report`. The entire `cleanup_debt` apparatus exists to
+   paper over that ordering. This independently confirms PROGRESS's instruction
+   that step 4 STOPS at the merge — and it means the four cleanup tests (#35-38)
+   have an invalidated premise for the sealed shape and must not be ported as
+   written.
+
+One more thing the scout surfaced that is not in any ADR: legacy runs a large
+number of bare `git` calls OUTSIDE its two isolated wrappers, with the
+operator's live config and hooks in scope (`core.worktree` probe, the whole
+receipt scan, `symbolic-ref`/`show-ref`, `merge-base`, `diff-tree`, `worktree
+list`, and the `cat-file` inside the `xargs` blocks). They are read-only
+plumbing so no hook fires today, but the isolation is by accident rather than
+by construction. The sealed lander should run EVERY git call through the fenced
+wrapper; ADR-017:704-711's "cleared environment plus generated safe Git
+configuration" reads as a whole-program property, not a per-command one.
