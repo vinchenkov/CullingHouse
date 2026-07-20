@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"strconv"
+	"strings"
 	"time"
 
 	"mc/substrate"
@@ -18,6 +19,11 @@ import (
 )
 
 const maxPrivateFrameBytes = 1 << 20
+
+// maxHelperStderrBytes bounds the helper diagnostic carried back on a broker
+// failure. It is a diagnostic tail, not a channel: enough for an exit status
+// and a refusal line, far too small to be used to move data.
+const maxHelperStderrBytes = 2 << 10
 
 var (
 	privateHelperSelfTimeout = 4 * time.Second
@@ -83,7 +89,13 @@ func runPrivateDispatchInScope(verb string, deadlineAt time.Time, stdin io.Reade
 			return verbs.DispatchPreparePrivateDB(db, request)
 		})
 		if err != nil {
-			fmt.Fprintln(stderr, "mc: private prepare refused")
+			// The reason travels with the refusal. The broker relays the
+			// helper's stderr into the resident log (helperReason), and a bare
+			// "refused" there is what left the sealed E2E's intermittent
+			// failures undiagnosable. This channel is operator-plane — the
+			// resident invokes `mc dispatch`, never an agent — so it does not
+			// widen ADR-016 D4's enumerated-only agent-facing refusal detail.
+			fmt.Fprintln(stderr, "mc: private prepare refused:", err)
 			return 1
 		}
 		if err := writePrivateFrame(stdout, out); err != nil {
@@ -106,7 +118,7 @@ func runPrivateDispatchInScope(verb string, deadlineAt time.Time, stdin io.Reade
 			return verbs.DispatchCommitPrivateDB(db, request)
 		})
 		if err != nil {
-			fmt.Fprintln(stderr, "mc: private commit refused")
+			fmt.Fprintln(stderr, "mc: private commit refused:", err)
 			return 1
 		}
 		if err := writePrivateFrame(stdout, out); err != nil {
@@ -206,7 +218,15 @@ func callPrivateHelper(verb string, request, response any) error {
 	output.limit = maxPrivateFrameBytes + 4
 	output.progress = make(chan struct{}, 1)
 	cmd.Stdout = &output
-	cmd.Stderr = io.Discard
+	// The helper's own refusal reason travels on stderr. Discarding it made
+	// every broker failure report as the bare string "private helper <verb>
+	// failed", which is why the fixture notes that a private-helper refusal is
+	// "diagnosable only by reproducing the prepare host-side" — the reason was
+	// destroyed here, not missing. It is bounded and only ever appended to the
+	// failure path, so the success path stays byte-silent as its test requires.
+	var helperErr boundedBuffer
+	helperErr.limit = maxHelperStderrBytes
+	cmd.Stderr = &helperErr
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("private helper %s failed to start", verb)
 	}
@@ -218,7 +238,7 @@ func callPrivateHelper(verb string, request, response any) error {
 		select {
 		case err := <-waited:
 			if err != nil {
-				return fmt.Errorf("private helper %s failed", verb)
+				return fmt.Errorf("private helper %s failed%s", verb, helperReason(&helperErr, err))
 			}
 			goto complete
 		case <-output.progress:
@@ -329,4 +349,31 @@ func readPrivateFrame(r io.Reader, value any) error {
 		return fmt.Errorf("private frame is not the closed canonical encoding")
 	}
 	return nil
+}
+
+// helperReason renders the helper's own failure evidence for the broker error.
+// Without it every private-helper failure read as the bare "private helper
+// <verb> failed", which is exactly why the intermittent `__dispatch-prepare`
+// failures in the sealed E2E were undiagnosable — the reason existed, on the
+// child's stderr, and was thrown away (ledger 2026-07-19).
+//
+// The wait error is included because it carries the case the stderr cannot:
+// exit 124 is the container-side absolute deadline expiring, which is the
+// signature of a `docker exec` that spent the broker allowance starting up.
+func helperReason(stderr *boundedBuffer, wait error) string {
+	var parts []string
+	if wait != nil {
+		parts = append(parts, wait.Error())
+	}
+	if msg := strings.TrimSpace(stderr.String()); msg != "" {
+		msg = strings.ReplaceAll(msg, "\n", "; ")
+		if stderr.overflow {
+			msg += " …(truncated)"
+		}
+		parts = append(parts, msg)
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return " (" + strings.Join(parts, ": ") + ")"
 }

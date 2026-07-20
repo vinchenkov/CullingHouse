@@ -153,3 +153,50 @@ func TestPrivateFrameClosedCanonicalAndBounded(t *testing.T) {
 		t.Fatal("oversized private frame was accepted")
 	}
 }
+
+// A broker failure must carry the helper's own reason. Discarding the child's
+// stderr made every private-helper failure read as the bare "private helper
+// <verb> failed", which is what made the sealed E2E's intermittent
+// __dispatch-prepare failures undiagnosable (ledger 2026-07-19). The exit
+// error is carried too: exit 124 is the container-side absolute deadline, the
+// signature of a docker exec that spent the broker allowance starting up.
+func TestHelperReasonCarriesTheChildsEvidence(t *testing.T) {
+	var buf boundedBuffer
+	buf.limit = maxHelperStderrBytes
+	buf.Write([]byte("mc: private prepare refused\n"))
+
+	got := helperReason(&buf, errors.New("exit status 1"))
+	for _, want := range []string{"exit status 1", "private prepare refused"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("helperReason = %q, want it to carry %q", got, want)
+		}
+	}
+
+	// Nothing to report stays empty, so the success path is unchanged.
+	var empty boundedBuffer
+	empty.limit = maxHelperStderrBytes
+	if got := helperReason(&empty, nil); got != "" {
+		t.Fatalf("helperReason with no evidence = %q, want empty", got)
+	}
+
+	// The tail is bounded and says so, so a chatty helper cannot use the
+	// diagnostic as a data channel.
+	var big boundedBuffer
+	big.limit = 64
+	big.Write([]byte(strings.Repeat("x", 500)))
+	got = helperReason(&big, nil)
+	if !strings.Contains(got, "truncated") {
+		t.Fatalf("helperReason over its bound = %q, want it marked truncated", got)
+	}
+	if len(got) > 200 {
+		t.Fatalf("helperReason over its bound is %d bytes, want it held near its limit", len(got))
+	}
+
+	// Newlines are folded so the reason stays one log line.
+	var multi boundedBuffer
+	multi.limit = maxHelperStderrBytes
+	multi.Write([]byte("first\nsecond\n"))
+	if got := helperReason(&multi, nil); strings.Contains(got, "\n") {
+		t.Fatalf("helperReason = %q, want no embedded newline", got)
+	}
+}
