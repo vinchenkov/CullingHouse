@@ -53,9 +53,17 @@ func landingGitEnv() []string {
 
 // landingFixedConfig is the `-c` prefix on every landing git call: the controls
 // that would otherwise let repository-local config execute something.
-// core.checkStat/core.trustctime are here for a specific attack legacy pinned —
-// a repository can set them to make git's dirty detection ignore a same-length
-// edit, hiding operator bytes from the very fence meant to protect them.
+//
+// core.checkStat and core.trustctime are the stat-cache pair legacy pinned: a
+// repository can set them so git's dirty detection skips a same-length edit,
+// hiding operator bytes from the fence meant to protect them. MEASURED, not
+// assumed: against `git diff --name-only HEAD -- <paths>` (the 4c fence) git
+// 2.50 detects a same-length, mtime-restored edit even with
+// `checkStat=minimal` and `trustctime=false` set in the repository, so these
+// two are NOT load-bearing for that fence today and mutating either away
+// leaves its test green. They are retained for the read-tree/write-tree
+// comparison the merge stage will use, where the stat cache IS consulted, and
+// documented here so nobody counts them as live for the dirty fence.
 func landingFixedConfig() []string {
 	return []string{
 		"-c", "core.hooksPath=/dev/null",
@@ -372,4 +380,119 @@ func revalidateSealedTaskStore(taskRoot string, pins landingStorePins) (landingS
 		return landingStoreFacts{}, err
 	}
 	return landingStoreFacts{Head: head, Tree: tree}, nil
+}
+
+// landingMergeBase returns the single merge base of the target branch and the
+// reviewed commit, refusing anything but exactly one.
+//
+// More than one base means a criss-cross history where "what the merge writes"
+// is not a single well-defined diff, so the reviewed-path set the dirty fence
+// depends on would be a guess. Zero means the reviewed commit shares no history
+// with the target at all. Legacy required uniqueness for the same reason; the
+// caller additionally binds the result to the assignment's frozen base, which
+// is what proves the target has not been rewritten out from under the review.
+func landingMergeBase(g landingGit, target, verifiedSHA string) (string, error) {
+	out, err := g.out("merge-base", "--all", "refs/heads/"+target, verifiedSHA)
+	if err != nil || out == "" {
+		return "", Domainf("reviewed commit shares no history with the landing target %q", target)
+	}
+	bases := strings.Fields(out)
+	if len(bases) != 1 {
+		return "", Domainf("landing target and reviewed commit have %d merge bases; the reviewed change is not a single well-defined diff", len(bases))
+	}
+	return bases[0], nil
+}
+
+// reviewedLandingPaths is the set of paths the reviewed change touches: the
+// diff from the base to the reviewed commit.
+//
+// Renames are deliberately NOT detected (`--no-renames`). Rename inference is a
+// heuristic, and a heuristic here would silently relocate a reviewed edit onto
+// a path the reviewer never saw — legacy pinned exactly that attack.
+//
+// MEASURED: `--no-renames` is currently INERT on this command. `diff-tree` is
+// plumbing and ignores `diff.renames`, so a repository cannot switch rename
+// detection on; with the config set to true both the source and destination
+// paths are still reported. The flag is retained as an explicit statement of
+// intent — it is what stops a future edit from adding `-M` and silently
+// shrinking the reviewed set — but it is not a live fence and mutating it away
+// leaves the suite green. Recorded so it is not counted as one.
+//
+// External diff drivers and textconv are off for the reason everything is off
+// in this class: they execute.
+func reviewedLandingPaths(g landingGit, base, verifiedSHA string) ([]string, error) {
+	out, err := g.run("diff-tree", "-r", "--no-commit-id", "--name-only", "--no-renames",
+		"--no-ext-diff", "--no-textconv", "-z", base, verifiedSHA)
+	if err != nil {
+		return nil, Domainf("landing cannot derive the reviewed path set: %v", err)
+	}
+	var paths []string
+	for _, p := range strings.Split(string(out), "\x00") {
+		if p != "" {
+			paths = append(paths, p)
+		}
+	}
+	if len(paths) == 0 {
+		return nil, Domainf("the reviewed change touches no paths")
+	}
+	return paths, nil
+}
+
+// fenceReviewedPathsClean is ADR-017:742's "primary dirty-tree fence", scoped
+// to the reviewed paths.
+//
+// SCOPED, not global, and that is a decision rather than an optimization. A
+// global check refuses an operator who merely has unrelated work in progress,
+// which makes landing usable only against a pristine tree. The paths the merge
+// will write must be pristine; everything else is the operator's business.
+func fenceReviewedPathsClean(g landingGit, workspace, target, base, verifiedSHA string) error {
+	paths, err := reviewedLandingPaths(g, base, verifiedSHA)
+	if err != nil {
+		return err
+	}
+
+	// Tracked modifications at reviewed paths, worktree AND index against HEAD.
+	// The fixed config overrides core.checkStat/core.trustctime, so a repo that
+	// configures git to skip content comparison cannot hide an edit here.
+	args := append([]string{"diff", "--name-only", "HEAD", "--"}, paths...)
+	dirty, err := g.out(args...)
+	if err != nil {
+		return Domainf("landing cannot compare reviewed paths against HEAD: %v", err)
+	}
+	if dirty != "" {
+		return Domainf("reviewed path(s) are modified in the primary checkout: %s", strings.Join(strings.Fields(dirty), " "))
+	}
+
+	// Paths the merge will CREATE but which already exist on disk. Git reports
+	// nothing for these — they are untracked, so no diff mentions them — and the
+	// merge would overwrite operator bytes without a trace. An IGNORED file is
+	// the same hazard and the likelier one: a .env sitting exactly where a
+	// reviewed file is about to land. Checked against the filesystem rather than
+	// `ls-files --others`, because --exclude-standard would omit precisely the
+	// ignored files that matter and dropping it would list every ignored file in
+	// the tree.
+	for _, p := range paths {
+		inTarget := true
+		if _, err := g.out("cat-file", "-e", "refs/heads/"+target+"^{tree}:"+p); err != nil {
+			inTarget = false
+		}
+		abs := filepath.Join(workspace, p)
+		if !inTarget {
+			if _, err := os.Lstat(abs); err == nil {
+				return Domainf("reviewed path %q will be created by the merge but already exists untracked in the primary checkout", p)
+			}
+		}
+		// Every ancestor component must be a directory or absent. A regular
+		// file where the merge needs a directory fails midway through the merge
+		// rather than before it.
+		rel := filepath.Dir(p)
+		for rel != "." && rel != string(filepath.Separator) && rel != "" {
+			info, err := os.Lstat(filepath.Join(workspace, rel))
+			if err == nil && !info.IsDir() {
+				return Domainf("reviewed path %q needs directory %q, which is occupied by a non-directory", p, rel)
+			}
+			rel = filepath.Dir(rel)
+		}
+	}
+	return nil
 }
