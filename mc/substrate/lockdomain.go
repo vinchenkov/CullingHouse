@@ -90,6 +90,13 @@ func lockDomainRefusal(dir, why string, args ...any) error {
 // containing mount with the longest mount point. Nesting matters — a bind
 // mounted *inside* an allowed volume must be judged on its own line, not on
 // its parent's.
+//
+// Ties go to the LAST entry, which is kernel semantics, not a preference.
+// mountinfo is ordered, and mounting twice at the same point shadows rather
+// than replaces: both lines remain, and the later one is what processes
+// actually see. Keeping the first would let a bind stacked over a named volume
+// at the very same path be judged on the volume's ext4 line while the process
+// reads and writes the bind.
 func longestPrefixMount(entries []mountEntry, dir string) *mountEntry {
 	var best *mountEntry
 	for i := range entries {
@@ -99,7 +106,7 @@ func longestPrefixMount(entries []mountEntry, dir string) *mountEntry {
 		if dir != mp && !strings.HasPrefix(dir, strings.TrimSuffix(mp, "/")+"/") {
 			continue
 		}
-		if best == nil || len(mp) > len(best.mountPoint) {
+		if best == nil || len(mp) >= len(best.mountPoint) {
 			best = &entries[i]
 		}
 	}

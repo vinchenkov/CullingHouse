@@ -120,6 +120,23 @@ func TestLockDomainAcceptsOnlyBlockDeviceBackedLocalFilesystems(t *testing.T) {
 	}
 }
 
+// Mounting twice at the same point SHADOWS rather than replaces: both lines
+// stay in mountinfo, and the later one is what the process actually reads and
+// writes. A guard that broke the length tie toward the first entry would judge
+// a bind stacked over a named volume on the volume's ext4 line.
+func TestLockDomainJudgesAShadowedMountPointOnTheEffectiveMount(t *testing.T) {
+	shadowed := mountinfo(mountOverlayRoot, mountNamedVolume, mountFakeownerBind)
+	if err := checkLockDomain(strings.NewReader(shadowed), "/mc/spine"); err == nil || !strings.Contains(err.Error(), "fakeowner") {
+		t.Fatalf("bind stacked OVER the volume = %v, want the later mount refused", err)
+	}
+	// And the converse, so this is a tie-break rule and not a bias toward
+	// refusal: a volume mounted over a bind is in the lock domain.
+	restacked := mountinfo(mountOverlayRoot, mountFakeownerBind, mountNamedVolume)
+	if err := checkLockDomain(strings.NewReader(restacked), "/mc/spine"); err != nil {
+		t.Fatalf("volume stacked OVER the bind = %v, want accept", err)
+	}
+}
+
 // The directory is not the whole story. Docker will bind a single file over
 // spine.db inside an otherwise-legitimate named volume, which leaves the
 // directory reporting ext4 while the database itself sits on VirtioFS — the
