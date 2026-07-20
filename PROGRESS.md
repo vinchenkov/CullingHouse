@@ -744,12 +744,27 @@ All eight fences mutation-tested; the symbolic-target one is REDUNDANT with the
 HEAD fence (git resolves symref chains transitively) — retained, documented,
 test relabelled.
 
-Remaining for step 4, in order: (4b) the sealed task-store side — reuse
-`inspectCompletableTaskStore`; (4c) the reviewed-path set + the path-scoped
-dirty fence; (4d) the import (`pack-objects --revs --stdout` | `index-pack`,
-fsync + verify, no hardlink/alternate/speculative delete); (4e) CAS-create the
-ref with a zero old-value `update-ref`, re-check the SHA fence, `merge --no-ff`.
+Step 4b is DONE (f5a0129): `revalidateSealedTaskStore` — exact fixed-grammar
+config reproduction, no alternates, pristine worktree, sole managed branch,
+HEAD on it, HEAD == the frozen verified SHA, canonical tree, fsck clean. It is
+NOT `inspectCompletableTaskStore`: that asks whether a store is COMPLETABLE
+(held RW by its producer, identity facts as OUTPUTS); this asks whether it IS
+the exact sealed artifact already named (held RO, identity facts as INPUTS).
+It runs under the landing fences, not `sourceGitEnv()`. Mutation found three
+vacuous fences — one tautological (removed), one with a non-isolating test
+(fixed), one with no test at all (added).
+
+Remaining for step 4, in order: (4c) the reviewed-path set + the path-scoped
+dirty fence — this is where the bulk of the 24 portable legacy tests land;
+(4d) the import (`pack-objects --revs --stdout` | `index-pack`, fsync + verify,
+no hardlink/alternate/speculative delete); (4e) CAS-create the ref with a zero
+old-value `update-ref`, re-check the SHA fence, `merge --no-ff`.
 STOP THERE — cleanup has no mount and no owner.
+
+MUTATION IS NOT OPTIONAL ON THIS LANE. Across 4a and 4b, 17 fences were written
+and 4 were vacuous — roughly one in four, and every one of them had a green
+test sitting under it. Mutate each new fence to `false` and confirm its subtest
+dies before committing.
 
 4. The lander itself: `mc __land-sealed` under `RequireHostScope`, staged per
    ADR-017:740-756 — revalidate branch/SHA/closure digest/repo UUID + dirty

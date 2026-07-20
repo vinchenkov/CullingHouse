@@ -3214,3 +3214,47 @@ than adjust the test.
 NEXT (in PROGRESS.md): 4b the sealed task-store side (reuse
 `inspectCompletableTaskStore`), then the reviewed-path set and path-scoped dirty
 fence, then the import, then CAS ref + merge. Stop at the merge.
+
+## 2026-07-20 (4b) — three more vacuous fences, and a taxonomy of why
+
+The sealed task-store stage is in (f5a0129). It is deliberately NOT
+`inspectCompletableTaskStore`, though the shapes rhyme: that function asks
+whether a store is COMPLETABLE — its producer holds it RW and the identity facts
+are OUTPUTS to record — while landing asks whether a store IS the exact sealed
+artifact the assignment already named, held RO, in a different effect class,
+with the identity facts as INPUTS to match. Sharing one function would mean a
+parameter that selects which of two security questions is being asked. It also
+runs under the landing fences rather than `sourceGitEnv()`, which lacks
+GIT_NO_REPLACE_OBJECTS and a hooks override — and the sealed store is
+attacker-shaped input to this class, not our own scratch space.
+
+Mutation found three more vacuous fences. What is worth recording is that they
+were vacuous for three DIFFERENT reasons, and only one of the three is the
+failure mode this ledger has been naming:
+
+1. **Tautological** — the object-format check. Git derives the reported format
+   by reading `extensions.objectFormat` from the very config file the exact
+   reproduction check had already pinned byte for byte. It was the same opinion
+   laundered through a subprocess. REMOVED, not repaired: repairing it would
+   have meant inventing a scenario where git disagrees with the file it reads
+   the answer from. The danger of this shape is that it reads as an independent
+   fence to an auditor counting fences.
+2. **Non-isolating test** — the HEAD-on-branch check, the familiar one. The test
+   checked out a NEW branch, which the sole-ref fence catches first. Detaching
+   HEAD leaves the ref set untouched and isolates it. Test fixed, fence kept.
+3. **No scenario at all** — fsck. Nothing in the suite produced a store that was
+   object-level corrupt while passing every ref/config/status check. A truncated
+   loose object does exactly that, which is what fsck exists for. Test added.
+
+The tally across 4a and 4b: 17 fences written, 4 vacuous. About one in four, and
+every one had a green test under it. That ratio is the argument for making
+mutation a standing step on this lane rather than a thing done when suspicious —
+it is now written into PROGRESS as such. The three-way split above is also worth
+keeping, because the remedies differ: a tautological fence should be DELETED, a
+non-isolating test should be REWRITTEN, and a fence with no scenario needs one
+built or an explicit note that the fast lane cannot reach it.
+
+NEXT (in PROGRESS.md): 4c, the reviewed-path set and the path-scoped dirty
+fence. That is where the bulk of the 24 portable legacy tests land — the
+stat-cache evasions, the untracked-collision walk, and the directory-rename
+inference cases all attach to the reviewed path set.
