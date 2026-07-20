@@ -81,8 +81,25 @@ var (
 )
 
 // landingDest returns the fixed container destination of one landing row, or
-// "" for a kind the table does not contain. An empty result never validates
-// anything: every caller compares it against a non-empty carried path.
+// "" for a kind the table does not contain.
+//
+// The "" branch is dead in the compiled binary: the only callers are the four
+// package vars above, each passing a compile-time constant that appears
+// literally in landingMountRows(). A rename cannot desynchronize them — both
+// references are the same identifier, so the package stops building — and a
+// dropped or re-kinded row is caught by two independent guards, one of which
+// reads ADR-017 itself rather than a transcription of it
+// (landingplan_test.go's whole-table equality, and boundary's typedkind ADR
+// parse).
+//
+// Recording that precisely because the earlier comment here claimed the
+// callers were safe because "every caller compares it against a non-empty
+// carried path". That was NOT true — the carried fields are omitempty with no
+// independent non-empty check, so a "" constant would compare equal to an
+// omitted field and ACCEPT, which is the fail-open direction on the one guard
+// ADR-017:700 exists to enforce. The code is safe for the reason above, not
+// for the reason first written down; a comment asserting the wrong invariant
+// is how a fence ends up passing for the wrong reason.
 func landingDest(kind boundary.TypedKind) string {
 	for _, row := range landingMountRows() {
 		if row.Kind == kind {

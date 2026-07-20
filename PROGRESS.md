@@ -612,6 +612,29 @@ kept below. Operator legs that remain open are under `## Parked`, not here.
         anchors and the `.mission-control` cover obligation, validated at the
         helper boundary — a landing container run without the cover hands the
         sealed root out RW through the source alias
+  - [x] Sealed landing step 3, the envelope arm + carrier instruction
+        (28c5df5, comment fix 8912869+). `sealed-landing` is the fourth arm of
+        the closed operation union; cross-arm bleed is refused BOTH ways, with
+        the landing-only fields refused from one hoisted preamble check so a
+        fifth arm inherits it. Landing refuses a run id — it holds no lease and
+        opens no Run (§7) — which is the bleed direction that hides, since all
+        three setup arms legitimately carry one. `PrivateDispatchLanding`
+        carries the two host anchors plus the cover obligation (step 3's OWED
+        line, closed); the task root is DERIVED from the Worksource root and
+        task id, never named; landing is mutually exclusive with every setup
+        step and with every plan entry (ADR-017:711 has no agent process here).
+        Destinations come from `landingMountRows()` via named constants.
+        Adversarial review (4 lenses, each finding facing a 3-angle refutation
+        panel): PASS — 7 raised, 0 survived. One residue fixed: the
+        `landingDest` comment asserted a FALSE invariant (callers compare
+        against omitempty fields with no non-empty check, so a "" constant
+        would fail OPEN); the code is safe because the "" branch is dead and
+        two guards pin the table, one by parsing ADR-017 itself. Logged not
+        fixed: `decimalIdentity` (envelope) refuses a leading zero while
+        `validDecimalText` (helper boundary) accepts one — a PRE-EXISTING
+        asymmetry on a predicate four other steps share, so 55c2949's lesson
+        says landing inherits it and pins it rather than tightening it here.
+        STILL INERT: no attester produces either, no lander consumes them
 - [ ] Phase 4 — E2E control loops (six scenario families)
 - [ ] Phase 5 — Real-subscription acceptance (operator-scheduled)
 - [ ] Release prep (after Phase 5): swap the repo's construction face for
@@ -697,18 +720,46 @@ resolver). Three facts they leave for step 3, the first of which reshapes it:
      No landing kind is in `TypedRoots`, so the digest has NOT moved. If step
      5 puts the landing anchors there, that is the commit to pin it.
 
-3. The landing envelope as a fourth closed-union arm in `setupenvelope.go`,
-   refusing cross-arm field bleed both directions, plus the `Landing` field on
-   `PrivateDispatchMountPlan` and its helper-boundary validation (mutually
-   exclusive with every setup step).
+Step 3 is DONE (28c5df5) — see the checklist. Its review was PASS.
+
 4. The lander itself: `mc __land-sealed` under `RequireHostScope`, staged per
    ADR-017:740-756 — revalidate branch/SHA/closure digest/repo UUID + dirty
    fence; import the exact closure (`pack-objects --revs --stdout` piped to
    `index-pack`, no hardlink/alternate/speculative delete); CAS-create the real
    ref with a zero old-value `update-ref`; re-check the SHA fence; `merge
    --no-ff`. STOP there — cleanup has no mount and no owner (see Parked).
-   Fast-lane it against real temp repos; the adversarial corpus is
-   `runner/image/mc-land.test.ts`'s 39 tests retargeted at the sealed shape.
+   Fast-lane it against real temp repos. The adversarial corpus is
+   `runner/image/mc-land.test.ts`, now TRIAGED (scout 2026-07-20, detail in
+   docs/ledger/phase-3.md): 38 tests, of which **24 are generic Git-landing
+   mechanics that port essentially unchanged** — stat-cache/`checkStat`
+   evasions, `--assume-unchanged`/`--skip-worktree` index-visibility fences,
+   untracked-collision walks, directory-rename inference, operator-owned vs
+   ours `MERGE_HEAD` (abort only what we started), executable merge-driver and
+   content-filter refusal, `mergeOptions` isolation incl. the `main=evil`
+   exact-key case, `core.worktree` refusal, forged-receipt rejection,
+   `GIT_NO_REPLACE_OBJECTS`. Port those FIRST; they encode adversarial Git
+   knowledge that is expensive to rediscover. **10 are legacy-shape-bound**
+   (task-worktree-scoped index/config, and the whole `mc/task-*` branch
+   NAMESPACE fence, which exists only because the branch is caller-supplied —
+   sealed takes it from the immutable assignment). **4 are cleanup tests whose
+   premise is invalid** for the sealed shape: do not port them as written.
+   Two structural mismatches to expect:
+   - Legacy performs NO import. It symlinks `objects/`/`refs/`/`worktrees`/
+     `packed-refs` from the real common dir into a temp view (`mc-land:134-143`)
+     and never CAS-creates a ref at all — its only durable marker is the merge
+     commit. ADR-017:743-750 wants an explicit verified import plus a
+     CAS-created ref as the durable import marker; neither exists today. Ref
+     DELETION is already CAS (`update-ref --no-deref -d … "$sha"`, :607) and
+     that idea carries over.
+   - Legacy's cleanup ordering VIOLATES ADR-017:756-758 — it removes the
+     worktree and deletes the branch inside the same invocation, before the
+     resident's `mc land report`, which is what the whole `cleanup_debt`
+     apparatus papers over. This independently confirms stopping at the merge.
+   Not in any ADR, worth fixing in the sealed lander: legacy runs many bare
+   `git` calls OUTSIDE its two isolated wrappers, with the operator's live
+   config and hooks in scope. They are read-only plumbing so no hook fires
+   today, but the isolation is by accident. Run EVERY git call through the
+   fenced wrapper — ADR-017:704-711 reads as a whole-program property.
 5. Turn it on, together: `Approve` holds instead of refusing; `LandReport`
    accepts an assignment-carrying row (`land.go:37-39` today refuses "no
    branch"); the resident's sealed arm in `effects.ts:696`; and `Decide`/
