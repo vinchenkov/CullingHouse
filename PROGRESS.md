@@ -722,6 +722,15 @@ resolver). Three facts they leave for step 3, the first of which reshapes it:
 
 Step 3 is DONE (28c5df5) — see the checklist. Its review was PASS.
 
+Step 4 prep is DONE (f58498f): the landing target is a BARE local branch name
+(`validLandingTargetBranch`), enforced on both sides of the crossing, and a
+target equal to the task's own sealed branch is refused. This CORRECTED step 3,
+which had checked only non-empty and whose fixture used `refs/heads/main` — a
+shape guessed at, not read off the spine. `tasks.target_ref` is free-form text
+and the first-task setup arm legitimately resolves it as a rev (even "HEAD"),
+so landing needed its own grammar rather than the shared looseness. Write the
+lander against the bare form.
+
 4. The lander itself: `mc __land-sealed` under `RequireHostScope`, staged per
    ADR-017:740-756 — revalidate branch/SHA/closure digest/repo UUID + dirty
    fence; import the exact closure (`pack-objects --revs --stdout` piped to

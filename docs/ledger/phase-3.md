@@ -3129,3 +3129,38 @@ plumbing so no hook fires today, but the isolation is by accident rather than
 by construction. The sealed lander should run EVERY git call through the fenced
 wrapper; ADR-017:704-711's "cleared environment plus generated safe Git
 configuration" reads as a whole-program property, not a per-command one.
+
+## 2026-07-20 (later) — step 4 prep: the landing target grammar, and a guess caught
+
+Before writing the lander, checking what `target_ref` actually holds turned up
+that step 3 had encoded an invention. Step 3 validated the landing target as
+merely non-empty and its fixture used `refs/heads/main`. The spine stores
+`tasks.target_ref` as free-form text (schema.sql:786) whose real values are
+bare names like `main` — and the first-task setup arm resolves it as a REV,
+where "HEAD" is a legitimate value. Two arms, two meanings, one field.
+
+Landing cannot inherit that looseness because it constructs
+`refs/heads/<target>` in the real operator repository: the qualified form
+yields `refs/heads/refs/heads/main`, "HEAD" is meaningless as a merge
+destination, and option- or glob-shaped names turn a ref into an argument or a
+pattern. `validLandingTargetBranch` is now a closed grammar on both sides of
+the crossing, plus a refusal when the target equals the task's own sealed
+branch (landing merges that branch INTO the target, so identity would make
+ADR-017:748's CAS ref creation create the ref it then merges from).
+
+Written in pure Go rather than shelling to `check-ref-format` because the
+helper boundary must not spawn a git process on caller-supplied bytes.
+
+The generalisable point is about WHEN this was caught. Step 3's tests were
+green, its adversarial review returned PASS, and neither noticed — because
+every one of them was written against the same fixture that carried the
+invention. A fixture is not evidence: a test suite can only disagree with the
+code, never with a shared premise both sides inherited. What caught it was
+reading the schema and the real call sites while preparing the NEXT slice.
+Cheap here (nothing produces a landing instruction yet, so tightening only
+refuses more); it would not have been cheap after step 5 wired the lane on.
+
+NEXT (in PROGRESS.md): step 4 proper — the lander, against the bare-branch
+form. Take the fenced git wrapper first: the ledger's earlier pin (every git
+call through one wrapper, not legacy's accidental isolation) is the foundation
+every later stage sits on.
