@@ -84,6 +84,23 @@ func TestRevalidateSealedTaskStoreFencesTheStoreItself(t *testing.T) {
 		"an untracked file in the sealed worktree": func(t *testing.T, root string) {
 			writeFile(t, filepath.Join(root, "source", "planted.txt"), "planted\n")
 		},
+		// The index-visibility evasion, ported from legacy mc-land.test.ts:128.
+		// A tampered reviewed file plus --assume-unchanged makes `status` report
+		// the store as pristine, defeating the dirt fence directly. The real
+		// repository was already fenced against this (:198); the sealed side —
+		// which is the Worker's own output, the attacker-shaped input here — was
+		// not. The config's exact-byte reproduction cannot catch it, because
+		// these flags live in the index rather than the config.
+		"a tampered reviewed file hidden by --assume-unchanged": func(t *testing.T, root string) {
+			src := filepath.Join(root, "source")
+			srcGit(t, src, "update-index", "--assume-unchanged", "README.md")
+			writeFile(t, filepath.Join(src, "README.md"), "tampered behind the flag\n")
+		},
+		"a reviewed path hidden by --skip-worktree": func(t *testing.T, root string) {
+			src := filepath.Join(root, "source")
+			srcGit(t, src, "update-index", "--skip-worktree", "README.md")
+			writeFile(t, filepath.Join(src, "README.md"), "tampered behind the flag\n")
+		},
 		// A second ref is how a sealed store stops being sole-branch. The same
 		// check is what keeps refs/replace/* out, which is the sharper attack:
 		// a replacement could substitute different bytes for a reviewed object.

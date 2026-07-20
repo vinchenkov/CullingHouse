@@ -365,6 +365,21 @@ func revalidateSealedTaskStore(taskRoot string, pins landingStorePins) (landingS
 		return landingStoreFacts{}, Domainf("sealed store worktree is not clean; the reviewed artifact has been modified")
 	}
 
+	// The same index-visibility flags the real repository is fenced against, on
+	// this side too. The exact-config reproduction above already makes a
+	// stat-cache evasion structurally impossible here (core.checkStat cannot be
+	// set without failing the byte comparison), but --assume-unchanged and
+	// --skip-worktree live in the INDEX, not the config, so nothing above
+	// excludes them — and either one makes `status` report a modified reviewed
+	// file as clean, which is precisely the fence directly above this.
+	//
+	// The sealed store is attacker-shaped input: its producer is the Worker
+	// whose output is under review. Legacy fenced both sides (mc-land.test.ts:128
+	// alongside :198); only the real side had been carried over.
+	if err := refuseHiddenLandingIndexEntries(g); err != nil {
+		return landingStoreFacts{}, Domainf("sealed store index carries visibility flags; a modification of the reviewed artifact could be hidden from the pristine check")
+	}
+
 	// Exactly one ref, the managed branch. This is also what keeps
 	// `refs/replace/*` out — a replacement could substitute different bytes for
 	// a reviewed object, and it lives under refs/ like any other ref.

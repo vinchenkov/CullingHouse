@@ -26,7 +26,18 @@ const landingFixtureUUID = "0a1b2c3d-4e5f-6071-8293-a4b5c6d7e8f9"
 // repository has never seen, plus the nested empty cover.
 func sealedLandingFixture(t *testing.T) (repo, taskRoot string, pins sealedLandingPins) {
 	t.Helper()
-	repo = t.TempDir()
+	// The repository path contains a SPACE, deliberately and for every test in
+	// this file. Legacy pinned this as a single case (mc-land.test.ts:90);
+	// making it structural is strictly stronger, because every stage of the lane
+	// then handles the spaced path rather than only the one scenario that
+	// remembered to. A Worksource root is operator-chosen and "~/My Projects" is
+	// entirely ordinary. It costs nothing here: the lane builds arguments as
+	// exec argv and never a shell string, so this proves that property rather
+	// than defending a quoting bug.
+	repo = filepath.Join(t.TempDir(), "work space")
+	if err := os.MkdirAll(repo, 0o755); err != nil {
+		t.Fatal(err)
+	}
 	srcGit(t, repo, "init", "-q", "-b", "main")
 	srcGit(t, repo, "config", "commit.gpgsign", "false")
 	if err := os.MkdirAll(filepath.Join(repo, "lib"), 0o755); err != nil {
