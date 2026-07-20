@@ -1019,7 +1019,7 @@ func TestProductionWorkerCompletionSealDockerBoundary(t *testing.T) {
 | editor | fake | fake |
 | worker | codex | chatgpt |
 | verifier | claude-sdk | claude |
-| packager | fake | fake |
+| packager | claude-sdk | minimax |
 | refiner | fake | fake |
 | homie | fake | fake |
 `), 0o600); err != nil {
@@ -1042,6 +1042,19 @@ func TestProductionWorkerCompletionSealDockerBoundary(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(f.base, "behaviors", "verifier-seal.json"), []byte(verifierSeal), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	// The sealed Packager is a pure reader of the canonical store: ADR-017:1218
+	// has it "receive canonical source/control RO and fail representative
+	// writes while their separate record outputs remain writable". The behavior
+	// asserts BOTH halves in the container, where the RO bind is real — a Go
+	// test can only check the plan's `access` field, never that Docker honored
+	// it. Its render lands in /tmp for the same reason the Verifier's evidence
+	// does: every canonical path it can see is read-only.
+	packagerSeal := `{"steps":[
+		{"do":"exec","command":"set -e; test -d /workspace/source; test -d /workspace/git; for p in /workspace/source/packager-probe /workspace/git/packager-probe; do if printf x > \"$p\" 2>/dev/null; then echo \"canonical path $p is writable; the sealed view is not RO\" >&2; exit 1; fi; done; printf 'packet for task %s\\n' \"$MC_SUBJECT_ID\" > /tmp/packet.md; mc complete \"$MC_SUBJECT_ID\" --run \"$MC_RUN_ID\" --status packaged --outputs /tmp/packet.md"},
+		{"do":"succeed","output":"packaged"}]}`
+	if err := os.WriteFile(filepath.Join(f.base, "behaviors", "packager-seal.json"), []byte(packagerSeal), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	cfgBytes, err := os.ReadFile(filepath.Join(f.base, "resident.json"))
 	if err != nil {
 		t.Fatal(err)
@@ -1052,10 +1065,15 @@ func TestProductionWorkerCompletionSealDockerBoundary(t *testing.T) {
 	}
 	cfg["roleBehaviors"].(map[string]any)["worker"] = "/mc/behaviors/worker-seal.json"
 	cfg["roleBehaviors"].(map[string]any)["verifier"] = "/mc/behaviors/verifier-seal.json"
-	// Both non-fake routes stand in through the fake adapter (see the
+	cfg["roleBehaviors"].(map[string]any)["packager"] = "/mc/behaviors/packager-seal.json"
+	// All three non-fake routes stand in through the fake adapter (see the
 	// 2026-07-18 deviation); the Verifier's is what carries the disposable
-	// projection and the sealed verdict fence.
-	cfg["agentRunnerRoutes"] = []string{"codex/chatgpt", "claude-sdk/claude"}
+	// projection and the sealed verdict fence, and the Packager's is what
+	// carries the sealed view RO. `claude-sdk/minimax` is the Packager's
+	// canonical production route (spec §9.1 registry); Inv. 9 decorrelation
+	// constrains only strategist↔editor and worker↔verifier (routing.go:117),
+	// so sharing the Verifier's harness family is legal here.
+	cfg["agentRunnerRoutes"] = []string{"codex/chatgpt", "claude-sdk/claude", "claude-sdk/minimax"}
 	out, err := json.MarshalIndent(cfg, "", "  ")
 	if err != nil {
 		t.Fatal(err)
@@ -1172,6 +1190,55 @@ func TestProductionWorkerCompletionSealDockerBoundary(t *testing.T) {
 	verified := f.mcOK("", "task", "get", strconv.FormatInt(taskID, 10))
 	if got, _ := verified["verified_sha"].(string); got != seeded.BaseSHA {
 		t.Fatalf("verified_sha = %q, want the accepted sealed commit %q", got, seeded.BaseSHA)
+	}
+
+	// The same resident carries on once more: `verified` dispatches the
+	// Packager (dispatch.go:699), routed non-fake so attest derives the sealed
+	// view — the 15-row task plan with EVERY row RO (mountattest.go's
+	// sealedViewReader arm). Before this slice the Packager health-refused on
+	// every repo Worksource; the E2E hid that only because it routed the
+	// Packager `fake/fake` onto the legacy workspace lane.
+	//
+	// Reaching `packaged` proves the arm end-to-end through the real container:
+	// the behavior refuses to complete unless both canonical children are
+	// present AND unwritable, so a plan that regressed any row to `rw`, or that
+	// dropped a child, fails here rather than passing silently. That is the
+	// lesson of 6657541 — a fence asserted only in the negative direction let a
+	// CLEAN projection be refused exactly like a dirty one for weeks.
+	f.waitForTaskStatus(taskID, "packaged", 120*time.Second)
+
+	// Inv. 11: the packet is born only from `packaged`, in the Packager
+	// terminal's own transaction (complete.go:169-181).
+	packets := f.packets()
+	if len(packets) != 1 {
+		t.Fatalf("packets = %v, want exactly the one born by the Packager terminal", packets)
+	}
+	packet := packets[0]
+	if got, _ := packet["task_id"].(float64); int64(got) != taskID {
+		t.Fatalf("packet task_id = %v, want %d", packet["task_id"], taskID)
+	}
+	if got, _ := packet["render_path"].(string); got != "/tmp/packet.md" {
+		t.Fatalf("packet render_path = %q, want the path the Packager rendered", got)
+	}
+	if archived, _ := packet["archived"].(bool); archived {
+		t.Fatalf("a freshly born packet is unarchived; got %v", packet)
+	}
+
+	// The Packager run is a distinct run on the packager role, and it released
+	// its lease — the packet decision is an OPERATOR act, so the board must be
+	// at rest waiting on a human, not holding a lease.
+	var packagerRun string
+	for _, r := range f.runs() {
+		if r["role"] == "packager" && r["subject"] != nil &&
+			int64(r["subject"].(float64)) == taskID && r["outcome"] == "completed" {
+			packagerRun = r["id"].(string)
+		}
+	}
+	if packagerRun == "" {
+		t.Fatalf("no completed packager run for task %d: %v", taskID, f.runs())
+	}
+	if packagerRun == workerRun || packagerRun == rebuildRun {
+		t.Fatalf("packager run %s collides with an earlier run", packagerRun)
 	}
 }
 

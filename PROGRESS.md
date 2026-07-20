@@ -10,7 +10,7 @@ Access does NOT fix it — the failure precedes any policy lookup. Symptom:
 `stat` works, reads return `Operation not permitted`, git says
 `Unable to read current working directory`.
 
-LAST GREEN SHA: 83ed9e9 — five-leg fast lane + full Docker suite 8/8 (local; the operator pushes manually — decided 2026-07-14. Agents: do not push.)
+LAST GREEN SHA: 5957cc9 — five-leg fast lane + full Docker suite 8/8 (local; the operator pushes manually — decided 2026-07-14. Agents: do not push.)
 
 PHASES PASSING: Phase 0 COMPLETE (S1–S8 all green, no fallback ADRs; only operator-leg deferrals remain); Phase 1 COMPLETE (1a substrate 172; 1b walking skeleton reviewed-and-fixed — fake-harness 43, agent-runner 13, runner/image 40, resident 42, dispatch + cmd/mc suites; Docker e2e PASS ×4 total); Phase 2 COMPLETE for every unparked acceptance line (domain/§18 surface, deterministic split-brain convergence, bounded honesty + five mutants, tagged dispatch/metamorphic/twin-spine lifecycle properties; the initiative-wave CLI is no longer isolated — ADR-020 landed 2026-07-14 and closed the last Phase 2 acceptance line)
 KNOWN-FAILING: `TestOnboardConcurrentFreshHomeNeverDeletesTheWinner` (mc/verbs),
@@ -531,6 +531,31 @@ kept below. Operator legs that remain open are under `## Parked`, not here.
         the same rot as 6657541). Logged not fixed: the allowlist refuses
         ZFS/f2fs/bcachefs, so a Linux host on ZFS has no path forward
         (IMPLEMENTATION-NOTES 2026-07-20; macOS is the primary target)
+  - [x] The Packager's production mount arm is the SEALED VIEW, read-only
+        (5957cc9): `mountattest.go` health-refused every production repo role
+        but the standalone Worker and seal-consuming Verifier. The outgoing
+        `NEXT:` guessed artifact-root-only; the ADRs win — ADR-017:637,640
+        inherit BOTH canonical children "through the RO task-root bind for
+        Packager/Refiner", :1218 has them "fail representative writes while
+        their separate record outputs remain writable", and ADR-016:765 forbids
+        only a MUTABLE view. So the arm is the seal-consumer row shape with
+        every row RO, gated on the accepted seal (phase3-contract:249). Writing
+        the absent-root case found a real defect fixed with it: the host
+        snapshot picks precreate-vs-resolve from the task root's PRESENCE
+        alone, with no role in the predicate, so any reader arriving before its
+        store existed would silently acquire first-task setup authority and run
+        a mutating setup container — already reachable for a seal-consuming
+        Verifier. Setup is Worker-only (ADR-016 D6), fenced, with the Worker's
+        own precreate path pinned so the guard cannot over-fence
+  - [x] The E2E carries the sealed pipeline to `packaged` + packet birth: the
+        Packager routes `claude-sdk/minimax` (its canonical spec §9.1 route;
+        Inv. 9 binds only strategist↔editor and worker↔verifier) and its
+        in-container behavior refuses to complete unless BOTH canonical
+        children are present AND unwritable — so a plan regressing any row to
+        `rw`, or dropping a child, fails there instead of passing silently.
+        Controlled A/B run per 6657541's lesson: arm disabled ⇒ stalls at
+        `verified`, never reaches `packaged` (126s timeout); arm enabled ⇒ PASS
+        in 5.2s. The test deliberately STOPS at `packaged` — see the next line
 - [ ] Phase 4 — E2E control loops (six scenario families)
 - [ ] Phase 5 — Real-subscription acceptance (operator-scheduled)
 - [ ] Release prep (after Phase 5): swap the repo's construction face for
@@ -593,9 +618,32 @@ it compacts at the phase boundary (the precedent Phases 0–2 set), not before.
 Keep committed-tree projections, structured Engine-API binds, and launchd in
 their named later slices.
 
-NEXT: Give the Packager a production mount arm (likely artifact-root-only — it
-mutates no repository state), then carry the E2E through the packet decision and
-land. `mountattest.go:267-278` health-refuses every repo-Worksource role except
-the standalone Worker and seal-consuming Verifier; that is LATENT today only
-because the E2E routes the Packager `fake/fake` (e2e_test.go:943), so it rides
-the legacy-workspace lane. It bites the moment a Packager is routed non-fake.
+NEXT: Sealed landing (ADR-017:1226-1240). Scoping the E2E past `packaged` found
+that the ENTIRE landing path is still the legacy `.mc-worktrees` model and the
+seal pipeline never joins it — two facts, the second worse:
+
+1. `mc-land` can only merge a ref that ALREADY exists in the real repo
+   (`mc-land:278-295` hard-fails `missing branch`; the resident binds one
+   mount, the real repo root RW, `effects.ts:696-711`; the `Land` payload is
+   four scalars, `dispatch.go:303-308`). A sealed task's reviewed commit lives
+   only in the task-local bare store. ADR-017:1226-1240 specifies the
+   replacement — import the reviewed closure, CAS-create the real ref,
+   SHA-fence, merge in the primary checkout, exact-clean — and NOTHING
+   implements it. Its four typed mount kinds are declared with zero producers
+   (`boundary/typedkind.go:110-113`), referenced only by a string-table test.
+2. **A sealed task never reaches landing-pending, so approving one archives it
+   silently as if it had landed.** `LandingPending()` needs `tasks.branch != ""`
+   (`dispatch.go:129-132`); `tasks.branch` has exactly ONE writer
+   (`complete.go:163`), reachable only through the `--status worked --branch`
+   terminal that `complete.go:128-134` closes to assigned tasks by design. The
+   sealed branch lives in `task_assignments.branch`, a table `LandingPending()`
+   never reads. So `domain.Approve` (`task.go:422-427`) sees a branchless task,
+   calls it an artifact-plane deliverable, and archives it. The operator
+   approves a merge, the task vanishes, main is untouched, nothing errors.
+
+Start with (2) red-first — it is small, it is a live correctness hole, and it
+forces the design question (project the sealed branch into `tasks.branch` at
+acceptance, or teach `LandingPending()` to read the assignment) that (1) then
+builds on. The E2E stops at `packaged` on purpose: driving `packet decide
+--approve` today would encode the silent archive as expected behavior. Full
+diagnosis in IMPLEMENTATION-NOTES.md (2026-07-20).

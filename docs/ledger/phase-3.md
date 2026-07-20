@@ -2741,3 +2741,78 @@ exactly am I judging, and is it the same object the caller will use?" is the
 question that finds bugs.
 
 NEXT (unchanged, in PROGRESS.md): the Packager production mount arm.
+
+## 2026-07-20 — the Packager's arm, and the landing path that was never joined
+
+The outgoing `NEXT:` proposed the Packager's production mount arm and guessed
+its shape: "likely artifact-root-only — it mutates no repository state". The
+guess was reasonable from the spec alone (§57: "From the durable record only",
+"Read-only w.r.t. workspace") and wrong. ADR-017 is explicit three times over:
+`/workspace/source` and `/workspace/git` are both "inherited through the RO
+task-root bind for Packager/Refiner" (:637, :640), and the acceptance text has
+them "receive canonical source/control RO and fail representative writes while
+their separate record outputs remain writable" (:1218). ADR-016:765 forbids
+only a MUTABLE canonical view. "Read-only w.r.t. workspace" is satisfied by an
+all-RO bind, not by no bind — the packet embeds repository evidence, and RO is
+how it reads it without being able to touch it.
+
+So the arm is the seal-consumer row shape with every row forced RO, gated on
+the accepted completion seal per phase3-contract:249 ("no downstream role
+starts until the accepted seal exists"), and carrying no setup step of any
+kind. The Verifier CONSUMES the seal by rebuilding the store; the Packager only
+READS what that rebuild produced. One predicate now names both, and the RO
+downgrade keys off the union.
+
+**The absent-root case found a real defect.** Writing the negative test — a
+Packager whose task root does not exist — surfaced that
+`captureDispatchMountHostSnapshot` chooses precreate-vs-resolve from the task
+root's PRESENCE alone. The role is not in that predicate. Attest then strips
+the typed rows and keeps the step (`mountattest.go:821`), so a reader arriving
+before its store existed would have been handed first-task setup authority and
+run a mutating setup container. This was not introduced by the Packager arm: it
+was already reachable for a seal-consuming Verifier whose canonical root
+vanished. First-task setup and its recovery are Worker-only (ADR-016 D6), now
+fenced, with the Worker's own precreate path pinned in the same table test so
+the guard cannot over-fence. Same shape as the four false ACCEPTs in the
+lock-domain guard the session before: the code was looking at something
+adjacent to the thing it was deciding about.
+
+**The E2E, and a control run.** The Packager now routes `claude-sdk/minimax`
+— its canonical spec §9.1 route; Inv. 9 decorrelation binds only
+strategist↔editor and worker↔verifier (`routing.go:117`), so sharing the
+Verifier's family is legal. Its in-container behavior refuses to complete
+unless both canonical children are present AND unwritable, which makes the
+assertion load-bearing in both directions: a plan that regressed a row to `rw`,
+or dropped a child, fails there rather than passing silently. That direction
+matters — 6657541 was exactly a fence asserted only in the negative, where a
+CLEAN projection was refused like a dirty one for weeks and both suites stayed
+green. So the arm was disabled and the E2E re-run as a control: it stalls at
+`verified` and times out after 126s never reaching `packaged`. Enabled, it
+passes in 5.2s. Full Docker suite 8/8.
+
+**What stopped the slice.** The second half of the outgoing `NEXT:` — "carry
+the E2E through the packet decision and land" — turns out not to be reachable,
+and the reason is worth stating plainly. The whole landing path is still the
+legacy `.mc-worktrees` model: `mc-land` merges a ref that must ALREADY exist in
+the real repo (`mc-land:278-295`), the resident binds one mount (the real repo
+root RW), and a sealed task's reviewed commit lives only in its task-local bare
+store. ADR-017:1226-1240 specifies the replacement and nothing implements it —
+its four typed mount kinds have zero producers.
+
+Worse, and separately: a sealed task never reaches landing-pending at all.
+`LandingPending()` requires `tasks.branch != ""`, and `tasks.branch` has exactly
+one writer, reachable only through the `--status worked --branch` terminal that
+`complete.go:128-134` closes to assigned tasks by design. The sealed branch
+lives in `task_assignments.branch` — a different table `LandingPending()` never
+reads. So `domain.Approve` sees a branchless task, classifies it as an
+artifact-plane deliverable, and archives it synchronously. The operator
+approves a merge, the task disappears, main is never touched, and nothing
+errors. The seal pipeline introduced a second home for the branch and no
+document reconciled the two.
+
+The E2E therefore stops at `packaged` deliberately. Driving `packet decide
+--approve` today would encode the silent archive as expected behavior and make
+the real fix a test-breaking change.
+
+NEXT (in PROGRESS.md): sealed landing, starting red-first with the
+`LandingPending`/`tasks.branch` hole.

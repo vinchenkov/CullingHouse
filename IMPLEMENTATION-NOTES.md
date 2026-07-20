@@ -321,3 +321,57 @@ date/title; delete a line here when its slice lands.
   independent work (it is what rejects a bind of somebody else's ext4), so
   widening cannot just drop it.
 - Needs your decision: no
+
+## 2026-07-20 — a sealed task cannot land, and approving one archives it silently
+- Where: Phase 3, extending `TestProductionWorkerCompletionSealDockerBoundary`
+  past `verified` (the Packager mount-arm slice). Surfaced while scoping the
+  second half of the outgoing `NEXT:` — "carry the E2E through the packet
+  decision and land".
+- Gap: the whole landing path is still the legacy `.mc-worktrees` model, and
+  the seal pipeline never joins it. Two separate facts, the second worse than
+  the first.
+
+  (1) **`mc-land` can only merge a ref that already exists in the real repo.**
+  The `Land` payload is four scalars (`dispatch.go:303-308` — task, branch,
+  verified_sha, target_ref); the resident binds exactly one mount, the real
+  repo root RW (`resident/src/effects.ts:696-711`); and `runner/image/mc-land`
+  hard-fails `missing branch` (`mc-land:278-295`) when `refs/heads/mc/task-<id>`
+  is absent. For a sealed task the reviewed commit lives ONLY in the task-local
+  bare store at `<worksource>/.mission-control/tasks/task-<id>/git`, which
+  mc-land never mounts or reads. ADR-017:1226-1240 specifies the replacement
+  (import the reviewed closure, CAS-create the real ref, SHA-fence, merge in
+  the primary checkout, exact-clean); NOTHING implements it. Its four typed
+  mount kinds are declared with zero producers — `KindLandingWorksource`,
+  `KindLandingMissionControlCover`, `KindLandingTaskRoot`, `KindLandingEnvelope`
+  (`boundary/typedkind.go:110-113`), referenced only by a string-table test.
+
+  (2) **A sealed task never reaches landing-pending at all, so approving one
+  archives it as if it had landed.** `LandingPending()` requires
+  `tasks.branch != ""` (`dispatch.go:129-132`). `tasks.branch` has exactly one
+  writer, `complete.go:163`, reachable only through the `--status worked
+  --branch` Worker terminal — which `complete.go:128-134` closes to assigned
+  (sealed) tasks by design. The sealed branch name lives in
+  `task_assignments.branch`, a different table `LandingPending()` never reads.
+  So a sealed task is `branch = NULL` forever, and `domain.Approve`
+  (`task.go:422-427`) treats a branchless task as an artifact-plane deliverable
+  and archives it synchronously. Net effect: the operator approves a merge,
+  the task disappears, main is never touched, and nothing errors. Inv. 25 says
+  merging always requires operator approval; it is silently the case here that
+  approval never produces a merge.
+- Choice: log and stop at `packaged`. The E2E now proves the Packager arm
+  end-to-end and ends there; it deliberately does NOT drive `packet decide
+  --approve`, because asserting today's behavior would encode the silent
+  archive as expected and make the real fix a test-breaking change. This is the
+  conservative option: it (a) preserves the fail-closed posture by not building
+  a landing path on a guessed design, (b) deviates least — sealed landing is
+  ADR-017's delegated design and deserves its own red-first slice, and (c) is
+  trivially reversible, being an absence of code.
+- Spec impact: none to the spec. ADR-017:1226-1240 is unimplemented, not wrong.
+  The `LandingPending`/`tasks.branch` join is the part no document covers: the
+  seal pipeline introduced a second branch home and nothing reconciled the two.
+  The landing slice must decide whether the sealed branch is projected into
+  `tasks.branch` at acceptance or whether `LandingPending()` learns to read the
+  assignment — and until then, `Approve` on an assigned task should arguably
+  refuse rather than archive.
+- Needs your decision: no — but the silent archive is the sharpest edge found
+  this phase, and the landing slice is now the top `NEXT:`.
