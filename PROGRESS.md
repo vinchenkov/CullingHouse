@@ -10,7 +10,7 @@ Access does NOT fix it — the failure precedes any policy lookup. Symptom:
 `stat` works, reads return `Operation not permitted`, git says
 `Unable to read current working directory`.
 
-LAST GREEN SHA: 5c72585 — five-leg fast lane (Docker suite last 8/8 at 4a69d15; the operator pushes manually — decided 2026-07-14. Agents: do not push.)
+LAST GREEN SHA: 6587edb — five-leg fast lane (Docker suite last 8/8 at 4a69d15; the operator pushes manually — decided 2026-07-14. Agents: do not push.)
 
 PHASES PASSING: Phase 0 COMPLETE (S1–S8 all green, no fallback ADRs; only operator-leg deferrals remain); Phase 1 COMPLETE (1a substrate 172; 1b walking skeleton reviewed-and-fixed — fake-harness 43, agent-runner 13, runner/image 40, resident 42, dispatch + cmd/mc suites; Docker e2e PASS ×4 total); Phase 2 COMPLETE for every unparked acceptance line (domain/§18 surface, deterministic split-brain convergence, bounded honesty + five mutants, tagged dispatch/metamorphic/twin-spine lifecycle properties; the initiative-wave CLI is no longer isolated — ADR-020 landed 2026-07-14 and closed the last Phase 2 acceptance line)
 KNOWN-FAILING: `TestOnboardConcurrentFreshHomeNeverDeletesTheWinner` (mc/verbs),
@@ -635,6 +635,25 @@ kept below. Operator legs that remain open are under `## Parked`, not here.
         asymmetry on a predicate four other steps share, so 55c2949's lesson
         says landing inherits it and pins it rather than tightening it here.
         STILL INERT: no attester produces either, no lander consumes them
+  - [x] Sealed landing step 4 COMPLETE — the composed lander (7847a23). The
+        five stages become `landSealed`; `RunSealedLanding` binds it to the
+        envelope's fixed destinations; `mc __land-sealed <file>` is the
+        host-scope verb, in main.go's local-execution bypass list because it
+        reads the `/repo` plane the helper has no bind for. THE ADR's FENCE
+        ORDER WAS BUILDABLE after all: the reviewed set is derived from the
+        SEALED store (which holds base..verified by construction), so the
+        dirty fence runs BEFORE the import instead of after it — a refused
+        landing now writes nothing, and a test asserts both the refusal and
+        the absence of the objects so the order cannot silently invert.
+        `fenceReviewedPathsCleanAt` is the additive split; 4c's tests are
+        untouched. The `.mission-control` cover obligation (step 3's OWED
+        line) is CLOSED: absent, populated, symlinked, and foreign-path all
+        refuse. 9 fences mutated, 4 survived → 3 labelled REDUNDANT, 1 was a
+        wrong scenario now fixed; 1 DEAD guard removed. Two gaps logged, both
+        fail-closed and additive: `pinned_closure_digest` is unverified
+        (UNDEFINED at landing time — see Parked) and retry has no adoption
+        path (ADR-017:750-753), so a retry after a successful merge refuses
+        at the pre-merge fence. STOPS at the merge. STILL INERT end to end
 - [ ] Phase 4 — E2E control loops (six scenario families)
 - [ ] Phase 5 — Real-subscription acceptance (operator-scheduled)
 - [ ] Release prep (after Phase 5): swap the repo's construction face for
@@ -697,7 +716,10 @@ it compacts at the phase boundary (the precedent Phases 0–2 set), not before.
 Keep committed-tree projections, structured Engine-API binds, and launchd in
 their named later slices.
 
-NEXT: Sealed landing, the rest of the lane. The branch-home question is settled
+NEXT: Sealed landing — STEPS 1-4 ARE DONE; the remaining work is the corpus
+port owed by step 4, then step 5 (turning the lane on, all at once) and step 6
+(the Docker lane at phase completion). Read item 4 below for the port and item
+5 for the four things that must land together. The branch-home question is settled
 (read the assignment) and the mount grammar + typed-root producer are IN
 (7fee4e4, 8273616 — see the checklist and docs/ledger/phase-3.md 2026-07-20).
 Build the remaining pieces INERT, in this order, and turn the lane on only at
@@ -772,10 +794,11 @@ Step 4e is DONE (5c72585) — STEP 4's STAGES ARE ALL BUILT. `createLandingRefCA
 SHA) and `mergeSealedLanding` (SHA fence recheck, merge --no-ff, every
 merge-behaviour knob pinned, fixed identity, no hooks). Stops at the merge.
 
-STILL NOT WIRED: there is no `mc __land-sealed` verb and no CLI entry yet — the
-five stages exist as functions with tests, nothing composes them and nothing
-calls them. That composition + `RequireHostScope` + reading /mc/landing.json is
-the remainder of step 4, and it is small next to the stages.
+STEP 4 IS COMPLETE (7847a23): `landSealed` composes the five stages,
+`RunSealedLanding` is the envelope entrypoint, and `mc __land-sealed` is the
+host-scope verb. See the checklist for what it deliberately does not do. The
+lane is still INERT end to end — nothing produces a landing instruction and no
+resident arm invokes the verb. That is step 5, and it is now the whole job.
 
 The stat-cache question raised at 4c is CLOSED: core.checkStat/core.trustctime
 do not matter for read-tree/add -u/write-tree either. A FRESH index has no stat
@@ -783,8 +806,9 @@ cache, so `add -u` must re-read every file — a disposable index is the defence
 not those settings. Assumed twice, measured twice, wrong both times. They stay
 as cheap defence for a future PERSISTENT-index path, labelled live-nowhere.
 
-MUTATION IS NOT OPTIONAL ON THIS LANE. Across 4a-4e, 40 fences written, 16
-vacuous — two in five, every one with a green test under it. The rate is
+MUTATION IS NOT OPTIONAL ON THIS LANE. Across 4a-4e plus the step-4
+composition, 49 fences written, 19 vacuous — two in five, every one with a
+green test under it. The rate is
 NOT falling with practice, which is the point: what produces them is the gap
 between "this check is correct" and "this check is reachable and load-bearing
 given every check around it". Mutate each new
@@ -810,46 +834,44 @@ better, and LABEL it; DEAD (cannot fire at all) -> it is not a fence, replace
 it with one that can. A fourth exists: SPEC-MANDATED with no reachable failure
 (ADR-017:744's post-import verify) -> retain and label, so the next reader
 neither hunts for the missing scenario nor deletes it for lacking one.
+A FIFTH, found at step 4 and the subtlest: the fence is live and load-bearing
+but the TEST NEVER REACHES IT, because an EARLIER fence refuses the scenario
+first. The suite is green, the mutation survives, and nothing distinguishes it
+from a vacuous fence except asking WHICH fence actually refused. At step 4 the
+frozen-base test set base = the reviewed commit, which empties the sealed diff,
+so path derivation refused and the base binding never ran. Remedy: build the
+scenario that passes every earlier stage (there, a rewritten target needing a
+two-commit fixture), and assert on the refusal MESSAGE, not just on error != nil
+— a message assertion turns this shape into an immediate, legible failure.
 Probes go in the session scratchpad, not /tmp (there is a deny rule on `rm`).
 
-4. The lander itself: `mc __land-sealed` under `RequireHostScope`, staged per
-   ADR-017:740-756 — revalidate branch/SHA/closure digest/repo UUID + dirty
-   fence; import the exact closure (`pack-objects --revs --stdout` piped to
-   `index-pack`, no hardlink/alternate/speculative delete); CAS-create the real
-   ref with a zero old-value `update-ref`; re-check the SHA fence; `merge
-   --no-ff`. STOP there — cleanup has no mount and no owner (see Parked).
-   Fast-lane it against real temp repos. The adversarial corpus is
-   `runner/image/mc-land.test.ts`, now TRIAGED (scout 2026-07-20, detail in
-   docs/ledger/phase-3.md): 38 tests, of which **24 are generic Git-landing
-   mechanics that port essentially unchanged** — stat-cache/`checkStat`
-   evasions, `--assume-unchanged`/`--skip-worktree` index-visibility fences,
-   untracked-collision walks, directory-rename inference, operator-owned vs
-   ours `MERGE_HEAD` (abort only what we started), executable merge-driver and
-   content-filter refusal, `mergeOptions` isolation incl. the `main=evil`
-   exact-key case, `core.worktree` refusal, forged-receipt rejection,
-   `GIT_NO_REPLACE_OBJECTS`. Port those FIRST; they encode adversarial Git
-   knowledge that is expensive to rediscover. **10 are legacy-shape-bound**
+4. DONE (7847a23) — the lander is composed and wired. STILL OWED FROM IT, and
+   the highest-value work left on this lane: **port the adversarial Git corpus**
+   from `runner/image/mc-land.test.ts`, TRIAGED but NOT YET PORTED (scout
+   2026-07-20, detail in docs/ledger/phase-3.md). 38 tests, of which **24 are
+   generic Git-landing mechanics that port essentially unchanged** —
+   stat-cache/`checkStat` evasions, `--assume-unchanged`/`--skip-worktree`
+   index-visibility fences, untracked-collision walks, directory-rename
+   inference, operator-owned vs ours `MERGE_HEAD` (abort only what we started),
+   executable merge-driver and content-filter refusal, `mergeOptions` isolation
+   incl. the `main=evil` exact-key case, `core.worktree` refusal, forged-receipt
+   rejection, `GIT_NO_REPLACE_OBJECTS`. They encode adversarial Git knowledge
+   that is expensive to rediscover, and the composed lane is the first thing
+   that can actually run them end to end. **10 are legacy-shape-bound**
    (task-worktree-scoped index/config, and the whole `mc/task-*` branch
    NAMESPACE fence, which exists only because the branch is caller-supplied —
    sealed takes it from the immutable assignment). **4 are cleanup tests whose
    premise is invalid** for the sealed shape: do not port them as written.
-   Two structural mismatches to expect:
-   - Legacy performs NO import. It symlinks `objects/`/`refs/`/`worktrees`/
-     `packed-refs` from the real common dir into a temp view (`mc-land:134-143`)
-     and never CAS-creates a ref at all — its only durable marker is the merge
-     commit. ADR-017:743-750 wants an explicit verified import plus a
-     CAS-created ref as the durable import marker; neither exists today. Ref
-     DELETION is already CAS (`update-ref --no-deref -d … "$sha"`, :607) and
-     that idea carries over.
-   - Legacy's cleanup ordering VIOLATES ADR-017:756-758 — it removes the
-     worktree and deletes the branch inside the same invocation, before the
-     resident's `mc land report`, which is what the whole `cleanup_debt`
-     apparatus papers over. This independently confirms stopping at the merge.
-   Not in any ADR, worth fixing in the sealed lander: legacy runs many bare
-   `git` calls OUTSIDE its two isolated wrappers, with the operator's live
-   config and hooks in scope. They are read-only plumbing so no hook fires
-   today, but the isolation is by accident. Run EVERY git call through the
-   fenced wrapper — ADR-017:704-711 reads as a whole-program property.
+   Legacy's two structural mismatches are both already settled in the sealed
+   lane's favour: it performs NO import and never CAS-creates a ref (its only
+   durable marker is the merge commit), and its cleanup ordering VIOLATES
+   ADR-017:756-758 by deleting the branch before `mc land report` — which is
+   what the whole `cleanup_debt` apparatus papers over, and independently
+   confirms stopping at the merge.
+   Also not in any ADR and worth keeping true: legacy runs many bare `git` calls
+   OUTSIDE its two isolated wrappers, with the operator's live config and hooks
+   in scope. The sealed lander already routes every call through `landingGit`;
+   ADR-017:704-711 reads as a whole-program property, so keep it that way.
 5. Turn it on, together: `Approve` holds instead of refusing; `LandReport`
    accepts an assignment-carrying row (`land.go:37-39` today refuses "no
    branch"); the resident's sealed arm in `effects.ts:696`; and `Decide`/
