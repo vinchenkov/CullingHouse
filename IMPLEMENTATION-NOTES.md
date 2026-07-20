@@ -376,7 +376,7 @@ date/title; delete a line here when its slice lands.
 - Needs your decision: no — but the silent archive is the sharpest edge found
   this phase, and the landing slice is now the top `NEXT:`.
 
-## 2026-07-20 — the landing mount table has two producible rows, not four
+## 2026-07-20 — the landing mount table has two producible rows, not four [S: the ROOT-RESOLUTION half stands; the plan-grammar half is superseded by the entry below]
 - Where: sealed-landing steps 1-2 (`mc/verbs/landingplan.go`), ADR-017:699-702.
   The outgoing `NEXT:` in PROGRESS.md planned "producers for the four typed
   kinds `KindLandingWorksource`, `KindLandingMissionControlCover`,
@@ -412,4 +412,48 @@ date/title; delete a line here when its slice lands.
   without the cover would expose the sealed root RW through the source alias.
 - Spec impact: none. ADR-017's table is right; `NEXT:` was a plan written before
   the resident's cover mechanism was re-read.
+- Needs your decision: no.
+
+## 2026-07-20 — the `/repo` plane is not plan-addressable, and asking whether it should be was the wrong question
+- Where: adversarial review of the sealed-landing mount slice (7fee4e4..8273616),
+  fixed in 55c2949. Supersedes the plan-grammar half of the entry above.
+- Gap: the entry above asked "does a host identity exist at attest time?" and
+  concluded two of the four landing rows were plan-bindable, so it taught the
+  ADR-016 D5 plan grammar the `/repo` plane. The question the codebase actually
+  answers is different: `resident/src/effects.ts:90-95` refuses EVERY plan entry
+  whose destination falls outside `/workspace`. The plan is an agent-plane
+  carrier. Every `/repo` row of the sibling setup class is composed by the
+  resident from paths it derives itself (effects.ts:598-603). Applied
+  consistently, landing produces ZERO plan cells, not two.
+- Choice: revert both seam widenings; keep the table and the host-anchor
+  resolver, repurposed as the landing CLASS's grammar for validating the landing
+  instruction. This is the conservative option on all three counts: (a) it
+  restores a fail-closed posture that the widening had actually weakened, (b) it
+  deviates least, being the division `/mc/setup.json` has had since the D5 slice,
+  and (c) it is a deletion.
+- Why this is worth an entry rather than a quiet fix: the widening bought NO
+  capability — the resident would have refused the spawn the moment step 5 turned
+  the lane on — while costing two real guards, because both predicates gate more
+  than their names suggest. `validatePrivateMountPlan` began accepting plans that
+  mixed agent-table `/workspace` rows with landing `/repo` rows, which ADR-017:686-687
+  forbids ("never inherit the agent table") and which nothing else enforces; and
+  the task-precreate fabrication guard, which keys off `validTaskPlanDestination`
+  alone, began admitting a precreate plan carrying RW to the real Worksource
+  checkout. Both were LIVE on the helper boundary — an incoming-plan re-validator,
+  not a producer — so the slice was not as inert as its own tests asserted. The
+  generalisable lesson: widening a predicate that several guards share is not a
+  local change, and "the producer is inert" does not make a validator inert.
+- Also fixed, found by the same review: the RW landing anchor had no shape fence
+  (now refuses group/world-writable, though not an exact mode — a real repository
+  is commonly 0755); no check that it is a "real Git Worksource root" per
+  ADR-017:699 (now requires an administrative `.git` entry); the task-root arm's
+  fences were unreachable because a foreign uid tripped the Worksource arm first;
+  and the canonical-ancestry fence was VACUOUS — mutating it to `if false` left
+  the suite green, because the symlink checks caught every shape it was meant to
+  refuse. That last one is the fourth time this phase a fence has been found
+  passing for the wrong reason; the smell is a negative test whose scenario is
+  reachable by an earlier fence, and mutation is the only thing that finds it.
+- Spec impact: none. ADR-017's table is right. The unwritten fact is that the D5
+  plan carrier is agent-plane-only — true in `effects.ts` since Phase 1b, stated
+  in no document, and re-derived twice now. ADR-016 D5 or D1 should say it.
 - Needs your decision: no.
