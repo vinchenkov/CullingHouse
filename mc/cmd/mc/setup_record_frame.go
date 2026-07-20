@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"io"
+	"regexp"
 	"strconv"
 	"strings"
 
@@ -30,6 +31,10 @@ import (
 // device/inode/owner identity, never a path. The `--task` id the host derives
 // its path from is an input, not an authority — the spine frame refuses unless
 // it matches its live lease AND the identity reproduces the durable receipt.
+
+// decimalIdentity mirrors the spine's identity grammar (verbs.RegisterFirstTaskSetup):
+// device and inode are canonical decimals, never empty and never zero-padded.
+var decimalIdentity = regexp.MustCompile(`^(0|[1-9][0-9]*)$`)
 
 // recordFrameVerbs maps a resident-facing record verb to its path-free spine
 // half. Membership here is what routes a verb through the host attest.
@@ -132,8 +137,13 @@ func attestedRecordFlags(name string, args []string) (string, int64, verbs.TaskS
 	if err := dec.Decode(&res); err != nil {
 		return "", 0, verbs.TaskSetupIdentity{}, verbs.SetupResult{}, verbs.Usagef("setup result is invalid: %v", err)
 	}
-	if *taskID < 1 || *ownerUID < 0 {
-		return "", 0, verbs.TaskSetupIdentity{}, verbs.SetupResult{}, verbs.Usagef("%s: --task and --owner-uid are required", name)
+	// Every element of the identity is required explicitly. Empty device/inode
+	// would fail closed downstream anyway (no receipt holds them), but as a
+	// receipt-mismatch rather than the usage error this actually is — and the
+	// asymmetry would invite a later caller to assume empties are checked.
+	if *taskID < 1 || *ownerUID < 0 || !decimalIdentity.MatchString(*device) || !decimalIdentity.MatchString(*inode) {
+		return "", 0, verbs.TaskSetupIdentity{}, verbs.SetupResult{},
+			verbs.Usagef("%s: --task, --device, --inode and --owner-uid are required decimal identities", name)
 	}
 	return *runID, *taskID, verbs.TaskSetupIdentity{Device: *device, Inode: *inode, OwnerUID: *ownerUID}, res, nil
 }

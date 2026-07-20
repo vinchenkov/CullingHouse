@@ -135,3 +135,36 @@ func TestSetupRecordAttestsTheWorksourceOnTheHostNotInTheHelper(t *testing.T) {
 		})
 	}
 }
+
+// The spine half's identity is all-or-nothing. An empty --device/--inode would
+// fail closed downstream anyway (no receipt holds them), but as a confusing
+// receipt mismatch rather than the usage error it actually is — and the
+// asymmetry would invite a later caller to assume empties are checked.
+func TestAttestedRecordRequiresEveryIdentityElement(t *testing.T) {
+	result := `{"base_sha":"` + strings.Repeat("a", 40) + `","object_format":"sha1",` +
+		`"local_repo_uuid":"3f2504e0-4f89-11d3-9a0c-0305e82c3301","closure_digest":"` +
+		strings.Repeat("b", 64) + `","object_count":3,"fsck_clean":true}`
+	full := map[string]string{"--run": "r", "--task": "7", "--device": "16777232", "--inode": "42", "--owner-uid": "501"}
+
+	for _, verb := range []string{"setup-record-attested", "accepted-seal-record-attested"} {
+		for _, drop := range []string{"--device", "--inode", "--owner-uid", "--task"} {
+			t.Run(verb+drop, func(t *testing.T) {
+				args := []string{"task", verb}
+				for flag, value := range full {
+					if flag == drop {
+						continue
+					}
+					args = append(args, flag, value)
+				}
+				args = append(args, "--result", result)
+				res := runMC(t, nil, "", args...)
+				if res.code != 2 {
+					t.Fatalf("%s without %s: exit = %d json=%v", verb, drop, res.code, res.json)
+				}
+				if e, _ := res.json["error"].(map[string]any); e == nil || e["code"] != "usage" {
+					t.Fatalf("%s without %s: want a usage envelope, got %v", verb, drop, res.json)
+				}
+			})
+		}
+	}
+}

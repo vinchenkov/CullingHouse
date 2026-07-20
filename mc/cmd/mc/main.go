@@ -511,10 +511,13 @@ func cmdInit(args []string) (any, error) {
 
 func cmdTask(args []string) (any, error) {
 	if len(args) == 0 {
-		// setup-record/accepted-seal-record are listed as the operator-facing
-		// spelling; each is a host attest frame that reaches this switch only
-		// as its path-free `-attested` half (setup_record_frame.go).
-		return nil, verbs.Usagef("usage: mc task add|get|block|unblock|setup-register|setup-record|setup-continue|accepted-seal-record|accepted-seal-continue …")
+		// setup-record and accepted-seal-record never reach this switch: run()
+		// intercepts both as host attest frames, which re-enter it only as the
+		// path-free `-attested` halves (setup_record_frame.go). Both spellings
+		// are listed — the first is what an operator or the resident invokes,
+		// the second is what this switch actually dispatches.
+		return nil, verbs.Usagef("usage: mc task add|get|block|unblock|setup-register|" +
+			"setup-record[-attested]|setup-continue|accepted-seal-record[-attested]|accepted-seal-continue …")
 	}
 	switch args[0] {
 	case "setup-register":

@@ -112,6 +112,12 @@ func crossCheckLandedStore(root FirstTaskSetupRoot, result SetupResult) error {
 // the exact pinned closure. It is the first (and only) production caller of the
 // closure machinery.
 func RecordFirstTaskSetupClosure(db *sql.DB, runID, workspaceRoot string, result SetupResult) (FirstTaskSetupRoot, map[boundary.TypedKind]boundary.ProtectedID, error) {
+	// Validate the result before touching the filesystem, as this composition
+	// always has: a malformed result is the caller's error and should be named
+	// as such, not masked by whatever the task root happens to look like.
+	if err := validateSetupResult(result); err != nil {
+		return FirstTaskSetupRoot{}, nil, err
+	}
 	root, err := AttestFirstTaskSetupRoot(db, runID, workspaceRoot)
 	if err != nil {
 		return FirstTaskSetupRoot{}, nil, err

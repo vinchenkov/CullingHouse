@@ -45,6 +45,11 @@ func RecordAcceptedSealRebuild(db *sql.DB, runID, workspaceRoot string, result S
 	if runID == "" {
 		return AcceptedSealRebuildReceipt{}, Domainf("accepted-seal rebuild record run is absent")
 	}
+	// Validate before the filesystem, as this composition always has — see
+	// RecordFirstTaskSetupClosure.
+	if err := validateSetupResult(result); err != nil {
+		return AcceptedSealRebuildReceipt{}, err
+	}
 	root, err := attestAcceptedSealRebuildRoot(db, runID, workspaceRoot)
 	if err != nil {
 		return AcceptedSealRebuildReceipt{}, err
