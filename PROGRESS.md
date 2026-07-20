@@ -43,6 +43,11 @@ immediate-exit shape is test-only. Repro (under load):
 `for i in $(seq 1 8); do ./resident/check.sh || break; done` while another
 suite runs. Owner: whoever next touches the resident control crossing — not a
 Phase 3 blocker.
+Sighting 2026-07-20: 1 failure in the five-leg run at 55c2949, then 9/9 green
+(5 idle, 3 under concurrent runner/image load, 1 clean). The NAME WAS NOT
+CAPTURED, so identity with the above is inferred from the profile only —
+load-sensitive, single, unreproducible. Whoever fixes this: capture the failing
+test name on first sight; `check.sh`'s summary alone does not carry it.
 
 Note the spine is now schema v11 (substrate.CurrentSchemaVersion): `mc onboard home` migrates older spines in place (v1→…→v11); scratch MC_HOME spines need no action. v4 closed the D2 BLOB hole; v5 is the task_setup_receipts table; v6 is the task-keyed immutable `task_assignments` table (first-task closure assignment: base/target SHA, object format, sole branch, path-free task-root key, local repo UUID, closure digest — a retry reuses it, never rebases; ADR-016 D5). v7 is the immutable run-keyed completion-seal state record; v8 binds every newly published seal to an immutable manifest digest; v9 makes each worked task point to its exact accepted completion run/request; v10 is the immutable verifier-run-fenced accepted-seal rebuild receipt; v11
 widens the §7 approve landing fence to cover the second branch home (an
