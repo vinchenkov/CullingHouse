@@ -10,7 +10,7 @@ Access does NOT fix it — the failure precedes any policy lookup. Symptom:
 `stat` works, reads return `Operation not permitted`, git says
 `Unable to read current working directory`.
 
-LAST GREEN SHA: 6587edb — five-leg fast lane (Docker suite last 8/8 at 4a69d15; the operator pushes manually — decided 2026-07-14. Agents: do not push.)
+LAST GREEN SHA: 4757df2 — five-leg fast lane (Docker suite last 8/8 at 4a69d15; the operator pushes manually — decided 2026-07-14. Agents: do not push.)
 
 PHASES PASSING: Phase 0 COMPLETE (S1–S8 all green, no fallback ADRs; only operator-leg deferrals remain); Phase 1 COMPLETE (1a substrate 172; 1b walking skeleton reviewed-and-fixed — fake-harness 43, agent-runner 13, runner/image 40, resident 42, dispatch + cmd/mc suites; Docker e2e PASS ×4 total); Phase 2 COMPLETE for every unparked acceptance line (domain/§18 surface, deterministic split-brain convergence, bounded honesty + five mutants, tagged dispatch/metamorphic/twin-spine lifecycle properties; the initiative-wave CLI is no longer isolated — ADR-020 landed 2026-07-14 and closed the last Phase 2 acceptance line)
 KNOWN-FAILING: `TestOnboardConcurrentFreshHomeNeverDeletesTheWinner` (mc/verbs),
@@ -28,6 +28,11 @@ await/retry like the existing `awaitConcurrentProvision`/`recoverConcurrentProvi
 paths (which already handle the *later* stages of this same race) and refuse only
 if it stays table-less. Owner: whoever next touches onboarding — not a Phase 3
 blocker. Full diagnosis in IMPLEMENTATION-NOTES.md (2026-07-15).
+Sighting 2026-07-20 (at 4757df2): 1 failure in a full `mc/check.sh` run, with
+the exact documented message (`non-empty (4096 bytes) but has no meta
+identity`). Then 8/8 green isolated and the full suite green on re-run — the
+~1-in-21 rate holds and the profile is unchanged. Not caused by the sealed
+landing work, which touches no onboarding path.
 
 KNOWN-FAILING (2): `resident one-use dispatch control > rejects every identity
 mismatch before accepting child output` (resident/src/resident-control.test.ts),
@@ -845,33 +850,40 @@ two-commit fixture), and assert on the refusal MESSAGE, not just on error != nil
 — a message assertion turns this shape into an immediate, legible failure.
 Probes go in the session scratchpad, not /tmp (there is a deny rule on `rm`).
 
-4. DONE (7847a23) — the lander is composed and wired. STILL OWED FROM IT, and
-   the highest-value work left on this lane: **port the adversarial Git corpus**
-   from `runner/image/mc-land.test.ts`, TRIAGED but NOT YET PORTED (scout
-   2026-07-20, detail in docs/ledger/phase-3.md). 38 tests, of which **24 are
-   generic Git-landing mechanics that port essentially unchanged** —
-   stat-cache/`checkStat` evasions, `--assume-unchanged`/`--skip-worktree`
-   index-visibility fences, untracked-collision walks, directory-rename
-   inference, operator-owned vs ours `MERGE_HEAD` (abort only what we started),
-   executable merge-driver and content-filter refusal, `mergeOptions` isolation
-   incl. the `main=evil` exact-key case, `core.worktree` refusal, forged-receipt
-   rejection, `GIT_NO_REPLACE_OBJECTS`. They encode adversarial Git knowledge
-   that is expensive to rediscover, and the composed lane is the first thing
-   that can actually run them end to end. **10 are legacy-shape-bound**
-   (task-worktree-scoped index/config, and the whole `mc/task-*` branch
-   NAMESPACE fence, which exists only because the branch is caller-supplied —
-   sealed takes it from the immutable assignment). **4 are cleanup tests whose
-   premise is invalid** for the sealed shape: do not port them as written.
-   Legacy's two structural mismatches are both already settled in the sealed
-   lane's favour: it performs NO import and never CAS-creates a ref (its only
-   durable marker is the merge commit), and its cleanup ordering VIOLATES
-   ADR-017:756-758 by deleting the branch before `mc land report` — which is
-   what the whole `cleanup_debt` apparatus papers over, and independently
-   confirms stopping at the merge.
-   Also not in any ADR and worth keeping true: legacy runs many bare `git` calls
-   OUTSIDE its two isolated wrappers, with the operator's live config and hooks
-   in scope. The sealed lander already routes every call through `landingGit`;
-   ADR-017:704-711 reads as a whole-program property, so keep it that way.
+4. DONE (7847a23). The corpus port is UNDER WAY (4757df2) and the triage's
+   "24 portable tests" estimate is now known to be too high: 4a-4e already
+   absorbed most of those hazards organically, so the real job is a GAP
+   ANALYSIS against the sealed lane's existing tests, not a blind port — a
+   blind port would have added duplicates. Verified so far:
+   - PORTED :882 (already-ancestor reviewed SHA) — refuses at the frozen-base
+     binding. Doubles as the retry-after-success case; asserts the MESSAGE.
+   - PORTED :90 (spaced paths) STRUCTURALLY — the landing fixture's repo now
+     lives under "work space", so every test exercises it at every stage.
+   - PORTED :128 (sealed-side index-visibility flags) and it found a REAL
+     HOLE: only the real repository's index was fenced, so --assume-unchanged
+     hid a TAMPERED reviewed file from the sealed store's pristine check.
+     Mutation-proved. This is the payoff that justifies the whole exercise.
+   - COVERED, no port needed: :100/:112 (sealed dirt, incl. untracked),
+     :168 (stat-cache primary), :198 (primary index flags), :219 (untracked
+     collision), :244 (unrelated bytes survive), :261 (operator merge in
+     flight), :827 (core.worktree), :919 (refs/replace — defended on BOTH
+     sides: landsealed_test.go:107 wrapper + landsealedstore_test.go:93
+     sole-ref), :782 (hooks/hostile identity), :738/:750 (mergeOptions).
+   STILL TO ASSESS, and where the remaining value is concentrated — the
+   TIMING cases, which concern hostile state introduced BETWEEN preflight and
+   merge: :683 (executable merge config inserted after preflight) and :413
+   (an operator merge won after preflight). Read `mergeSealedLanding` and
+   answer honestly whether the lane re-checks anything at merge time beyond
+   the SHA fence; if it does not, that is a GAP with a real attack. Also
+   unassessed: :289/:328 (rename inference relocating a reviewed path onto
+   ignored operator bytes) and :763 (merge autostash).
+   N/A by construction — do NOT port: everything about cleanup, branch
+   deletion, worktree removal, and receipts (:463, :506, :557, :590, :808,
+   :846, :868, :897, :946, :965, :1026), plus :1011 (the `mc/task-*`
+   NAMESPACE fence, which exists only because legacy's branch is
+   caller-supplied; sealed takes it from the immutable assignment).
+   Keep every git call inside `landingGit`: ADR-017:704-711 reads as a
+   whole-program property, and legacy's isolation was by accident.
 5. Turn it on, together: `Approve` holds instead of refusing; `LandReport`
    accepts an assignment-carrying row (`land.go:37-39` today refuses "no
    branch"); the resident's sealed arm in `effects.ts:696`; and `Decide`/

@@ -3476,3 +3476,62 @@ instruction and no resident arm invokes the verb.
 
 NEXT (outgoing): Sealed landing, the rest of the lane — step 4's composition
 (`mc __land-sealed`, RequireHostScope, reading the landing instruction).
+
+## 2026-07-20 (later) — the corpus gap analysis, and a real hole in the sealed store
+
+Step 4's owed work was "port the 24 portable adversarial Git tests from
+`runner/image/mc-land.test.ts`". The port is under way, and the first finding is
+about the estimate itself: **24 was too high**. Steps 4a-4e absorbed most of
+those hazards organically while building the stages, so a blind port would have
+added duplicates. The real job is a gap analysis against the sealed lane's
+existing tests, and it should have been framed that way in the triage.
+
+Three fan-out agents were spawned to do that analysis in parallel. Two idled
+twice without returning anything, including after a direct request naming the
+report shape. The channel did not deliver, and the correct response was to stop
+spending turns on it: the two questions flagged as highest-value were cheap to
+answer by reading the code directly, and doing so took less time than the
+retries had. Recorded because the failure mode is invisible from the outside —
+an agent that idles looks like an agent that is working.
+
+**The one real defect the exercise found.** Legacy fenced index-visibility flags
+on BOTH sides — `mc-land.test.ts:128` for the task worktree alongside `:198` for
+the primary checkout. Only the real-repository side had been carried into the
+sealed lane. `revalidateSealedTaskStore` proves the worktree is pristine with
+`status --porcelain`, and `--assume-unchanged` or `--skip-worktree` makes status
+report a TAMPERED reviewed file as clean. The store's exact-byte config
+reproduction — which is genuinely strong, and is what makes a stat-cache evasion
+structurally impossible there — does NOT generalize to this, because these flags
+live in the index rather than the config. Mutation-proved: with the new check
+removed, both subtests fail with "accepted a sealed store with a tampered
+reviewed file hidden by --assume-unchanged".
+
+That asymmetry is worth naming as a pattern. Two fences protected the same
+property on two sides of a crossing; one side got a hardening the other did not,
+and nothing in either file pointed at the other. The sealed store is the
+attacker-shaped input of this class — it is the Worker's own output, under
+review — so if anything the weaker side had it backwards.
+
+`:90` (paths containing spaces) was ported STRUCTURALLY rather than as a case:
+the landing fixture's repository now lives under a "work space" directory, so
+every test in the file exercises the spaced path through every stage. `:882`
+(already-ancestor reviewed SHA) was ported and doubles as the retry-after-success
+case logged earlier — it refuses at the frozen-base binding, because once merged
+the reviewed commit becomes the merge base.
+
+Eleven further legacy tests were assessed as already COVERED and deliberately
+not ported; the specific citations are in PROGRESS so the next session does not
+re-derive them. Notably `:919` (refs/replace) is defended on BOTH sides already —
+`GIT_NO_REPLACE_OBJECTS=1` in the constructed env for the wrapper, and the
+sole-ref check for the sealed store.
+
+What is left is where the value is now concentrated: the TIMING cases (`:683`,
+`:413`), which concern hostile state introduced BETWEEN preflight and merge. The
+honest question for the next session is whether `mergeSealedLanding` re-checks
+anything at merge time beyond the SHA fence. If it does not, that is a gap with
+a real attack, and it is exactly the kind the stage-by-stage tests cannot see.
+
+The known onboard flake fired once during this session's full run and was
+confirmed as the documented one (exact message, then 8/8 green isolated). Its
+sighting is recorded in PROGRESS; the sealed landing work touches no onboarding
+path.
