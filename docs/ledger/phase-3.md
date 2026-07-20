@@ -2088,3 +2088,73 @@ cause are above.
 
 NEXT (moved to PROGRESS.md): close (c), then re-run the carry-through E2E to the
 rebuild receipt, then on through Verifier→Packager→land.
+
+## 2026-07-19 (later) — the carry-through's third layer: the setup-record crossing splits
+
+Layer (c) is closed. `TestProductionWorkerCompletionSealDockerBoundary` now
+passes end to end, and the deliberate red at HEAD is gone.
+
+**The bug, restated from the fix side.** `mc task setup-record` and `mc task
+accepted-seal-record` each did two things one process could not do on Darwin:
+read HOST files (the Worksource task root, and the store the setup container
+landed in it) and write the spine. Host mc has no spine path (§11.5), so it
+self-delegates the whole invocation into the helper — which carries spine and
+MC_HOME binds and no Worksource. `boundary.ResolveSource(workspaceRoot)` then
+resolved a host path from inside that container and refused on a 500ms loop with
+`mc: source "<ws>" does not exist`, churning the Verifier lease.
+
+**Why the other option was rejected outright.** The previous entry left two
+candidates: bind the Worksource into the helper, or split the verb. Binding it
+in is not merely inelegant, it is unsound — Docker Desktop exposes
+namespace-local device/inode values across a bind, so an identity attested
+inside the helper could never equal the resident's host registration. That is
+the exact crossing defect layer (a) fixed for the accepted seal (690fb08). The
+helper must not be an observer of filesystem identity at all.
+
+**The split.** The host frame (`cmd/mc/setup_record_frame.go`) attests
+everything filesystem: the canonical Worksource, the fixed non-symlink
+mode-0555 operator-owned task root, `crossCheckLandedStore`, and for the first
+task the 15-row typed skeleton walk. It then invokes the path-free spine half
+(`task setup-record-attested` / `task accepted-seal-record-attested`) with
+device/inode/owner and nothing else — through `delegate` when the build
+delegates, in-process when it does not, so the two lanes cannot diverge. The
+spine half (`verbs/setuprecordsplit.go`) binds that identity to authority it
+alone holds: the live run/task lease, `receipt.TaskID == --task`,
+`receipt.Root == the attested identity`, and for the rebuild the task-pointed
+accepted seal.
+
+**On the new `--task` input.** The host used to derive the task id from the
+spine; it now takes it from the resident's argv. That is an input, not an
+authority — every spine half refuses unless it equals its live lease's task AND
+the identity reproduces a durable receipt, so a wrong or hostile id can only
+fail closed. The one property genuinely given up is logged in
+IMPLEMENTATION-NOTES (2026-07-19): the spine half no longer independently proves
+the landed store exists, because the cross-check is host-side. That matches the
+trust boundary `mc task setup-register` already sits on.
+
+`task setup-record` carried the identical latent bug — it had simply never been
+driven through the resident under Docker — and is fixed in the same commit.
+
+**Evidence.** A control worktree at `d3471f5^` fails with exactly the documented
+refusal loop; at `d3471f5` the test passes in ~4s. The ledger's earlier "~3 min"
+was image-build time. Full Docker suite: 7/7 green. Full five-leg fast lane:
+green. The in-process compositions kept their names, messages, and behavior, so
+the verbs suite passed unchanged throughout.
+
+**A pre-existing flake, measured, not inherited silently.** While confirming the
+fix, `TestProductionWorkerCompletionSealDockerBoundary` failed 2 of 10 runs —
+always *before* the Worker completes, at `mc dispatch failed: private helper
+__dispatch-prepare failed` / `resident control hello timeout`, never in the
+rebuild. Measured at the parent commit with the rebuild wait shortened: 1 of 10
+flakes the same way. Same population; the split did not cause it, and
+`TestWalkingSkeleton` was 10/10. It belongs to the load-sensitive resident
+control family already recorded as KNOWN-FAILING (2). Recorded in PROGRESS.md
+rather than fixed here.
+
+The slice review was self-performed against the six risk lenses (authority
+laundering, lost checks, spine-half reachability, TOCTOU, argv passthrough,
+resident side); a spawned reviewer was launched but never returned a verdict, so
+no external verdict backs this slice — the next takeover review should treat it
+as unreviewed by a second party.
+
+NEXT (moved to PROGRESS.md): carry the E2E on through Verifier→Packager→land.
