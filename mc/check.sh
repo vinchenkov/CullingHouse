@@ -23,6 +23,13 @@ for tag in nightly docker_e2e test_fake_routing; do
     mise exec -- go vet -tags "$tag" ./...
 done
 
+# Same argument, one axis over: the fast lane runs on darwin, but the mc that
+# opens the spine for real runs on linux. The lock-domain guard
+# (substrate/lockdomain_linux.go, Inv. 24) therefore has its ONLY production
+# implementation on a platform this suite never compiles by default — the
+# invisible-rot shape the tagged vets above exist to prevent.
+mise exec -- env GOOS=linux GOARCH=arm64 go vet ./...
+
 # The ADR-021 D10a derivation guard reads docs/adr/017-mount-authorization.md at
 # run time, so that a destination row added to ADR-017 fails a test instead of
 # failing a container launch. Go's test cache does NOT track that read — the ADR

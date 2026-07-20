@@ -152,6 +152,12 @@ func inspectSpineReadOnly(spine string) (spineInspection, error) {
 	if spine == "" {
 		return spineInspection{}, Usagef("mc onboard home requires MC_SPINE")
 	}
+	// This inspection is the one deliberate bypass of substrate.Open (it must
+	// not WAL-mutate a foreign database), so it carries the lock-domain guard
+	// itself. Inv. 24 binds every open, including read-only ones.
+	if err := substrate.GuardLockDomain(spine); err != nil {
+		return spineInspection{}, Domainf("%v", err)
+	}
 	st, err := os.Stat(spine)
 	if os.IsNotExist(err) {
 		return spineInspection{}, nil

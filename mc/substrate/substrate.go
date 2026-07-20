@@ -35,6 +35,9 @@ var Schema string
 // not work on ":memory:" databases, and the tests deliberately use a temp
 // file for that reason.
 func Open(path string) (*sql.DB, error) {
+	if err := GuardLockDomain(path); err != nil {
+		return nil, err
+	}
 	dsn := fmt.Sprintf("file:%s?%s", path, strings.Join([]string{
 		"_pragma=busy_timeout(5000)",
 		"_pragma=journal_mode(WAL)",
