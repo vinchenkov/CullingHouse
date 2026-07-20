@@ -375,3 +375,41 @@ date/title; delete a line here when its slice lands.
   refuse rather than archive.
 - Needs your decision: no — but the silent archive is the sharpest edge found
   this phase, and the landing slice is now the top `NEXT:`.
+
+## 2026-07-20 — the landing mount table has two producible rows, not four
+- Where: sealed-landing steps 1-2 (`mc/verbs/landingplan.go`), ADR-017:699-702.
+  The outgoing `NEXT:` in PROGRESS.md planned "producers for the four typed
+  kinds `KindLandingWorksource`, `KindLandingMissionControlCover`,
+  `KindLandingTaskRoot`, `KindLandingEnvelope`".
+- Gap: two of those four rows have no host source at attest time. ADR-017:700
+  calls `/repo/source/.mission-control` a GENERATED empty directory — the same
+  word :692 uses for the setup class's cover, which `resident/src/effects.ts`
+  creates per run as `<run-id>.setup-cover` immediately before the container
+  launch. `/mc/landing.json` is generated the same way. Dispatch attest captures
+  device/inode/owner evidence for a plan entry; it creates nothing and runs
+  before the resident does. So neither row can be produced as a typed root, and
+  a fourth-kind producer would have had to either fabricate an identity or
+  create host state inside attest.
+- Choice: mark both rows `ResidentMaterialized` in `landingPlanRows()` — the
+  table stays ADR-017's faithful four — and exclude them from
+  `validLandingPlanDestination`, so dispatch never carries them as bind entries.
+  `resolveLandingRoots` produces the two host-backed kinds only. This is the
+  conservative option: (a) fail-closed is preserved, since a request for either
+  generated kind finds no authorized root and denies; (b) it deviates least,
+  because it is what the ADR's own word "generated" already means and it copies
+  the division `/mc/setup.json` has had since the D5 slice; (c) it is trivially
+  reversible — a later slice that finds an attest-time identity for the cover
+  clears one bool and adds a producer arm.
+- Consequence, stated rather than hidden: because the cover is not a plan entry,
+  the PLAN cannot express that the sealed task bytes are unreachable through the
+  RW `/repo/source` alias (ADR-017:700). The plan authorizes the grant; only the
+  realized mount table establishes containment. This does not weaken anything
+  that exists — the RO-alias property was already a Docker-lane obligation for
+  exactly this reason (a plan-level `:ro` assertion cannot prove it) — but it
+  does mean the resident's obligation to PLACE the cover has to be carried by
+  the landing instruction and validated at the helper boundary. That is owed to
+  the envelope slice (step 3) and must not be skipped: a landing container run
+  without the cover would expose the sealed root RW through the source alias.
+- Spec impact: none. ADR-017's table is right; `NEXT:` was a plan written before
+  the resident's cover mechanism was re-read.
+- Needs your decision: no.
