@@ -496,13 +496,22 @@ BEGIN
     SELECT RAISE(ABORT, 'approval requires a live Review Packet (Inv. 11, Inv. 17)');
 END;
 
+-- A task headed for a merge may not be approved without the two facts the
+-- merge needs. There are two branch homes: `tasks.branch` for the legacy
+-- worktree lane, and `task_assignments.branch` for a sealed standalone task,
+-- which is branchless in `tasks` by construction (ADR-016 D6 closes the
+-- `--status worked --branch` terminal to assigned tasks). Either one arms the
+-- fence; a row with neither is an artifact-plane deliverable that never merges
+-- and has no landing facts to require.
 CREATE TRIGGER tasks_approve_requires_landing_fence
 BEFORE UPDATE OF decision ON tasks
-WHEN NEW.decision = 'approved' AND NEW.branch IS NOT NULL AND NEW.branch <> ''
+WHEN NEW.decision = 'approved'
+  AND ((NEW.branch IS NOT NULL AND NEW.branch <> '')
+       OR EXISTS (SELECT 1 FROM task_assignments a WHERE a.task_id = NEW.id))
   AND (NEW.verified_sha IS NULL OR NEW.verified_sha = ''
        OR NEW.target_ref IS NULL OR NEW.target_ref = '')
 BEGIN
-    SELECT RAISE(ABORT, 'branch approval requires verified_sha and target_ref (§7 landing fence)');
+    SELECT RAISE(ABORT, 'landing approval requires verified_sha and target_ref (§7 landing fence)');
 END;
 
 -- Packets are born live, into the queue (Inv. 11): a born-archived packet

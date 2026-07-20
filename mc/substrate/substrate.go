@@ -79,7 +79,7 @@ func Init(db *sql.DB) error {
 // activity/outbox replay-key columns, whose v2 hex CHECKs hold only for TEXT.
 // Version 5 adds the durable run/task-fenced first-task setup receipt.
 // Version 10 adds the durable verifier-run-fenced accepted-seal rebuild receipt.
-const CurrentSchemaVersion = 10
+const CurrentSchemaVersion = 11
 
 // migrationV1ToV2 is ADR-016 Decision 2's storage step, frozen as history.
 //
@@ -448,6 +448,28 @@ CREATE TRIGGER accepted_seal_rebuild_receipts_no_delete BEFORE DELETE ON accepte
 BEGIN SELECT RAISE(ABORT, 'accepted seal rebuild receipts are durable recovery evidence (ADR-016 D6)'); END;
 `
 
+// migrationV10ToV11 widens the §7 approve landing fence to the second branch
+// home. The fence was written when `tasks.branch` was the only one, so it
+// skipped every sealed standalone task — which is branchless in `tasks` by
+// construction and carries its branch in `task_assignments` — and would let an
+// approved sealed task through with no verified SHA or target ref at all. The
+// trigger is dropped and recreated because SQLite has no ALTER TRIGGER; the
+// recreated text must stay byte-identical to schema.sql so a migrated spine and
+// a fresh one are indistinguishable.
+const migrationV10ToV11 = `
+DROP TRIGGER tasks_approve_requires_landing_fence;
+CREATE TRIGGER tasks_approve_requires_landing_fence
+BEFORE UPDATE OF decision ON tasks
+WHEN NEW.decision = 'approved'
+  AND ((NEW.branch IS NOT NULL AND NEW.branch <> '')
+       OR EXISTS (SELECT 1 FROM task_assignments a WHERE a.task_id = NEW.id))
+  AND (NEW.verified_sha IS NULL OR NEW.verified_sha = ''
+       OR NEW.target_ref IS NULL OR NEW.target_ref = '')
+BEGIN
+    SELECT RAISE(ABORT, 'landing approval requires verified_sha and target_ref (§7 landing fence)');
+END;
+`
+
 // Migrate brings an existing spine up to CurrentSchemaVersion, reporting
 // whether it changed anything. It is the "present with an older schema →
 // migrate" arm of §16.4; the caller owns the "absent on a non-empty volume →
@@ -473,7 +495,7 @@ func Migrate(db *sql.DB) (bool, error) {
 		return false, err
 	}
 
-	steps := map[int]string{1: migrationV1ToV2, 2: migrationV2ToV3, 3: migrationV3ToV4, 4: migrationV4ToV5, 5: migrationV5ToV6, 6: migrationV6ToV7, 7: migrationV7ToV8, 8: migrationV8ToV9, 9: migrationV9ToV10}
+	steps := map[int]string{1: migrationV1ToV2, 2: migrationV2ToV3, 3: migrationV3ToV4, 4: migrationV4ToV5, 5: migrationV5ToV6, 6: migrationV6ToV7, 7: migrationV7ToV8, 8: migrationV8ToV9, 9: migrationV9ToV10, 10: migrationV10ToV11}
 	changed := false
 	for version < CurrentSchemaVersion {
 		step, ok := steps[version]
