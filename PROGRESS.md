@@ -10,7 +10,7 @@ Access does NOT fix it — the failure precedes any policy lookup. Symptom:
 `stat` works, reads return `Operation not permitted`, git says
 `Unable to read current working directory`.
 
-LAST GREEN SHA: 485a7f2 (local; the operator pushes manually — decided 2026-07-14. Agents: do not push.)
+LAST GREEN SHA: ac6e0fa (local; the operator pushes manually — decided 2026-07-14. Agents: do not push.)
 
 PHASES PASSING: Phase 0 COMPLETE (S1–S8 all green, no fallback ADRs; only operator-leg deferrals remain); Phase 1 COMPLETE (1a substrate 172; 1b walking skeleton reviewed-and-fixed — fake-harness 43, agent-runner 13, runner/image 40, resident 42, dispatch + cmd/mc suites; Docker e2e PASS ×4 total); Phase 2 COMPLETE for every unparked acceptance line (domain/§18 surface, deterministic split-brain convergence, bounded honesty + five mutants, tagged dispatch/metamorphic/twin-spine lifecycle properties; the initiative-wave CLI is no longer isolated — ADR-020 landed 2026-07-14 and closed the last Phase 2 acceptance line)
 KNOWN-FAILING: `TestOnboardConcurrentFreshHomeNeverDeletesTheWinner` (mc/verbs),
@@ -475,8 +475,10 @@ kept below. Operator legs that remain open are under `## Parked`, not here.
         identity reproduces the durable receipt. `setup-record` had the
         identical latent bug and is fixed with it. Full Docker suite 7/7;
         control worktree at the parent commit reproduces the exact old refusal.
-        Deviation logged (2026-07-19). NOT reviewed by a second party — the
-        spawned reviewer never returned a verdict
+        Deviation logged (2026-07-19). Spawned adversarial review:
+        PASS-WITH-MINORS — 4 majors refuted (no authority laundering via the
+        new `--task`, no lost check, no widened principal set), 5 minors, all
+        closed or already logged (ac6e0fa)
 - [ ] Phase 4 — E2E control loops (six scenario families)
 - [ ] Phase 5 — Real-subscription acceptance (operator-scheduled)
 - [ ] Release prep (after Phase 5): swap the repo's construction face for
@@ -544,9 +546,6 @@ TestProductionWorkerCompletionSealDockerBoundary ./e2e/... || break; done`.
 Owed, not blocking: the clearing mechanism chosen in (b) (in-container replace,
 over the host exact-empty primitive or staging-then-swap) is a design the ADRs
 delegate and mandate-without-specifying; it has a code comment but no ADR.
-The setup-record split (d3471f5) is UNREVIEWED by a second party — the spawned
-reviewer never returned a verdict, so the six risk lenses were self-checked
-only; the next takeover review should cover that range.
 This file is ~550 lines against §5's ~200 target, nearly all of it the Phase 3
 sub-checklist. That checklist is live acceptance state while Phase 3 is open, so
 it compacts at the phase boundary (the precedent Phases 0–2 set), not before.

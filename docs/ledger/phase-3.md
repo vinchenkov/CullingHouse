@@ -2158,3 +2158,48 @@ no external verdict backs this slice — the next takeover review should treat i
 as unreviewed by a second party.
 
 NEXT (moved to PROGRESS.md): carry the E2E on through Verifier→Packager→land.
+
+## 2026-07-19 (later still) — the split's adversarial review
+
+The spawned reviewer that went silent during the slice was re-issued the task
+once it reported idle, and returned: **PASS-WITH-MINORS**.
+
+All four majors REFUTED, each with the trace that kills it:
+- A hostile `--task` cannot mutate the spine or launder wrong-root evidence, on
+  either verb. `RecordFirstTaskSetupClosureAttested` derives the task from
+  `runs.subject` of a live standalone Worker AND re-proves the lock row names
+  that exact run/subject pair before comparing `receipt.TaskID` and
+  `receipt.Root`; the accepted-seal half opens with `liveAcceptedSealRebuildTask`
+  plus a `domain.Fence` match. The host frame is stat/read-only, so a wrong
+  `--task` costs a refusal and nothing else.
+- No lost check: the reviewer traced the union and found every pre-commit check
+  present in exactly one of the two halves, no orphan. The 15-row walk and the
+  same-path-swap guard both survive; the guard's baseline moved from the durable
+  receipt to the host-observed identity, but the spine half then equates that
+  identity with the receipt, so the equality is transitive.
+- No widened principal set: `RequireHostScope` refuses anything carrying
+  `/mc/run.json`, and the reviewer confirmed no agent container binds the Docker
+  socket. What remains is the host and the helper — exactly the set that could
+  already run the whole verb.
+- Two of the new checks are *stricter* than what they replaced:
+  `ReadFirstTaskSetup` is run-fenced where the old accepted-seal path was only
+  task-keyed, and the accepted-seal half now does its identity comparison,
+  seal comparison and insert inside one transaction where the old form used two.
+
+Five minors confirmed. Three needed no code — the dropped `rows` field and the
+widened attest→commit TOCTOU window were already logged in
+IMPLEMENTATION-NOTES, and the usage line had been corrected in 485a7f2, which
+the reviewer's d3471f5-only scope could not see. Two were real and are fixed in
+ac6e0fa: `validateSetupResult` had drifted behind the root attest in both
+in-process compositions (so a call with both a malformed result and an absent
+root named the root — making d3471f5's "keep their names, messages and
+behavior" claim untrue), and the spine half let `--device`/`--inode` fall
+through empty to surface as a receipt mismatch rather than the usage error they
+are. The usage line now also names the `-attested` halves it actually
+dispatches.
+
+Worth recording for the next reviewer: the one thing this review could not do
+was run anything — it read statically, by its task prompt. The two confirmed
+minors were both ordering/validation drift invisible to the passing suites,
+which is exactly what static reading is good at and what the green lane was
+never going to catch.
