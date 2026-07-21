@@ -4160,3 +4160,66 @@ refusals via `refusal.CodeProjectionUnavailable`, plan literal
 `{Version: 1, Entries: []{}, Landing: &plan}` because `validatePrivateMountPlan`
 hard-refuses a zero Version or a nil Entries. Then 8-15, then the switch. Do NOT
 run step 16 before 15 is green.
+
+## 2026-07-21 — micro-steps 7-11: the lane is complete but unreachable
+
+Attest, commit, the driver hook, the private-frame guard, and the prepare fork.
+The sealed lane is now end-to-end code; the only thing missing is anything that
+selects a sealed row, which is step 16.
+
+**Attest reads no routing, and that had to be tested rather than asserted.**
+`cli_test.go:1193-1206` looks like it guards this and does not: its fixture is
+branch-carrying, so it satisfies `LandingPending` not `SealedLandingPending`,
+returns from prepare as `final`, and never reaches any attest leg at all. It is
+green by construction and would stay green if the sealed lane grew a routing
+dependency tomorrow. `TestDispatchAttestLandingNeverReadsRouting` is the real
+fence. `route` and `routingDigest` stay zero as the honest encoding of "no
+routing input" — not an omission for someone to fill in later.
+
+**Commit's fences are pure and tested one drift at a time.** The value is in each
+firing for its OWN reason; a table that only proves "the set rejects garbage"
+would pass with half the fences deleted. The host half is deliberately not
+rechecked inside the transaction — the pre-commit re-attest covered it and D1
+forbids a host read there. That is stated in the code because the absence looks
+like an oversight.
+
+**`RefusalSubjectlessPipeline`, not `RefusalSubjectTask`.** `domain.Block` is
+reachable only from a candidate-class refusal naming a subject task, so the
+subjectless kind makes a durable blocked row unreachable BY TYPE rather than by
+an enumeration of which refusal codes happen to be stale-class today. The cost
+is that a diverged target ref is loud only in the health detail text and not in
+an indexed column; that trade was taken deliberately and is reversible.
+
+Two things worth not re-deriving:
+
+- **The pre-commit recheck's moved-tip test was passing for the wrong reason.**
+  Before the selector landed, re-attesting a landing through `dispatchAttest`
+  ALSO produced a stale refusal — so the test that was supposed to prove the
+  fence proved only that something failed. `TestLandingRecheckAcceptsAnUnmovedHost`
+  is the one that actually distinguishes them. A refusal-expecting test is not
+  evidence until the success case is pinned beside it.
+- **The first draft of the private-frame test was a tautology** — it
+  re-implemented the guard inline and asserted on its own copy. The guard is now
+  a named function (`privateFrameRefusesLanding`) so the test exercises real
+  code. Worth remembering as a shape: a guard written inline at its call site is
+  a guard that invites a fake test.
+
+The private frame refuses a landing outright rather than serializing one.
+`privateCandidateFromPrepared` is only ever handed `prepared.candidate`, which a
+landing leaves nil, so the far side would receive a candidate whose `Spawn` is
+nil and deref it unguarded. That guard is also the standing tripwire on the
+lane's whole safety argument.
+
+`dispatchLandingRound` is a separate function rather than conditionals inside the
+spawn round, so no arrangement of flags can attest a landing and commit it as a
+spawn.
+
+Fixture note that cost a cycle: spine triggers require tasks to be born
+`proposed` and to have a live Review Packet before approval. `dvInsertTask` plus
+an explicit packet insert plus an UPDATE is the working recipe
+(`dispatchverb_test.go:286-297`); a direct INSERT of an approved row is refused.
+
+NEXT (outgoing): micro-step 12 (the sealed twin of the broken-routing test — no
+production change), then 13 `LandReport` widening, 14 `LandingBranch()`, 15 the
+resident's routing discriminator + absence gate + exit-code classification. Step
+16 is the switch and MUST NOT run before 15 is green.
