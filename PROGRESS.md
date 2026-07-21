@@ -6,10 +6,13 @@ REPO PATH: `~/dev/ai/homie`. Never relocate this repo into `~/Documents`,
 `~/Desktop`, or `~/Downloads`: macOS TCC can revoke an agent session's own
 filesystem access there during fan-out. Full Disk Access does not fix it.
 
-LAST GREEN SHA: `a4246e9` — five-leg fast lane green. Docker E2E last 8/8 at
-`f21f11c` (2026-07-21), WITH the sealed landing lane live — so activation
-disturbed no existing crossing. Tag compile/vet lanes (`docker_boundary`,
-`docker_e2e`, `test_fake_routing`) also clean at that SHA.
+LAST GREEN SHA: `dbfc553` — five-leg fast lane green. Docker E2E 8/8 at `dbfc553`, INCLUDING
+the sealed landing walk (`packaged -> approve -> merge -> archived` with a real
+`--no-ff` merge). `docker_boundary` 9/9 at the same SHA. All three tag
+compile/vet lanes clean. Production image `mc-prod`
+`sha256:8f12cc425a6d8f37e364b1627bb0e349a7fdbccf59035a25f58a57224a044a02`,
+arm64/linux, Docker Desktop 29.4.0 aarch64, native (no --platform, no
+emulation).
 
 The operator pushes manually; agents do not push.
 
@@ -189,4 +192,4 @@ advancing to Phase 4.
   canonical landing row derived; use the assignment's frozen `target_ref` and
   refuse divergence. Details are in the Phase 3 ledger.
 
-NEXT: Phase 3 completion lane. The sealed landing lane is DONE and proven end to end: the E2E walks `packaged -> approve -> merge -> archived` with a real merge, through the Darwin helper frame that production uses. Green: five-leg fast lane, `docker_e2e` 8/8, `docker_boundary` nine rows, all three tag vet lanes. Production image `mc-prod` digest `sha256:8f12cc42`, arm64/linux. CONTINUE AT: the orphan-sweep row for landing residue — every landing deliberately leaves its `.cover` directory under `MC_HOME/runs`, deferred by `effects.ts` to "a later tick responsible for landing residue" (ADR-016:344-349), and that sweep was never written. BLOCKER for declaring Phase 3 done regardless of any landing work: the parked gateway/forbidden-env question — `doctor` names three Phase-3-owned deferrals and §8 forbids any. Read `docs/ledger/phase-3.md` (2026-07-21) first.
+NEXT: Phase 3 is DONE except for the parked scope question. The sealed landing lane is complete and proven end to end on the real platform, and its acceptance rows are green: `docker_boundary` 9/9 (final-uid VirtioFS canary, nested-cover shadowing, applied envelope inspect, `--network none`, the realized four-row mount table plus in-container mode governance, production-image fake-route refusal, landing host-scope inversion, landing-program fence order), `docker_e2e` 8/8 including the merge walk, five-leg fast lane, all tag vet lanes. Residue cleanup closed. THE ONE REMAINING BLOCKER IS OPERATOR-ONLY and is under `## Parked`: the gateway and forbidden-env mechanisms of §3 are UNIMPLEMENTED, and `doctor` names three Phase-3-owned deferrals while §8 forbids any at completion. Phase 3 cannot be declared done, and Phase 4 must not start, until that is answered — no further implementation resolves it. Remaining non-blocking obligations are in `IMPLEMENTATION-NOTES.md` (2026-07-21): the unenforced 15-minute landing deadline, `SealedLandingResult` having no spine consumer, and the ADR-016 D7 label non-conformance in setup/legacy-land.
