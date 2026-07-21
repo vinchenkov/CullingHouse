@@ -1250,7 +1250,6 @@ func TestProductionWorkerCompletionSealDockerBoundary(t *testing.T) {
 		t.Fatalf("packager run %s collides with an earlier run", packagerRun)
 	}
 
-
 	// The sealed LANDING walk (packaged -> approve -> merge -> archived) belongs
 	// here and is NOT yet written, because it cannot pass: `mc dispatch` on
 	// Darwin routes through the private helper frame, which refuses a landing
