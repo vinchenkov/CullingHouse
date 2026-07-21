@@ -1025,8 +1025,11 @@ func TestProductionWorkerCompletionSealDockerBoundary(t *testing.T) {
 `), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	// The Worker makes a REAL commit before sealing. Without it the sealed HEAD
+	// equals the base, the eventual landing merge is trivially up-to-date, and
+	// the walk would prove the lane runs without proving it MERGES anything.
 	sealBehavior := `{"steps":[
-		{"do":"exec","command":"mc complete \"$MC_SUBJECT_ID\" --run \"$MC_RUN_ID\" --seal-request ` + sealRequest + `"},
+		{"do":"exec","command":"set -e; cd /workspace/source; printf 'worker change\\n' > WORKED.md; git add -A; git -c user.email=w@example.invalid -c user.name=worker commit -qm 'worker change'; mc complete \"$MC_SUBJECT_ID\" --run \"$MC_RUN_ID\" --seal-request ` + sealRequest + `"},
 		{"do":"succeed","output":"sealed"}]}`
 	if err := os.WriteFile(filepath.Join(f.base, "behaviors", "worker-seal.json"), []byte(sealBehavior), 0o644); err != nil {
 		t.Fatal(err)
@@ -1188,8 +1191,14 @@ func TestProductionWorkerCompletionSealDockerBoundary(t *testing.T) {
 	// like a dirty one).
 	f.waitForTaskStatus(taskID, "verified", 120*time.Second)
 	verified := f.mcOK("", "task", "get", strconv.FormatInt(taskID, 10))
-	if got, _ := verified["verified_sha"].(string); got != seeded.BaseSHA {
-		t.Fatalf("verified_sha = %q, want the accepted sealed commit %q", got, seeded.BaseSHA)
+	// The Worker committed, so the verified commit must have ADVANCED past the
+	// assignment's frozen base. Asserting inequality first is what keeps this
+	// honest: if the behavior ever stopped committing, an equality check
+	// against the base would still pass and the landing below would silently
+	// become a no-op merge.
+	sealedSHA, _ := verified["verified_sha"].(string)
+	if sealedSHA == "" || sealedSHA == seeded.BaseSHA {
+		t.Fatalf("verified_sha = %q, want a commit past the frozen base %q", sealedSHA, seeded.BaseSHA)
 	}
 
 	// The same resident carries on once more: `verified` dispatches the
@@ -1240,6 +1249,15 @@ func TestProductionWorkerCompletionSealDockerBoundary(t *testing.T) {
 	if packagerRun == workerRun || packagerRun == rebuildRun {
 		t.Fatalf("packager run %s collides with an earlier run", packagerRun)
 	}
+
+
+	// The sealed LANDING walk (packaged -> approve -> merge -> archived) belongs
+	// here and is NOT yet written, because it cannot pass: `mc dispatch` on
+	// Darwin routes through the private helper frame, which refuses a landing
+	// candidate outright (dispatchprivate.go privateFrameRefusesLanding). The
+	// lane is live on the native single-process path only. Repro, evidence and
+	// the intended fix: docs/ledger/phase-3.md (2026-07-21, "the lane is live
+	// on the wrong platform").
 }
 
 // ───────────────────────────── fixtures ─────────────────────────────────
