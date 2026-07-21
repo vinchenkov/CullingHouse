@@ -6,7 +6,7 @@ REPO PATH: `~/dev/ai/homie`. Never relocate this repo into `~/Documents`,
 `~/Desktop`, or `~/Downloads`: macOS TCC can revoke an agent session's own
 filesystem access there during fan-out. Full Disk Access does not fix it.
 
-LAST GREEN SHA: `cc81501` — five-leg fast lane green. Docker E2E last 8/8 at
+LAST GREEN SHA: `65b758e` — five-leg fast lane green. Docker E2E last 8/8 at
 `f21f11c` (2026-07-21), WITH the sealed landing lane live — so activation
 disturbed no existing crossing. Tag compile/vet lanes (`docker_boundary`,
 `docker_e2e`, `test_fake_routing`) also clean at that SHA.
@@ -184,4 +184,4 @@ advancing to Phase 4.
   canonical landing row derived; use the assignment's frozen `target_ref` and
   refuse divergence. Details are in the Phase 3 ledger.
 
-NEXT: Phase 3 completion lane. THREE structural §8 gaps found; two now closed. (1) The `docker_boundary` suite did not exist — created, with six landing/envelope rows green. (2) The production image did not exist — `runner/image/build-prod.sh` builds `mc-prod` (no fake route, untagged), digest `sha256:8f12cc42`, arm64/linux; row 8's landing scope inversion is proved inside it. (3) Gateway + forbidden-env are unimplemented — PARKED, and `doctor` confirms it. Also closed: row 7's class-divergence guard, row 1's landing-plane blocked floor. CONTINUE AT: the realized four-row landing mount table against `docker inspect` (argv is pinned host-side, the applied table is not), then the sealed production E2E through `packaged -> approve -> merge -> archived`. Read `docs/ledger/phase-3.md` (2026-07-21) first — it records three vacuous-test traps hit this session, one proposed test that would have re-litigated a rejected design, and one finding that had to be corrected.
+NEXT: Phase 3 completion lane. `mc/boundarydocker` holds nine green tests across four files (it did not exist at session start): final-uid VirtioFS canary, nested-cover shadowing, applied envelope inspect, `--network none`, the realized four-row mount table plus in-container mode governance, the production image's fake-route refusal, landing's host-scope inversion, and the landing program's fence ORDER. Production image `mc-prod` (untagged, no fake route) digest `sha256:8f12cc42`, arm64/linux. CONTINUE AT: the full `packaged -> approve -> merge -> archived` walk with a REAL merge — the only remaining landing row that proves the lane does its JOB rather than that it refuses correctly. It belongs in `mc/e2e` (tag `docker_e2e`), which already drives the sealed pipeline to `packaged` and owns the machinery for a task-local bare store carrying a reviewed commit; `mc/boundarydocker`'s probes stop at the sealed-store fence for exactly that reason. BLOCKER for declaring Phase 3 done, regardless of landing rows: the parked gateway/forbidden-env question — `doctor` names three Phase-3-owned deferrals and §8 forbids any. Read `docs/ledger/phase-3.md` (2026-07-21) first.

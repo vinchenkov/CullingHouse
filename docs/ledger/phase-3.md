@@ -4621,3 +4621,58 @@ then the sealed production E2E through `packaged -> approve -> merge ->
 archived`. The three §8 structural gaps found so far — no `docker_boundary`
 suite, no production image, no gateway/forbidden-env — are all recorded; the
 first two are now closed.
+
+## 2026-07-21 (cont.) — the mount table is real, and the landing program has now run
+
+Row 10 closed and the fixed landing program executed for the first time.
+
+**Row 10, the realized mount table.** The resident compares docker ARGV to a
+literal, which proves the table was REQUESTED. `docker inspect` now proves it
+was APPLIED, and an in-container probe proves the access MODES actually govern a
+process — the part argv can never show, since a bind requested `:ro` that the
+runtime silently mounted RW is invisible to every host-side test in the tree.
+The count assertion carries as much weight as the contents: "exact minimal
+table" is a CEILING, so a fifth bind is a violation even with all four required
+rows correct.
+
+The mode probe is deliberately two-sided (it requires BOTH `SOURCE_RW` and
+`TASK_RO`), so it cannot pass if the runtime made everything uniformly RO or RW.
+After three vacuous-test traps this session, one-sided probes are no longer
+trusted here.
+
+**`mc __land-sealed` has now run inside a container.** It never had. Its entire
+coverage was host-side unit tests of the functions it calls, which cannot show
+that the baked binary, the mounted envelope, and the realized `/repo` plane
+agree with one another. Walked by probe, it behaves exactly as designed: parses
+the envelope, then refuses fail-closed at each fence with a diagnostic naming
+what was missing.
+
+  1. no cover → "landing cover is absent; the sealed bytes would be reachable
+     through the source alias"
+  2. cover bound → "sealed store config is unreadable: open /repo/task/git/config"
+
+The test pins the ORDER, not merely the refusals. The cover is checked BEFORE
+the sealed store is opened, so a landing never touches the reviewed bytes until
+it has proved they are unreachable through the writable source alias. A
+reordering would still refuse every malformed landing and would silently drop
+that guarantee. The second arm asserts the cover fence STOPS firing and the
+sealed-store fence takes over — which is how we know the first refused for its
+own reason rather than because the envelope was malformed overall.
+
+`mc/boundarydocker` now holds nine tests across four files, all green.
+
+NEXT (outgoing): the one remaining landing obligation is the full
+`packaged -> approve -> merge -> archived` walk with a REAL merge — the fences
+above stop at the sealed store because building one needs a task-local bare
+store carrying a reviewed commit whose closure digest and repo uuid match the
+envelope. That machinery already exists in the e2e suite (`mc/e2e`, tag
+`docker_e2e`), which drives the sealed pipeline to `packaged` today, so the walk
+belongs there as an extension rather than as new fixtures in
+`mc/boundarydocker`. It is the last row that would prove the lane does its JOB
+rather than that it refuses correctly.
+
+Still parked and unanswered: the gateway / forbidden-env scope question. `mc
+doctor` in the production image names three Phase-3-owned deferrals
+(`container-runtime`, `gateway`, `runtime-auth`), and §8 forbids any at
+completion — so Phase 3 cannot be declared done regardless of how many landing
+rows go green.
