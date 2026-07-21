@@ -410,8 +410,14 @@ func TestStep0c_BlockedLandingPending_DoesNotRetryUntilUnblocked(t *testing.T) {
 }
 
 func TestStep0c_ApprovedBranchlessRow_NeverLands(t *testing.T) {
-	// Defensive: an artifact-plane deliverable is archived synchronously at
-	// approve and carries no branch; no land effect may exist for it.
+	// Defensive: an artifact-plane deliverable — branchless AND UNASSIGNED — is
+	// archived synchronously at approve, and no land effect may exist for it.
+	//
+	// The "and unassigned" half is load-bearing since the sealed lane opened.
+	// Branchlessness alone no longer implies the artifact plane: a sealed row is
+	// branchless in `tasks` by construction and carries its branch on the
+	// immutable assignment instead. This fixture's Sealed is nil, so it is a
+	// genuine artifact-plane row and the assertion below is unchanged.
 	rec := recs([]Task{
 		tk(1, StatusSeeded),
 		tk(2, StatusPackaged, decided(DecisionApproved, at(-30))), // no branch

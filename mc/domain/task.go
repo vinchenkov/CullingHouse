@@ -417,29 +417,45 @@ func Approve(ctx context.Context, q Q, taskID int64) (bool, error) {
 	// An assigned (sealed) standalone task is branchless in `tasks` by
 	// construction: its branch lives in `task_assignments.branch`, because the
 	// only writer of `tasks.branch` is the `--status worked --branch` terminal
-	// that ADR-016 D6 closes to assigned tasks. Without this fence the
-	// branchless arm below would classify it as an artifact-plane deliverable
-	// and archive it — the operator approves a merge, the task disappears, and
-	// main is never touched, silently. Sealed landing (ADR-017:1226-1240) is
-	// not implemented, so refuse loudly and strand nothing: the seal, the
-	// packet, and the task all survive for the landing slice to pick up.
+	// that ADR-016 D6 closes to assigned tasks. So `branch == ""` does NOT mean
+	// "artifact-plane deliverable" for such a row, and the archiving arm below
+	// must not reach it: archiving would make the operator's approval of a
+	// merge disappear the task without ever touching main.
+	//
+	// It used to refuse outright, because sealed landing did not exist. It does
+	// now, so the row instead HOLDS for landing exactly as a branch-carrying
+	// one does — approved, unarchived, and owed the §10 step (0c) land effect
+	// that the sealed lane selects.
+	assigned := false
 	if !r.Branch.Valid || r.Branch.String == "" {
-		var assigned int
+		var present int
 		if err := q.QueryRowContext(ctx,
-			`SELECT EXISTS(SELECT 1 FROM task_assignments WHERE task_id = ?)`, taskID).Scan(&assigned); err != nil {
+			`SELECT EXISTS(SELECT 1 FROM task_assignments WHERE task_id = ?)`, taskID).Scan(&present); err != nil {
 			return false, err
 		}
-		if assigned != 0 {
-			return false, Errf(CodeLandingFence,
-				"task %d carries a sealed closure assignment and cannot be approved until sealed landing exists (ADR-017:1226-1240); approving it now would archive it without ever merging", taskID)
-		}
+		assigned = present != 0
+	}
+	// The same landing fence the branch-carrying arm above applies, for the
+	// same reason and against a different branch home. Without it an assigned
+	// row could be approved while missing the two facts SealedLandingPending
+	// requires — and would then be approved, unarchived, and permanently
+	// invisible to the landing lane. Silently unlandable is the precise failure
+	// this slice exists to remove, so it refuses here instead. The v11
+	// substrate trigger is the backstop; naming it here names the rule.
+	if assigned && (!r.VerifiedSHA.Valid || r.VerifiedSHA.String == "" ||
+		!r.TargetRef.Valid || r.TargetRef.String == "") {
+		return false, Errf(CodeLandingFence,
+			"task %d carries a sealed closure assignment and requires verified_sha and target_ref before approval (§7 landing fence)", taskID)
 	}
 	if _, err := q.ExecContext(ctx, `
 		UPDATE tasks SET decision = 'approved', decided_at = datetime('now')
 		WHERE id = ?`, taskID); err != nil {
 		return false, err
 	}
-	if !r.Branch.Valid || r.Branch.String == "" {
+	// Branchless AND unassigned is the artifact-plane deliverable: nothing to
+	// merge, so approve archives it synchronously. An assigned row has a branch
+	// home and falls through to hold for landing.
+	if (!r.Branch.Valid || r.Branch.String == "") && !assigned {
 		if _, err := q.ExecContext(ctx,
 			`UPDATE tasks SET archived = 1 WHERE id = ?`, taskID); err != nil {
 			return false, err

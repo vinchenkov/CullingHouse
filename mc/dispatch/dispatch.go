@@ -567,7 +567,11 @@ func nextLanding(rec Records) (Task, bool) {
 		// Deliberately no worksourceActive gate: §10 (0c) has no status
 		// qualifier, archive is terminal, and no unpause verb exists — a
 		// gated landing would strand approved work and its Inv. 18 slot.
-		if t.LandingPending() {
+		// The two landing lanes, keyed on their two branch homes. They
+		// partition by construction — `tasks.branch`'s only writer is closed to
+		// assigned tasks — so no row satisfies both, and the ordering key below
+		// interleaves them into one deterministic drain order.
+		if t.LandingPending() || t.SealedLandingPending() {
 			cand = append(cand, t)
 		}
 	}

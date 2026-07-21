@@ -813,30 +813,78 @@ func TestApprove(t *testing.T) {
 	// task-local bare store, and its branch name in `task_assignments.branch` —
 	// NOT in `tasks.branch`, whose only writer (complete.go:163) is the
 	// `--status worked --branch` terminal that D6 closes to assigned tasks.
-	// Before this fence, Approve saw branch=NULL, classified the task as an
+	// Before the fence, Approve saw branch=NULL, classified the task as an
 	// artifact-plane deliverable, and ARCHIVED it: the operator approved a
 	// merge, the task vanished, and main was never touched (Inv. 25 says
 	// merging always requires approval; it was silently the case that approval
-	// never produced a merge). Sealed landing (ADR-017:1226-1240) is
-	// unimplemented, so the honest answer is a loud refusal, not a silent
-	// archive that strands the work.
-	t.Run("assigned_sealed_task_refuses_rather_than_archiving", func(t *testing.T) {
+	// never produced a merge).
+	//
+	// The fence's first form was a loud refusal, because sealed landing did not
+	// exist. It does now, so the row HOLDS for landing instead — approved,
+	// unarchived, packet intact, and owed the §10 step (0c) land effect the
+	// sealed lane selects. The archive hole stays closed either way; what
+	// changed is that the work now has somewhere to go.
+	t.Run("assigned_sealed_task_holds_for_landing", func(t *testing.T) {
 		db := openSpine(t)
 		id := mkTask(t, db, "task", "packaged")
 		mkPacket(t, db, id)
 		mkAssignment(t, db, id)
-		wantCode(t, db, domain.CodeLandingFence, func(ctx context.Context, q domain.Q) error {
-			_, err := domain.Approve(ctx, q, id)
+		// The two landing facts the §7 fence requires of any branch home. The
+		// v11 substrate trigger refuses the approve without them, so a fixture
+		// missing them would fail for a reason unrelated to this test.
+		mustExec(t, db, `UPDATE tasks SET verified_sha = ?, target_ref = 'main' WHERE id = ?`,
+			strings.Repeat("a", 40), id)
+
+		var archived bool
+		mustTx(t, db, func(ctx context.Context, q domain.Q) error {
+			var err error
+			archived, err = domain.Approve(ctx, q, id)
 			return err
 		})
-		if got := taskStr(t, db, id, "decision"); got != "<NULL>" {
-			t.Fatalf("refused approve wrote decision %q", got)
+		if archived {
+			t.Fatalf("sealed task archived on approve without ever landing (the silent-archive hole)")
+		}
+		if got := taskStr(t, db, id, "decision"); got != "approved" {
+			t.Fatalf("sealed approve wrote decision %q, want approved", got)
 		}
 		if got := oneInt(t, db, `SELECT archived FROM tasks WHERE id = ?`, id); got != 0 {
 			t.Fatalf("sealed task archived on approve without ever landing (the silent-archive hole)")
 		}
 		if got := oneInt(t, db, `SELECT archived FROM review_packets WHERE task_id = ?`, id); got != 0 {
-			t.Fatalf("packet archived with the sealed task")
+			t.Fatalf("packet archived with the sealed task; its Inv. 18 slot frees on landing success, not at approve")
+		}
+	})
+
+	// The landing fence applies to the assignment branch home exactly as it
+	// does to `tasks.branch`. Without it the row would be approved, unarchived,
+	// and permanently invisible to SealedLandingPending — silently unlandable,
+	// which is the failure this slice exists to remove.
+	t.Run("assigned_sealed_task_without_landing_facts_refuses", func(t *testing.T) {
+		for _, tc := range []struct {
+			name  string
+			setup string
+		}{
+			{"missing_both", `UPDATE tasks SET verified_sha = NULL, target_ref = NULL WHERE id = ?`},
+			{"missing_verified_sha", `UPDATE tasks SET verified_sha = NULL, target_ref = 'main' WHERE id = ?`},
+			{"missing_target_ref", `UPDATE tasks SET verified_sha = 'abc', target_ref = NULL WHERE id = ?`},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				db := openSpine(t)
+				id := mkTask(t, db, "task", "packaged")
+				mkPacket(t, db, id)
+				mkAssignment(t, db, id)
+				mustExec(t, db, tc.setup, id)
+				wantCode(t, db, domain.CodeLandingFence, func(ctx context.Context, q domain.Q) error {
+					_, err := domain.Approve(ctx, q, id)
+					return err
+				})
+				if got := taskStr(t, db, id, "decision"); got != "<NULL>" {
+					t.Fatalf("refused approve wrote decision %q", got)
+				}
+				if got := oneInt(t, db, `SELECT archived FROM tasks WHERE id = ?`, id); got != 0 {
+					t.Fatalf("refused approve archived the task")
+				}
+			})
 		}
 	})
 

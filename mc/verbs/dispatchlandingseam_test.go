@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"mc/dispatch"
+	"mc/domain"
 	"mc/refusal"
 	"mc/routing"
 	"mc/substrate"
@@ -1008,5 +1009,108 @@ func TestLandReportStillRefusesABranchlessUnassignedRow(t *testing.T) {
 
 	if _, err := LandReport(db, nil, 1, "success", ""); err == nil {
 		t.Fatal("a branchless, unassigned row reported a landing it never had")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// The activation proof.
+//
+// Everything above tests a leg. This drives the REAL Dispatch() over a real
+// spine and a real git Worksource and asserts that an approved, assignment-
+// backed row now produces a sealed land effect — which is the one thing that
+// was not true before the switch, and the only way to know the two reachability
+// edits actually meet in the middle.
+// ---------------------------------------------------------------------------
+
+func TestSealedLandingIsReachableEndToEnd(t *testing.T) {
+	db := dvSpine(t)
+	ws, _ := lcRepo(t, "7")
+	dvExec(t, db, `UPDATE sandbox_profiles SET workspace_root = ?`, ws)
+
+	// A sealed row: branchless in `tasks`, branch on the immutable assignment.
+	// Walked through the real lifecycle rather than dropped in at `packaged`:
+	// the acceptance pointer below is fenced to `status = 'worked'`, which is
+	// the lifecycle position where a Worker seal is actually accepted.
+	task := dvTask(7, dispatch.ScopeTask, dispatch.StatusWorked, 0)
+	task.TargetRef, task.VerifiedSHA = "main", strings.Repeat("a", 40)
+	fixture := task
+	fixture.Decision, fixture.DecidedAt = "", nil
+	dvInsertTask(t, db, fixture)
+	dvExec(t, db, `INSERT INTO task_assignments
+		(task_id, target_ref, branch, task_root_key, object_format, base_sha, local_repo_uuid, closure_digest)
+		VALUES (7, 'main', 'mc/task-7', '.mission-control/tasks/task-7', 'sha1', ?, ?, ?)`,
+		strings.Repeat("c", 40), "0f9c1e2a-3b4c-4d5e-8f60-112233445566", strings.Repeat("d", 64))
+
+	// The accepted completion seal supplies the approved-run identity the
+	// landing id digests.
+	dvExec(t, db, `INSERT INTO runs (id, tier, role, worksource, subject, created_at, ended_at, outcome, session_path, binding)
+		VALUES ('0123456789abcdef', 'pipeline', 'worker', 'ws-test', 7, ?, ?, 'worked', 'sessions/x', 'claude')`,
+		dvOld.Format(spineTime), dvOld.Format(spineTime))
+	dvExec(t, db, `INSERT INTO completion_seals
+		(run_id, task_id, completion_request_id, object_format, sealed_sha, closure_digest,
+		 manifest_digest, seal_device, seal_inode, seal_owner_uid, state, accepted_at)
+		VALUES ('0123456789abcdef', 7, 'fedcba9876543210', 'sha1', ?, ?, ?, '16777220', '424242', 501, 'accepted', ?)`,
+		strings.Repeat("a", 40), strings.Repeat("d", 64), strings.Repeat("e", 64), dvOld.Format(spineTime))
+	dvExec(t, db, `UPDATE tasks SET accepted_completion_run_id = '0123456789abcdef',
+		accepted_completion_request_id = 'fedcba9876543210' WHERE id = 7`)
+	// Now advance to the status an approval requires.
+	dvExec(t, db, `UPDATE tasks SET status = 'verified' WHERE id = 7`)
+	dvExec(t, db, `UPDATE tasks SET status = 'packaged', verified_sha = ? WHERE id = 7`,
+		strings.Repeat("a", 40))
+
+	// Approve it through the real verb, so the OTHER half of the switch is
+	// exercised rather than simulated by a direct UPDATE.
+	dvExec(t, db, `INSERT INTO review_packets (task_id, created_at) VALUES (7, ?)`, dvOld.Format(spineTime))
+	if err := inTx(db, func(ctx context.Context, q Q) error {
+		_, err := domain.Approve(ctx, q, 7)
+		return err
+	}); err != nil {
+		t.Fatalf("approve of an assignment-backed row: %v — the switch's Approve half did not open", err)
+	}
+	var archived int
+	if err := db.QueryRow(`SELECT archived FROM tasks WHERE id = 7`).Scan(&archived); err != nil {
+		t.Fatal(err)
+	}
+	if archived != 0 {
+		t.Fatal("approve archived the sealed task instead of holding it for landing")
+	}
+
+	effect, err := Dispatch(db)
+	if err != nil {
+		t.Fatalf("dispatch: %v", err)
+	}
+	eff, ok := effect.(map[string]any)
+	if !ok {
+		t.Fatalf("dispatch returned %T", effect)
+	}
+	if eff["action"] != "land" {
+		t.Fatalf("dispatch action = %v, want land — the sealed row is approved and packaged but nothing selects it", eff["action"])
+	}
+	if eff["landing"] == nil {
+		t.Fatal("the land effect carries no landing carrier; the resident would route it to the legacy lane")
+	}
+	if eff["branch"] != "mc/task-7" {
+		t.Fatalf("land effect branch = %v, want the assignment's branch", eff["branch"])
+	}
+
+	// Landing holds no lease. This is the property a landing routed through the
+	// spawn machinery would have silently broken.
+	var heldBy string
+	if err := db.QueryRow(`SELECT COALESCE(run_id, '') FROM lock WHERE id = 1`).Scan(&heldBy); err != nil {
+		t.Fatal(err)
+	}
+	if heldBy != "" {
+		t.Fatalf("the landing claimed the lease: %q", heldBy)
+	}
+	// runs.role has no landing member at all, so a landing that opened a Run
+	// could only have done it by borrowing an agent role — which is exactly the
+	// masquerade the label rules forbid. Count every run beyond the accepted
+	// Worker seal's own.
+	var runCount int
+	if err := db.QueryRow(`SELECT count(*) FROM runs`).Scan(&runCount); err != nil {
+		t.Fatal(err)
+	}
+	if runCount != 1 {
+		t.Fatalf("runs table holds %d rows, want only the accepted Worker seal's; the landing opened a Run", runCount)
 	}
 }
