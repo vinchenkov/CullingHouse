@@ -75,3 +75,18 @@ func loadDispatchMountState(ctx context.Context, q Q, sp *dispatch.Spawn, rec di
 	state.Worksources = rows
 	return state, nil
 }
+
+// loadDispatchLandingMountState reaches the same subject-keyed projection for a
+// sealed landing, which has no Spawn to key on — it holds no lease, opens no
+// run, and has no role.
+//
+// The synthesized Spawn carries no spawn semantics: loadDispatchMountState
+// above is role-BLIND, reading only sp.SubjectID and never sp.Role, so the
+// role-less value below selects exactly the same state a subject-keyed spawn
+// would. That is asserted directly rather than left to inspection
+// (TestLoadDispatchMountStateIsRoleBlind); if it ever stops holding, narrow the
+// loader to *int64 rather than teaching this wrapper to lie.
+func loadDispatchLandingMountState(ctx context.Context, q Q, taskID int64, rec dispatch.Records) (PrivateDispatchMountState, error) {
+	id := taskID
+	return loadDispatchMountState(ctx, q, &dispatch.Spawn{SubjectID: &id}, rec)
+}

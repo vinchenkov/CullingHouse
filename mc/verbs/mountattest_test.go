@@ -1780,3 +1780,66 @@ func TestDispatchRepoWorkerRetryPrecreateReusesRecordedAssignment(t *testing.T) 
 		t.Fatalf("committed retry setup = %+v, want the recorded assignment pins", setup)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// The landing's mount-state entry point.
+//
+// A landing has no Spawn — no run, no role — so it cannot call
+// loadDispatchMountState directly. The wrapper exists so the sealed lane does
+// not have to fabricate a Spawn at each call site, and these tests pin the two
+// facts that make fabricating one internally honest rather than a fib: the
+// loader is role-BLIND (it reads sp.SubjectID and never sp.Role), and the
+// wrapper's output is byte-identical to the subject-keyed spawn path.
+//
+// If either ever stops holding, the wrapper is lying and the loader must be
+// narrowed to *int64 instead.
+// ---------------------------------------------------------------------------
+
+func TestLoadDispatchLandingMountStateMatchesSubjectSpawn(t *testing.T) {
+	db := dvSpine(t)
+	taskID := int64(7)
+	rec := dispatch.Records{
+		Tasks: []dispatch.Task{{ID: taskID, Worksource: "ws-test", TargetRef: "refs/heads/main"}},
+	}
+
+	viaSpawn, err := loadDispatchMountState(context.Background(), db, &dispatch.Spawn{SubjectID: &taskID}, rec)
+	if err != nil {
+		t.Fatalf("loadDispatchMountState: %v", err)
+	}
+	viaLanding, err := loadDispatchLandingMountState(context.Background(), db, taskID, rec)
+	if err != nil {
+		t.Fatalf("loadDispatchLandingMountState: %v", err)
+	}
+	if !reflect.DeepEqual(viaSpawn, viaLanding) {
+		t.Fatalf("landing mount state diverged from the subject spawn path\n landing: %+v\n   spawn: %+v", viaLanding, viaSpawn)
+	}
+}
+
+func TestLoadDispatchMountStateIsRoleBlind(t *testing.T) {
+	// The wrapper synthesizes a role-less Spawn. That is only honest while the
+	// loader ignores the role entirely, so assert it across every role the
+	// spawn path can carry rather than trusting the current implementation.
+	db := dvSpine(t)
+	taskID := int64(7)
+	rec := dispatch.Records{
+		Tasks: []dispatch.Task{{ID: taskID, Worksource: "ws-test", TargetRef: "refs/heads/main"}},
+	}
+
+	var first PrivateDispatchMountState
+	for i, role := range []dispatch.Role{
+		"", dispatch.RoleWorker, dispatch.RoleVerifier, dispatch.RolePackager, dispatch.RoleEditor,
+	} {
+		state, err := loadDispatchMountState(context.Background(), db,
+			&dispatch.Spawn{Role: role, SubjectID: &taskID}, rec)
+		if err != nil {
+			t.Fatalf("loadDispatchMountState(role=%q): %v", role, err)
+		}
+		if i == 0 {
+			first = state
+			continue
+		}
+		if !reflect.DeepEqual(first, state) {
+			t.Fatalf("role %q changed the mount-state projection; the landing wrapper's role-less Spawn is no longer honest", role)
+		}
+	}
+}
