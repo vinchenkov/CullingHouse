@@ -8,7 +8,7 @@ OPERATOR-INPUTS.md
 .mc-dev-home/
 
 # Human maintained files that should not be tracked
-.agents-ignore-please/
+agents-ignore-please/
 
 # Build & dependency output
 node_modules/
