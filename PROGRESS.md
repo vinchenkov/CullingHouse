@@ -6,7 +6,7 @@ REPO PATH: `~/dev/ai/homie`. Never relocate this repo into `~/Documents`,
 `~/Desktop`, or `~/Downloads`: macOS TCC can revoke an agent session's own
 filesystem access there during fan-out. Full Disk Access does not fix it.
 
-LAST GREEN SHA: `8641fe9` — five-leg fast lane green. Docker E2E last 8/8 at
+LAST GREEN SHA: `cc81501` — five-leg fast lane green. Docker E2E last 8/8 at
 `f21f11c` (2026-07-21), WITH the sealed landing lane live — so activation
 disturbed no existing crossing. Tag compile/vet lanes (`docker_boundary`,
 `docker_e2e`, `test_fake_routing`) also clean at that SHA.
@@ -90,10 +90,13 @@ the approve landing fence so an immutable task assignment, not only
   (`mc/boundary` env builder + `doctor`) and a gateway with three egress modes
   (resident-hosted gateway + Docker network layer). Neither exists: there is no
   env builder in `mc/boundary`, and the only occurrences of "gateway" anywhere
-  are refusal codes and control-descriptor plumbing. Every other §3 row has a
-  production owner. DECISION NEEDED: are these in Phase 3, or deferred to a
-  later phase with the contract amended? Until answered, the landing and
-  envelope rows continue; they are independent.
+  are refusal codes and control-descriptor plumbing. `mc doctor` agrees in its
+  own words: it returns `gateway` as "egress gateway health probe runs in
+  Phase 3", plus Phase-3-owned deferrals for `container-runtime` and
+  `runtime-auth` — and §8 forbids ANY Phase-3-owned deferred finding at
+  completion. DECISION NEEDED: are these in Phase 3, or deferred to a later
+  phase with the contract amended? Until answered, the landing and envelope
+  rows continue; they are independent.
 
 ## Current work: sealed landing
 
@@ -181,4 +184,4 @@ advancing to Phase 4.
   canonical landing row derived; use the assignment's frozen `target_ref` and
   refuse divergence. Details are in the Phase 3 ledger.
 
-NEXT: Phase 3 completion lane. Done: `mc/boundarydocker` created (it did not exist) with four landing rows green; row 7's class-divergence guard; row 1's landing-plane blocked floor (the landing bound the strongest grant in the system with no source check — closed). CONTINUE AT: landing's host-scope / no-`run.json` inversion — `mc __land-sealed` calls `RequireHostScope` and the landing container deliberately carries no `run.json`, so its security argument is the INVERSE of every other class, and nothing proves it holds inside the image or that a `run.json` cannot be injected. Then the four-row mount table against `docker inspect`, and the sealed production E2E through `packaged -> approve -> merge -> archived`. Read `docs/ledger/phase-3.md` (2026-07-21) first — it records one proposed test that would have re-litigated a rejected design, and one finding this session had to correct.
+NEXT: Phase 3 completion lane. THREE structural §8 gaps found; two now closed. (1) The `docker_boundary` suite did not exist — created, with six landing/envelope rows green. (2) The production image did not exist — `runner/image/build-prod.sh` builds `mc-prod` (no fake route, untagged), digest `sha256:8f12cc42`, arm64/linux; row 8's landing scope inversion is proved inside it. (3) Gateway + forbidden-env are unimplemented — PARKED, and `doctor` confirms it. Also closed: row 7's class-divergence guard, row 1's landing-plane blocked floor. CONTINUE AT: the realized four-row landing mount table against `docker inspect` (argv is pinned host-side, the applied table is not), then the sealed production E2E through `packaged -> approve -> merge -> archived`. Read `docs/ledger/phase-3.md` (2026-07-21) first — it records three vacuous-test traps hit this session, one proposed test that would have re-litigated a rejected design, and one finding that had to be corrected.
