@@ -117,7 +117,13 @@ reaches them until the selector flips. Only step 3 must be atomic.
    domain-separated digest of deployment, subject, approved packet/run identity
    — DETERMINISTIC, because the abort path matches `MERGE_MSG` on it and the
    container is `mc-landing-<id>`. Follow `dispatchseam.go:184-206`'s idiom with
-   its own domain constant; `DeploymentUUID` is at `dispatchprivate.go:54`.
+   its own domain constant. DERIVE IT ATTEST-SIDE, not in the dispatch table:
+   all three inputs are already in scope there (`DeploymentUUID`
+   `dispatchprivate.go:54`, `SubjectID`/`RunID` `:59-61`), whereas the `Land`
+   payload (`dispatch.go:350`) carries none of them and the dispatch table has
+   no other use for a landing id. That keeps seam 4's payload to the assignment
+   facts alone and leaves `TestStep0c_LandingPending_ReturnsLandEffect…`
+   (`dispatch_test.go:361`, which pins the exact payload) to change once.
 2. Resident: `MountPlan.landing`, a sealed `Effect` arm, execution beside
    `runAcceptedSealRebuild` (`effects.ts:651`), binds resident-derived. The
    envelope destination for this class is `/mc/landing.json`, not
