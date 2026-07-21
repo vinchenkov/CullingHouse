@@ -818,3 +818,89 @@ Three gaps carried forward rather than closed:
   three are label-conformance bugs against Decision 7 in code the sealed lane
   does not own. Fixing them touches whole-argv assertions in three test files
   and belongs in its own change, not in a landing commit.
+
+## 2026-07-21 — the sealed landing lane routed through prepare/attest/commit
+
+Six delegated design decisions, all made because the corpus is SILENT and all
+individually reversible. Recorded together because they were taken as one
+coherent reading of ADR-016:369-379 rather than independently.
+
+- **DELEGATED — the sealed landing is a SEPARATE lane, not a widened candidate.**
+  ADR-016:369-379 requires a landing to form "an attested candidate rather than a
+  bare effect" and to have commit "recheck the entire pending tuple and
+  inventory". It does not say how. `preparedDispatch` gained a third variant
+  (`landing`) beside `final` and `candidate`; `preparedCandidate` was NOT
+  widened. The argument is type-level rather than aesthetic: the spawn seam
+  dereferences `cand.spawn` unguarded in dozens of places, and a landing carried
+  inside `preparedCandidate` would make every one of them reachable with a nil
+  `Spawn`, correct only by ongoing audit. Two competing designs (a sibling
+  pointer on `preparedCandidate`, and a kind-polymorphic ops table) were
+  evaluated and lost on exactly this point. Reversal is mechanical but wide.
+
+- **DELEGATED — no dispatch-side receipt and no `dispatch_key` on the landing
+  success path.** ADR-016:255-257's prepare-side receipt rule reaches mutations
+  that return DIRECTLY FROM PREPARE; a landing returns from commit, so the rule
+  does not reach it. ADR-016:261-263 exempts a result that has caused neither a
+  state mutation nor a host effect, and at the instant `dispatchCommitLanding`
+  returns BOTH are true — the spine is untouched and the resident has not yet
+  started the container. A `dispatch_key` would additionally be a fake fence:
+  the token binds a per-command `RequestID`, so it could never dedupe across
+  ticks. Cross-tick idempotency is assigned elsewhere by the corpus — the
+  durable landing-pending row (ADR-016:571-573) and the receipt-idempotent
+  `mc-land` keyed on the stable landing id (ADR-016:377-378). Adding a receipt
+  later is additive; removing a shipped one is not.
+
+- **DELEGATED — no new consequence identifier.** The question is made moot
+  rather than answered: the success path derives no key and constructs no
+  `canonicalAction` at all, so the only one the lane ever builds is the refusal
+  action, reusing the existing `"refusal"` literal. The one new string anywhere
+  is `canonicalCandidate.Kind == "landing"`, which is a candidate-identity tag
+  inside the preparation token, not a consequence name. If a consequence name is
+  ever needed, `"landing"` is free.
+
+- **DEVIATION — the landing id is derived at PREPARE, not at attest.** This
+  contradicts the header `landingid.go` shipped with, which sited it attest-side
+  on an availability argument. ADR-016:371 names the deterministic id as a
+  member of the candidate TUPLE, and a tuple member must be inside the
+  preparation token or commit cannot detect its drift. All four inputs are in
+  prepare's scope. The header was corrected in the same commit rather than left
+  contradicting the code.
+
+- **DELEGATED — landing refusals use `RefusalSubjectlessPipeline`, not
+  `RefusalSubjectTask`.** `domain.Block` is reachable only from a
+  candidate-class refusal carrying `RefusalSubjectTask`, so the subjectless kind
+  makes a durable blocked row unreachable BY TYPE rather than by an enumeration
+  of which refusal codes happen to be stale-class today. ADR-016:573-576
+  reserves blocking for the fixed `mc-land` program's semantic Git refusal,
+  reported through `mc land report failure`. The cost is real and accepted: a
+  diverged target ref is loud only in the health detail text, not in an indexed
+  subject column. Reversible by one field.
+
+- **DELEGATED — the container exit-code classification.** ADR-016:576 forbids
+  mislabeling runtime failure as a failed reviewed change but names no exit
+  contract. Resolved against mc's own (`mc/cmd/mc/main.go:91-107`): 0 is
+  success; 1 is domain rejection, meaning `mc-land` looked at the repository and
+  refused, and is the ONLY case that reports failure and blocks; everything else
+  (2 usage/environment, docker's 125/126/127) reports NOTHING and leaves the
+  landing pending as deployment health. The previous code reported failure on
+  any nonzero exit, which turned a broken image or a bad mount into a durable
+  blocked row an operator had to clear by hand.
+
+Two host-side facts settled while building, worth not re-deriving:
+
+- `attestDeploymentPreamble` exists so both attest legs provably owe the same
+  D1 deployment fence. The landing leg reads no routing at all, and the
+  deployment check sits adjacent to the routing read in the original body, so
+  splitting it out is what prevents a second leg from dropping the fence
+  alongside the routing it genuinely does not need.
+- `landingWorkspaceRoot` REFUSES rather than returning `""`.
+  `captureLandingPlan` resolves every host anchor relative to the root it is
+  handed, so an empty root resolves them against the process working directory —
+  the single place in this lane where a landing could interrogate, and then
+  write into, a repository that is not the operator's.
+
+Closed since the previous entry: `LandReport` now accepts assignment-backed
+rows, so the second bullet of the 2026-07-20 "three gaps" list is partly
+addressed — the fence is open, though `SealedLandingResult` still has no spine
+consumer and the topology JSON is still discarded. The 15-minute deadline and
+the label-conformance bugs remain open exactly as recorded there.
