@@ -26,16 +26,36 @@ const landingIDDomain = "MC-DISPATCH-LANDING-V1\x00"
 const landingIDHexLen = 16
 
 // canonicalLandingIdentity is the closed encoding of ADR-016 D7's three
-// inputs: deployment, subject, and the exact approved packet/run identity.
+// inputs: deployment, subject, and "the exact approved packet/run identity".
 //
-// Every input must be stable across landing attempts. The id is not a
-// per-attempt nonce: `abortOwnConflictedMerge` identifies a merge this system
-// wrote by matching `MC-Landing-Id: <id>`, so a retry that derived a fresh id
-// could never undo the merge its predecessor left behind.
+// That last phrase appears exactly once in the design corpus (ADR-016:833,
+// echoed as "approved-run identity" at :846) and is never expanded, so its
+// referent is resolved here rather than re-derived at every call site:
+//
+//   - The PACKET contributes nothing. `review_packets.task_id` is both primary
+//     key and foreign key (schema.sql:453-454) — one packet per task for life,
+//     with no id of its own — so "packet identity" is numerically the subject,
+//     which the digest already names separately.
+//   - The approved RUN is the Worker run whose seal was accepted:
+//     `tasks.accepted_completion_run_id` / `accepted_completion_request_id`
+//     (schema.sql:116-120), "the exact downstream authority: the currently
+//     accepted Worker seal for this task". Approval itself is an operator write
+//     with no run (spec §5), so there is no other run to mean. The pair, not
+//     the run alone, is what makes it "exact".
+//
+// Every input is stable across landing attempts, and that is load-bearing
+// rather than incidental. ADR-017:753-756 requires a retry to match "its exact
+// action trailer" before adopting a merge, and this lane's trailer is
+// `MC-Landing-Id: <id>` — so a per-attempt id would leave a crashed attempt's
+// merge state unrecognizable to its own successor, which is the one state
+// `abortOwnConflictedMerge` exists to resolve. Deliberately NOT inputs: the
+// dispatch request id and dispatch key, which ADR-016:110-111 marks "not
+// canonical work state" and regenerates every tick.
 type canonicalLandingIdentity struct {
-	DeploymentUUID string `json:"deployment_uuid"`
-	SubjectID      int64  `json:"subject_id"`
-	RunID          string `json:"run_id"`
+	DeploymentUUID    string `json:"deployment_uuid"`
+	SubjectID         int64  `json:"subject_id"`
+	ApprovedRunID     string `json:"approved_run_id"`
+	ApprovedRequestID string `json:"approved_request_id"`
 }
 
 func (c canonicalLandingIdentity) bytes() ([]byte, error) {

@@ -724,3 +724,47 @@ and would otherwise be re-raised.
   "abort" to tell them apart. This is the landing failure taxonomy already
   listed as unresolved in PROGRESS; the three post-conditions above are the
   concrete cases it must name. Do not invent the taxonomy inside the abort.
+
+## 2026-07-20 — what "approved packet/run identity" denotes in the landing id
+
+ADR-016:833 defines `landing_id` as the first 16 hex of a domain-separated
+digest of "deployment, subject, and exact approved packet/run identity". That
+phrase occurs ONCE in the whole corpus, echoed once as "approved-run identity"
+(:846), and is never expanded. It also has no unique referent in the spine, so
+it had to be resolved rather than read off. Resolution, with the evidence:
+
+- The PACKET contributes no entropy. `review_packets.task_id` is both primary
+  key and foreign key (`schema.sql:453-454`): one packet per task for life, no
+  id of its own. "Packet identity" IS the subject, which the digest already
+  names separately.
+- The approved RUN is the accepted Worker seal's `(run_id, request_id)` pair
+  from `tasks.accepted_completion_run_id` / `accepted_completion_request_id`
+  (`schema.sql:116-120`), which the schema itself calls "the exact downstream
+  authority: the currently accepted Worker seal for this task". Approval is an
+  operator write with no run of its own (spec §5), and `runs.role` has no
+  landing member (`schema.sql:694-695`), so there is no other run to mean. The
+  pair rather than the run alone is what "exact" buys.
+
+STABILITY ACROSS ATTEMPTS was the reason this needed settling, and the corpus
+is SILENT on it — no sentence contains both `landing_id` and a retry qualifier.
+It is nonetheless load-bearing under the abort slice landed at `2d2cffb`:
+ADR-017:753-756 requires a retry to match "its exact action trailer" before
+adopting a merge, and this lane's trailer is `MC-Landing-Id: <id>`. A
+per-attempt id would leave a crashed attempt's merge state unrecognizable to
+its own successor — exactly the state `abortOwnConflictedMerge` exists to
+resolve. Every candidate referent above is attempt-stable; the only
+attempt-varying ids in the system are `dispatch_request_id` and `dispatch_key`,
+which ADR-016:110-111 marks "not canonical work state".
+
+Worth recording because the corpus points the OTHER way on names generally:
+`mc-land` "never guesses from a name" (ADR-016:378) and "name alone is never
+authority" (:362-363), with cross-attempt recognition routed through the spine
+row plus exact Git topology (ADR-017:739-740, :1235-1236). That is consistent —
+the landing id is not authority here either; it is the discriminator INSIDE an
+already-authorized trailer match. Do not promote it to authority later.
+
+Deliberately NOT inputs: `verified_sha` and `target_ref`. Both are stable and
+both would tighten replay identity, but ADR-016:831-833 names three inputs and
+adding a fourth is a deviation with no stated need. If a future finding shows
+the trailer must distinguish two landings of the same task at different
+reviewed SHAs, that is the moment to add it — under an ADR, not silently.

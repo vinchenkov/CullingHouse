@@ -19,9 +19,10 @@ import (
 
 func landingIdentityFixture() canonicalLandingIdentity {
 	return canonicalLandingIdentity{
-		DeploymentUUID: "0f9c1e2a-3b4c-4d5e-8f60-112233445566",
-		SubjectID:      7,
-		RunID:          "a1b2c3d4e5f60718",
+		DeploymentUUID:    "0f9c1e2a-3b4c-4d5e-8f60-112233445566",
+		SubjectID:         7,
+		ApprovedRunID:     "a1b2c3d4e5f60718",
+		ApprovedRequestID: "00112233445566aa",
 	}
 }
 
@@ -29,7 +30,8 @@ func landingIdentityFixture() canonicalLandingIdentity {
 // declared field order, explicit zero values, no maps or floats. Changing this
 // shape changes every landing id in flight, so it is an ADR-worthy event.
 func landingIdentityGoldenJSON() string {
-	return `{"deployment_uuid":"0f9c1e2a-3b4c-4d5e-8f60-112233445566","subject_id":7,"run_id":"a1b2c3d4e5f60718"}`
+	return `{"deployment_uuid":"0f9c1e2a-3b4c-4d5e-8f60-112233445566","subject_id":7,` +
+		`"approved_run_id":"a1b2c3d4e5f60718","approved_request_id":"00112233445566aa"}`
 }
 
 func TestLandingIdentityCanonicalGoldenVector(t *testing.T) {
@@ -80,7 +82,11 @@ func TestDeriveLandingIDSeparatesEveryInput(t *testing.T) {
 	perturbed := map[string]func(*canonicalLandingIdentity){
 		"deployment": func(c *canonicalLandingIdentity) { c.DeploymentUUID = "11111111-2222-4333-8444-555555555555" },
 		"subject":    func(c *canonicalLandingIdentity) { c.SubjectID = 8 },
-		"run":        func(c *canonicalLandingIdentity) { c.RunID = "ffeeddccbbaa9988" },
+		"run":        func(c *canonicalLandingIdentity) { c.ApprovedRunID = "ffeeddccbbaa9988" },
+		// The request id earns its place only if it separates on its own: the
+		// accepted seal is the (run, request) pair, and a run that re-sealed
+		// under a different request is a different approved authority.
+		"request": func(c *canonicalLandingIdentity) { c.ApprovedRequestID = "99887766554433bb" },
 	}
 	for name, mutate := range perturbed {
 		id := landingIdentityFixture()
