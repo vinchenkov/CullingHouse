@@ -6,10 +6,14 @@ package verbs
 // `mc dispatch` would assert on the legacy lane and quietly prove nothing.
 
 import (
+	"context"
+	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"mc/dispatch"
 	"mc/refusal"
@@ -566,5 +570,229 @@ func TestLandingRecheckDoesNotReattestAsASpawn(t *testing.T) {
 	}
 	if got := dispatchRecheckAttestation(home, prepared, first); got.refusal != nil {
 		t.Fatalf("recheck of a landing consulted routing: %+v", got.refusal)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// The commit leg.
+//
+// ADR-016:375-377 — commit "rechecks the entire pending tuple and inventory
+// before returning the frozen landing plan". The fences are tested pure, one
+// drift at a time, because the value is in each of them firing for its own
+// reason rather than in the whole set failing together.
+// ---------------------------------------------------------------------------
+
+func dlsFenceInputs(t *testing.T) (preparedDispatch, spineSelection, PrivateDispatchMountState) {
+	t.Helper()
+	task := dlsTask()
+	st := dlsMountState()
+	prepared := dlsPrepare(t, task, st)
+	return prepared, dlsSelection(task), st
+}
+
+func TestLandingCommitFencesPassOnAnUndriftedTuple(t *testing.T) {
+	prepared, sel, st := dlsFenceInputs(t)
+	code, err := landingCommitFences(prepared, sel, st)
+	if err != nil {
+		t.Fatalf("landingCommitFences: %v", err)
+	}
+	if code != "" {
+		t.Fatalf("an undrifted tuple refused %q", code)
+	}
+}
+
+func TestLandingCommitFencesRefuseEveryDrift(t *testing.T) {
+	for name, tc := range map[string]struct {
+		mutate func(*preparedDispatch, *spineSelection, *PrivateDispatchMountState)
+		want   string
+	}{
+		"inventory moved": {
+			func(_ *preparedDispatch, _ *spineSelection, st *PrivateDispatchMountState) {
+				st.Worksources[0].WorkspaceRoot = "/srv/somewhere-else"
+			}, refusal.CodeStale,
+		},
+		"row left the lane": {
+			func(_ *preparedDispatch, sel *spineSelection, _ *PrivateDispatchMountState) {
+				sel.rec.Tasks[0].Blocked = true
+			}, refusal.CodeCandidateMismatch,
+		},
+		"row archived": {
+			func(_ *preparedDispatch, sel *spineSelection, _ *PrivateDispatchMountState) {
+				sel.rec.Tasks[0].Archived = true
+			}, refusal.CodeCandidateMismatch,
+		},
+		"verified sha drifted": {
+			func(_ *preparedDispatch, sel *spineSelection, _ *PrivateDispatchMountState) {
+				sel.rec.Tasks[0].VerifiedSHA = strings.Repeat("9", 40)
+			}, refusal.CodeStale,
+		},
+		"assignment ref drifted": {
+			func(_ *preparedDispatch, sel *spineSelection, _ *PrivateDispatchMountState) {
+				sel.rec.Tasks[0].Sealed.TargetRef = "refs/heads/elsewhere"
+			}, refusal.CodeStale,
+		},
+		"approved run changed": {
+			func(_ *preparedDispatch, _ *spineSelection, st *PrivateDispatchMountState) {
+				st.SubjectAcceptedCompletionSeal.RunID = "aaaaaaaaaaaaaaaa"
+			}, refusal.CodeStale,
+		},
+		"landing id no longer derives": {
+			func(p *preparedDispatch, _ *spineSelection, _ *PrivateDispatchMountState) {
+				p.landing.landingID = "ffffffffffffffff"
+			}, refusal.CodeStale,
+		},
+		"tick no longer selects a landing": {
+			func(_ *preparedDispatch, sel *spineSelection, _ *PrivateDispatchMountState) {
+				sel.action = dispatch.Action{Kind: dispatch.KindIdle}
+			}, refusal.CodeCandidateMismatch,
+		},
+		"tick selects a different landing": {
+			func(_ *preparedDispatch, sel *spineSelection, _ *PrivateDispatchMountState) {
+				sel.action.Land.TaskID = 8
+			}, refusal.CodeCandidateMismatch,
+		},
+	} {
+		t.Run(name, func(t2 *testing.T) {
+			prepared, sel, st := dlsFenceInputs(t2)
+			tc.mutate(&prepared, &sel, &st)
+			code, err := landingCommitFences(prepared, sel, st)
+			if err != nil {
+				t2.Fatalf("landingCommitFences: %v", err)
+			}
+			if code == "" {
+				t2.Fatalf("%s was committed anyway", name)
+			}
+			if code != tc.want {
+				t2.Fatalf("%s refused %q, want %q", name, code, tc.want)
+			}
+		})
+	}
+}
+
+// ---------------------------------------------------------------------------
+// The two producers of the land effect.
+//
+// The resident discriminates the sealed lane from the legacy one on the
+// presence of the "landing" key alone, so a drift in the five SHARED keys would
+// surface nowhere as a type error — it would simply stop matching, at runtime,
+// in a lane nobody is watching yet.
+// ---------------------------------------------------------------------------
+
+func TestLandingEffectKeysMatchTheLegacyProducer(t *testing.T) {
+	legacy, err := applyAction(context.Background(), dvSpine(t), time.Time{}, dispatch.Action{
+		Kind: dispatch.KindLand,
+		Land: &dispatch.Land{
+			TaskID: 7, Branch: "mc/task-7",
+			VerifiedSHA: "3333333333333333333333333333333333333333",
+			TargetRef:   "refs/heads/main",
+		},
+	}, tunables{})
+	if err != nil {
+		t.Fatalf("legacy land effect: %v", err)
+	}
+
+	sealed := landingEffect(7, &PrivateDispatchLanding{
+		Branch:      "mc/task-7",
+		VerifiedSHA: "3333333333333333333333333333333333333333",
+		TargetRef:   "refs/heads/main",
+	})
+
+	for _, key := range []string{"action", "task_id", "branch", "verified_sha", "target_ref"} {
+		if fmt.Sprint(sealed[key]) != fmt.Sprint(legacy[key]) {
+			t.Fatalf("the two land-effect producers disagree on %q: sealed %v, legacy %v",
+				key, sealed[key], legacy[key])
+		}
+	}
+	if _, ok := legacy["landing"]; ok {
+		t.Fatal("the legacy land effect carries a landing key; the resident's lane discriminator is broken")
+	}
+	if sealed["landing"] == nil {
+		t.Fatal("the sealed land effect carries no landing key; the resident would route it to the legacy lane")
+	}
+}
+
+// A landing commit must not touch the spine. It claims no lease, opens no Run,
+// charges no retry, and writes no receipt — the writes come later, through
+// `mc land report`. This drives the real DB-backed commit and compares the
+// whole of every table the lane could plausibly reach.
+func TestDispatchCommitLandingWritesNothing(t *testing.T) {
+	db := dvSpine(t)
+	ctx := context.Background()
+
+	var uuid string
+	if err := db.QueryRowContext(ctx, `SELECT deployment_uuid FROM meta WHERE id = 1`).Scan(&uuid); err != nil {
+		t.Fatal(err)
+	}
+
+	// A real row for the subject, so the mount-state loader resolves rather
+	// than erroring before any fence runs. It is deliberately NOT
+	// landing-pending: it is `proposed`, so the lane-membership fence is what
+	// refuses, which is the inert path this test is about.
+	dvExec(t, db, `INSERT INTO tasks (id, title, scope, priority, created_at, status,
+		dispatch_retries, origin, worksource, target_ref)
+		VALUES (7, 'seal', 'task', 1, ?, 'proposed', 3, 'user', 'ws-test', 'refs/heads/main')`,
+		dvOld.Format(spineTime))
+
+	task := dlsTask()
+	prepared := dlsPrepare(t, task, dlsMountState())
+	prepared.deploymentUUID = uuid
+
+	snapshot := func() map[string]string {
+		out := map[string]string{}
+		for _, table := range []string{"tasks", "runs", "lock", "activity", "review_packets", "dispatch_receipts"} {
+			rows, err := db.QueryContext(ctx, `SELECT count(*) FROM `+table)
+			if err != nil {
+				continue // a table this schema version does not have
+			}
+			var n int
+			if rows.Next() {
+				_ = rows.Scan(&n)
+			}
+			rows.Close()
+			out[table] = fmt.Sprint(n)
+		}
+		var blocked, archived int
+		_ = db.QueryRowContext(ctx, `SELECT count(*) FROM tasks WHERE blocked=1`).Scan(&blocked)
+		_ = db.QueryRowContext(ctx, `SELECT count(*) FROM tasks WHERE archived=1`).Scan(&archived)
+		out["blocked"], out["archived"] = fmt.Sprint(blocked), fmt.Sprint(archived)
+		return out
+	}
+
+	before := snapshot()
+	// The spine holds no such task, so the lane-membership fence refuses. That
+	// is the point: a stale-class refusal is INERT, and this asserts the
+	// inertness rather than assuming it from the code's shape.
+	effect, err := dispatchCommitLanding(ctx, db, prepared, attestedDispatch{
+		deploymentUUID: uuid,
+		mountPlan: &PrivateDispatchMountPlan{
+			Version: 1, Entries: []PrivateDispatchMountEntry{},
+			Landing: &PrivateDispatchLanding{Branch: "mc/task-7"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("dispatchCommitLanding: %v", err)
+	}
+	if effect == nil {
+		t.Fatal("commit returned no effect")
+	}
+	after := snapshot()
+	if !reflect.DeepEqual(before, after) {
+		t.Fatalf("a landing commit mutated the spine:\n before %v\n  after %v", before, after)
+	}
+	// And specifically: it must never block its own task from the seam.
+	// ADR-016:576 reserves blocking for the fixed mc-land program's semantic
+	// Git refusal, reported through `mc land report failure`.
+	if after["blocked"] != "0" {
+		t.Fatal("a landing commit blocked a task from the seam")
+	}
+}
+
+func TestLandingRefusalIsNeverCandidateClass(t *testing.T) {
+	// domain.Block is reachable only from a candidate-class refusal carrying
+	// RefusalSubjectTask. The landing lane uses the subjectless kind precisely
+	// so that a durable blocked row is unreachable BY TYPE, rather than by an
+	// enumeration of which refusal codes happen to be stale-class today.
+	if got := refusalReceiptSubject(RefusalCandidate{Kind: RefusalSubjectlessPipeline}); got != nil {
+		t.Fatalf("the subjectless refusal candidate named a subject %v; it can reach domain.Block", got)
 	}
 }

@@ -27,6 +27,7 @@ package verbs
 import (
 	"context"
 	"os"
+	"reflect"
 
 	"mc/dispatch"
 	"mc/refusal"
@@ -287,4 +288,194 @@ func landingHealthRefusal(deploymentUUID string, field refusal.Field, summary re
 		Summary: summary,
 		Message: err.Error(),
 	}}
+}
+
+// landingCommitFences is ADR-016:375-377's "recheck the entire pending tuple
+// and inventory", pure over already-loaded state so every fence is testable
+// without a spine.
+//
+// It returns the refusal code to route, or "" to proceed. Both codes are
+// stale-class and therefore INERT: nothing is mutated, the effect is terminal,
+// and the next tick re-decides from scratch.
+//
+// The HOST half of the inventory is not rechecked here and must not be:
+// dispatchRecheckAttestation re-attested it immediately before commit, and D1
+// forbids a host read inside the transaction. If you came looking for a second
+// captureLandingPlan call, that is why there isn't one.
+func landingCommitFences(prepared preparedDispatch, sel spineSelection,
+	current PrivateDispatchMountState) (string, error) {
+	land := prepared.landing
+
+	// Inventory: the frozen mount state must still describe the deployment.
+	if !reflect.DeepEqual(current, land.mountState) {
+		return refusal.CodeStale, nil
+	}
+
+	// Lane membership, re-asserted in full rather than by id. A row approved at
+	// prepare and blocked, archived, un-approved or un-packaged by now is a
+	// candidate mismatch, not a landing.
+	t, ok := sealedLandingSubject(sel.rec, land.taskID)
+	if !ok {
+		return refusal.CodeCandidateMismatch, nil
+	}
+
+	// The tuple, byte-for-byte. Assignment pins, verified SHA, both target
+	// refs, the approved seal's identity and the landing id all move the token,
+	// so this single comparison covers every member at once.
+	tuple, err := landingTupleProjection(t, current, land.landingID)
+	if err != nil {
+		return "", err
+	}
+	canonical, err := buildCanonicalLandingPrepare(prepared.identity, prepared.deploymentUUID,
+		prepared.requestID, sel.rec, sel.lk, sel.tun, sel.homies, current, land.taskID, tuple).bytes()
+	if err != nil {
+		return "", err
+	}
+	if preparationToken(canonical) != land.token {
+		return refusal.CodeStale, nil
+	}
+
+	// The landing id re-derived from the reloaded seal. Redundant with the
+	// token by construction, and kept anyway: this id is the container name and
+	// the MERGE_MSG trailer the abort path matches on, so a silent change to it
+	// is the one drift worth paying to detect twice.
+	seal := current.SubjectAcceptedCompletionSeal
+	if seal == nil {
+		return refusal.CodeCandidateMismatch, nil
+	}
+	rederived, err := deriveLandingID(canonicalLandingIdentity{
+		DeploymentUUID:    prepared.deploymentUUID,
+		SubjectID:         land.taskID,
+		ApprovedRunID:     seal.RunID,
+		ApprovedRequestID: seal.CompletionRequest,
+	})
+	if err != nil {
+		return "", err
+	}
+	if rederived != land.landingID {
+		return refusal.CodeCandidateMismatch, nil
+	}
+
+	// Re-decision with commit's own clock: byte-identical state must still
+	// select THIS landing. A doctored frame or a time-flipped decision refuses
+	// here rather than committing a consequence nothing selected.
+	if sel.action.Kind != dispatch.KindLand || sel.action.Land == nil ||
+		sel.action.Land.TaskID != land.taskID {
+		return refusal.CodeCandidateMismatch, nil
+	}
+	return "", nil
+}
+
+// landingEffect is the land effect a committed landing returns.
+//
+// The first five keys are byte-identical to the legacy producer in
+// dispatchverb.go, because the resident discriminates the two lanes on the
+// presence of "landing" alone — a drift in the shared keys would surface
+// nowhere as a type error. TestLandingEffectKeysMatchTheLegacyProducer is what
+// keeps the two honest.
+func landingEffect(taskID int64, plan *PrivateDispatchLanding) map[string]any {
+	return map[string]any{
+		"action":       "land",
+		"task_id":      taskID,
+		"branch":       plan.Branch,
+		"verified_sha": plan.VerifiedSHA,
+		"target_ref":   plan.TargetRef,
+		"landing":      plan,
+	}
+}
+
+// dispatchCommitLanding is the sealed lane's step 3: under a fresh flock and
+// transaction it reloads lock-domain truth, rechecks the entire pending tuple,
+// and returns the frozen landing plan.
+//
+// It writes NOTHING to the spine on the success path — no activity row, no
+// receipt, no dispatch_key. The corpus is silent here and this is the chosen
+// reading: ADR-016:255-257's prepare-side receipt rule reaches mutations that
+// return DIRECTLY FROM PREPARE, and a landing returns from commit; and
+// ADR-016:261-263 exempts a result that has caused neither a state mutation nor
+// a host effect, which at the instant this returns is exactly true — the spine
+// is untouched and the resident has not yet started the container. A
+// dispatch_key would additionally be a fake fence, because the token binds a
+// per-command request id and so could never dedupe across ticks; cross-tick
+// idempotency belongs to the durable landing-pending row and to the
+// receipt-idempotent mc-land keyed on the stable landing id.
+func dispatchCommitLanding(ctx context.Context, q Q, prepared preparedDispatch, attested attestedDispatch) (map[string]any, error) {
+	land := prepared.landing
+	if land == nil {
+		return nil, Domainf("dispatch: landing commit requires a prepared landing")
+	}
+	if attested.deploymentUUID != prepared.deploymentUUID {
+		return nil, Domainf("dispatch: attested deployment identity does not match prepare")
+	}
+	if err := requireDeploymentUUID(ctx, q, attested.deploymentUUID); err != nil {
+		return nil, err
+	}
+	sel, err := selectFromSpine(ctx, q)
+	if err != nil {
+		return nil, err
+	}
+	current, err := loadDispatchLandingMountState(ctx, q, land.taskID, sel.rec)
+	if err != nil {
+		return nil, err
+	}
+	// Subjectless, NOT subject-keyed. domain.Block is reachable only from a
+	// candidate-class refusal carrying RefusalSubjectTask, so the subjectless
+	// kind makes a durable blocked row unreachable BY TYPE here rather than by
+	// an enumeration of which codes happen to be stale-class today. A landing
+	// must never block its own task from the seam: ADR-016:576 reserves that
+	// for the fixed mc-land program's semantic Git refusal, reported through
+	// `mc land report failure`.
+	rcand := RefusalCandidate{Kind: RefusalSubjectlessPipeline}
+
+	code, err := landingCommitFences(prepared, sel, current)
+	if err != nil {
+		return nil, err
+	}
+	if code != "" {
+		return commitInertLandingRefusal(ctx, q, prepared, rcand, code)
+	}
+	if attested.refusal != nil {
+		key, err := landingDispatchKey(prepared, *attested.refusal)
+		if err != nil {
+			return nil, err
+		}
+		return applyAttestedRefusal(ctx, q, prepared.requestID, rcand, *attested.refusal, key)
+	}
+	if attested.mountPlan == nil || attested.mountPlan.Landing == nil {
+		return nil, Domainf("dispatch: a landing attestation carries no landing plan (ADR-016:375-377)")
+	}
+	return landingEffect(land.taskID, attested.mountPlan.Landing), nil
+}
+
+// landingDispatchKey is the refusal-only D2 fence for the landing lane. A
+// landing has no run id and no role, so the canonical action names its subject
+// and nothing else; the success path derives no key at all, which is why
+// "landing" never becomes a consequence string.
+func landingDispatchKey(prepared preparedDispatch, r refusal.Refusal) (string, error) {
+	land := prepared.landing
+	subject := land.taskID
+	return deriveDispatchKey(land.token, canonicalAction{
+		Version:     1,
+		RequestID:   prepared.requestID,
+		Consequence: "refusal",
+		SubjectID:   &subject,
+		Refusal: &canonicalRefusal{
+			Code:      r.Code,
+			Authority: string(r.Authority),
+			Field:     string(r.Field),
+			Summary:   string(r.Summary),
+			ItemIndex: r.ItemIndex,
+		},
+	})
+}
+
+// commitInertLandingRefusal mirrors commitInertRefusal for the landing lane,
+// which cannot use it because that one dereferences prepared.candidate.
+func commitInertLandingRefusal(ctx context.Context, q Q, prepared preparedDispatch, rcand RefusalCandidate, code string) (map[string]any, error) {
+	r := refusal.Refusal{Code: code, Field: refusal.FieldNone, Summary: refusal.SummaryMismatch}
+	key, err := landingDispatchKey(prepared, r)
+	if err != nil {
+		return nil, err
+	}
+	return applyRefusal(ctx, q, rcand, r, key)
 }
