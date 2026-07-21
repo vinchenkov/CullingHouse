@@ -1321,6 +1321,40 @@ describe("sealed landing", () => {
 	// a container this one collides with. Without this gate the collision exits
 	// nonzero and — before the classification above — reported a failure this
 	// attempt never actually observed.
+	// Contract §3 (orphan sweep): "setup/landing/probe residue and closed
+	// derived file artifacts have exact component/action liveness and cleanup".
+	//
+	// The cover directory is a closed derived file artifact once the landing
+	// reaches a VERDICT. It used to be left behind on the grounds that
+	// ADR-016:344-349 makes a later tick responsible for landing residue — but
+	// that clause is about action CONTAINERS visible to a later tick, not about
+	// host directories the resident itself created, and the sweep it defers to
+	// was never written. So every landing leaked one directory under
+	// MC_HOME/runs, permanently.
+	test("a closed landing removes its cover and envelope", async () => {
+		const rig = makeRig();
+		rig.docker.enqueue(ok(""));
+		rig.docker.enqueue(ok(""));
+		rig.mc.enqueue(ok("{}"));
+		await runSealedLanding(landingStep, rig.deps);
+		expect(rig.fakeFs.events).toContain("rm:/tmp/mc-home/runs/landing-0011223344556677.json");
+		expect(rig.fakeFs.events).toContain("rm:/tmp/mc-home/runs/landing-0011223344556677.cover");
+	});
+
+	// ...but an UNCLOSED landing keeps it. An infrastructure failure leaves the
+	// landing pending, and the retry reuses this exact path because the landing
+	// id is stable by construction. Removing it here would be churn, and worse,
+	// it would delete the cover out from under a container that a confirmed
+	// absence has not yet been established for.
+	test("an infrastructure failure leaves the cover for the retry", async () => {
+		const rig = makeRig();
+		rig.docker.enqueue(ok(""));
+		rig.docker.enqueue(fail(125, "no such image"));
+		await runSealedLanding(landingStep, rig.deps);
+		expect(rig.mc.calls).toEqual([]);
+		expect(rig.fakeFs.events).not.toContain("rm:/tmp/mc-home/runs/landing-0011223344556677.cover");
+	});
+
 	// The lane discriminator. applyEffect routes on the PRESENCE of the landing
 	// carrier alone, so these two tests are what keep the legacy lane from
 	// being swallowed by the sealed one and vice versa.

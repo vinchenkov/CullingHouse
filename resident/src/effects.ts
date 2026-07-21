@@ -817,12 +817,25 @@ export async function runSealedLanding(
 			log(`sealed landing ${step.landing_id}: land report refused (exit ${reported.exitCode}): ${reported.stderr.trim()}`);
 		}
 	}
-	// The envelope goes; the cover does NOT. Removing a directory that was just
-	// a bind target is safe, but it is also the one piece of evidence that the
-	// cover existed for this landing, and ADR-016:344-349 makes a later tick
-	// responsible for landing residue. Left for that sweep rather than raced
-	// against a container the resident no longer tracks.
-	await deps.fs.rm(landingJsonPath);
+	// Contract §3 (orphan sweep): "closed derived file artifacts have exact
+	// component/action liveness and cleanup". Both the envelope and the cover
+	// are exactly that once the landing has reached a VERDICT.
+	//
+	// An earlier draft kept the cover, citing ADR-016:344-349 as making a later
+	// tick responsible for landing residue. That clause is about action
+	// CONTAINERS visible to a later tick, not about host directories the
+	// resident itself created — and the sweep it defers to was never written,
+	// so every landing leaked one directory under MC_HOME/runs permanently.
+	//
+	// The `report === null` case is different and deliberately keeps both: the
+	// landing did not close, it stays pending, and the retry reuses these exact
+	// paths because the landing id is stable by construction. Removing them
+	// there would also delete a cover out from under a container whose absence
+	// has not been confirmed.
+	if (report) {
+		await deps.fs.rm(landingJsonPath);
+		await deps.fs.rm(coverDir, { recursive: true });
+	}
 }
 
 /** §7 Landing: run the baked mc-land script, then report its exit code.
