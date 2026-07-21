@@ -954,3 +954,10 @@ rows, so the sealed lane can report its outcome. Still open from that entry: the
 consumer because `mc land report` takes only a status and a reason, and the
 setup/legacy-land containers remain non-conformant to ADR-016 Decision 7's label
 rules in code the sealed lane does not own.
+
+## 2026-07-21 — Free-internet credential projection supersedes the egress gateway (ADR-022)
+- Where: spec §11.4, Inv. 16, Inv. 23; `docs/phase3-contract.md` §3; ADR-018.
+- Gap: the spec built the boundary around a resident-hosted credential-injecting egress proxy that also enforced `egress_policy` and audited egress. The operator set a hard requirement that agent containers browse the internet freely, which deletes the proxy as a network control and leaves the credential boundary as the sole blast-radius property.
+- Choice: keep exactly one property — access-token-in / refresh-token-out — enforced by a resident-hosted token service, not a proxy. Proven live for both runtimes in `scratchpad/oauth-poc/POC-RESULT-v2.md` (Claude 2.1.216 PUSH the file always-valid; Codex 0.144.6 PULL via `CODEX_REFRESH_TOKEN_URL_OVERRIDE`). This is the conservative option available *given* free internet: it preserves fail-closed posture (a lapsed/absent host service stalls the run, never leaks) and is the least machinery (deletes ADR-018 D1-D9 wholesale). Static API-key bindings cannot be split, so v1 materializes them as a declared per-binding downgrade (ADR-022 D5), bounded by no-metered-spend + the §11.3 advisory; the narrow header-injector hardening is deferred.
+- Spec impact: §11.4 amended (2026-07-21 block); Inv. 16 reinterpreted as "the refresh/long-lived grant never enters the container" (access token in-container by design; static keys excepted); Inv. 23 reinterpreted as "resident hosts a token service, not an egress proxy". `docs/phase3-contract.md` head + §3 rows amended; ADR-018 marked Superseded; ADR-022 authored.
+- Needs your decision: no (operator approved the Inv. 16/23 modifications and the loss of HTTP egress auditability in-conversation on 2026-07-21).

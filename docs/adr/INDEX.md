@@ -30,14 +30,19 @@ citation — if the heading is not there, grep the heading text.
 | 015 | What does `mc onboard` dispatch, provision, and stage at the Phase-2 tier? | 7 KB |
 | 016 | How does one dispatch command span the Darwin/Linux boundary to plan, validate, and commit an action? | 62 KB |
 | 017 | Which host paths may be mounted, under whose consent, and where do they land in the container? | 85 KB |
-| 018 | How is agent egress confined and mediated per launch, and who owns gateway, credentials, and audit? | 33 KB |
+| 018 | ~~How is agent egress confined and mediated per launch~~ **SUPERSEDED by 022** — do not implement | 33 KB |
 | 019 | How are container resource envelopes and per-class security postures configured and enforced? | 11 KB |
 | 020 | How does the Editor's holistic wave review get a durable state, a dispatch step, and a terminal? | 49 KB |
 | 021 | Which mount sources does jurisdiction reject, and how does that check get built, placed, and reported? | 71 KB |
+| 022 | Free-internet credential projection: what replaces the egress gateway, and how does each runtime get a host-managed token? | 7 KB |
 
 **Relations.** 021 resolves gaps 017 left open — **017 remains the authority
 and is not superseded**; read both. 020 resolves 001's Open Question 1 and
-`docs/phase2-contract.md` A-P2-7. 013 resolves a slice 010 deferred.
+`docs/phase2-contract.md` A-P2-7. 013 resolves a slice 010 deferred. **022
+supersedes 018 whole** (operator's free-internet requirement): the egress
+gateway/proxy is deleted as a network control and replaced by a resident-hosted
+credential token service. 022 also amends spec §11.4 and Inv. 16/23 — the
+amendment text in the spec is the authority; 022 is the design record.
 
 ## Dead stubs — do not read
 

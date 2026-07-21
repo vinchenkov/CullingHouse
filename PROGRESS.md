@@ -88,18 +88,8 @@ the approve landing fence so an immutable task assignment, not only
   operator. Instructions: `spikes/07-launchd-clock/RESULT.md`. All other S7
   sub-tests passed.
 
-- **Phase 3 scope: two §3 mechanisms appear unimplemented, not merely
-  untested.** `docs/phase3-contract.md` §3 requires a forbidden-env builder
-  (`mc/boundary` env builder + `doctor`) and a gateway with three egress modes
-  (resident-hosted gateway + Docker network layer). Neither exists: there is no
-  env builder in `mc/boundary`, and the only occurrences of "gateway" anywhere
-  are refusal codes and control-descriptor plumbing. `mc doctor` agrees in its
-  own words: it returns `gateway` as "egress gateway health probe runs in
-  Phase 3", plus Phase-3-owned deferrals for `container-runtime` and
-  `runtime-auth` — and §8 forbids ANY Phase-3-owned deferred finding at
-  completion. DECISION NEEDED: are these in Phase 3, or deferred to a later
-  phase with the contract amended? Until answered, the landing and envelope
-  rows continue; they are independent.
+_(The parked §3 gateway/forbidden-env scope decision is RESOLVED — see
+"Credential design" below. Nothing operator-only is parked here now.)_
 
 ## Current work: sealed landing
 
@@ -178,6 +168,33 @@ Phase 3 Docker, and Docker E2E lanes are green. Record image digest,
 architecture, capability probes, commands, and green evidence here before
 advancing to Phase 4.
 
+## Credential design (RESOLVED — ADR-022, operator-approved 2026-07-21)
+
+The parked §3 gateway question is answered: the operator requires **free
+internet** for agent containers, which deletes the egress gateway/proxy as a
+network control. ADR-022 supersedes ADR-018 whole and replaces it with a
+resident-hosted **token service**: **access token in, refresh token out.** A
+live POC (`scratchpad/oauth-poc/POC-RESULT-v2.md`) proved both runtimes adopt a
+host-managed access token with only a dummy refresh in the container — Claude
+PUSH (keep `.credentials.json` always-valid so it never self-refreshes), Codex
+PULL (broker its refresh via `CODEX_REFRESH_TOKEN_URL_OVERRIDE`). Static keys
+(MiniMax) can't be split → v1 materializes with the scoped-key advisory (D5).
+
+Authoritative texts, already written: ADR-022; spec §11.4 amendment (2026-07-21)
++ Inv. 16/23 markers; `docs/phase3-contract.md` head amendment + the §3
+*Credential projection* and *Forbidden env* rows. The whole gateway apparatus
+(egress modes, `--network none`, `network_allow` enforcement, egress audit, the
+`doctor gateway` finding) is STRUCK, not deferred.
+
+**Not yet built** — this is the next implementation surface, spike-first:
+1. Spike `CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST` and real-token Codex startup
+   refresh (both may simplify the writers; results → a spike `RESULT.md`).
+2. Token service skeleton + refresh-ahead loop; Claude + Codex projection
+   writers; Codex refresh-broker endpoint; forbidden-env builder.
+3. Wire into the resident spawn seam, removing the gateway wiring; relax the
+   `docker_boundary` `--network none`/egress assertions to the §3 credential
+   rows; retire the `doctor gateway` finding.
+
 ## Known later obligations
 
 - Production spine-volume ownership is unspecified; the E2E fixture currently
@@ -192,4 +209,4 @@ advancing to Phase 4.
   canonical landing row derived; use the assignment's frozen `target_ref` and
   refuse divergence. Details are in the Phase 3 ledger.
 
-NEXT: Phase 3 is DONE except for the parked scope question. The sealed landing lane is complete and proven end to end on the real platform, and its acceptance rows are green: `docker_boundary` 9/9 (final-uid VirtioFS canary, nested-cover shadowing, applied envelope inspect, `--network none`, the realized four-row mount table plus in-container mode governance, production-image fake-route refusal, landing host-scope inversion, landing-program fence order), `docker_e2e` 8/8 including the merge walk, five-leg fast lane, all tag vet lanes. Residue cleanup closed. THE ONE REMAINING BLOCKER IS OPERATOR-ONLY and is under `## Parked`: the gateway and forbidden-env mechanisms of §3 are UNIMPLEMENTED, and `doctor` names three Phase-3-owned deferrals while §8 forbids any at completion. Phase 3 cannot be declared done, and Phase 4 must not start, until that is answered — no further implementation resolves it. Remaining non-blocking obligations are in `IMPLEMENTATION-NOTES.md` (2026-07-21): the unenforced 15-minute landing deadline, `SealedLandingResult` having no spine consumer, and the ADR-016 D7 label non-conformance in setup/legacy-land.
+NEXT: Implement the ADR-022 credential design (see "Credential design" above) — the parked §3 gateway question is now RESOLVED, not blocking. Start spike-first: `CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST` and real-token Codex startup-refresh (each may simplify the projection writers), then build the resident token service + Claude/Codex projection writers + Codex refresh-broker endpoint + forbidden-env builder, wire into the spawn seam removing the gateway wiring, and swap the `docker_boundary` `--network none`/egress-mode assertions for the §3 *Credential projection* row while retiring the `doctor gateway` finding. Everything else in Phase 3 is green and proven end to end on the real platform: sealed landing lane complete, `docker_boundary` 9/9 (note: the `--network none` assertion there is now superseded and to be swapped), `docker_e2e` 8/8 including the merge walk, five-leg fast lane, all tag vet lanes. Non-blocking obligations remain in `IMPLEMENTATION-NOTES.md` (2026-07-21): unenforced 15-minute landing deadline, `SealedLandingResult` has no spine consumer, ADR-016 D7 label non-conformance in setup/legacy-land.

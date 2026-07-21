@@ -1,6 +1,10 @@
 # ADR-018 — Per-launch network guard and resident-owned egress gateway
 
-- Status: Accepted
+- Status: **Superseded by ADR-022 (2026-07-21).** The free-internet requirement
+  deletes the egress gateway/proxy as a network control; the credential boundary
+  is now a resident-hosted token service (access-in/refresh-out). Read ADR-022
+  and §11.4's 2026-07-21 amendment first. This ADR is retained for history only —
+  do not implement D1–D9.
 - Date: 2026-07-13
 - Where the spec delegates: §11.4 fixes two independent egress planes,
   three HTTP modes, resident-held runtime auth, raw host:port allowances, and
