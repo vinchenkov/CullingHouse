@@ -341,6 +341,144 @@ func TestSealedMergeNeverAbortsAnOperatorMergeOfTheSameReviewedCommit(t *testing
 	}
 }
 
+// The reviewed commit's MESSAGE is attacker-shaped input, and `merge --log`
+// puts it in MERGE_MSG.
+//
+// The landing-id gate assumes MERGE_MSG can only carry our trailer if we wrote
+// it. An operator running `git merge --log mc/task-7` — or any merge in a
+// repository with `merge.log=true`, an ordinary setting — makes git splice the
+// SUBJECT LINES of every merged commit into MERGE_MSG as an indented shortlog.
+// Those subjects are authored by the task agent inside the sealed store. An
+// agent that sets a reviewed commit's subject to this landing's trailer
+// therefore forges the second half of the gate, and a substring match aborts the
+// operator's merge.
+//
+// Our own `-c merge.log=false --no-log` protects the message WE write and
+// cannot constrain the operator's. So the match is anchored instead: our trailer
+// is a line at column 0 in a message that begins "Land task ", and a shortlog
+// entry is indented under a `* <branch>:` header. That distinction is
+// structural, and it does not rely on the landing id staying secret — which
+// nothing else in this lane guarantees.
+func TestSealedMergeNeverAbortsAMergeThatMerelyQuotesOurTrailer(t *testing.T) {
+	const landingID = "0011223344556677"
+	repo, verified, pre, branch := forgedTrailerMergeReady(t, landingID)
+	g := landingGit{dir: repo}
+
+	// The operator merges the task branch with the shortlog turned on.
+	if _, err := gitOutput(repo, sourceGitEnv(), nil, "merge", "--log", branch); err == nil {
+		t.Fatal("fixture is invalid: the operator's own merge did not conflict")
+	}
+	message, err := os.ReadFile(filepath.Join(repo, ".git", "MERGE_MSG"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(message), landingIDTrailer+landingID) {
+		t.Fatalf("fixture is invalid: the forged trailer is not in MERGE_MSG:\n%s", message)
+	}
+	conflicted, err := os.ReadFile(filepath.Join(repo, "README.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := mergeSealedLanding(g, "main", verified, pre, landingID, 7); err == nil {
+		t.Fatal("the landing merged on top of the operator's merge")
+	}
+	if got := srcGit(t, repo, "rev-parse", "MERGE_HEAD"); got != verified {
+		t.Fatalf("the landing aborted an operator merge that merely quoted its trailer: MERGE_HEAD = %q", got)
+	}
+	if body, err := os.ReadFile(filepath.Join(repo, "README.md")); err != nil || string(body) != string(conflicted) {
+		t.Fatalf("the operator's half-resolved conflict was rewritten: %q (err %v)", body, err)
+	}
+}
+
+// forgedTrailerMergeReady is a pair whose REVIEWED COMMIT SUBJECT is the landing
+// trailer — the one thing a task agent controls that reaches an operator's
+// MERGE_MSG. `mergeReady` cannot express this: its sealed commit message is
+// fixed.
+func forgedTrailerMergeReady(t *testing.T, landingID string) (repo, verified, pre, branch string) {
+	t.Helper()
+	repo = t.TempDir()
+	srcGit(t, repo, "init", "-q", "-b", "main")
+	srcGit(t, repo, "config", "commit.gpgsign", "false")
+	writeFile(t, filepath.Join(repo, "README.md"), "operator\n")
+	srcGit(t, repo, "add", "-A")
+	srcGit(t, repo, "commit", "-qm", "base")
+	base := srcGit(t, repo, "rev-parse", "HEAD")
+
+	sealed := filepath.Join(t.TempDir(), "sealed")
+	srcGit(t, filepath.Dir(sealed), "clone", "-q", "--no-hardlinks", repo, sealed)
+	srcGit(t, sealed, "config", "commit.gpgsign", "false")
+	branch = taskAssignmentBranch(7)
+	srcGit(t, sealed, "checkout", "-q", "-b", branch)
+	writeFile(t, filepath.Join(sealed, "README.md"), "operator\nreviewed\n")
+	srcGit(t, sealed, "add", "-A")
+	// The agent's chosen subject line, and the whole of the attack.
+	srcGit(t, sealed, "commit", "-qm", landingIDTrailer+landingID)
+	verified = srcGit(t, sealed, "rev-parse", "HEAD")
+
+	if err := importSealedClosure(sealed, repo, base, verified); err != nil {
+		t.Fatalf("import: %v", err)
+	}
+	// Stage (7): the ref that lets the operator name the reviewed commit.
+	if err := createLandingRefCAS(landingGit{dir: repo}, branch, verified); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(repo, "README.md"), "operator\nconflicting\n")
+	srcGit(t, repo, "add", "-A")
+	srcGit(t, repo, "commit", "-qm", "operator edits the same reviewed path")
+	return repo, verified, srcGit(t, repo, "rev-parse", "refs/heads/main"), branch
+}
+
+// The target preimage, checked at abort time. ADR-017:752-753 lists it among the
+// facts a merge-in-progress must match, and it is the one member of that list
+// which is available in flight and was not being checked.
+//
+// NO REACHABLE SCENARIO TODAY, and labelled rather than counted: `merge --abort`
+// resets to whatever HEAD currently is, so this only matters if the target moved
+// while our merge state was outstanding. Every path that moves it either goes
+// through our own merge (which then succeeded, leaving nothing to abort) or
+// through an operator commit, which git refuses while a merge is in progress. It
+// is asserted because the ADR names it and because the cost is one rev-parse, so
+// the abort resets to the commit the plan froze or refuses to reset at all.
+func TestAbortRefusesWhenTheTargetIsNoLongerThePreimage(t *testing.T) {
+	const landingID = "0011223344556677"
+	repo, _, _, verified, branch := mergeReady(t)
+	g := landingGit{dir: repo}
+	if err := createLandingRefCAS(g, branch, verified); err != nil {
+		t.Fatal(err)
+	}
+	stale := srcGit(t, repo, "rev-parse", "refs/heads/main")
+	writeFile(t, filepath.Join(repo, "README.md"), "operator\nconflicting\n")
+	srcGit(t, repo, "add", "-A")
+	srcGit(t, repo, "commit", "-qm", "operator edits the same reviewed path")
+	moved := srcGit(t, repo, "rev-parse", "refs/heads/main")
+
+	// The merge state is built directly rather than through mergeSealedLanding,
+	// which would abort it successfully and leave nothing to test. The message
+	// is the one this lane writes, so both identity halves of the gate pass and
+	// the preimage is the only thing left to refuse on.
+	message := landingMergeSubject + "7\n\n" + landingIDTrailer + landingID + "\n"
+	if _, err := gitOutput(repo, sourceGitEnv(), nil, "merge", "--no-ff", "-m", message, verified); err == nil {
+		t.Fatal("fixture is invalid: the merge did not conflict")
+	}
+	if got := srcGit(t, repo, "rev-parse", "MERGE_HEAD"); got != verified {
+		t.Fatalf("fixture is invalid: MERGE_HEAD = %q, want %q", got, verified)
+	}
+
+	// The merge state is genuinely ours, but the preimage the caller names is
+	// not where the target is.
+	err := abortOwnConflictedMerge(g, verified, landingID, stale, Domainf("merge failed"))
+	if err == nil {
+		t.Fatal("the abort accepted a target that is not the frozen preimage")
+	}
+	if _, statErr := os.Lstat(filepath.Join(repo, ".git", "MERGE_HEAD")); statErr != nil {
+		t.Fatal("the abort ran against a moved target instead of refusing")
+	}
+	if now := srcGit(t, repo, "rev-parse", "refs/heads/main"); now != moved {
+		t.Fatalf("the refused abort moved the target: %q", now)
+	}
+}
+
 // Ported from legacy mc-land.test.ts:289,328, and it closes the last two of the
 // four knobs 7364503 found were held by nothing.
 //

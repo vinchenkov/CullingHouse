@@ -762,7 +762,7 @@ func mergeSealedLanding(g landingGit, target, verifiedSHA, preMergeSHA, landingI
 		return err
 	}
 
-	message := "Land task " + strconv.FormatInt(taskID, 10) + "\n\n" +
+	message := landingMergeSubject + strconv.FormatInt(taskID, 10) + "\n\n" +
 		landingIDTrailer + landingID + "\n" +
 		"MC-Landing-Task: task " + strconv.FormatInt(taskID, 10) + "\n" +
 		"MC-Landing-Verified-SHA: " + verifiedSHA + "\n" +
@@ -799,9 +799,37 @@ func mergeSealedLanding(g landingGit, target, verifiedSHA, preMergeSHA, landingI
 		"GIT_COMMITTER_EMAIL="+landingIdentityEmail,
 	)
 	if _, err := gitOutput(g.dir, env, nil, args...); err != nil {
-		return abortOwnConflictedMerge(g, verifiedSHA, landingID, err)
+		return abortOwnConflictedMerge(g, verifiedSHA, landingID, preMergeSHA, err)
 	}
 	return nil
+}
+
+// landingMergeSubject is the first line of every message this lane writes. The
+// abort matcher requires it, so a message that merely QUOTES our trailer
+// somewhere in its body cannot be mistaken for one we wrote.
+const landingMergeSubject = "Land task "
+
+// landingWroteMergeMessage decides whether a MERGE_MSG is one this landing
+// authored. Both conditions are structural rather than lexical:
+//
+//   - the message opens with our own subject, and
+//   - the trailer is a LINE, at column 0, exactly.
+//
+// `git merge --log` indents merged commits' subjects by two spaces beneath a
+// `* <branch>:` header, so agent-authored text can never present as a trailer
+// line however it is spelled. The trailing newline requirement matters equally:
+// without it a subject ending in our trailer would match at the end of a
+// shortlog block.
+func landingWroteMergeMessage(message, landingID string) bool {
+	if !strings.HasPrefix(message, landingMergeSubject) {
+		return false
+	}
+	for _, line := range strings.Split(message, "\n") {
+		if line == landingIDTrailer+landingID {
+			return true
+		}
+	}
+	return false
 }
 
 // abortOwnConflictedMerge is the operator-approved scoped self-abort (decision
@@ -816,17 +844,28 @@ func mergeSealedLanding(g landingGit, target, verifiedSHA, preMergeSHA, landingI
 // ADR-017:752-753: "Merge-in-progress files are accepted or aborted only when
 // they match this action." Two facts have to agree before anything is undone:
 //
-//   - MERGE_HEAD is the reviewed SHA, and
-//   - MERGE_MSG carries THIS landing's id.
+//   - MERGE_HEAD is the reviewed SHA,
+//   - MERGE_MSG is a message THIS landing wrote, and
+//   - the target is still at the preimage the plan froze.
 //
 // The first alone is NOT sufficient, and believing it was is a hole this code
 // shipped with for one commit. Stage (7) publishes the reviewed commit under a
 // name the operator can reach — `refs/heads/mc/task-<id>`, created by our own
 // CAS — so an operator running `git merge mc/task-7` in the window before our
 // merge completes produces a MERGE_HEAD equal to the reviewed SHA. A SHA-only
-// gate would abort their half-resolved conflict. The landing id is what
-// distinguishes the two: git preserves our `-m` message verbatim through a
-// conflict, and an operator's merge carries git's default message instead.
+// gate would abort their half-resolved conflict.
+//
+// Nor is a SUBSTRING match on the message sufficient, which is a second hole
+// found by review. The reviewed commit's message is authored by the task agent
+// inside the sealed store, and `git merge --log` (or `merge.log=true`, an
+// ordinary operator setting) splices every merged commit's SUBJECT into
+// MERGE_MSG as an indented shortlog. An agent that titles a reviewed commit with
+// this landing's trailer would forge the match. Our own `--no-log` protects the
+// message we write and cannot constrain the operator's, so the match is
+// STRUCTURAL instead: our trailer is a line at column 0, in a message that opens
+// with our own subject. A shortlog entry is indented beneath a `* <branch>:`
+// header and can never satisfy that. This deliberately does not rest on the
+// landing id being secret, because nothing in this lane makes it so.
 //
 // Preflight already refused a merge in flight before we began, so any merge
 // state here appeared after it — a race the operator won. This is the one
@@ -834,15 +873,22 @@ func mergeSealedLanding(g landingGit, target, verifiedSHA, preMergeSHA, landingI
 // scoped this tightly, and why an unreadable or unrecognised message refuses to
 // abort rather than guessing.
 //
-// `merge --abort` is a `reset --merge`: it restores the merge's own paths and
-// preserves local changes outside them. The path-scoped dirty fence deliberately
-// permits unrelated uncommitted operator work, so that work is present when this
-// runs and must survive it.
+// ON WHAT `merge --abort` DESTROYS. It is a `reset --merge`, which resets the
+// whole INDEX to HEAD — so it would revert unrelated STAGED operator work, not
+// merely leave it alone. That is not reachable here, and the reason is worth
+// recording because it is not obvious: `git merge` refuses to start at all with
+// anything staged ("Your local changes would be overwritten by merge"), so a
+// merge state cannot coexist with pre-existing staged work. MEASURED, not
+// reasoned. The residue is an operator who stages something in the window
+// between our merge failing and this abort running, which is milliseconds wide
+// and is named in IMPLEMENTATION-NOTES rather than guarded, because the guard
+// would cost a reviewed-path set this function does not have and would fire in
+// no reachable test.
 //
 // The cause is always reported. An abort — successful or not — never converts a
 // failed landing into a quiet one, and a FAILED abort is louder still, because
 // then the residue really is there and the operator needs to know which.
-func abortOwnConflictedMerge(g landingGit, verifiedSHA, landingID string, cause error) error {
+func abortOwnConflictedMerge(g landingGit, verifiedSHA, landingID, preMergeSHA string, cause error) error {
 	head, err := g.out("rev-parse", "--verify", "-q", "MERGE_HEAD")
 	if err != nil || head == "" {
 		// The merge failed before recording any merge state — a refused
@@ -856,9 +902,15 @@ func abortOwnConflictedMerge(g landingGit, verifiedSHA, landingID string, cause 
 	}
 	// Same commit, but is it OUR merge of it? Only the message can say.
 	message, msgErr := os.ReadFile(filepath.Join(gitDirOf(g, g.dir), "MERGE_MSG"))
-	if msgErr != nil || !strings.Contains(string(message), landingIDTrailer+landingID) {
-		return Domainf("landing merge failed: %v; a merge of the reviewed commit %s is in progress but does not carry landing %s, so it was left untouched",
+	if msgErr != nil || !landingWroteMergeMessage(string(message), landingID) {
+		return Domainf("landing merge failed: %v; a merge of the reviewed commit %s is in progress but was not written by landing %s, so it was left untouched",
 			cause, head, landingID)
+	}
+	// `merge --abort` resets to whatever HEAD is NOW, so aborting is only safe
+	// while the target is still where the plan froze it.
+	if tip, tipErr := g.out("rev-parse", "--verify", "HEAD^{commit}"); tipErr != nil || tip != preMergeSHA {
+		return Domainf("landing merge failed: %v; and its own merge was left in place because the target is at %s, not the frozen preimage %s",
+			cause, tip, preMergeSHA)
 	}
 	if _, abortErr := g.run("merge", "--abort"); abortErr != nil {
 		return Domainf("landing merge failed: %v; and aborting its own conflicted merge failed too, so the merge state is still present: %v",

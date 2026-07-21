@@ -384,6 +384,10 @@ func TestLandSealedRefusesInconsistentPins(t *testing.T) {
 		"branch mismatch":  func(p *sealedLandingPins) { p.Branch = taskAssignmentBranch(9) },
 		"targets own":      func(p *sealedLandingPins) { p.TargetRef = p.Branch },
 		"bad objectformat": func(p *sealedLandingPins) { p.ObjectFormat = "md5" },
+		// Not cosmetic: an empty id makes the abort path's MERGE_MSG match
+		// degenerate to the trailer NAME, which every landing's message carries.
+		"no landing id":    func(p *sealedLandingPins) { p.LandingID = "" },
+		"short landing id": func(p *sealedLandingPins) { p.LandingID = "0011" },
 	}
 	for name, mutate := range broken {
 		t.Run(name, func(t *testing.T) {

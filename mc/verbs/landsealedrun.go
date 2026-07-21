@@ -116,6 +116,15 @@ func landSealed(sourceRepo, taskRoot, coverRoot string, pins sealedLandingPins) 
 	if err := validateSetupObjectFormat(pins.ObjectFormat); err != nil {
 		return zero, err
 	}
+	// The one guard here that is NOT redundant, and it was the one missing. The
+	// abort path matches MERGE_MSG against `MC-Landing-Id: <LandingID>`; an empty
+	// id degenerates that into a match on the trailer NAME, which every landing's
+	// message carries — so the lane would abort another action's merge, and would
+	// write its own merge commit with an empty trailer for a later retry to match
+	// on. Nothing downstream re-derives this, unlike the three above.
+	if !validLowercaseHex(pins.LandingID, 16) {
+		return zero, Domainf("sealed landing id is not 16 lowercase hex; the abort path could not identify its own merge")
+	}
 
 	if err := fenceLandingCover(sourceRepo, coverRoot); err != nil {
 		return zero, err
