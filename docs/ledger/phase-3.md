@@ -4676,3 +4676,72 @@ doctor` in the production image names three Phase-3-owned deferrals
 (`container-runtime`, `gateway`, `runtime-auth`), and §8 forbids any at
 completion — so Phase 3 cannot be declared done regardless of how many landing
 rows go green.
+
+## 2026-07-21 — the lane is live on the wrong platform
+
+The sealed landing walk found the thing every host-side test in this session was
+structurally unable to see, and it is the most important finding of the slice.
+
+**`mc dispatch` on Darwin routes through the PRIVATE HELPER FRAME, and that
+frame refuses a landing candidate outright.** The resident log, verbatim, 240
+consecutive ticks:
+
+    mc dispatch failed (exit 1): mc: private helper __dispatch-prepare failed
+    (exit status 1: mc: private prepare refused: dispatch: the private frame
+    does not yet carry a landing candidate)
+
+So the sealed landing lane — declared live at `d91e388`, green across the whole
+fast suite and nine `docker_boundary` rows — is live on the NATIVE
+single-process path only. On the platform this deployment actually targets it
+cannot dispatch a landing at all. An approved sealed task sits at `packaged`
+forever, burning one dispatch per tick.
+
+The guard doing the refusing is correct and stays: `privateFrameRefusesLanding`
+(step 10) exists because `privateCandidateFromPrepared` is only ever handed
+`prepared.candidate`, which a landing leaves nil, so serializing one would hand
+the far side a candidate whose `Spawn` is nil. Refusing loudly was the right
+call. What was wrong was the ACTIVATION claim built on top of it: the seam
+survey recorded the Darwin split as "a later slice over these same functions"
+(dispatchseam.go:448-450), which is true of the SPAWN path and became false for
+landing the moment the lane went live.
+
+Worth stating plainly because it generalizes: every test that proved the lane
+works called `Dispatch()` — the in-process entry point. The production path on
+this platform is `DispatchPreparePrivate` over the one-shot control descriptor.
+Both are "the seam", and a test suite can be exhaustive about one while the
+other is dead. The E2E is the only thing in the tree that walks the real one.
+
+**The Worker now commits.** Writing the walk exposed a second, quieter problem:
+the sealed E2E's Worker sealed WITHOUT committing, so `verified_sha` equalled
+the assignment's frozen base. Any landing merge would have been trivially
+up-to-date, and the walk would have proved the lane runs without proving it
+merges. The behavior now writes and commits a file, and the assertion requires
+`verified_sha` to have ADVANCED past the base rather than to equal it — so the
+behavior cannot silently stop committing and leave a no-op merge behind.
+
+**Intended fix**, and it is a real slice, not a patch:
+`PrivateDispatchCandidate` (`dispatchprivate.go:58-75`) gains a landing sibling
+carrying `preparedLanding`'s fields — task id, landing id, the frozen
+`landingCaptureInputs`, assigned ref, workspace root, tunables, token, mount
+state. `PrivateDispatchPrepareResponse` gains `Landing *PrivateDispatchLanding
+Candidate` beside `Candidate`, `privateCandidateFromPrepared` gains a landing
+counterpart, and `preparedFromPrivate` a `"landing"` kind arm. Then
+`DispatchAttestPrivate` and `DispatchCommitPrivate` must route the landing legs
+(`dispatchAttestLanding` / `dispatchCommitLanding`) rather than the spawn ones.
+`privateFrameRefusesLanding` inverts into the arm that BUILDS the carrier, and
+its test inverts with it.
+
+REPRO (~2 minutes, and it is the acceptance test for the fix):
+re-add the landing walk after the packager assertions in
+`TestProductionWorkerCompletionSealDockerBoundary` — approve, wait for archived,
+assert `main` advanced, `main^1` is the prior main, `main^2` is the sealed
+commit, and `main:WORKED.md` carries the Worker's bytes — then
+`cd mc && mise exec -- go test -tags docker_e2e -run TestProductionWorkerCompletionSealDockerBoundary ./e2e/`
+
+It is deliberately NOT in the tree as a red test: it lands in the same commit as
+the carrier, because it is that carrier's acceptance evidence and passes only
+with it.
+
+NEXT (outgoing): build the private-frame landing carrier above, then land the
+walk with it. Until that is done, "the sealed landing lane is live" is true only
+of the native path and must not be stated without that qualifier.
