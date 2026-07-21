@@ -6,7 +6,7 @@ REPO PATH: `~/dev/ai/homie`. Never relocate this repo into `~/Documents`,
 `~/Desktop`, or `~/Downloads`: macOS TCC can revoke an agent session's own
 filesystem access there during fan-out. Full Disk Access does not fix it.
 
-LAST GREEN SHA: `8ba4c75` — five-leg fast lane green. Docker suite last 8/8 at
+LAST GREEN SHA: `96c5364` — five-leg fast lane green. Docker suite last 8/8 at
 `4a69d15`. The operator pushes manually; agents do not push.
 
 PHASES PASSING: Phase 0 COMPLETE; Phase 1 COMPLETE; Phase 2 COMPLETE. Phase 3
@@ -66,8 +66,8 @@ the approve landing fence so an immutable task assignment, not only
   - [x] Adversarial Git corpus gap analysis complete; rename inference pinned.
   - [x] Operator-approved scoped self-abort, implemented and reviewed.
   - [x] Landing id and attest-side carrier producer; both inert.
-  - [ ] Resident landing arm, then route landing through the dispatch seam and
-        turn it on atomically.
+  - [x] Resident sealed-landing arm and container envelope; inert.
+  - [ ] Route landing through the dispatch seam, then turn it on atomically.
   - [ ] Run and record the complete Phase 3 real-mechanism/Docker acceptance
         lane before advancing.
 - [ ] Phase 4 — six E2E control-loop scenario families.
@@ -105,14 +105,10 @@ reaches them until the selector flips. Only the last step must be atomic.
 
 1. [x] The landing id (`landingid.go`) and the attest-side carrier producer
    `captureLandingPlan` (`landingcapture.go`). Both green and inert.
-2. [ ] Resident: `MountPlan.landing`, a sealed `Effect` arm, execution beside
-   `runAcceptedSealRebuild` (`effects.ts:651`), binds resident-derived. The
-   envelope destination for this class is `/mc/landing.json`, not
-   `/mc/setup.json`. Note the TS mirror lags the Go carrier: `MountPlan`
-   (`types.ts:116`) has no `landing`, the `land` effect (`:169`) has no
-   `mount_plan`, and `invalidMountPlanReason` (`effects.ts:90-95`) refuses
-   every destination outside `/workspace` — which is WHY `Landing` is a sibling
-   of `Entries` and a landing plan must carry no entries at all.
+2. [x] Resident `runSealedLanding` and the `MountPlan.landing` mirror, with the
+   ADR-019 landing-class envelope pinned by test. Green and inert; it has no
+   effect arm, so step 3 changes routing alone. The carrier grew
+   `ApprovedRunID` for ADR-016:846's label.
 3. [ ] Route the landing THROUGH prepare/attest/commit, then flip. This is a
    seam restructure, not three switch edits, and it needs its own plan before
    code. ADR-016:369-379 is the authority: a landing-pending row forms "an
@@ -172,4 +168,4 @@ advancing to Phase 4.
   canonical landing row derived; use the assignment's frozen `target_ref` and
   refuse divergence. Details are in the Phase 3 ledger.
 
-NEXT: Sealed-lane activation step 2 — the resident landing arm: `MountPlan.landing` on the TS mirror, a sealed `Effect` arm, and execution beside `runAcceptedSealRebuild` writing its envelope to `/mc/landing.json`. Inert on its own; do not touch the selector.
+NEXT: Sealed-lane activation step 3 — PLAN IT BEFORE CODING. Route the landing through prepare/attest/commit (own candidate shape, canonical projection, consequence name, and a claim-free apply), then flip the switches atomically. Read the 2026-07-20 ledger entries first; the seam survey and the four tests that must move with it are there.

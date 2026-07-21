@@ -3892,3 +3892,41 @@ NEXT (outgoing): the resident landing arm — `MountPlan.landing`, a sealed
 `Effect` arm, execution beside `runAcceptedSealRebuild`, envelope to
 `/mc/landing.json`. Inert on its own. The seam restructure above is the step
 after, and it is the one that needs its own plan before code.
+
+## 2026-07-20 (cont.) — the resident landing arm, and the uid that looks wrong
+
+`runSealedLanding` plus the `MountPlan.landing` mirror. Tested directly rather
+than through `applyEffect`: no effect arm dispatches it, which is deliberate, so
+the seam step changes routing and nothing else.
+
+The container envelope was surveyed rather than assumed, and almost all of it is
+already decided — network `none`, `CapDrop=ALL` with NNP on, `1 cpu / 1024m /
+128 pids` from ADR-019:30's own landing row, the `mc-landing-<id>` name.
+
+Two points where the obvious guess is wrong, recorded so they are not "fixed"
+later by someone who trusts intuition over the corpus:
+
+- The uid is 10002:10002, NOT the operator's, even though landing is the one
+  class that writes into an operator-owned repository. ADR-019:85 puts setup and
+  landing on one row; ADR-017:76-86 refuses to assert anything about how the
+  VirtioFS share presents host ownership and defers the whole question to
+  ADR-019:183-188's final-uid canary. Nothing chowns a host inode, and there is
+  no permission-widening fallback anywhere in the design. This was very nearly
+  implemented as an operator-uid exception on intuition.
+- The approved-run label key is `mc-approved-run-id`, not `mc-run-id`. ADR-016
+  names the concept (:846) but never spells the key. `mc-run-id` means "the run
+  this container IS" everywhere else, so a landing carrying the Worker run it
+  landed FOR could read to a liveness sweep as that Worker's own agent
+  container — the masquerade :857 forbids. The carrier grew `ApprovedRunID` to
+  supply it.
+
+Three gaps carried rather than closed, all in `IMPLEMENTATION-NOTES.md`: the
+15-minute foreground deadline is unenforced (no timeout seam exists on
+`TickDeps.docker` for ANY class, so this is inherited, not opened);
+`SealedLandingResult` has no spine consumer because `mc land report` takes only
+a status and a reason; and the setup/legacy-land containers are non-conformant
+to ADR-016 Decision 7's label rules in ways this lane does not own.
+
+NEXT (outgoing): activation step 3, the seam. Plan before code — it needs a
+landing candidate shape, canonical projection, consequence name, and a
+claim-free apply, plus the four whole-object test moves already catalogued.
