@@ -904,3 +904,53 @@ rows, so the second bullet of the 2026-07-20 "three gaps" list is partly
 addressed — the fence is open, though `SealedLandingResult` still has no spine
 consumer and the topology JSON is still discarded. The 15-minute deadline and
 the label-conformance bugs remain open exactly as recorded there.
+
+## 2026-07-21 (cont.) — the Darwin landing carrier, and two reversed decisions
+
+- **DELEGATED — the sealed landing crosses the Darwin private frame as its own
+  kind.** ADR-016 D1 describes the broker/helper split as "a later slice over
+  these same functions", which was true of the spawn path and became false for
+  landing the moment the lane went live: `mc dispatch` on this platform
+  self-delegates, so a landing that could not cross the frame could not dispatch
+  at all. `PrivateDispatchLandingCandidate` is a sibling of the spawn carrier,
+  and all three legs plus the broker CLI select on the frame KIND rather than on
+  a nil check, so a malformed frame cannot take the other lane's attestation.
+  The landing needed its own attestation validator because
+  `validatePrivateAttestation` requires a resolvable routing digest on any
+  non-refusal frame and a landing attests no routing.
+
+  The helper re-validates every scalar it acts on but deliberately NOT the
+  token's value: commit recomputes the token from the tuple it received, so a
+  dropped or mangled field fails on evidence the helper computed itself rather
+  than on a shape check a well-formed lie would satisfy.
+
+- **REVERSED — `preparedLanding` no longer carries tunables.** They were written
+  at prepare and never read; commit rebuilds the token from the FRESH
+  selection's tunables. Found only because the Darwin carrier had to serialize
+  them and the round-trip test failed a bound check on a field with no reader.
+  Carrying dead state across a security boundary is strictly worse than
+  carrying it in-process: it becomes something the helper must validate and an
+  attacker can vary.
+
+- **REVERSED — a closed landing now removes its own cover directory.** The prior
+  code kept it, citing ADR-016:344-349 as making a later tick responsible for
+  landing residue. On reading that clause it is about action CONTAINERS visible
+  to a later tick, not about host directories the resident itself created, and
+  the sweep it defers to was never written — so every landing leaked one
+  directory under `MC_HOME/runs` permanently. Contract §3's orphan-sweep row is
+  the governing text: "closed derived file artifacts have exact
+  component/action liveness and cleanup".
+
+  The infrastructure-failure path still keeps both cover and envelope, and that
+  asymmetry is the point: the landing did not CLOSE, it stays pending, and the
+  retry reuses those exact paths because the landing id is stable by
+  construction. Removing them there would also delete a cover out from under a
+  container whose absence has not been confirmed.
+
+Closed since the 2026-07-20 entry: `mc land report` now accepts assignment-backed
+rows, so the sealed lane can report its outcome. Still open from that entry: the
+15-minute foreground landing deadline is unenforced (no timeout seam exists on
+`TickDeps.docker` for any class), `SealedLandingResult` still has no spine
+consumer because `mc land report` takes only a status and a reason, and the
+setup/legacy-land containers remain non-conformant to ADR-016 Decision 7's label
+rules in code the sealed lane does not own.
