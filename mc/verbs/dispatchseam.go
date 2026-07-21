@@ -664,7 +664,17 @@ func attestDeploymentPreamble(home string, prepared preparedDispatch) (string, e
 // Any deployment/routing byte or interpretation drift abandons the prepared
 // candidate as stale; it never claims from old host authority.
 func dispatchRecheckAttestation(home string, prepared preparedDispatch, first attestedDispatch) attestedDispatch {
-	second, err := dispatchAttest(home, prepared)
+	// Both lanes owe the same fence, so the recheck is shared and only the leg
+	// differs. The comparison stays canonicalPrivateAttestation, which already
+	// carries the whole mount plan — so for a landing this covers PreMergeSHA,
+	// and an operator commit that moves the target tip between the two attests
+	// abandons the prepared landing instead of landing onto a preimage that no
+	// longer exists.
+	reattest := dispatchAttest
+	if prepared.landing != nil {
+		reattest = dispatchAttestLanding
+	}
+	second, err := reattest(home, prepared)
 	if err == nil && reflect.DeepEqual(canonicalPrivateAttestation(first), canonicalPrivateAttestation(second)) {
 		return first
 	}

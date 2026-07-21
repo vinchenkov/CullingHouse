@@ -485,3 +485,86 @@ func TestDispatchAttestLandingStillOwesTheDeploymentFence(t *testing.T) {
 		t.Fatal("a deployment identity that moved between prepare and attest was accepted")
 	}
 }
+
+// ---------------------------------------------------------------------------
+// The pre-commit recheck.
+//
+// D1's immediate pre-commit host fence is shared: both legs run their own
+// attest a second time and compare the canonical attestation. For a landing the
+// comparison covers PreMergeSHA, because canonicalPrivateAttestation already
+// carries the whole mount plan — so an operator commit that moves the target
+// tip between the two attests abandons the prepared landing rather than landing
+// onto a preimage that no longer exists.
+// ---------------------------------------------------------------------------
+
+func TestLandingRecheckAcceptsAnUnmovedHost(t *testing.T) {
+	home, prepared := dlsPreparedOverRepo(t)
+	first, err := dispatchAttestLanding(home, prepared)
+	if err != nil {
+		t.Fatalf("dispatchAttestLanding: %v", err)
+	}
+	got := dispatchRecheckAttestation(home, prepared, first)
+	if got.refusal != nil {
+		t.Fatalf("an unmoved host was refused as stale: %+v", got.refusal)
+	}
+	if got.mountPlan == nil || got.mountPlan.Landing == nil {
+		t.Fatal("recheck dropped the landing plan")
+	}
+}
+
+func TestLandingRecheckRefusesStaleOnMovedTargetTip(t *testing.T) {
+	home := dlsHome(t)
+	ws, _ := lcRepo(t, "7")
+
+	task := dlsTask()
+	task.TargetRef = "main"
+	task.Sealed.TargetRef = "main"
+	task.VerifiedSHA = strings.Repeat("a", 40)
+	task.Sealed.BaseSHA = strings.Repeat("c", 40)
+	task.Sealed.ClosureDigest = strings.Repeat("d", 64)
+	task.Sealed.LocalRepoUUID = "0f9c1e2a-3b4c-4d5e-8f60-112233445566"
+
+	st := dlsMountState()
+	st.Worksources[0].WorkspaceRoot = ws
+	prepared, err := landingPrepareFromState(defaultDispatchProtocolIdentity,
+		dlsUUID, "00112233445566ff", dlsSelection(task), task, st)
+	if err != nil {
+		t.Fatalf("landingPrepareFromState: %v", err)
+	}
+	first, err := dispatchAttestLanding(home, prepared)
+	if err != nil || first.refusal != nil {
+		t.Fatalf("first attest = %+v err %v", first.refusal, err)
+	}
+
+	// The operator commits on the target between attest and commit.
+	writeFile(t, filepath.Join(ws, "app.txt"), "v2\n")
+	srcGit(t, ws, "add", "-A")
+	srcGit(t, ws, "commit", "-qm", "operator c3")
+
+	got := dispatchRecheckAttestation(home, prepared, first)
+	if got.refusal == nil {
+		t.Fatal("the target tip moved between attest and commit and the landing was committed anyway")
+	}
+	if got.refusal.Code != refusal.CodeStale {
+		t.Fatalf("moved-tip refusal = %+v, want stale", got.refusal)
+	}
+}
+
+func TestLandingRecheckDoesNotReattestAsASpawn(t *testing.T) {
+	// The selector is two lines and easy to get backwards. If a landing were
+	// re-attested through dispatchAttest, it would nil-deref cand.spawn — so
+	// the assertion is simply that recheck completes at all, on a home whose
+	// routing.md is unreadable and which therefore has nothing a spawn attest
+	// could succeed against.
+	home, prepared := dlsPreparedOverRepo(t)
+	first, err := dispatchAttestLanding(home, prepared)
+	if err != nil {
+		t.Fatalf("dispatchAttestLanding: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(home, "routing.md"), []byte("\x00 not routing \x00"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got := dispatchRecheckAttestation(home, prepared, first); got.refusal != nil {
+		t.Fatalf("recheck of a landing consulted routing: %+v", got.refusal)
+	}
+}
