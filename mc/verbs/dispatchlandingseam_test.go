@@ -824,3 +824,56 @@ func TestPrivateFrameRefusesALandingCandidate(t *testing.T) {
 		t.Fatalf("the landing guard refused a spawn candidate: %v", err)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// The prepare fork.
+//
+// The sealed landing forks out of prepare ahead of applyAction, because it owes
+// attest and commit. The legacy branch-carrying landing must keep falling
+// through to applyAction and stay the pure effect data it has always been —
+// the lanes partition on the assignment, so the fork can never divert one into
+// the other.
+// ---------------------------------------------------------------------------
+
+func TestLegacyLandStillReturnsFromPrepare(t *testing.T) {
+	db := dvSpine(t)
+	ctx := context.Background()
+
+	var uuid string
+	if err := db.QueryRowContext(ctx, `SELECT deployment_uuid FROM meta WHERE id = 1`).Scan(&uuid); err != nil {
+		t.Fatal(err)
+	}
+	// A branch-carrying, unassigned, approved+packaged row: the LEGACY lane.
+	// Built the way the substrate triggers require — born proposed, with a live
+	// Review Packet before approval.
+	decided := dvOld.Add(time.Hour)
+	task := dvTask(1, dispatch.ScopeTask, dispatch.StatusPackaged, 0)
+	task.Branch, task.VerifiedSHA, task.TargetRef = "mc/task-1", "abc123", "refs/heads/main"
+	fixture := task
+	fixture.Decision, fixture.DecidedAt = "", nil
+	dvInsertTask(t, db, fixture)
+	dvExec(t, db, `INSERT INTO review_packets (task_id, created_at) VALUES (1, ?)`, dvOld.Format(spineTime))
+	dvExec(t, db, `UPDATE tasks SET decision='approved', decided_at=? WHERE id=1`, decided.Format(spineTime))
+
+	var prepared preparedDispatch
+	if err := underDispatchLock(db, func(ctx context.Context, q Q) error {
+		var e error
+		prepared, e = dispatchPrepareWithIdentity(ctx, q, defaultDispatchProtocolIdentity, uuid, "00112233445566ff")
+		return e
+	}); err != nil {
+		t.Fatalf("dispatchPrepareWithIdentity: %v", err)
+	}
+
+	if prepared.landing != nil {
+		t.Fatal("a legacy branch-carrying landing was diverted into the sealed lane")
+	}
+	if prepared.final == nil {
+		t.Fatal("the legacy land effect no longer returns from prepare")
+	}
+	if prepared.final["action"] != "land" || prepared.final["task_id"] != int64(1) {
+		t.Fatalf("legacy land effect = %+v", prepared.final)
+	}
+	if _, ok := prepared.final["landing"]; ok {
+		t.Fatal("the legacy land effect grew a landing key; the resident's lane discriminator is broken")
+	}
+}

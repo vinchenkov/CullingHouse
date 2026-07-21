@@ -578,6 +578,18 @@ func dispatchPrepareWithIdentity(ctx context.Context, q Q, identity dispatchProt
 		}}, nil
 	}
 
+	// A SEALED landing needs host authority — it attests the operator's Git
+	// views — so like a spawn it returns a candidate rather than finishing
+	// here. The legacy branch-carrying landing keeps falling through to
+	// applyAction below, where it stays the pure effect data it has always
+	// been; the two lanes partition on the assignment, so this fork can never
+	// divert one into the other.
+	if sel.action.Kind == dispatch.KindLand && sel.action.Land != nil {
+		if t, ok := sealedLandingSubject(sel.rec, sel.action.Land.TaskID); ok {
+			return dispatchLandingPrepare(ctx, q, identity, uuid, requestID, sel, t)
+		}
+	}
+
 	effect, err := applyAction(ctx, q, sel.now, sel.action, sel.tun)
 	if err != nil {
 		return preparedDispatch{}, err
