@@ -3694,3 +3694,70 @@ about the first landing's own residue could establish.
 NEXT (outgoing): corpus closed and the self-abort reviewed and fixed; the lane is
 still inert. Remaining before Phase 3 completion: the four-seam activation, then
 the real-mechanism/Docker acceptance lane.
+
+## 2026-07-20 — the abort slice under adversarial review
+
+Two independent read-only reviews of the self-abort. Both earned their cost, and
+between them they changed the code three times. Worth recording is not only what
+they found but which finding was WRONG, because it was the one rated most
+severe.
+
+The conformance review settled the question the slice was nervous about: the
+lane is permitted to mutate here. ADR-017:752 — "Merge-in-progress files are
+accepted or aborted only when they match this action" — both authorizes the
+abort and supplies the gate, and the "later trusted action" constraint at :757
+is scoped to deleting the task ref and emptying the task root, neither of which
+the abort touches. It also confirmed the four seams remain unwired. That reading
+is what turned up the ownership hole recorded above, because the ADR says match
+THIS ACTION and the implementation matched a SHA.
+
+The safety review then found the second forgery, which is subtler and better.
+The landing-id gate assumed MERGE_MSG can only carry our trailer if we wrote it.
+It cannot be assumed: the reviewed commit's message is authored by the task
+agent, and `git merge --log` — or `merge.log=true`, an ordinary operator setting
+— splices every merged commit's SUBJECT into MERGE_MSG as an indented shortlog.
+An agent that titles a reviewed commit with the landing trailer forges the
+match. Our own `--no-log` protects the message WE write and can say nothing
+about the operator's. The fix is structural rather than lexical: our subject at
+the start, the trailer as a line at column 0. A shortlog entry is indented under
+a `* <branch>:` header and cannot present as one. Deliberately, this does not
+rest on the landing id being secret, because nothing in the lane makes it so.
+
+The pattern across both holes is the same and worth naming: each time, the lane
+itself created the capability that defeated the gate. Stage (7) publishes the
+reviewed commit under an operator-typeable name; the sealed store carries
+agent-authored text into an operator's merge message. Asking "what did we hand
+the other party?" would have found both faster than asking "is this check
+correct?"
+
+**And one finding was refuted by measurement.** The review's most severe defect
+was that `merge --abort`, being a `reset --merge`, destroys unrelated STAGED
+operator work — reverting it to HEAD, recoverable only as a dangling blob. The
+mechanism is real; the reachability is not. `git merge` refuses to start with
+anything staged, exit 2, no MERGE_HEAD written, so a merge state cannot coexist
+with pre-existing staged work and the abort is never entered. The same fact
+refutes the companion claim that the abort would fail and wedge the slot.
+
+The review reached its conclusion by testing `reset --merge` standalone and
+inferring reachability from our path-scoped dirty fence permitting unrelated
+work. The fence does permit it. Git's own clean-index precondition — not our
+fence — is what excludes it. The lesson is not that the review was careless; it
+had verified its mechanism carefully. It is that a verified mechanism plus an
+unverified path to it is still an unverified finding, and the path is the half
+that decides whether to write code.
+
+Two smaller items landed with it: the abort now asserts the target is still at
+the frozen preimage (ADR-017 names target preimage, and `merge --abort` resets
+to whatever HEAD is now — no reachable scenario today, labelled as such), and
+`landSealed` now validates LandingID, which by that function's own comment is
+the one guard that is not redundant and was the one missing.
+
+Accepted residuals, recorded in IMPLEMENTATION-NOTES rather than guarded: the
+millisecond window where an operator stages during a failed landing, the TOCTOU
+between reading MERGE_HEAD and aborting, and the fact that three materially
+different post-conditions are still one prose error. The last belongs to the
+landing failure taxonomy already owed, and the three cases are now written down
+as its concrete requirements.
+
+NEXT (outgoing): abort slice reviewed, hardened, and still inert. The four-seam
+activation is next, then the Phase 3 real-mechanism/Docker completion lane.

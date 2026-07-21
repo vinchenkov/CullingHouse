@@ -6,7 +6,7 @@ REPO PATH: `~/dev/ai/homie`. Never relocate this repo into `~/Documents`,
 `~/Desktop`, or `~/Downloads`: macOS TCC can revoke an agent session's own
 filesystem access there during fan-out. Full Disk Access does not fix it.
 
-LAST GREEN SHA: `64dc5de` — five-leg fast lane green. Docker suite last 8/8 at
+LAST GREEN SHA: `2d2cffb` — five-leg fast lane green. Docker suite last 8/8 at
 `4a69d15`. The operator pushes manually; agents do not push.
 
 PHASES PASSING: Phase 0 COMPLETE; Phase 1 COMPLETE; Phase 2 COMPLETE. Phase 3
@@ -81,16 +81,20 @@ the approve landing fence so an immutable task assignment, not only
 
 ## Current work: sealed landing
 
-The corpus gap and the scoped self-abort are closed (`96b86a2`, `6463d8a`,
-`64dc5de`). The lane remains inert end to end; keep it that way until the
-coordinated activation step, because a partially active lane can convert
-today's loud `Approve` refusal into a durable blocked row.
+The corpus gap and the scoped self-abort are closed (`96b86a2` through
+`2d2cffb`, the last of which hardens the abort gate after adversarial review).
+The lane remains inert end to end; keep it that way until the coordinated
+activation step, because a partially active lane can convert today's loud
+`Approve` refusal into a durable blocked row.
 
-The self-abort's gate is ACTION identity, not SHA identity: `MERGE_HEAD` must be
-the reviewed SHA *and* `MERGE_MSG` must carry this landing's id. Do not
-"simplify" it back to the SHA alone — stage (7) publishes the reviewed commit as
-`refs/heads/mc/task-<id>`, so an operator's own `git merge mc/task-7` produces
-that same `MERGE_HEAD`. Details: `IMPLEMENTATION-NOTES.md` (2026-07-20 finding).
+The self-abort gate is ACTION identity and it has three parts: `MERGE_HEAD` is
+the reviewed SHA, `MERGE_MSG` is a message this landing WROTE (our subject, and
+the trailer as a line at column 0), and the target is still at the frozen
+preimage. Do not loosen any of the three. Stage (7) publishes the reviewed
+commit as `refs/heads/mc/task-<id>`, so an operator can produce that same
+`MERGE_HEAD`; and `git merge --log` can splice an agent-authored subject into
+their MERGE_MSG, so a substring match on the trailer is forgeable. Details:
+`IMPLEMENTATION-NOTES.md` (2026-07-20 finding, and the review disposition).
 
 ### 1. Activate all four seams together
 
