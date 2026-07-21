@@ -97,10 +97,19 @@ state, never inside historical text.
 ## 6. Deviations and delegated design
 
 Append spec deviations and uncovered judgment calls to
-`IMPLEMENTATION-NOTES.md`, newest last, using its entry template; put designs
-delegated by the spec in `docs/adr/`. The conservative choice preserves all 26
-invariants and fail-closed posture, deviates least from the spec, and is easiest
-to reverse.
+`IMPLEMENTATION-NOTES.md`, newest last, using its entry template.
+
+ADRs are agent-authored design records, not independent authority; they never
+supersede the spec. Use one only for a design the spec explicitly delegates.
+
+Before relying on an ADR, classify its claim:
+explicitly delegated → binding within the spec's constraints; conservative
+internal mechanism → permissible but derivative and reversible; new behavior
+operator policy → no authority without operator approval.
+
+The conservative choice preserves all 26 invariants and fail-closed posture,
+deviates least from the spec, and is easiest to reverse. If an ADR needs to be made but invalidates one of the 26 invariants, then let the author know a decision must be made. This is last case scenario.
+
 
 Log-and-go unless operator-only input is required or an invariant breaks. Park
 only that decision; continue independent work.
