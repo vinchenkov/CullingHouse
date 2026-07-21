@@ -111,6 +111,38 @@ type canonicalCandidate struct {
 	DedupeTitles []string `json:"dedupe_titles"`
 }
 
+// canonicalLandingCandidate is ADR-016:371-373's landing tuple: the
+// deterministic landing id, task-store identity, accepted base, verified SHA,
+// target ref, and the approved seal's identity, all frozen at prepare so commit
+// can recheck "the entire pending tuple" against bytes rather than re-observe
+// it.
+//
+// It is a nullable SIBLING of Candidate rather than a widening of it. A landing
+// has no run and no role, so it fits nothing in canonicalCandidate; and an
+// omitempty sibling contributes no bytes to a prepare without one, which is
+// what keeps every existing preparation token — and the frozen cross-harness
+// vectors this file's header calls out — byte-identical.
+//
+// Both target refs are members. SealedLandingPending deliberately admits a row
+// whose assignment-frozen ref has diverged from the task's current one, so the
+// seam can refuse it loudly instead of leaving it silently unlandable; carrying
+// both is what makes that refusal reproducible at commit.
+type canonicalLandingCandidate struct {
+	LandingID         string `json:"landing_id"`
+	TaskID            int64  `json:"task_id"`
+	TaskRootKey       string `json:"task_root_key"`
+	Branch            string `json:"branch"`
+	ObjectFormat      string `json:"object_format"`
+	PinnedBaseSHA     string `json:"pinned_base_sha"`
+	ClosureDigest     string `json:"closure_digest"`
+	LocalRepoUUID     string `json:"local_repo_uuid"`
+	VerifiedSHA       string `json:"verified_sha"`
+	TargetRef         string `json:"target_ref"`
+	AssignedTargetRef string `json:"assigned_target_ref"`
+	ApprovedRunID     string `json:"approved_run_id"`
+	ApprovedRequestID string `json:"approved_request_id"`
+}
+
 // canonicalPrepare is D2's closed prepare projection: everything selection
 // read, plus the candidate it selected. The Homie entries are the launch
 // generations the D4 fence compares, in the same frozen homieCandidateState
@@ -131,6 +163,9 @@ type canonicalPrepare struct {
 	Homies              []homieCandidateState     `json:"homies"`
 	MountState          PrivateDispatchMountState `json:"mount_state"`
 	Candidate           canonicalCandidate        `json:"candidate"`
+	// Landing is set only by the sealed landing lane, and omitempty keeps it
+	// out of every other prepare's bytes entirely.
+	Landing *canonicalLandingCandidate `json:"landing_candidate,omitempty"`
 }
 
 type dispatchProtocolIdentity struct {

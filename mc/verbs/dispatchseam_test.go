@@ -439,3 +439,143 @@ func TestDispatchSeamHomieProjection(t *testing.T) {
 		}
 	}
 }
+
+// ---------------------------------------------------------------------------
+// The sealed landing's canonical sibling (ADR-016:371-373).
+//
+// A landing candidate is a NULLABLE SIBLING of Candidate rather than a widening
+// of it, and this test is what makes that structural claim testable in both
+// directions at once. The spawn arm asserts the frozen vector is byte-identical
+// — an `omitempty` sibling contributes nothing to a prepare that has no
+// landing, so no existing deployment's preparation token moves, which is the
+// ADR-worthy event the header of dispatchseam.go exists to prevent. The landing
+// arm asserts the tuple serializes with all thirteen members present.
+//
+// Both target refs are carried on purpose. SealedLandingPending deliberately
+// admits a row whose assignment-frozen target_ref has diverged from the task's
+// current one, so that the seam can refuse it LOUDLY; binding both into the
+// token is what makes that refusal reproducible at commit rather than
+// re-observed there.
+// ---------------------------------------------------------------------------
+
+func dsGoldenLandingCandidate() canonicalLandingCandidate {
+	return canonicalLandingCandidate{
+		LandingID:         "0f1e2d3c4b5a6978",
+		TaskID:            7,
+		TaskRootKey:       "16777220:424242",
+		Branch:            "mc/task-7",
+		ObjectFormat:      "sha1",
+		PinnedBaseSHA:     "1111111111111111111111111111111111111111",
+		ClosureDigest:     "2222222222222222222222222222222222222222222222222222222222222222",
+		LocalRepoUUID:     "de41cafe-0000-4000-8000-00000000beef",
+		VerifiedSHA:       "3333333333333333333333333333333333333333",
+		TargetRef:         "refs/heads/main",
+		AssignedTargetRef: "refs/heads/main",
+		ApprovedRunID:     "0123456789abcdef",
+		ApprovedRequestID: "fedcba9876543210",
+	}
+}
+
+func dsGoldenLandingCandidateJSON() string {
+	return `"landing_candidate":{` +
+		`"landing_id":"0f1e2d3c4b5a6978","task_id":7,"task_root_key":"16777220:424242",` +
+		`"branch":"mc/task-7","object_format":"sha1",` +
+		`"pinned_base_sha":"1111111111111111111111111111111111111111",` +
+		`"closure_digest":"2222222222222222222222222222222222222222222222222222222222222222",` +
+		`"local_repo_uuid":"de41cafe-0000-4000-8000-00000000beef",` +
+		`"verified_sha":"3333333333333333333333333333333333333333",` +
+		`"target_ref":"refs/heads/main","assigned_target_ref":"refs/heads/main",` +
+		`"approved_run_id":"0123456789abcdef","approved_request_id":"fedcba9876543210"}`
+}
+
+func TestCanonicalLandingSiblingIsInertForSpawn(t *testing.T) {
+	// A prepare with no landing must serialize to the byte-identical frozen
+	// vector. This is the omitempty claim, and it is the reason the sealed lane
+	// can be built incrementally without moving any spawn's token.
+	got, err := dsGoldenPrepare().bytes()
+	if err != nil {
+		t.Fatalf("canonical bytes: %v", err)
+	}
+	if string(got) != dsGoldenPrepareJSON() {
+		t.Fatalf("the landing sibling perturbed a landing-free prepare\n got: %s\nwant: %s", got, dsGoldenPrepareJSON())
+	}
+	if strings.Contains(string(got), "landing") {
+		t.Fatalf("a landing-free prepare named the landing sibling at all: %s", got)
+	}
+}
+
+func TestCanonicalLandingSiblingSerializesTheWholeTuple(t *testing.T) {
+	p := dsGoldenPrepare()
+	land := dsGoldenLandingCandidate()
+	p.Landing = &land
+
+	got, err := p.bytes()
+	if err != nil {
+		t.Fatalf("canonical bytes: %v", err)
+	}
+	// The sibling is the last member, so the frozen vector's trailing brace is
+	// the only byte that moves.
+	want := strings.TrimSuffix(dsGoldenPrepareJSON(), "}") + "," + dsGoldenLandingCandidateJSON() + "}"
+	if string(got) != want {
+		t.Fatalf("landing candidate bytes drifted\n got: %s\nwant: %s", got, want)
+	}
+
+	// Every member must be present by NAME: a tuple member that silently
+	// vanished from the projection would drop out of the preparation token, and
+	// the drift it was carried to catch would stop being caught.
+	for _, key := range []string{
+		"landing_id", "task_id", "task_root_key", "branch", "object_format",
+		"pinned_base_sha", "closure_digest", "local_repo_uuid", "verified_sha",
+		"target_ref", "assigned_target_ref", "approved_run_id", "approved_request_id",
+	} {
+		if !strings.Contains(string(got), `"`+key+`":`) {
+			t.Fatalf("landing tuple omitted %q from the canonical projection: %s", key, got)
+		}
+	}
+}
+
+func TestCanonicalLandingSiblingMovesThePreparationToken(t *testing.T) {
+	// The tuple is inside the token, so any member's drift abandons the
+	// prepared landing at commit (ADR-016:375-377). Asserted field-by-field
+	// rather than in aggregate: a member accidentally left out of the struct
+	// would otherwise pass a whole-object comparison.
+	base := dsGoldenPrepare()
+	land := dsGoldenLandingCandidate()
+	base.Landing = &land
+	baseBytes, err := base.bytes()
+	if err != nil {
+		t.Fatalf("canonical bytes: %v", err)
+	}
+	baseToken := preparationToken(baseBytes)
+
+	mutations := map[string]func(*canonicalLandingCandidate){
+		"landing_id":          func(c *canonicalLandingCandidate) { c.LandingID = "ffffffffffffffff" },
+		"task_id":             func(c *canonicalLandingCandidate) { c.TaskID = 8 },
+		"task_root_key":       func(c *canonicalLandingCandidate) { c.TaskRootKey = "16777220:999999" },
+		"branch":              func(c *canonicalLandingCandidate) { c.Branch = "mc/task-8" },
+		"object_format":       func(c *canonicalLandingCandidate) { c.ObjectFormat = "sha256" },
+		"pinned_base_sha":     func(c *canonicalLandingCandidate) { c.PinnedBaseSHA = strings.Repeat("4", 40) },
+		"closure_digest":      func(c *canonicalLandingCandidate) { c.ClosureDigest = strings.Repeat("5", 64) },
+		"local_repo_uuid":     func(c *canonicalLandingCandidate) { c.LocalRepoUUID = "de41cafe-0000-4000-8000-00000000feed" },
+		"verified_sha":        func(c *canonicalLandingCandidate) { c.VerifiedSHA = strings.Repeat("6", 40) },
+		"target_ref":          func(c *canonicalLandingCandidate) { c.TargetRef = "refs/heads/other" },
+		"assigned_target_ref": func(c *canonicalLandingCandidate) { c.AssignedTargetRef = "refs/heads/other" },
+		"approved_run_id":     func(c *canonicalLandingCandidate) { c.ApprovedRunID = "aaaaaaaaaaaaaaaa" },
+		"approved_request_id": func(c *canonicalLandingCandidate) { c.ApprovedRequestID = "bbbbbbbbbbbbbbbb" },
+	}
+	for name, mutate := range mutations {
+		t.Run(name, func(t *testing.T) {
+			p := dsGoldenPrepare()
+			c := dsGoldenLandingCandidate()
+			mutate(&c)
+			p.Landing = &c
+			b, err := p.bytes()
+			if err != nil {
+				t.Fatalf("canonical bytes: %v", err)
+			}
+			if preparationToken(b) == baseToken {
+				t.Fatalf("drifting %s left the preparation token unchanged", name)
+			}
+		})
+	}
+}
