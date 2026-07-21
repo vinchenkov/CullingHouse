@@ -3586,3 +3586,45 @@ characterizing test so it cannot drift while the decision is outstanding.
 
 NEXT (outgoing): the corpus port — timing cases assessed, autostash pinned,
 rename inference still unpinned.
+
+## 2026-07-20 (operator) — the sealed lander MAY abort its own conflicted merge
+
+Operator answered the parked failure-path question: **Option B, the scoped
+self-abort.** On merge failure the lander runs `git merge --abort`, gated on
+`MERGE_HEAD` being the SHA it verified and created itself — legacy's "abort only
+what we started" (`mc-land.test.ts:368`).
+
+The question was framed to the operator as six end-to-end situations rather than
+as a principle, and two of them carried the decision:
+
+- A leftover `MERGE_HEAD` head-of-line-blocks the single landing slot, and
+  nothing surfaces it. Later, unrelated, non-conflicting tasks refuse at the
+  operator-merge-in-flight fence until a human clears the checkout by hand.
+- The natural human response to finding conflict markers — resolve, `add`,
+  `commit` — COMPLETES the lander's merge, putting reviewed work onto the target
+  outside the lane and outside its record of what landed. It is indistinguishable
+  from an ordinary conflict resolution, so nothing warns the operator.
+
+The counter-cost is real and was stated: the conflicted tree is no longer
+available for inspection, so diagnosing a collision means re-running the merge
+against the two commits the error names. Accepted.
+
+The invariant objection ("this lane has never mutated on a failure path") was
+answered rather than overridden: `--abort` RESTORES the pre-merge tree, so it is
+closer to "writes nothing on failure" than leaving a half-applied merge behind.
+It is still a write, so the guard is what makes it safe, and the guard is
+testable.
+
+Also confirmed to the operator, and worth keeping: this does NOT teach the lander
+to resolve conflicts. Landing fails under both answers; reconciliation stays with
+the operator. The decision was only about what state the checkout is left in.
+
+Not implemented in this session. Per the 2026-07-20 diagnosis it gets its OWN
+slice and its own adversarial review, not a smuggled line in the composition
+commit. `TestLandSealedLeavesAConflictedMergeInPlace` is characterizing, not
+aspirational — the slice INVERTS it (assert no `MERGE_HEAD`, assert a later
+unrelated landing succeeds) rather than deleting it, and adds the negative case:
+an operator merge in flight is still refused at preflight and never aborted.
+
+NEXT (outgoing): the corpus port — timing cases assessed, autostash pinned,
+rename inference still unpinned; plus the now-unblocked self-abort slice.

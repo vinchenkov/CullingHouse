@@ -626,3 +626,29 @@ date/title; delete a line here when its slice lands.
 - Needs your decision: yes for (2) → parked in PROGRESS. A conflicted landing
   wedging the single landing slot is an operator-visible behaviour, and whether
   the lander may mutate on a failure path is not mine to settle.
+
+## 2026-07-20 (operator decision) — scoped self-abort on a conflicted landing
+
+- Context: the 2026-07-20 entry above logged finding (2), A CONFLICTED MERGE
+  HEAD-OF-LINE-BLOCKS, and closed with "Needs your decision". This resolves it.
+- Decision (operator, 2026-07-20): **allow the scoped self-abort.** On merge
+  failure the sealed lander aborts iff `MERGE_HEAD` is the SHA it verified and
+  created — legacy `mc-land.test.ts:368`.
+- Why this is conservative under §6's definition: it preserves the fail-closed
+  posture (the landing still FAILS; nothing merges), it restores the pre-merge
+  tree rather than advancing it, and it is trivially reversible — deleting the
+  abort call returns the lane to today's behaviour exactly.
+- What decided it: not the invariant argument but two operational consequences —
+  (a) the leftover merge silently blocks every later landing, and (b) a human
+  resolving the debris the obvious way lands reviewed work outside the lane and
+  outside its record. Both are in docs/ledger/phase-3.md (2026-07-20 operator).
+- Accepted cost: the conflicted tree is not preserved for inspection.
+- Scope guard, to be honoured by the implementing slice: an operator's own merge
+  in flight is refused at PREFLIGHT (`landsealed.go:225`) and the abort path is
+  never reached; the `MERGE_HEAD`-identity check is a second, independent fence,
+  not the primary one. Both must be tested.
+- `TestLandSealedLeavesAConflictedMergeInPlace` is characterizing. The slice
+  inverts it; it must not be deleted.
+- Spec impact: ADR-016:569-576 wants infra failure to record health and leave the
+  tuple pending — the conflict outcome's natural home. `mc land report` still has
+  two statuses and no backoff (owed decision, unchanged by this).

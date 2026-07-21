@@ -678,21 +678,6 @@ deleted, not struck through. History is in `docs/ledger/`.
   agent cannot sleep the machine it runs on). Instructions in
   `spikes/07-launchd-clock/RESULT.md`. All other S7 sub-tests passed.
 
-- **May the sealed lander mutate on a failure path?** A conflicting
-  `merge --no-ff` leaves `MERGE_HEAD` behind and the next attempt refuses at the
-  operator-merge-in-flight fence, so one conflicting landing wedges the single
-  landing slot until a human clears the checkout. Verified, not reasoned
-  (`TestLandSealedLeavesAConflictedMergeInPlace`); conflicts are reachable
-  because the target may advance from the frozen base to the pre-merge SHA
-  touching the same reviewed paths. Legacy's answer is "abort only what we
-  started" (`mc-land.test.ts:368`): on failure, abort iff `MERGE_HEAD` is our
-  verified SHA. That unwedges the lane and cannot touch an operator's own merge
-  — but it adds a MUTATING failure path to a lane that has deliberately had
-  none. Decision request: allow the scoped self-abort (then it gets its own
-  slice + adversarial review), or keep refusing and treat a wedged lane as an
-  operator-visible event needing manual clearing? Full diagnosis in
-  IMPLEMENTATION-NOTES.md (2026-07-20).
-
 The completion-seal Docker line is closed: D1 deployment-mirror, D5 first-task
 setup, D6 accepted-seal rebuild, D6 image completion-wrapper, the carrier/unit +
 legacy-route crossings, AND the production resident Worker seal (dace2c6) are
@@ -738,7 +723,11 @@ their named later slices.
 
 NEXT: Sealed landing — STEPS 1-4 ARE DONE; the remaining work is the corpus
 port owed by step 4, then step 5 (turning the lane on, all at once) and step 6
-(the Docker lane at phase completion). Read item 4 below for the port and item
+(the Docker lane at phase completion). ALSO NOW UNBLOCKED, its own slice, before
+step 5: the conflicted-merge SELF-ABORT the operator approved 2026-07-20 (abort
+iff MERGE_HEAD is our verified SHA; invert TestLandSealedLeavesAConflictedMerge
+InPlace, do not delete it; keep the preflight operator-merge refusal proven).
+Terms in IMPLEMENTATION-NOTES.md (2026-07-20 operator decision). Read item 4 below for the port and item
 5 for the four things that must land together. The branch-home question is settled
 (read the assignment) and the mount grammar + typed-root producer are IN
 (7fee4e4, 8273616 — see the checklist and docs/ledger/phase-3.md 2026-07-20).
