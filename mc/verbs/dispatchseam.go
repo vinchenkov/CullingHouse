@@ -598,12 +598,9 @@ func dispatchAttest(home string, prepared preparedDispatch) (attestedDispatch, e
 	if cand == nil {
 		return attestedDispatch{}, Domainf("dispatch: attest requires a prepared candidate")
 	}
-	reattestedUUID, err := readDeploymentMirrorStrict(home)
+	reattestedUUID, err := attestDeploymentPreamble(home, prepared)
 	if err != nil {
 		return attestedDispatch{}, err
-	}
-	if reattestedUUID != prepared.deploymentUUID {
-		return attestedDispatch{}, Domainf("deployment identity mirror changed between dispatch prepare and attest")
 	}
 	path := filepath.Join(home, "routing.md")
 	data, err := os.ReadFile(path)
@@ -632,6 +629,25 @@ func dispatchAttest(home string, prepared preparedDispatch) (attestedDispatch, e
 		return attestedDispatch{deploymentUUID: reattestedUUID, refusal: mountRefusal}, nil
 	}
 	return attestedDispatch{deploymentUUID: reattestedUUID, route: route, routingDigest: hex.EncodeToString(sum[:]), mountPlan: plan}, nil
+}
+
+// attestDeploymentPreamble is the D1 fence every attest leg owes before it
+// reads any other host file: re-read the deployment identity mirror strictly,
+// and abandon the command if it moved since prepare.
+//
+// Extracted so the two legs provably owe the SAME fence. A landing attests no
+// routing at all, so without this it would be easy to write a second leg that
+// quietly skipped the deployment check along with it — the two are adjacent in
+// the original body but only one of them is about routing.
+func attestDeploymentPreamble(home string, prepared preparedDispatch) (string, error) {
+	reattestedUUID, err := readDeploymentMirrorStrict(home)
+	if err != nil {
+		return "", err
+	}
+	if reattestedUUID != prepared.deploymentUUID {
+		return "", Domainf("deployment identity mirror changed between dispatch prepare and attest")
+	}
+	return reattestedUUID, nil
 }
 
 // dispatchRecheckAttestation is D1's immediate pre-commit host-file fence.
