@@ -6,7 +6,7 @@ REPO PATH: `~/dev/ai/homie`. Never relocate this repo into `~/Documents`,
 `~/Desktop`, or `~/Downloads`: macOS TCC can revoke an agent session's own
 filesystem access there during fan-out. Full Disk Access does not fix it.
 
-LAST GREEN SHA: `96c5364` — five-leg fast lane green. Docker suite last 8/8 at
+LAST GREEN SHA: `73959aa` — five-leg fast lane green. Docker suite last 8/8 at
 `4a69d15`. The operator pushes manually; agents do not push.
 
 PHASES PASSING: Phase 0 COMPLETE; Phase 1 COMPLETE; Phase 2 COMPLETE. Phase 3
@@ -124,6 +124,10 @@ reaches them until the selector flips. Only the last step must be atomic.
    `|| t.SealedLandingPending()`, and `Approve` stops refusing an assigned
    sealed row. Neither works alone.
 
+   DONE: steps 1-5 (canonical sibling; `loadDispatchLandingMountState`;
+   `landingWorkspaceRoot`; `attestDeploymentPreamble`; the landing projections
+   and `sealedLandingSubject`). NEXT MICRO-STEP: 6, `dispatchLandingPrepare`.
+
    HARD ORDERING: do not run step 16 until step 15 is green. Step 15 closes
    ADR-016:373-375's confirmed-absence gate resident-side; without it a crashed
    attempt's `mc-landing-<id>` container makes the next attempt collide on the
@@ -173,4 +177,4 @@ advancing to Phase 4.
   canonical landing row derived; use the assignment's frozen `target_ref` and
   refuse divergence. Details are in the Phase 3 ledger.
 
-NEXT: Sealed-lane activation step 3 is PLANNED — execute micro-steps 1-15 in order, TDD, committing each green; the lane stays inert throughout. The plan is `docs/ledger/phase-3.md` (2026-07-20, "step 3 planned"); read it first, it names every test, insertion point, and corpus basis. Do NOT run step 16 (the atomic switch) until step 15 is green.
+NEXT: Sealed-lane activation step 3, micro-steps 1-5 are green and committed — continue at micro-step 6 (`dispatchLandingPrepare`), then 7-15 in order, TDD, committing each green; the lane stays inert throughout. The plan is `docs/ledger/phase-3.md` (2026-07-20, "step 3 planned"); read it first, it names every test, insertion point, and corpus basis. Do NOT run step 16 (the atomic switch) until step 15 is green.
