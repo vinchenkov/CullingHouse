@@ -6,7 +6,7 @@ REPO PATH: `~/dev/ai/homie`. Never relocate this repo into `~/Documents`,
 `~/Desktop`, or `~/Downloads`: macOS TCC can revoke an agent session's own
 filesystem access there during fan-out. Full Disk Access does not fix it.
 
-LAST GREEN SHA: `7364503` — five-leg fast lane green. Docker suite last 8/8 at
+LAST GREEN SHA: `64dc5de` — five-leg fast lane green. Docker suite last 8/8 at
 `4a69d15`. The operator pushes manually; agents do not push.
 
 PHASES PASSING: Phase 0 COMPLETE; Phase 1 COMPLETE; Phase 2 COMPLETE. Phase 3
@@ -63,9 +63,8 @@ the approve landing fence so an immutable task assignment, not only
   - [x] Sealed landing steps 1–4: assignment lane, mount grammar and host
         anchors, closed envelope arm, fenced lander, closure import, CAS ref,
         and merge. The lane remains inert end to end.
-  - [ ] Finish the adversarial Git corpus gap analysis: rename inference is the
-        last open corpus item.
-  - [ ] Implement and review the operator-approved scoped self-abort.
+  - [x] Adversarial Git corpus gap analysis complete; rename inference pinned.
+  - [x] Operator-approved scoped self-abort, implemented and reviewed.
   - [ ] Turn on sealed landing atomically across all four production seams.
   - [ ] Run and record the complete Phase 3 real-mechanism/Docker acceptance
         lane before advancing.
@@ -82,42 +81,18 @@ the approve landing fence so an immutable task assignment, not only
 
 ## Current work: sealed landing
 
-Steps 1–4 are complete. Keep every remaining addition inert until the
-coordinated activation step; a partially active lane can convert today's loud
-`Approve` refusal into a durable blocked row.
+The corpus gap and the scoped self-abort are closed (`96b86a2`, `6463d8a`,
+`64dc5de`). The lane remains inert end to end; keep it that way until the
+coordinated activation step, because a partially active lane can convert
+today's loud `Approve` refusal into a durable blocked row.
 
-### 1. Close the corpus gap
+The self-abort's gate is ACTION identity, not SHA identity: `MERGE_HEAD` must be
+the reviewed SHA *and* `MERGE_MSG` must carry this landing's id. Do not
+"simplify" it back to the SHA alone — stage (7) publishes the reviewed commit as
+`refs/heads/mc/task-<id>`, so an operator's own `git merge mc/task-7` produces
+that same `MERGE_HEAD`. Details: `IMPLEMENTATION-NOTES.md` (2026-07-20 finding).
 
-The source corpus is `runner/image/mc-land.test.ts`; this is a gap analysis, not
-a blind port. Existing sealed tests already cover most legacy hazards. Landed
-ports include the already-ancestor retry refusal, structurally spaced paths,
-sealed-side index-visibility flags, executable-control rechecks at merge time,
-and autostash refusal.
-
-The last open corpus item is rename inference (`mc-land.test.ts:289,328`).
-Create a repository where the reviewed side renames and modifies a tracked
-file while the target modifies its original path. With rename detection on,
-Git relocates the operator edit onto the new path; with it off, the same input
-conflicts. Assert refusal and an unmoved target, then remove
-`merge.renames=false` and `merge.directoryRenames=false` to prove the test
-dies. This needs a bespoke fixture because `mergeReady` has fixed sealed
-content.
-
-Do not port legacy cleanup, branch deletion, worktree removal, receipt, or
-caller-supplied `mc/task-*` namespace cases. Sealed landing deliberately stops
-at the merge and takes its branch from the immutable assignment. Keep every Git
-call inside `landingGit`.
-
-### 2. Scoped self-abort
-
-Operator decision `e42fce7`: on a merge failure, abort only if `MERGE_HEAD`
-equals the verified SHA created by this landing attempt. Invert
-`TestLandSealedLeavesAConflictedMergeInPlace`: assert no residual `MERGE_HEAD`
-and that a later unrelated landing can proceed. Preserve the negative case:
-an operator merge already in flight is refused during preflight and is never
-aborted. This is its own reviewed slice before activation.
-
-### 3. Activate all four seams together
+### 1. Activate all four seams together
 
 1. `Approve` holds a sealed assignment-backed task instead of refusing it.
 2. `LandReport` accepts an assignment-backed row without `tasks.branch`.
@@ -129,7 +104,7 @@ The branch comes from the immutable assignment and is never projected into
 landing binds. The nested `.mission-control` cover must prevent the RW source
 alias from exposing the sealed task root as writable.
 
-### 4. Phase 3 completion lane
+### 2. Phase 3 completion lane
 
 Prove the realized landing mount table, RO alias/cover behavior,
 network-none/uid/capability envelope, VirtioFS import durability, and the five
@@ -157,4 +132,4 @@ advancing to Phase 4.
   canonical landing row derived; use the assignment's frozen `target_ref` and
   refuse divergence. Details are in the Phase 3 ledger.
 
-NEXT: Finish the sealed-landing rename-inference corpus test, then implement the approved scoped self-abort; keep both inert before the four-seam activation and Phase 3 Docker completion lane.
+NEXT: Activate the four sealed-landing seams together (Approve, LandReport, resident effects, Decide/nextLanding + SealedLandingPending), then run and record the Phase 3 real-mechanism/Docker completion lane.

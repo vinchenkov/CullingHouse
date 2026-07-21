@@ -652,3 +652,37 @@ date/title; delete a line here when its slice lands.
 - Spec impact: ADR-016:569-576 wants infra failure to record health and leave the
   tuple pending — the conflict outcome's natural home. `mc land report` still has
   two statuses and no backoff (owed decision, unchanged by this).
+
+## 2026-07-20 (finding) — the self-abort's ownership gate needed the landing id
+
+- Context: implementing the operator-approved scoped self-abort. The decision
+  entry above specifies the gate as "`MERGE_HEAD` is the SHA it verified and
+  created", and the first implementation (`6463d8a`) took that literally.
+- Finding, confirmed by a test that failed against the shipped code: a reviewed
+  SHA in `MERGE_HEAD` does NOT prove the merge is ours. Stage (7) creates
+  `refs/heads/mc/task-<id>` at the reviewed SHA by CAS, which publishes the
+  reviewed commit under a name the operator can reach. An operator running
+  `git merge mc/task-7` between that ref appearing and our merge completing
+  produces `MERGE_HEAD == verifiedSHA`, and the SHA-only gate aborted their
+  half-resolved conflict — the exact outcome the scope guard forbids.
+- Note the shape of the mistake: the scope guard called the identity check "a
+  second, independent fence, not the primary one", with preflight as primary.
+  But preflight cannot see a merge started AFTER it ran, which is the only state
+  the abort path ever meets. The second fence is the only fence here, and it was
+  sized as though it were not.
+- Fix (`64dc5de`): the gate additionally requires `MERGE_MSG` to carry
+  `MC-Landing-Id: <this landing's id>`. Git preserves the `-m` message verbatim
+  through a conflict; an operator's own merge carries git's default message.
+  Writer and matcher share the `landingIDTrailer` constant, because a drift
+  between them would silently stop the abort recognising its own merges.
+- Spec impact: none — this moves TOWARD the ADR. ADR-017:752-753 says
+  merge-in-progress files are "accepted or aborted only when they match this
+  action", which is action identity, not SHA identity. The looser first reading
+  came from the decision entry's shorthand, not from the ADR.
+- Residual, deliberately not closed: the ADR's full match set (action trailer,
+  parents, tree, target preimage, worktree/index state) is specified for the
+  ADOPTION direction, where a merge COMMIT exists to match against. At abort
+  time the merge failed, so there is no commit and no trailer — `MERGE_HEAD`
+  plus `MERGE_MSG` is the whole of the available evidence. An unreadable or
+  unrecognised message refuses to abort rather than guessing, so the failure
+  direction is residue left behind, never an operator's merge destroyed.

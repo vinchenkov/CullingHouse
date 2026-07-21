@@ -3628,3 +3628,69 @@ an operator merge in flight is still refused at preflight and never aborted.
 
 NEXT (outgoing): the corpus port — timing cases assessed, autostash pinned,
 rename inference still unpinned; plus the now-unblocked self-abort slice.
+
+## 2026-07-20 — the corpus closes, and the self-abort lands with a hole in it
+
+Two slices, and the second one is the interesting entry.
+
+**Rename inference (`96b86a2`) closes the corpus.** The last legacy hazard
+(`mc-land.test.ts:289,328`) is now pinned by a bespoke fixture: the reviewed side
+renames and edits a tracked file, the operator edits it where it still is. With
+detection on git carries the operator's edit onto the renamed path and commits.
+That is not merely surprising — it breaks an AGREEMENT between two halves of the
+lane, because the reviewed-path dirty fence derives its set with `--no-renames`,
+so the merge would write a path the fence never checked.
+
+Mutation-confirmed both ways, which is the habit the previous session asked for:
+dropping `merge.renames=false` makes the merge succeed and the test fail;
+`merge.directoryRenames=false` is CORRECT AND UNREACHABLE, because git disables
+directory-rename detection whenever rename detection is off. It is labelled as
+such rather than counted. Three of the four knobs from `7364503` are now
+accounted for honestly: two live, one measured-unreachable, one (autostash)
+already pinned.
+
+The fixture carries a guard asserting git actually infers the rename. A
+similarity-based fixture that drifts below the detection threshold keeps passing
+while testing nothing, and that failure mode is invisible without the guard.
+
+**The self-abort (`6463d8a`) shipped with a real hole, found by reviewing it
+(`64dc5de`).** The operator's decision was recorded as "abort iff `MERGE_HEAD` is
+the SHA it verified and created", and it was implemented exactly that way.
+
+The reading is wrong, and the reason is worth stating because it is a
+lane-shaped mistake rather than a coding one. Stage (7) creates
+`refs/heads/mc/task-<id>` at the reviewed SHA. That is the durable import marker
+— and it is also a NAME, in the operator's own repository, for the commit whose
+uniqueness the whole ownership argument rested on. `git merge mc/task-7`, typed
+by an operator in the window before our merge completes, produces a `MERGE_HEAD`
+equal to the reviewed SHA. The gate would then destroy their half-resolved
+conflict: the precise outcome the operator's own scope guard forbade.
+
+Note where the sizing error came from. The scope guard called the identity check
+"a second, independent fence, not the primary one", with the preflight
+merge-in-flight refusal as primary. But preflight cannot see a merge started
+after it ran, and a merge started after it ran is the ONLY state the abort path
+ever meets. The second fence is the only fence at that point, and it had been
+sized as though something else were carrying the weight.
+
+ADR-017:752-753 had the right standard all along — "accepted or aborted only
+when they match THIS ACTION", which is action identity, not SHA identity. The
+loose reading came from the decision entry's shorthand, not the ADR. The gate now
+also requires `MERGE_MSG` to carry this landing's id, which git preserves
+verbatim through a conflict and which an operator's merge does not have. Writer
+and matcher share a constant, because a drift between them would silently stop
+the abort recognising its own merges — failing in the quiet direction.
+
+The abort's failure directions are deliberately asymmetric: an unreadable or
+unrecognised message refuses to abort. The cost of being wrong is then residue
+left behind and a wedged slot, never an operator's merge destroyed.
+
+`TestLandSealedLeavesAConflictedMergeInPlace` was inverted rather than deleted,
+as the decision entry required, and now also asserts that unrelated uncommitted
+operator work survives the `reset --merge` and that a SECOND, unrelated sealed
+landing runs to a merge afterwards — the slot really is free, which no assertion
+about the first landing's own residue could establish.
+
+NEXT (outgoing): corpus closed and the self-abort reviewed and fixed; the lane is
+still inert. Remaining before Phase 3 completion: the four-seam activation, then
+the real-mechanism/Docker acceptance lane.
