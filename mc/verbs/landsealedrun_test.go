@@ -289,9 +289,10 @@ func TestLandSealedRefusesAnAlreadyLandedReviewedCommit(t *testing.T) {
 	}
 }
 
-// CHARACTERIZING, not aspirational: this records what the lane does today when
-// the merge CONFLICTS, because the answer was not obvious and matters
-// operationally.
+// The operator-approved scoped self-abort (decision e42fce7, legacy
+// mc-land.test.ts:368). This test was the INVERSE until that decision: it
+// characterized the lane leaving `MERGE_HEAD` behind, which head-of-line-blocked
+// the single landing slot until a human intervened.
 //
 // A conflict is reachable even though the reviewed paths are fenced clean and
 // the target tip is pinned: the target may have ADVANCED from the frozen base
@@ -300,33 +301,76 @@ func TestLandSealedRefusesAnAlreadyLandedReviewedCommit(t *testing.T) {
 // change commits a different one — every earlier stage passes and `merge --no-ff`
 // cannot resolve it.
 //
-// The lane has no abort path (cleanup has no mount and no owner), so it returns
-// the error and LEAVES the conflicted state behind. That state then trips the
-// operator-merge-in-flight fence on the next attempt, which refuses rather than
-// disturbing what it finds — so a conflicted landing head-of-line-blocks until
-// a human intervenes. Whether that is right is a decision, logged 2026-07-20;
-// this test exists so the behaviour cannot change silently either way.
-func TestLandSealedLeavesAConflictedMergeInPlace(t *testing.T) {
+// What the lane now owes is narrow: undo the merge IT started, and nothing
+// else. The three assertions below are the three halves of that — no residue,
+// the operator's unrelated uncommitted work untouched, and the slot genuinely
+// free afterwards for a landing that has nothing to do with this one.
+func TestLandSealedAbortsItsOwnConflictedMerge(t *testing.T) {
 	repo, taskRoot, pins := sealedLandingFixture(t)
 	writeFile(t, filepath.Join(repo, "README.md"), "operator\nconflicting\n")
 	srcGit(t, repo, "add", "-A")
 	srcGit(t, repo, "commit", "-qm", "operator edits the same reviewed path")
 	pins.PreMergeSHA = srcGit(t, repo, "rev-parse", "HEAD")
+	target := pins.PreMergeSHA
 
-	if _, err := landSealed(repo, taskRoot, coverOf(repo), pins); err == nil {
+	// Uncommitted operator work at a path the reviewed change never touches.
+	// The path-scoped dirty fence permits it, so it is present when the abort
+	// runs — and `merge --abort` is a `reset --merge`, which must preserve it.
+	// Legacy pinned exactly this ("without erasing unrelated hidden bytes").
+	unrelated := filepath.Join(repo, "lib/core.go")
+	writeFile(t, unrelated, "package lib\n// operator work in progress\n")
+
+	err := func() error { _, err := landSealed(repo, taskRoot, coverOf(repo), pins); return err }()
+	if err == nil {
 		t.Fatal("a conflicting merge reported success")
 	}
-	// The conflicted state is left behind, and the next attempt refuses at the
-	// merge-in-flight fence rather than disturbing it.
-	if _, err := os.Lstat(filepath.Join(repo, ".git", "MERGE_HEAD")); err != nil {
-		t.Skipf("no MERGE_HEAD left behind (%v); the conflict shape changed — re-derive the finding", err)
+	if !strings.Contains(err.Error(), "abort") {
+		t.Fatalf("the refusal does not say the landing undid its own merge: %v", err)
 	}
-	_, err := landSealed(repo, taskRoot, coverOf(repo), pins)
-	if err == nil {
-		t.Fatal("a retry ran against a conflicted checkout")
+	if _, statErr := os.Lstat(filepath.Join(repo, ".git", "MERGE_HEAD")); statErr == nil {
+		t.Fatal("the conflicted merge was left in place; the landing slot is wedged")
 	}
-	if !strings.Contains(err.Error(), "merge already in progress") {
-		t.Fatalf("retry refused for some other reason than the in-flight merge: %v", err)
+	if now := srcGit(t, repo, "rev-parse", "refs/heads/main"); now != target {
+		t.Fatalf("the aborted merge moved the target: %q, want %q", now, target)
+	}
+	if body, readErr := os.ReadFile(unrelated); readErr != nil || !strings.Contains(string(body), "work in progress") {
+		t.Fatalf("the abort erased unrelated operator bytes: %q (err %v)", body, readErr)
+	}
+
+	// And the slot is really free: a landing with nothing to do with this one
+	// now runs to a merge, where before it refused at the in-flight fence.
+	otherRoot, otherPins := unrelatedSealedLanding(t, repo, 8)
+	if _, err := landSealed(repo, otherRoot, coverOf(repo), otherPins); err != nil {
+		t.Fatalf("an unrelated landing could not proceed after the abort: %v", err)
+	}
+}
+
+// unrelatedSealedLanding materializes a SECOND sealed store against the
+// repository as it stands, holding a reviewed change at a path the first
+// landing never names. It exists to prove the slot is free, which no assertion
+// about the first landing's own residue can establish on its own.
+func unrelatedSealedLanding(t *testing.T, repo string, taskID int64) (taskRoot string, pins sealedLandingPins) {
+	t.Helper()
+	format := srcGit(t, repo, "rev-parse", "--show-object-format")
+	tip := srcGit(t, repo, "rev-parse", "refs/heads/main")
+	taskRoot = mkTaskChildren(t)
+	if _, err := MaterializeFirstTaskStore(repo, taskRoot, FirstTaskSetupSpec{
+		TaskID: taskID, Mode: "fresh", TargetRef: "HEAD", ObjectFormat: format,
+		LocalRepoUUID: landingFixtureUUID,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	source := filepath.Join(taskRoot, "source")
+	writeFile(t, filepath.Join(source, "UNRELATED.md"), "a change that shares no path with task 7\n")
+	srcGit(t, source, "-c", "commit.gpgsign=false", "add", "-A")
+	srcGit(t, source, "-c", "commit.gpgsign=false", "commit", "-qm", "unrelated reviewed change")
+	verified := srcGit(t, source, "rev-parse", "HEAD")
+
+	return taskRoot, sealedLandingPins{
+		TaskID: taskID, Branch: taskAssignmentBranch(taskID), TargetRef: "main",
+		ObjectFormat: format, VerifiedSHA: verified, PreMergeSHA: tip,
+		PinnedBaseSHA: tip, LocalRepoUUID: landingFixtureUUID,
+		LandingID: "8899aabbccddeeff",
 	}
 }
 

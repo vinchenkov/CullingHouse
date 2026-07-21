@@ -794,7 +794,51 @@ func mergeSealedLanding(g landingGit, target, verifiedSHA, preMergeSHA, landingI
 		"GIT_COMMITTER_EMAIL="+landingIdentityEmail,
 	)
 	if _, err := gitOutput(g.dir, env, nil, args...); err != nil {
-		return Domainf("landing merge failed: %v", err)
+		return abortOwnConflictedMerge(g, verifiedSHA, err)
 	}
 	return nil
+}
+
+// abortOwnConflictedMerge is the operator-approved scoped self-abort (decision
+// e42fce7, legacy's "abort only what we started" at mc-land.test.ts:368).
+//
+// A failed `merge --no-ff` usually leaves a conflicted merge state behind, and
+// leaving it there head-of-line-blocks the single landing slot: the very next
+// attempt trips the merge-in-flight fence and refuses, forever, until a human
+// intervenes. So the lane undoes the merge it started.
+//
+// THE GATE IS OWNERSHIP, and it is the entire safety argument. `MERGE_HEAD` is
+// only ours when it is the reviewed SHA — a commit that entered this repository
+// moments ago via our own import, and which no operator has any reason to be
+// merging. Preflight already refused a merge in flight before we began, so the
+// only other way a merge state can be here is an operator winning the race
+// after preflight passed; that state is theirs, possibly half-resolved by hand,
+// and it is left exactly as found. This is the one MUTATING failure path in a
+// lane that otherwise has none, which is why it is scoped this tightly.
+//
+// `merge --abort` is a `reset --merge`: it restores the merge's own paths and
+// preserves local changes outside them. The path-scoped dirty fence deliberately
+// permits unrelated uncommitted operator work, so that work is present when this
+// runs and must survive it.
+//
+// The cause is always reported. An abort — successful or not — never converts a
+// failed landing into a quiet one, and a FAILED abort is louder still, because
+// then the residue really is there and the operator needs to know which.
+func abortOwnConflictedMerge(g landingGit, verifiedSHA string, cause error) error {
+	head, err := g.out("rev-parse", "--verify", "-q", "MERGE_HEAD")
+	if err != nil || head == "" {
+		// The merge failed before recording any merge state — a refused
+		// fast-forward, an unreadable ref, a config refusal. Nothing of ours to
+		// undo, and nothing to say about it.
+		return Domainf("landing merge failed: %v", cause)
+	}
+	if head != verifiedSHA {
+		return Domainf("landing merge failed: %v; a merge of %s is in progress and is not this landing's %s, so it was left untouched",
+			cause, head, verifiedSHA)
+	}
+	if _, abortErr := g.run("merge", "--abort"); abortErr != nil {
+		return Domainf("landing merge failed: %v; and aborting its own conflicted merge failed too, so the merge state is still present: %v",
+			cause, abortErr)
+	}
+	return Domainf("landing merge failed and its own merge was aborted: %v", cause)
 }

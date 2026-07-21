@@ -228,6 +228,65 @@ func TestSealedMergeNeverAutostashesOperatorBytes(t *testing.T) {
 	}
 }
 
+// The NEGATIVE half of the scoped self-abort, ported from legacy
+// mc-land.test.ts:425 ("does not abort an operator merge won after preflight").
+//
+// The lane's preflight refuses a merge already in progress, so the only way a
+// foreign `MERGE_HEAD` reaches the merge stage is a race: the operator starts
+// one AFTER preflight passed. Our merge then fails — git refuses to merge with a
+// merge in progress — and the failure path must recognise that the state it
+// finds is not its own and leave it completely alone. Aborting here would
+// destroy an operator's half-resolved conflict, which is the worst thing this
+// lane could do.
+//
+// The gate is `MERGE_HEAD == the reviewed SHA`, and this is the case that gives
+// it teeth: mutate the gate to an unconditional abort and the operator's merge
+// state vanishes here.
+func TestSealedMergeNeverAbortsAMergeItDidNotStart(t *testing.T) {
+	repo, _, _, verified, branch := mergeReady(t)
+	g := landingGit{dir: repo}
+	if err := createLandingRefCAS(g, branch, verified); err != nil {
+		t.Fatal(err)
+	}
+
+	// The operator's own conflicting merge, started after preflight would have
+	// passed and still in flight when the landing's merge runs.
+	base := srcGit(t, repo, "rev-parse", "refs/heads/main")
+	srcGit(t, repo, "checkout", "-q", "-b", "operator-work", base)
+	writeFile(t, filepath.Join(repo, "README.md"), "operator branch work\n")
+	srcGit(t, repo, "add", "-A")
+	srcGit(t, repo, "commit", "-qm", "operator branch")
+	operatorSHA := srcGit(t, repo, "rev-parse", "refs/heads/operator-work")
+	srcGit(t, repo, "checkout", "-q", "main")
+	writeFile(t, filepath.Join(repo, "README.md"), "operator main work\n")
+	srcGit(t, repo, "add", "-A")
+	srcGit(t, repo, "commit", "-qm", "operator main")
+	pre := srcGit(t, repo, "rev-parse", "refs/heads/main")
+	if _, err := gitOutput(repo, sourceGitEnv(), nil, "merge", "operator-work"); err == nil {
+		t.Fatal("fixture is invalid: the operator merge did not conflict")
+	}
+	if got := srcGit(t, repo, "rev-parse", "MERGE_HEAD"); got != operatorSHA {
+		t.Fatalf("fixture is invalid: MERGE_HEAD = %q, want the operator's %q", got, operatorSHA)
+	}
+	conflicted, err := os.ReadFile(filepath.Join(repo, "README.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := mergeSealedLanding(g, "main", verified, pre, "0011223344556677", 7); err == nil {
+		t.Fatal("the landing merged on top of an operator merge in flight")
+	}
+	if got := srcGit(t, repo, "rev-parse", "MERGE_HEAD"); got != operatorSHA {
+		t.Fatalf("the landing aborted the OPERATOR's merge: MERGE_HEAD = %q, want %q", got, operatorSHA)
+	}
+	if now := srcGit(t, repo, "rev-parse", "refs/heads/main"); now != pre {
+		t.Fatalf("the refused merge moved the target: %q", now)
+	}
+	if body, err := os.ReadFile(filepath.Join(repo, "README.md")); err != nil || string(body) != string(conflicted) {
+		t.Fatalf("the operator's half-resolved conflict was rewritten: %q (err %v)", body, err)
+	}
+}
+
 // Ported from legacy mc-land.test.ts:289,328, and it closes the last two of the
 // four knobs 7364503 found were held by nothing.
 //
