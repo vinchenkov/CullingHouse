@@ -4223,3 +4223,73 @@ NEXT (outgoing): micro-step 12 (the sealed twin of the broken-routing test — n
 production change), then 13 `LandReport` widening, 14 `LandingBranch()`, 15 the
 resident's routing discriminator + absence gate + exit-code classification. Step
 16 is the switch and MUST NOT run before 15 is green.
+
+## 2026-07-21 (cont.) — micro-steps 12-15: the lane is built, the flip is unblocked
+
+All fifteen inert steps are green. Everything except the two reachability edits
+now exists, and nothing selects a sealed row.
+
+**Step 12, the sealed routing twin.** Written with a NEGATIVE half: a spawn over
+the same home must still refuse. Without it the test would pass just as happily
+if the fixture's `routing.md` were valid, proving nothing about the landing.
+Worth generalizing — a test asserting "X is not affected by Y" is only evidence
+once something else in it demonstrates Y is really present.
+
+**Step 13, `LandReport`.** The fence was "no branch ⇒ nothing was landing"; it is
+now "no branch AND no assignment". The negative test is the load-bearing one: an
+artifact-plane deliverable has neither home, approve archives it synchronously,
+and no land effect ever exists for it — so the widening must not drift into
+"anything approved can report a landing".
+
+**Step 14, `LandingBranch()`.** A provable no-op today, since every row
+`nextLanding` can select satisfies `LandingPending` and so has a non-empty
+`tasks.branch`. It stops being one at the switch. Checked `mc/property` first
+for a Land.Branch assertion, as the plan's risk 10 asked: there is none.
+
+**Step 15 is the flip precondition and it closed two real holes**, both of which
+would have converted infrastructure trouble into a durable blocked row —
+precisely what ADR-016:576 forbids:
+
+- The **confirmed-absence gate**. The landing id, and therefore the container
+  name, is stable across attempts BY CONSTRUCTION — that stability is what lets
+  a retry recognize its own merge — which is exactly why a crashed prior attempt
+  leaves a container the next attempt collides with. The probe refuses to guess:
+  name taken means this attempt never runs and never reports, and the row stays
+  pending for a tick that finds it free. `mc/verbs` has no Docker client, so this
+  could only be closed resident-side.
+- **Exit-code classification.** The old code reported `--status failure` on ANY
+  nonzero exit. Grounded in mc's contract (`main.go:91-107`), only exit 1 —
+  domain rejection — is mc-land having looked at the repository and refused, and
+  only that blocks. 2 is usage/environment; 125/126/127 are docker's own
+  create/exec/not-found. None are evidence about the change.
+
+The test that asserted the old any-nonzero-blocks behaviour was INVERTED rather
+than deleted, because it encoded the bug. Same for the envelope tests' whole-object
+`toEqual` on `docker.calls`: the absence probe adds a call, so they became a
+per-call assertion plus a length check. The plan had listed those as "do not
+touch", which was wrong once the gate existed — recorded so the next reader
+trusts the code over that line of the plan.
+
+NEXT (outgoing): step 16, the ATOMIC SWITCH, and nothing else in the same commit
+beyond the tests that must move with it. Two edits:
+  A. `mc/dispatch/dispatch.go` `nextLanding` filter → `t.LandingPending() ||
+     t.SealedLandingPending()`
+  B. `mc/domain` `Approve` stops refusing an assigned sealed row and takes the
+     existing hold-for-landing arm instead
+Neither works alone: A selects nothing while B keeps `decision` from reaching
+approved, and B marks rows pending that nothing selects.
+Tests that MUST move in that same commit:
+  - `mc/domain/task_test.go:823` `assigned_sealed_task_refuses_rather_than_archiving`
+    → INVERT to `assigned_sealed_task_holds_for_landing`. The fixture must gain
+    `verified_sha` and `target_ref` or the substrate landing-fence trigger
+    legitimately refuses it (shape: `mc/substrate/landing_fence_test.go:60-64`).
+  - `mc/dispatch/dispatch_test.go:413-414` — COMMENT ONLY; assertions stay green
+    because that fixture's `Sealed` is nil. Its stated INTENT is what goes stale.
+  - ADD a `mc/cmd/mc/cli_test.go` end-to-end: assignment-backed approve →
+    `mc dispatch` returns `action: land` with a `landing` key → `land report
+    success` archives → re-dispatch returns no land.
+MUST NOT RELAX: `TestNoLandingCellIsPlanAddressable`,
+`TestPlanMountsRefusesEveryLandingCell`, `mc/dispatch/sealed_landing_test.go`,
+`mc/substrate/landing_fence_test.go`.
+Reversal is reverting the two edits; steps 1-15 all go inert again with nothing
+to unwind, which is a direct consequence of the no-receipt policy.

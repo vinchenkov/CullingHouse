@@ -6,7 +6,7 @@ REPO PATH: `~/dev/ai/homie`. Never relocate this repo into `~/Documents`,
 `~/Desktop`, or `~/Downloads`: macOS TCC can revoke an agent session's own
 filesystem access there during fan-out. Full Disk Access does not fix it.
 
-LAST GREEN SHA: `4f2f9e0` — five-leg fast lane green. Docker suite last 8/8 at
+LAST GREEN SHA: `1e73179` — five-leg fast lane green. Docker suite last 8/8 at
 `4a69d15`. The operator pushes manually; agents do not push.
 
 PHASES PASSING: Phase 0 COMPLETE; Phase 1 COMPLETE; Phase 2 COMPLETE. Phase 3
@@ -124,19 +124,20 @@ reaches them until the selector flips. Only the last step must be atomic.
    `|| t.SealedLandingPending()`, and `Approve` stops refusing an assigned
    sealed row. Neither works alone.
 
-   DONE: steps 1-11 — the sealed lane is now end-to-end code (canonical
-   sibling, mount-state entry point, workspace-root fence, deployment preamble,
-   projections and frozen tuple, prepare, routing-free attest, recheck
-   selector, commit with its pure fences, driver round and private-frame guard,
-   prepare fork). It is unreachable: nothing selects a sealed row until 16.
-   Places the code intentionally diverges from the written plan, and two tests
-   that were passing for the wrong reason, are in `docs/ledger/phase-3.md`
-   (2026-07-20 cont. and 2026-07-21) — read those, not just the plan.
-   NEXT MICRO-STEP: 12 — the sealed twin of the broken-routing test, no
-   production change. `cli_test.go:1193-1206` does NOT guard the sealed lane:
-   its fixture is branch-carrying, so it never reaches any attest leg.
+   DONE: ALL FIFTEEN inert steps (1-15) are green and committed. The sealed
+   lane exists end to end and is unreachable: nothing selects a sealed row.
+   Step 15 closed the confirmed-absence gate and the exit-code classification,
+   so the flip is UNBLOCKED.
 
-   HARD ORDERING: do not run step 16 until step 15 is green. Step 15 closes
+   ONLY STEP 16 REMAINS — the atomic switch. It is two reachability edits plus
+   the tests that must move with them, and nothing else in that commit. The
+   full instruction, including the fixture trap in the inverted approve test,
+   is in `docs/ledger/phase-3.md` (2026-07-21 cont.) — read it before editing.
+   Places the code intentionally diverges from the written plan are in the
+   2026-07-20 cont. and 2026-07-21 entries; trust the code and the ledger over
+   the plan where they disagree.
+
+   SATISFIED (step 15 is green): the flip was gated on step 15 closing
    ADR-016:373-375's confirmed-absence gate resident-side; without it a crashed
    attempt's `mc-landing-<id>` container makes the next attempt collide on the
    name and report `land report failure`, converting infrastructure trouble
@@ -185,4 +186,4 @@ advancing to Phase 4.
   canonical landing row derived; use the assignment's frozen `target_ref` and
   refuse divergence. Details are in the Phase 3 ledger.
 
-NEXT: Sealed-lane activation step 3, micro-steps 1-11 are green and committed — continue at micro-step 12 (the sealed broken-routing twin), then 13-15 in order, TDD, committing each green; the lane stays inert throughout. The plan is `docs/ledger/phase-3.md` (2026-07-20, "step 3 planned"); read it first, it names every test, insertion point, and corpus basis. Do NOT run step 16 (the atomic switch) until step 15 is green.
+NEXT: Sealed-lane activation step 3, ALL fifteen inert micro-steps are green and committed — the only remaining work is step 16, the atomic switch in order, TDD, committing each green; the lane stays inert throughout. The plan is `docs/ledger/phase-3.md` (2026-07-20, "step 3 planned"); read it first, it names every test, insertion point, and corpus basis. Do NOT run step 16 (the atomic switch) until step 15 is green.
