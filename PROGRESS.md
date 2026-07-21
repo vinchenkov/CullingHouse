@@ -122,11 +122,24 @@ Build the producers FIRST. They are naturally inert, because nothing reaches
 them until the selector flips — which is the last step, and the only one that
 must be atomic:
 
-1. Attester produces the landing carrier for a sealed landing action. Settle
-   where `PreMergeSHA` and `PinnedBaseSHA` come from (attest-time target
-   observation vs the assignment's frozen base) before writing it; ADR-017 and
-   ADR-016 govern, and the answer decides whether attest must observe the
-   target under the landing fences.
+1. Attester produces the landing carrier for a sealed landing action. The three
+   missing facts are SETTLED (2026-07-20, from the ADRs — do not re-derive):
+   - `PinnedBaseSHA` ← `task_assignments.base_sha`, the assignment's frozen
+     base (schema `substrate.go:327`).
+   - `PreMergeSHA` ← observed at ATTEST time as the target ref's tip, and
+     carried frozen into the envelope. `landingRepoFacts.TargetSHA`
+     (`landsealed.go:112`) already documents itself as that value, and the
+     lander rechecks it twice against the frozen one. So attest must observe
+     the target, which is what makes a moved target refuse before the import.
+   - `LandingID` ← ADR-016:830-833: "the first 16 lowercase hex of the
+     domain-separated digest of deployment, subject, and exact approved
+     packet/run identity". DETERMINISTIC, not random — so a retry of the same
+     landing derives the same id, which is what the abort path's MERGE_MSG
+     match and the container name `mc-landing-<landing_id>` (ADR-016:830) both
+     rely on. No derivation exists yet; follow the existing domain-separated
+     idiom (`mountPlanDigest`, `preparationToken`, `dispatchseam.go:184-206`)
+     with its own domain constant, and take `DeploymentUUID` from the dispatch
+     frame (`dispatchprivate.go:54`).
 2. Resident: `MountPlan.landing`, a sealed `Effect` arm, and execution beside
    `runAcceptedSealRebuild` (`effects.ts:651`) — envelope to
    `${runsDir}/<id>.setup.json`, resident-derived binds, result passed through
@@ -183,4 +196,4 @@ advancing to Phase 4.
   canonical landing row derived; use the assignment's frozen `target_ref` and
   refuse divergence. Details are in the Phase 3 ledger.
 
-NEXT: Sealed-lane activation step 1 — settle where PreMergeSHA and PinnedBaseSHA come from (ADR-017/ADR-016), then have the attester produce PrivateDispatchLanding; it stays inert until the selector flips in step 3.
+NEXT: Sealed-lane activation step 1 — derive the deterministic landing_id (ADR-016:830-833) with its own domain constant beside the dispatchseam digests, then have the attester populate PrivateDispatchLanding; both stay inert until the selector flips in step 3.
