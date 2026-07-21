@@ -3930,3 +3930,171 @@ to ADR-016 Decision 7's label rules in ways this lane does not own.
 NEXT (outgoing): activation step 3, the seam. Plan before code — it needs a
 landing candidate shape, canonical projection, consequence name, and a
 claim-free apply, plus the four whole-object test moves already catalogued.
+
+## 2026-07-20 — step 3 planned: the landing is a separate lane, not a wider candidate
+
+Step 3 was planned before code, as its own NEXT demanded. The plan came out of
+three independent designs judged on three lenses (correctness, invariants,
+conservatism); the winner on two of three is the SEPARATE LANE, and the two
+runners-up contributed grafts that fixed real defects in it.
+
+The three designs were: widen `preparedCandidate` with a sibling pointer; make
+the seam kind-polymorphic with a per-kind ops table; or give landing its own
+prepare/attest/commit trio. The deciding argument is a type-level one. There are
+~35 unguarded `cand.spawn` derefs across the seam and its helpers. Under the
+first two designs those become reachable-from-landing and stay correct only by
+audit; under the separate lane they stay unreachable BY TYPE, because a landing
+is never a `preparedCandidate` at all. `preparedCandidate`, `dispatchAttest`,
+`dispatchCommit`, `refusalCandidateFor`, `spawnCandidateProjection`,
+`attestCandidateMounts`, `applySpawn` and `loadDispatchMountState` keep their
+exact signatures and bodies.
+
+So the shape is: a THIRD variant of `preparedDispatch` — `landing
+*preparedLanding`, sibling of `final` and `candidate` — with its own
+`dispatchLandingPrepare`/`dispatchAttestLanding`/`dispatchCommitLanding` in a new
+`dispatchlandingseam.go`, reusing five shared primitives (`preparationToken`,
+`deriveDispatchKey`, `buildCanonicalPrepareWithIdentity`,
+`readDeploymentMirrorStrict`, `applyAttestedRefusal`).
+
+Grafts taken from the losing designs, each verified against the tree rather than
+taken on report:
+
+- The carrier rides `attestedDispatch.mountPlan.Landing`; there is no bespoke
+  `attestedLanding` type. `canonicalPrivateAttestation` (`dispatchprivate.go:209`)
+  already carries `MountPlan`, so `PreMergeSHA` lands inside the pre-commit drift
+  frame with zero new code, and `dispatchRecheckAttestation` is reused via a
+  two-line re-attest selector instead of being duplicated.
+- The plan literal must be `{Version: 1, Entries: []{}, Landing: &plan}`.
+  `validatePrivateMountPlan:393-395` hard-refuses `Version != 1 || Entries ==
+  nil`, and one design had built it with a zero Version and a nil Entries.
+- Landing refusals use `RefusalSubjectlessPipeline`, NOT `RefusalSubjectTask`.
+  `refusalroute.go:145-151` reaches `domain.Block` only from `ClassCandidate` +
+  `RefusalSubjectTask`, so the subjectless kind makes a durable blocked row
+  unreachable by type rather than by an enumeration of today's refusal codes.
+- `refusal.CodeProjectionUnavailable` (`refusal.go:79`, ClassHealth) for landing
+  attest failures. One design named `refusal.CodeRuntimeUnappliable`, which does
+  not exist in package `refusal` — only in `boundary`, where it maps to
+  `authorityDecides` and would have `Domainf`'d inside `applyRefusal`.
+- The canonical sibling is `omitempty`, so every frozen golden vector stays
+  byte-identical and no spawn's preparation token moves. `dispatchseam.go:6-14`
+  is what makes the alternative ADR-worthy.
+
+Two judge splits, both resolved conservatively:
+
+- Mount-state loader. Two judges preferred wrapping (`&dispatch.Spawn{SubjectID:
+  &id}`), one called that a semantic fib and wanted `loadDispatchMountState`
+  narrowed to `*int64`. Took the wrapper: it touches zero existing call sites and
+  changes no shared signature. `loadDispatchMountState` is already role-BLIND —
+  it reads only `sp.SubjectID` and never `sp.Role` — so the fib is neutralized by
+  a comment, not by refactoring a function the spawn path depends on.
+- Refusal subject kind. One judge wanted `RefusalSubjectTask` for the queryable
+  subject column. Took subjectless: observability is recoverable from the health
+  detail text; a durable blocked row written from the seam is not recoverable and
+  violates ADR-016:573-576.
+
+Four things the corpus is SILENT on, decided here and logged:
+
+- **No dispatch-side receipt for a landing commit.** ADR-016:255-257's
+  prepare-side rule reaches mutations returning DIRECTLY FROM PREPARE; a landing
+  returns from commit. ADR-016:261-263 exempts a result that has caused neither a
+  state mutation nor a host effect, and at the instant `dispatchCommitLanding`
+  returns, NEITHER has happened — the spine is untouched and the resident has not
+  yet started the container. A `dispatch_key` would additionally be a fake fence,
+  because the token binds a per-command `RequestID` and can never dedupe across
+  ticks; cross-tick idempotency is assigned elsewhere by the corpus (the durable
+  landing-pending row, plus receipt-idempotent `mc-land` keyed on the stable
+  landing id). Adding a receipt later is additive; removing a shipped one is not.
+- **No new consequence identifier**, and the question is made moot rather than
+  answered: the success path derives no key and builds no `canonicalAction` at
+  all, so the only `canonicalAction` the lane constructs is the refusal one,
+  reusing the existing `"refusal"` literal. The `// "spawn" | "refusal"` comment
+  stays accurate. The one new string anywhere is `canonicalCandidate.Kind ==
+  "landing"`, which is a candidate-identity tag inside the token, not a
+  consequence name.
+- **The landing id moves to PREPARE.** This contradicts `landingid.go:9-11`,
+  which sited it attest-side on an availability argument. ADR-016:371 names the
+  id as a member of the candidate TUPLE, and a tuple member must be inside the
+  preparation token; that is the stronger argument. All four inputs are in
+  prepare's scope. The header comment is corrected in the same commit rather than
+  left contradicting the code.
+- **Landing attest reads no routing.** ADR-016:53-60: a land candidate "instead
+  attests ADR-017's exact task-store/real-repository Git views ... without a
+  gateway probe", and spec §7:231 puts no agent in the landing path, so there is
+  no role to resolve. `dispatchAttestLanding` contains no path to
+  `routingRefusal` or `CodeRoutingInvalid`.
+
+That last one is where `cli_test.go:1193-1206` turned out to be weaker than
+feared AND weaker than assumed. It is green by construction — its fixture is
+branch-carrying, so it satisfies `LandingPending` not `SealedLandingPending`,
+returns as `prepared.final`, and never reaches any attest. It therefore does not
+guard the sealed lane at all, which makes a sealed twin a required NEW test
+rather than a fixture update. The constraint the earlier survey read into it is
+real, but the test does not enforce it.
+
+Two risks found that the design had to close rather than carry, both resident-side
+and both capable of converting infrastructure trouble into a durable blocked row —
+exactly what ADR-016:576 forbids:
+
+- **The confirmed-absence gate (ADR-016:373-375) was open.** The container name
+  `mc-landing-<id>` is stable by construction, so a crashed prior attempt's
+  container makes a fresh plan collide on the name, exit non-zero, and — under
+  today's `effects.ts:774-779` — report `land report --status failure`. Closed by a
+  resident-side container-name pre-check, because `mc/verbs` has no Docker client.
+  This is a HARD FLIP PRECONDITION: do not run step 16 until step 15 is green.
+- **Exit-code conflation.** Today ANY non-zero exit reports failure. The new
+  mapping, grounded in the exit contract at `mc/cmd/mc/main.go:91-107`: 0 →
+  success; 1 (the fixed program's semantic Git refusal) → `land report failure`;
+  anything else (2 usage/environment, docker's 125/126/127) → no report at all,
+  logged as infrastructure health, pending landing retained.
+
+The ordered plan is sixteen micro-steps. Steps 1-15 each leave the lane INERT and
+the fast suite green; the lane is doubly inert throughout, because `nextLanding`
+filters on `LandingPending()` only AND `domain.Approve` refuses assigned sealed
+rows so `decision` never reaches `approved`. Step 16 is the atomic switch and it
+is exactly two reachability edits: `nextLanding`'s filter gains
+`|| t.SealedLandingPending()`, and `Approve` stops refusing an assigned sealed row
+and takes the existing hold-for-landing arm instead. Neither works alone — A
+selects nothing without B, and B marks rows pending that nothing selects.
+
+1.  canonical sibling, `omitempty`, golden vectors provably unchanged
+2.  `loadDispatchLandingMountState`, the subject-keyed entry point
+3.  `landingWorkspaceRoot`, which refuses empty rather than returning `""`
+4.  extract `attestDeploymentPreamble` (pure refactor, whole suite is the test)
+5.  landing projections: candidate, tuple, canonical prepare
+6.  `dispatchLandingPrepare` — freezes the tuple, id inside the token
+7.  `dispatchAttestLanding` — routing-free
+8.  reuse `dispatchRecheckAttestation` via the two-line selector
+9.  `dispatchCommitLanding` — full-tuple recheck, writes nothing
+10. driver hook + fail-closed `Domainf` on the private frame
+11. fork the sealed landing out of prepare, ahead of the legacy land effect
+12. the sealed twin of the broken-routing test
+13. widen `LandReport` to assignment-backed rows
+14. `LandingBranch()` — a provable no-op today
+15. resident: routing discriminator, absence gate, exit-code classification
+16. THE SWITCH
+
+Step 3 is its own step for a reason worth keeping: `""` into `captureLandingPlan`
+resolves the anchors against the process CWD, and that is the single place in
+this lane where a landing could touch the wrong filesystem.
+
+Two drift hazards get dedicated tests rather than comments. The five land-effect
+keys will have TWO producers (`dispatchverb.go:418-427` and
+`dispatchCommitLanding`), and the resident discriminates on the `landing` key, so
+a legacy key drift would surface nowhere as a type error — step 9 asserts the two
+producers agree. And the whole safety argument is that a landing is never a
+`preparedCandidate`, so step 10 pins that the private frame refuses one.
+
+Carried, not closed: `captureLandingPlan` runs through
+`revalidateLandingRepository` in BOTH attest passes, so on a busy target ref the
+recheck can stale-refuse permanently. Fail-closed, but a liveness hazard with no
+spawn analogue, since routing.md bytes are static where a target tip is not. Only
+observable after the flip. Same shape for a diverged target ref, which refuses
+health every tick until an operator reads the signal — loud-and-safe over
+silently-unlandable, and it obeys "only a semantic Git refusal blocks".
+
+No operator input is required: the one obligation that would have needed sign-off
+(the confirmed-absence gate) is closed in-tree by step 15.
+
+NEXT (outgoing): execute micro-steps 1-15 in order, TDD, committing each green.
+Do NOT run step 16 until step 15 is green — the absence gate is what keeps a
+crashed prior attempt from becoming a durable blocked row.

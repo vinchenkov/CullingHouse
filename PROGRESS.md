@@ -109,21 +109,26 @@ reaches them until the selector flips. Only the last step must be atomic.
    ADR-019 landing-class envelope pinned by test. Green and inert; it has no
    effect arm, so step 3 changes routing alone. The carrier grew
    `ApprovedRunID` for ADR-016:846's label.
-3. [ ] Route the landing THROUGH prepare/attest/commit, then flip. This is a
-   seam restructure, not three switch edits, and it needs its own plan before
-   code. ADR-016:369-379 is the authority: a landing-pending row forms "an
-   attested candidate rather than a bare effect", and commit "rechecks the
-   entire pending tuple and inventory before returning the frozen landing
-   plan". The seam is spawn-shaped end to end and cannot carry it today:
-   `preparedCandidate.spawn` is `*dispatch.Spawn` (`dispatchseam.go:465`), only
-   the `KindSpawn` arm (`:509`) builds a candidate, commit asserts
-   `Kind != KindSpawn` (`:674`) and hardcodes `Consequence: "spawn"`
-   (`:703-713`), and `applySpawn` claims the lease (`dispatchverb.go:471`) —
-   which landing MUST NOT do (it holds no lease, opens no Run, and `runs.role`
-   has no landing member). Landing needs its own candidate shape, projection,
-   consequence name, and a claim-free apply, shaped like the reap/reenter arms.
-   Full survey and the four tests that must move with it:
-   `docs/ledger/phase-3.md` (2026-07-20).
+3. [ ] Route the landing THROUGH prepare/attest/commit, then flip. PLANNED as
+   16 micro-steps; the plan is `docs/ledger/phase-3.md` (2026-07-20, "step 3
+   planned"), which is the working document for this slice — read it before
+   touching the seam. The shape: a landing is a SEPARATE LANE, a third variant
+   of `preparedDispatch` (`landing *preparedLanding`, sibling of `final` and
+   `candidate`), never a variant of `preparedCandidate`. That keeps the ~35
+   unguarded `cand.spawn` derefs unreachable BY TYPE, and leaves
+   `preparedCandidate`, `dispatchAttest`, `dispatchCommit`, `applySpawn` and
+   `loadDispatchMountState` byte-identical.
+
+   Steps 1-15 each leave the lane inert and the fast suite green. Step 16 is
+   the atomic switch and is exactly two edits: `nextLanding`'s filter gains
+   `|| t.SealedLandingPending()`, and `Approve` stops refusing an assigned
+   sealed row. Neither works alone.
+
+   HARD ORDERING: do not run step 16 until step 15 is green. Step 15 closes
+   ADR-016:373-375's confirmed-absence gate resident-side; without it a crashed
+   attempt's `mc-landing-<id>` container makes the next attempt collide on the
+   name and report `land report failure`, converting infrastructure trouble
+   into a durable blocked row (ADR-016:576 forbids exactly this).
 
 Invert, do not delete: `TestApprove/assigned sealed task refuses rather than
 archiving` (`task_test.go:823`) and `TestStep0c_ApprovedBranchlessRow_NeverLands`
@@ -168,4 +173,4 @@ advancing to Phase 4.
   canonical landing row derived; use the assignment's frozen `target_ref` and
   refuse divergence. Details are in the Phase 3 ledger.
 
-NEXT: Sealed-lane activation step 3 — PLAN IT BEFORE CODING. Route the landing through prepare/attest/commit (own candidate shape, canonical projection, consequence name, and a claim-free apply), then flip the switches atomically. Read the 2026-07-20 ledger entries first; the seam survey and the four tests that must move with it are there.
+NEXT: Sealed-lane activation step 3 is PLANNED — execute micro-steps 1-15 in order, TDD, committing each green; the lane stays inert throughout. The plan is `docs/ledger/phase-3.md` (2026-07-20, "step 3 planned"); read it first, it names every test, insertion point, and corpus basis. Do NOT run step 16 (the atomic switch) until step 15 is green.
