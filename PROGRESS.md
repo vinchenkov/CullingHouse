@@ -6,7 +6,7 @@ REPO PATH: `~/dev/ai/homie`. Never relocate this repo into `~/Documents`,
 `~/Desktop`, or `~/Downloads`: macOS TCC can revoke an agent session's own
 filesystem access there during fan-out. Full Disk Access does not fix it.
 
-LAST GREEN SHA: `2d2cffb` — five-leg fast lane green. Docker suite last 8/8 at
+LAST GREEN SHA: `8ba4c75` — five-leg fast lane green. Docker suite last 8/8 at
 `4a69d15`. The operator pushes manually; agents do not push.
 
 PHASES PASSING: Phase 0 COMPLETE; Phase 1 COMPLETE; Phase 2 COMPLETE. Phase 3
@@ -65,7 +65,9 @@ the approve landing fence so an immutable task assignment, not only
         and merge. The lane remains inert end to end.
   - [x] Adversarial Git corpus gap analysis complete; rename inference pinned.
   - [x] Operator-approved scoped self-abort, implemented and reviewed.
-  - [ ] Turn on sealed landing atomically across all four production seams.
+  - [x] Landing id and attest-side carrier producer; both inert.
+  - [ ] Resident landing arm, then route landing through the dispatch seam and
+        turn it on atomically.
   - [ ] Run and record the complete Phase 3 real-mechanism/Docker acceptance
         lane before advancing.
 - [ ] Phase 4 — six E2E control-loop scenario families.
@@ -98,40 +100,34 @@ their MERGE_MSG, so a substring match on the trailer is forgeable. Details:
 
 ### 1. Activate the sealed lane
 
-NOT four edits. The seams are SWITCHES; three PRODUCERS they consume do not
-exist (verified by grep 2026-07-20): nothing constructs `PrivateDispatchLanding`
-(`mountattest.go:884` never sets `.Landing`; `dispatchprivate.go:460` validates
-a carrier nothing emits), the resident has no landing concept at all (zero
-occurrences in `types.ts`; `effects.ts:696` is the legacy lane), and
-`LandingID`/`PreMergeSHA`/`PinnedBaseSHA` have no host-side producer.
-`SealedLandingPending` and `resolveLandingRoots` have no production caller
-either. Full survey: `docs/ledger/phase-3.md` (2026-07-20).
-
 Build the producers FIRST — they stay inert on their own, because nothing
-reaches them until the selector flips. Only step 3 must be atomic.
+reaches them until the selector flips. Only the last step must be atomic.
 
-1. The landing carrier. Facts SETTLED from the ADRs, do not re-derive:
-   `PinnedBaseSHA` ← `task_assignments.base_sha`; `PreMergeSHA` ← the target tip
-   observed AT ATTEST and carried frozen (which is why attest must observe the
-   target at all); `LandingID` ← ADR-016:830-833, first 16 hex of a
-   domain-separated digest of deployment, subject, approved packet/run identity
-   — DETERMINISTIC, because the abort path matches `MERGE_MSG` on it and the
-   container is `mc-landing-<id>`. Follow `dispatchseam.go:184-206`'s idiom with
-   its own domain constant. DERIVE IT ATTEST-SIDE, not in the dispatch table:
-   all three inputs are already in scope there (`DeploymentUUID`
-   `dispatchprivate.go:54`, `SubjectID`/`RunID` `:59-61`), whereas the `Land`
-   payload (`dispatch.go:350`) carries none of them and the dispatch table has
-   no other use for a landing id. That keeps seam 4's payload to the assignment
-   facts alone and leaves `TestStep0c_LandingPending_ReturnsLandEffect…`
-   (`dispatch_test.go:361`, which pins the exact payload) to change once.
-2. Resident: `MountPlan.landing`, a sealed `Effect` arm, execution beside
+1. [x] The landing id (`landingid.go`) and the attest-side carrier producer
+   `captureLandingPlan` (`landingcapture.go`). Both green and inert.
+2. [ ] Resident: `MountPlan.landing`, a sealed `Effect` arm, execution beside
    `runAcceptedSealRebuild` (`effects.ts:651`), binds resident-derived. The
    envelope destination for this class is `/mc/landing.json`, not
-   `/mc/setup.json`.
-3. THEN flip together: `Approve` (`task.go:426`) holds instead of refusing,
-   `LandReport` (`land.go:37`) accepts an assignment-backed row,
-   `Decide`/`nextLanding` (`dispatch.go:549`, payload `:403`) consult
-   `SealedLandingPending`.
+   `/mc/setup.json`. Note the TS mirror lags the Go carrier: `MountPlan`
+   (`types.ts:116`) has no `landing`, the `land` effect (`:169`) has no
+   `mount_plan`, and `invalidMountPlanReason` (`effects.ts:90-95`) refuses
+   every destination outside `/workspace` — which is WHY `Landing` is a sibling
+   of `Entries` and a landing plan must carry no entries at all.
+3. [ ] Route the landing THROUGH prepare/attest/commit, then flip. This is a
+   seam restructure, not three switch edits, and it needs its own plan before
+   code. ADR-016:369-379 is the authority: a landing-pending row forms "an
+   attested candidate rather than a bare effect", and commit "rechecks the
+   entire pending tuple and inventory before returning the frozen landing
+   plan". The seam is spawn-shaped end to end and cannot carry it today:
+   `preparedCandidate.spawn` is `*dispatch.Spawn` (`dispatchseam.go:465`), only
+   the `KindSpawn` arm (`:509`) builds a candidate, commit asserts
+   `Kind != KindSpawn` (`:674`) and hardcodes `Consequence: "spawn"`
+   (`:703-713`), and `applySpawn` claims the lease (`dispatchverb.go:471`) —
+   which landing MUST NOT do (it holds no lease, opens no Run, and `runs.role`
+   has no landing member). Landing needs its own candidate shape, projection,
+   consequence name, and a claim-free apply, shaped like the reap/reenter arms.
+   Full survey and the four tests that must move with it:
+   `docs/ledger/phase-3.md` (2026-07-20).
 
 Invert, do not delete: `TestApprove/assigned sealed task refuses rather than
 archiving` (`task_test.go:823`) and `TestStep0c_ApprovedBranchlessRow_NeverLands`
@@ -176,4 +172,4 @@ advancing to Phase 4.
   canonical landing row derived; use the assignment's frozen `target_ref` and
   refuse divergence. Details are in the Phase 3 ledger.
 
-NEXT: Sealed-lane activation step 1 — derive the deterministic landing_id (ADR-016:830-833) with its own domain constant beside the dispatchseam digests, then have the attester populate PrivateDispatchLanding; both stay inert until the selector flips in step 3.
+NEXT: Sealed-lane activation step 2 — the resident landing arm: `MountPlan.landing` on the TS mirror, a sealed `Effect` arm, and execution beside `runAcceptedSealRebuild` writing its envelope to `/mc/landing.json`. Inert on its own; do not touch the selector.

@@ -3804,3 +3804,91 @@ kind of rot, and the reason it is named here.
 
 NEXT (outgoing): activation step 1 — the deterministic landing_id, then the
 attester's landing carrier. Both inert until the selector flips.
+
+## 2026-07-20 — the landing id, the carrier, and what the seam actually costs
+
+Two producers landed; the third turned out to be much larger than the
+activation plan recorded, and that is the session's real finding.
+
+**Producer 1, the landing id** (`landingid.go`). ADR-016 D7's first-16-hex of a
+domain-separated digest, its own `MC-DISPATCH-LANDING-V1` domain beside the
+dispatchseam constants. Its third input needed settling: "exact approved
+packet/run identity" occurs ONCE in the corpus (:833, echoed :846) and is never
+expanded, and it has no unique referent in the spine. Resolved to the accepted
+Worker seal's `(run_id, request_id)` pair, because the packet contributes no
+entropy — `review_packets.task_id` is both PK and FK, so packet identity IS the
+subject the digest already names — and approval is an operator write with no
+run of its own. Full reasoning, including the two deliberately excluded inputs,
+is in `IMPLEMENTATION-NOTES.md`.
+
+The corpus is SILENT on whether the id must be stable across attempts. It is,
+under the abort slice landed at `2d2cffb`: ADR-017:753-756 requires a retry to
+match "its exact action trailer", and this lane's trailer is the landing id.
+Worth recording that the corpus points the other way on names generally —
+`mc-land` "never guesses from a name" (:378), "name alone is never authority"
+(:362-363). Consistent, because the id is the discriminator INSIDE an
+already-authorized trailer match, not authority itself. Do not promote it.
+
+**Producer 2, the carrier** (`landingcapture.go`). Asserted against
+`validatePrivateMountPlan` rather than field-by-field, so a producer/validator
+divergence fails at the producer instead of at arming time. `PreMergeSHA` is
+observed at attest via the lander's own `revalidateLandingRepository`, which
+means attest refuses exactly what the lander would; a landing that could not
+succeed is never planned.
+
+**Producer 3 is not a producer — it is a seam.** The activation plan said step
+3 flips three switches. That is wrong, and the correction is authored rather
+than delegated: ADR-016:369-379 says a landing-pending row's id, task-store
+identity, base, verified SHA and target "form an attested candidate rather than
+a bare effect", and "Commit rechecks the entire pending tuple and inventory
+before returning the frozen landing plan". So the sealed landing must go
+THROUGH prepare/attest/commit. It cannot today, because the seam is
+spawn-shaped end to end:
+
+- `preparedCandidate.spawn` is typed `*dispatch.Spawn` (`dispatchseam.go:465`)
+  — there is no shape a `dispatch.Land` can occupy.
+- Only the `KindSpawn` arm (`:509`) allocates a run id, loads mount state, and
+  returns a candidate; every other kind falls through to `applyAction` and
+  terminates the seam.
+- Commit asserts `sel.action.Kind != dispatch.KindSpawn` (`:674`),
+  `refusalCandidateFor(cand.spawn)` nil-derefs (`:652`), and the dispatch key's
+  `canonicalAction` hardcodes `Consequence: "spawn"` with a role and run id
+  (`:703-713`) that a landing does not have.
+- `applySpawn` calls `domain.Claim` (`dispatchverb.go:471`). Landing holds no
+  lease and opens no Run (§7; `setupenvelope.go:100-108`), and `runs.role` has
+  no landing member (`schema.sql:694-695`). Routing a landing through it would
+  consume the single global lease slot, insert a run with no heartbeat producer
+  — a reap target with no container — and log the landing as `dispatch.spawn`.
+
+So the landing needs its own candidate shape, its own canonical projection and
+consequence name, and an apply that skips the claim entirely — structurally
+like the `KindReap`/`KindReenter` arms, which mutate without touching the lock.
+
+The resident half is a second, independent asymmetry: TypeScript `MountPlan`
+(`types.ts:116-147`) has no `landing` member though the Go carrier declares
+one; the `land` effect (`types.ts:169-175`) has no `mount_plan` though `spawn`
+declares it non-optional; and `invalidMountPlanReason` (`effects.ts:90-95`)
+refuses every destination outside `/workspace`, which is exactly why `Landing`
+is a SIBLING of `Entries` and why `dispatchprivate.go:468-470` refuses a
+landing plan carrying entries at all. `land()` (`effects.ts:696`) validates
+nothing and binds a hardcoded `config.workspaceRoot`.
+
+Also corrected: the activation plan claimed all three landing-id inputs were
+already in attest scope. `DeploymentUUID` is NOT — it lives on
+`preparedDispatch` one frame up (`dispatchseam.go:458`); `dispatchprivate.go:54`
+is the request struct, not the attester's. `verified_sha` is likewise absent
+from `DispatchMountState`.
+
+Four tests pin the current land shape and will have to move together with the
+switch, beyond the two inversions already named: `dispatchverb_test.go:187-190`
+(effect-key oracle), `effects.test.ts:1080-1092` (full docker argv `toEqual`),
+`split-brain.test.ts:1490-1497` (whole-object `toEqual`), and
+`cli_test.go:1200-1204`, which requires the land effect to be emitted even
+under a broken `routing.md` — sharp, because attest resolves routing, so a
+landing routed through it would newly be suppressible by unrelated routing
+breakage. That last one is a constraint on the design, not just a fixture.
+
+NEXT (outgoing): the resident landing arm — `MountPlan.landing`, a sealed
+`Effect` arm, execution beside `runAcceptedSealRebuild`, envelope to
+`/mc/landing.json`. Inert on its own. The seam restructure above is the step
+after, and it is the one that needs its own plan before code.
