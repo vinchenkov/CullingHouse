@@ -7,6 +7,9 @@ OPERATOR-INPUTS.md
 # Dev scratch state (dev MC_HOME lives OUT of tree; this is a second backstop).
 .mc-dev-home/
 
+# Human maintained files that should not be tracked
+.agents-ignore-please/
+
 # Build & dependency output
 node_modules/
 __pycache__/
