@@ -4745,3 +4745,71 @@ with it.
 NEXT (outgoing): build the private-frame landing carrier above, then land the
 walk with it. Until that is done, "the sealed landing lane is live" is true only
 of the native path and must not be stated without that qualifier.
+
+## 2026-07-21 — the sealed landing lane MERGES, on the real platform
+
+The private-frame carrier is built and the sealed landing walk passes. An
+approved sealed task now goes `packaged -> approve -> merge -> archived` with a
+real `--no-ff` merge into the operator's repository, dispatched through the
+Darwin broker/helper split that production actually uses.
+
+Three layers had to learn the landing, and the third is the one a
+survey would have missed:
+
+1. `PrivateDispatchLandingCandidate` — a SIBLING of the spawn carrier, for the
+   same reason `preparedLanding` is a sibling of `preparedCandidate`.
+2. All three private legs (`DispatchPreparePrivate`, `DispatchAttestPrivate`,
+   `DispatchCommitPrivate`) select on the frame KIND rather than on a nil check,
+   so a malformed frame cannot silently take the other lane's attestation. The
+   landing needed its own attestation validator too:
+   `validatePrivateAttestation` requires a resolvable routing digest on any
+   non-refusal frame, and a landing attests no routing at all — requiring one
+   would have been the same mistake as making the landing read `routing.md`.
+3. **The BROKER CLI** (`mc/cmd/mc/private_dispatch.go:166`) had its own
+   `Kind != "candidate"` gate. Nothing in the verbs package would have revealed
+   it; the second E2E run failed with `malformed private candidate response`
+   after the carrier itself was complete and correct.
+
+**`preparedLanding` lost its tunables.** They were written at prepare and never
+read — commit rebuilds the token from the FRESH selection's tunables, not the
+frozen copy. Discovered only because the carrier had to serialize them and the
+round-trip test failed on a bound check for a field with no reader. Carrying
+dead state across a security boundary is worse than carrying it in-process: it
+becomes something the helper must validate and an attacker can vary.
+
+**What the helper does and does not re-validate**, stated because the asymmetry
+is deliberate: it re-checks every scalar it will act on (task id, landing id
+width, absolute workspace root, structural text, mount state) but NOT the
+token's value. Commit recomputes the token from the tuple it received, so a
+carrier that dropped or mangled a field fails on evidence the helper computed
+itself, rather than on a shape check that a well-formed lie would satisfy.
+
+**The lesson, and it is the session's most transferable one.** Every test that
+proved this lane worked called `Dispatch()`, the in-process entry point. The
+production path on this platform is `DispatchPreparePrivate` over the one-shot
+control descriptor. Both are "the seam". A suite can be exhaustive about one
+while the other is entirely dead, and no amount of host-side coverage will say
+so — the fast lane, nine `docker_boundary` rows, and the whole sealed pipeline
+were green while an approved task could never land. Only a test that walks the
+REAL entry point can catch a dead entry point.
+
+Also fixed in passing, and worth its own line: the sealed E2E's Worker used to
+seal WITHOUT committing, so `verified_sha` equalled the frozen base and any
+landing merge would have been trivially up-to-date. The walk would have proved
+the lane runs without proving it merges. The Worker now commits, and the
+assertion requires the SHA to have ADVANCED — so the behavior cannot silently
+stop committing and leave a no-op merge behind. The walk additionally asserts
+`main:WORKED.md` carries the Worker's bytes, because the merge-parent
+assertions alone would pass on a merge carrying no tree.
+
+Green at this commit: five-leg fast lane; `docker_e2e` 8/8 including the landing
+walk; `docker_boundary` nine rows; all three tag vet lanes.
+
+NEXT (outgoing): the remaining §3 row for landing is the orphan sweep's
+`setup/landing/probe residue` clause — the `.cover` directory under
+`MC_HOME/runs` is left behind by every landing on purpose (`effects.ts` defers it
+to "a later tick responsible for landing residue", ADR-016:344-349) and that
+sweep was never written, so every landing leaks one directory. Then §8's
+remaining bookkeeping. STILL PARKED and still the completion blocker: the
+gateway / forbidden-env question — `doctor` names three Phase-3-owned deferrals
+and §8 forbids any at completion.

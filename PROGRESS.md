@@ -6,7 +6,7 @@ REPO PATH: `~/dev/ai/homie`. Never relocate this repo into `~/Documents`,
 `~/Desktop`, or `~/Downloads`: macOS TCC can revoke an agent session's own
 filesystem access there during fan-out. Full Disk Access does not fix it.
 
-LAST GREEN SHA: `ce110dd` — five-leg fast lane green. Docker E2E last 8/8 at
+LAST GREEN SHA: `a4246e9` — five-leg fast lane green. Docker E2E last 8/8 at
 `f21f11c` (2026-07-21), WITH the sealed landing lane live — so activation
 disturbed no existing crossing. Tag compile/vet lanes (`docker_boundary`,
 `docker_e2e`, `test_fake_routing`) also clean at that SHA.
@@ -128,11 +128,12 @@ reaches them until the selector flips. Only the last step must be atomic.
    ADR-019 landing-class envelope pinned by test. Green and inert; it has no
    effect arm, so step 3 changes routing alone. The carrier grew
    `ApprovedRunID` for ADR-016:846's label.
-3. [~] The landing routes THROUGH prepare/attest/commit and the lane is ON —
-   BUT ONLY ON THE NATIVE PATH. `mc dispatch` on Darwin goes through the
-   private helper frame, which refuses a landing candidate, so on the platform
-   this deployment targets an approved sealed task never dispatches a landing.
-   See the 2026-07-21 ledger entry "the lane is live on the wrong platform".
+3. [x] The landing routes THROUGH prepare/attest/commit, on BOTH paths, and
+   the lane MERGES. The Darwin private frame carries a landing candidate
+   (`PrivateDispatchLandingCandidate`), and the sealed E2E walks
+   `packaged -> approve -> merge -> archived` with a real `--no-ff` merge into
+   the operator's repository. Ledger: 2026-07-21 "the sealed landing lane
+   MERGES, on the real platform".
    Sixteen micro-steps; the design, the divergences, and the activation are in
    `docs/ledger/phase-3.md` (2026-07-20 "step 3 planned", 2026-07-20 cont.,
    2026-07-21 x3). Six delegated design decisions are in
@@ -188,4 +189,4 @@ advancing to Phase 4.
   canonical landing row derived; use the assignment's frozen `target_ref` and
   refuse divergence. Details are in the Phase 3 ledger.
 
-NEXT: Build the PRIVATE-FRAME LANDING CARRIER. This is the blocker and it outranks the remaining acceptance rows: `mc dispatch` on Darwin routes through `DispatchPreparePrivate`, which refuses a landing candidate, so the sealed landing lane cannot dispatch at all on this platform — every test that proved it works called the in-process `Dispatch()` instead. Shape, repro, and the acceptance walk that lands in the same commit: `docs/ledger/phase-3.md` (2026-07-21, "the lane is live on the wrong platform"). AFTER that: `mc/boundarydocker` holds nine green rows and the production image `mc-prod` (digest `sha256:8f12cc42`, arm64/linux) exists; the remaining §3 work is the orphan-sweep row for landing residue. BLOCKER for declaring Phase 3 done regardless: the parked gateway/forbidden-env question — `doctor` names three Phase-3-owned deferrals and §8 forbids any.
+NEXT: Phase 3 completion lane. The sealed landing lane is DONE and proven end to end: the E2E walks `packaged -> approve -> merge -> archived` with a real merge, through the Darwin helper frame that production uses. Green: five-leg fast lane, `docker_e2e` 8/8, `docker_boundary` nine rows, all three tag vet lanes. Production image `mc-prod` digest `sha256:8f12cc42`, arm64/linux. CONTINUE AT: the orphan-sweep row for landing residue — every landing deliberately leaves its `.cover` directory under `MC_HOME/runs`, deferred by `effects.ts` to "a later tick responsible for landing residue" (ADR-016:344-349), and that sweep was never written. BLOCKER for declaring Phase 3 done regardless of any landing work: the parked gateway/forbidden-env question — `doctor` names three Phase-3-owned deferrals and §8 forbids any. Read `docs/ledger/phase-3.md` (2026-07-21) first.
