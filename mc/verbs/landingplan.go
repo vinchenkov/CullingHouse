@@ -204,6 +204,24 @@ func resolveLandingRoots(workspaceRoot string, taskID int64, ownerUID int) (map[
 			Msg:  "landing Worksource root carries no administrative .git entry; it is not a real Git Worksource (ADR-017:699)",
 		}
 	}
+	// The shared blocked floor, which the agent plane already applies to every
+	// typed source (mountplan.go:336,353) and the landing plane did not.
+	//
+	// The asymmetry was backwards: landing binds "the only grant in the system
+	// that gets a real Worksource repository RW, intentionally including its
+	// primary checkout" (ADR-017:699), so it had the strongest grant and the
+	// weakest source check. A Worksource registered under a blocked component
+	// was refused for every agent spawn and still bound RW into a landing.
+	//
+	// The zero-value policy is deliberate and matches mountattest.go:876 — the
+	// shipped patterns are always evaluated, and a landing has no operator
+	// extension of its own to honor.
+	if (boundary.BlockPolicy{}).Rejects(ws.RawClean, ws.Canonical) {
+		return nil, &boundary.MountError{
+			Code: boundary.CodeSourceBlocked,
+			Msg:  "landing Worksource root has a blocked address component",
+		}
+	}
 	taskRoot := filepath.Join(ws.Canonical, ".mission-control", "tasks", "task-"+strconv.FormatInt(taskID, 10))
 	// The sealed task root carries the reviewed repository. Landing reads it
 	// RO, and the 0555 operator-owned shape is the same fence the agent plan

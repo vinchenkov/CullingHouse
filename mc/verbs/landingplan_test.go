@@ -343,3 +343,59 @@ func lrBuild(t *testing.T) (string, string) {
 	}
 	return ws, root
 }
+
+// ---------------------------------------------------------------------------
+// The blocked floor governs the landing's host anchors too (contract §3 row 1).
+//
+// The agent plane already meets the floor: planMounts calls
+// `in.Blocked.Rejects(...)` on every typed source (mountplan.go:336) and passes
+// the policy into Authorize (:353). The LANDING plane did not, and landing is
+// the one class that binds a real Worksource checkout RW — "the only grant in
+// the system that gets a real Worksource repository RW, intentionally including
+// its primary checkout" (ADR-017:699).
+//
+// So the asymmetry was exactly backwards: the strongest grant in the system had
+// the weakest source check. A Worksource registered under a blocked address
+// component would be refused for every agent spawn and still bound RW into a
+// landing container.
+//
+// This is not hypothetical bookkeeping: `mc init` (init.go:85) writes
+// `sandbox_profiles.workspace_root` with no boundary call at all, so nothing
+// upstream of here has ever vetted that path either.
+// ---------------------------------------------------------------------------
+
+func TestResolveLandingRootsRefusesABlockedWorksourceAddress(t *testing.T) {
+	for _, component := range []string{".ssh", "secrets", "credentials", ".aws"} {
+		t.Run(component, func(t *testing.T) {
+			// A Worksource whose canonical path passes through a blocked
+			// component. Everything else about it is a perfectly good repo.
+			base, err := filepath.EvalSymlinks(t.TempDir())
+			if err != nil {
+				t.Fatal(err)
+			}
+			ws := filepath.Join(base, component, "ws")
+			if err := os.MkdirAll(ws, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Mkdir(filepath.Join(ws, ".git"), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			tsBuildAt(t, ws)
+
+			if _, err := resolveLandingRoots(ws, 7, os.Getuid()); err == nil {
+				t.Fatalf("a Worksource under a blocked %q component resolved for a landing; "+
+					"the agent plane refuses this address (mountplan.go:336) while landing "+
+					"would bind it RW", component)
+			}
+		})
+	}
+}
+
+// The floor must not over-reach: an ordinary Worksource still resolves. Without
+// this, a rejection bug that refused everything would look like a passing fence.
+func TestResolveLandingRootsStillAcceptsAnOrdinaryWorksource(t *testing.T) {
+	ws, _ := lrBuild(t)
+	if _, err := resolveLandingRoots(ws, 7, os.Getuid()); err != nil {
+		t.Fatalf("an ordinary Worksource was refused by the blocked floor: %v", err)
+	}
+}
