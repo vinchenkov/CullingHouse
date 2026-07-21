@@ -40,13 +40,17 @@ import (
 // `inputs` is held as the exact struct captureLandingPlan takes, so attest
 // passes it straight through with no field-by-field copy that could drift from
 // the tuple the token was computed over.
+//
+// Deliberately NO tunables. An earlier draft froze them here, but nothing ever
+// read them: commit rebuilds the token from the FRESH selection's tunables, so a
+// frozen copy would be dead weight that the Darwin carrier would then have to
+// serialize and re-validate for no reader.
 type preparedLanding struct {
 	taskID        int64
 	landingID     string
 	inputs        landingCaptureInputs
 	assignedRef   string
 	workspaceRoot string
-	tun           tunables
 	token         string
 	mountState    PrivateDispatchMountState
 }
@@ -212,7 +216,6 @@ func landingPrepareFromState(identity dispatchProtocolIdentity, uuid, requestID 
 			},
 			assignedRef:   tuple.AssignedTargetRef,
 			workspaceRoot: workspaceRoot,
-			tun:           sel.tun,
 			token:         preparationToken(canonical),
 			mountState:    mountState,
 		},

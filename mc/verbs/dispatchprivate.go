@@ -74,6 +74,33 @@ type PrivateDispatchCandidate struct {
 	MountState          PrivateDispatchMountState `json:"mount_state"`
 }
 
+// PrivateDispatchLandingCandidate is the sealed landing's carrier across the
+// Darwin broker/helper split — the sibling of PrivateDispatchCandidate, and a
+// SIBLING for the same reason preparedLanding is: a landing has no run and no
+// role, so it fits nothing in the spawn shape, and serializing one through that
+// shape would hand the helper a candidate whose Spawn is nil.
+//
+// Everything the helper needs to REBUILD the tuple and recompute the
+// preparation token is here. That is the trust model: the helper never takes
+// the broker's word for the token, it recomputes it, so a carrier that dropped
+// or mangled a field surfaces as a token mismatch at commit rather than as a
+// landing applied from a doctored frame.
+type PrivateDispatchLandingCandidate struct {
+	TaskID            int64                     `json:"task_id"`
+	LandingID         string                    `json:"landing_id"`
+	ApprovedRunID     string                    `json:"approved_run_id"`
+	TargetRef         string                    `json:"target_ref"`
+	AssignedTargetRef string                    `json:"assigned_target_ref"`
+	VerifiedSHA       string                    `json:"verified_sha"`
+	ObjectFormat      string                    `json:"object_format"`
+	PinnedBaseSHA     string                    `json:"pinned_base_sha"`
+	ClosureDigest     string                    `json:"closure_digest"`
+	LocalRepoUUID     string                    `json:"local_repo_uuid"`
+	WorkspaceRoot     string                    `json:"workspace_root"`
+	Token             string                    `json:"preparation_token"`
+	MountState        PrivateDispatchMountState `json:"mount_state"`
+}
+
 type PrivateDispatchPrepareResponse struct {
 	Version             int                       `json:"version"`
 	Kind                string                    `json:"kind"`
@@ -85,6 +112,9 @@ type PrivateDispatchPrepareResponse struct {
 	DispatchRequestID   string                    `json:"dispatch_request_id"`
 	Final               *json.RawMessage          `json:"final"`
 	Candidate           *PrivateDispatchCandidate `json:"candidate"`
+	// Landing is set only for Kind == "landing"; exactly one of Final,
+	// Candidate and Landing is ever non-nil.
+	Landing *PrivateDispatchLandingCandidate `json:"landing,omitempty"`
 }
 
 type PrivateDispatchRefusal struct {
@@ -113,6 +143,9 @@ type PrivateDispatchCommitRequest struct {
 	DispatchRequestID   string                     `json:"dispatch_request_id"`
 	Candidate           PrivateDispatchCandidate   `json:"candidate"`
 	Attestation         PrivateDispatchAttestation `json:"attestation"`
+	// Landing, when set, means this commit applies the sealed landing lane and
+	// Candidate is unused.
+	Landing *PrivateDispatchLandingCandidate `json:"landing,omitempty"`
 }
 
 type PrivateDispatchResult struct {
@@ -165,30 +198,14 @@ func DispatchPreparePrivate(ctx context.Context, q Q, req PrivateDispatchPrepare
 		response.Final = &rawFinal
 		return response, nil
 	}
-	if err := privateFrameRefusesLanding(prepared); err != nil {
-		return PrivateDispatchPrepareResponse{}, err
+	if prepared.landing != nil {
+		response.Kind = "landing"
+		response.Landing = privateLandingFromPrepared(prepared.landing)
+		return response, nil
 	}
 	response.Kind = "candidate"
 	response.Candidate = privateCandidateFromPrepared(prepared.candidate)
 	return response, nil
-}
-
-// privateFrameRefusesLanding is the fail-closed guard on the Darwin
-// broker/helper split, which has no landing carrier yet.
-//
-// There is no safe fallback here. privateCandidateFromPrepared is only ever
-// handed prepared.candidate, which a landing leaves nil, so serializing one
-// through the candidate frame would hand the far side a candidate whose Spawn
-// is nil — and every consumer on that side dereferences it unguarded.
-//
-// It is also the standing guard on this lane's whole safety argument: if a
-// future edit ever routes a landing into preparedCandidate, this is where it
-// should fail first and loudly.
-func privateFrameRefusesLanding(prepared preparedDispatch) error {
-	if prepared.landing != nil {
-		return Domainf("dispatch: the private frame does not yet carry a landing candidate")
-	}
-	return nil
 }
 
 func DispatchAttestPrivate(home string, prepared PrivateDispatchPrepareResponse) (PrivateDispatchCommitRequest, error) {
@@ -196,21 +213,34 @@ func DispatchAttestPrivate(home string, prepared PrivateDispatchPrepareResponse)
 	if err != nil {
 		return PrivateDispatchCommitRequest{}, err
 	}
-	if prepared.Kind != "candidate" {
-		return PrivateDispatchCommitRequest{}, Domainf("dispatch: only a candidate private frame may attest")
+	if prepared.Kind != "candidate" && prepared.Kind != "landing" {
+		return PrivateDispatchCommitRequest{}, Domainf("dispatch: only a candidate or landing private frame may attest")
 	}
-	attested, err := dispatchAttest(home, internal)
+	// The landing attests the operator's Git views and no routing; the spawn
+	// attests routing and its mount plan. Selecting the leg on the frame KIND
+	// rather than on a nil check keeps a malformed frame from silently taking
+	// the other lane's attestation.
+	attest := dispatchAttest
+	if prepared.Kind == "landing" {
+		attest = dispatchAttestLanding
+	}
+	attested, err := attest(home, internal)
 	if err != nil {
 		return PrivateDispatchCommitRequest{}, err
 	}
-	frame := canonicalPrivateAttestation(attested)
-	return PrivateDispatchCommitRequest{
+	req := PrivateDispatchCommitRequest{
 		Version: 1, ReleaseBuildID: prepared.ReleaseBuildID,
 		ControlVersion: prepared.ControlVersion, SpineSchemaVersion: prepared.SpineSchemaVersion,
 		ConfigSchemaVersion: prepared.ConfigSchemaVersion, DeploymentUUID: prepared.DeploymentUUID,
-		DispatchRequestID: prepared.DispatchRequestID, Candidate: *prepared.Candidate,
-		Attestation: frame,
-	}, nil
+		DispatchRequestID: prepared.DispatchRequestID,
+		Attestation:       canonicalPrivateAttestation(attested),
+	}
+	if prepared.Kind == "landing" {
+		req.Landing = prepared.Landing
+	} else {
+		req.Candidate = *prepared.Candidate
+	}
+	return req, nil
 }
 
 // DispatchRecheckPrivate performs the second host-file read immediately
@@ -271,20 +301,35 @@ func DispatchCommitPrivate(ctx context.Context, q Q, req PrivateDispatchCommitRe
 		req.SpineSchemaVersion, req.ConfigSchemaVersion, req.DeploymentUUID, req.DispatchRequestID); err != nil {
 		return PrivateDispatchResult{}, err
 	}
-	prepared, err := preparedFromCandidate(
-		privateIdentity(req.ReleaseBuildID, req.ControlVersion, req.SpineSchemaVersion, req.ConfigSchemaVersion),
-		req.DeploymentUUID, req.DispatchRequestID, &req.Candidate)
-	if err != nil {
-		return PrivateDispatchResult{}, err
-	}
-	if err := validatePrivateAttestation(req.Attestation); err != nil {
-		return PrivateDispatchResult{}, err
-	}
-	if err := validatePrivateTaskPrecreateCandidate(prepared.candidate, req.Attestation.MountPlan); err != nil {
-		return PrivateDispatchResult{}, err
+	identity := privateIdentity(req.ReleaseBuildID, req.ControlVersion, req.SpineSchemaVersion, req.ConfigSchemaVersion)
+	var prepared preparedDispatch
+	var err error
+	if req.Landing != nil {
+		prepared, err = preparedFromPrivateLanding(identity, req.DeploymentUUID, req.DispatchRequestID, req.Landing)
+		if err != nil {
+			return PrivateDispatchResult{}, err
+		}
+		if err := validatePrivateLandingAttestation(req.Attestation); err != nil {
+			return PrivateDispatchResult{}, err
+		}
+	} else {
+		prepared, err = preparedFromCandidate(identity, req.DeploymentUUID, req.DispatchRequestID, &req.Candidate)
+		if err != nil {
+			return PrivateDispatchResult{}, err
+		}
+		if err := validatePrivateAttestation(req.Attestation); err != nil {
+			return PrivateDispatchResult{}, err
+		}
+		if err := validatePrivateTaskPrecreateCandidate(prepared.candidate, req.Attestation.MountPlan); err != nil {
+			return PrivateDispatchResult{}, err
+		}
 	}
 	attested := attestedFromPrivate(req.Attestation, req.DeploymentUUID)
-	effect, err := dispatchCommit(ctx, q, prepared, attested)
+	commit := dispatchCommit
+	if prepared.landing != nil {
+		commit = dispatchCommitLanding
+	}
+	effect, err := commit(ctx, q, prepared, attested)
 	if err != nil {
 		return PrivateDispatchResult{}, err
 	}
@@ -622,6 +667,13 @@ func preparedFromPrivate(frame PrivateDispatchPrepareResponse) (preparedDispatch
 		return preparedDispatch{}, err
 	}
 	switch frame.Kind {
+	case "landing":
+		if frame.Landing == nil || frame.Candidate != nil || frame.Final != nil {
+			return preparedDispatch{}, Domainf("dispatch: a landing private frame carries exactly one landing")
+		}
+		return preparedFromPrivateLanding(
+			privateIdentity(frame.ReleaseBuildID, frame.ControlVersion, frame.SpineSchemaVersion, frame.ConfigSchemaVersion),
+			frame.DeploymentUUID, frame.DispatchRequestID, frame.Landing)
 	case "candidate":
 		if frame.Candidate == nil || frame.Final != nil {
 			return preparedDispatch{}, Domainf("dispatch: malformed private candidate response")
@@ -862,4 +914,114 @@ func nonNilStrings(in []string) []string {
 		return []string{}
 	}
 	return in
+}
+
+// privateLandingFromPrepared projects a prepared landing onto its carrier.
+func privateLandingFromPrepared(l *preparedLanding) *PrivateDispatchLandingCandidate {
+	if l == nil {
+		return nil
+	}
+	return &PrivateDispatchLandingCandidate{
+		TaskID:            l.taskID,
+		LandingID:         l.landingID,
+		ApprovedRunID:     l.inputs.ApprovedRunID,
+		TargetRef:         l.inputs.TargetRef,
+		AssignedTargetRef: l.assignedRef,
+		VerifiedSHA:       l.inputs.VerifiedSHA,
+		ObjectFormat:      l.inputs.ObjectFormat,
+		PinnedBaseSHA:     l.inputs.PinnedBaseSHA,
+		ClosureDigest:     l.inputs.ClosureDigest,
+		LocalRepoUUID:     l.inputs.LocalRepoUUID,
+		WorkspaceRoot:     l.workspaceRoot,
+		Token:             l.token,
+		MountState:        l.mountState,
+	}
+}
+
+// preparedFromPrivateLanding rebuilds the prepared landing on the helper side.
+//
+// The helper never trusts the broker's shape: it re-validates every scalar it
+// will act on. The workspace root is the sharpest of them — it is the anchor
+// every host path of the landing resolves against, so a relative or empty one
+// would resolve them against the helper's working directory.
+//
+// It does NOT re-validate the token's VALUE, deliberately: commit recomputes
+// the token from the tuple and compares, so a carrier that dropped or mangled a
+// field fails there, on evidence the helper computed itself, rather than here
+// on a shape check that could be satisfied by a well-formed lie.
+func preparedFromPrivateLanding(identity dispatchProtocolIdentity, deploymentUUID, requestID string,
+	c *PrivateDispatchLandingCandidate) (preparedDispatch, error) {
+	if c == nil {
+		return preparedDispatch{}, Domainf("dispatch: missing private landing candidate")
+	}
+	if c.TaskID <= 0 {
+		return preparedDispatch{}, Domainf("dispatch: private landing candidate names no subject task")
+	}
+	if !validLowercaseHex(c.LandingID, landingIDHexLen) || !validLowercaseHex(c.Token, 64) {
+		return preparedDispatch{}, Domainf("dispatch: malformed private landing identity")
+	}
+	if c.WorkspaceRoot == "" || !path.IsAbs(c.WorkspaceRoot) {
+		return preparedDispatch{}, Domainf("dispatch: private landing workspace root must be an absolute path")
+	}
+	for _, text := range []string{c.ApprovedRunID, c.TargetRef, c.AssignedTargetRef, c.VerifiedSHA,
+		c.ObjectFormat, c.PinnedBaseSHA, c.ClosureDigest, c.LocalRepoUUID, c.WorkspaceRoot} {
+		if !validStructuralText(text, maxPrivateScalarBytes) {
+			return preparedDispatch{}, Domainf("dispatch: private landing structural text is invalid")
+		}
+	}
+	if err := validatePrivateMountState(c.MountState); err != nil {
+		return preparedDispatch{}, err
+	}
+	return preparedDispatch{
+		requestID:      requestID,
+		deploymentUUID: deploymentUUID,
+		identity:       identity,
+		landing: &preparedLanding{
+			taskID:    c.TaskID,
+			landingID: c.LandingID,
+			inputs: landingCaptureInputs{
+				TaskID: c.TaskID, LandingID: c.LandingID, ApprovedRunID: c.ApprovedRunID,
+				TargetRef: c.TargetRef, VerifiedSHA: c.VerifiedSHA, ObjectFormat: c.ObjectFormat,
+				PinnedBaseSHA: c.PinnedBaseSHA, ClosureDigest: c.ClosureDigest,
+				LocalRepoUUID: c.LocalRepoUUID,
+			},
+			assignedRef:   c.AssignedTargetRef,
+			workspaceRoot: c.WorkspaceRoot,
+			token:         c.Token,
+			mountState:    c.MountState,
+		},
+	}, nil
+}
+
+// validatePrivateLandingAttestation is the landing's own attestation fence.
+//
+// It cannot reuse validatePrivateAttestation, which requires a resolvable
+// routing digest/harness/binding on any non-refusal frame. A landing attests no
+// routing at all (ADR-016:53-60), so those fields are deliberately empty — and
+// requiring them here would be the same mistake as making the landing read
+// routing.md in the first place.
+func validatePrivateLandingAttestation(a PrivateDispatchAttestation) error {
+	if a.Refusal != nil {
+		if a.MountPlan != nil {
+			return Domainf("dispatch: private landing attestation carries both a plan and a refusal")
+		}
+		r := a.Refusal
+		if _, err := refusal.DetailFor(refusal.Refusal{
+			Code: r.Code, Authority: refusal.Authority(r.Authority), Field: refusal.Field(r.Field),
+			Summary: refusal.Summary(r.Summary), ItemIndex: r.ItemIndex,
+		}); err != nil {
+			return Domainf("dispatch: invalid private landing refusal attestation")
+		}
+		return nil
+	}
+	if a.RoutingDigest != "" || a.Harness != "" || a.Binding != "" {
+		return Domainf("dispatch: a private landing attestation must carry no route (ADR-016:53-60)")
+	}
+	if err := validatePrivateMountPlan(a.MountPlan); err != nil {
+		return err
+	}
+	if a.MountPlan.Landing == nil {
+		return Domainf("dispatch: private landing attestation carries no landing plan")
+	}
+	return nil
 }

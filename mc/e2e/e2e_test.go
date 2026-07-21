@@ -1250,13 +1250,66 @@ func TestProductionWorkerCompletionSealDockerBoundary(t *testing.T) {
 		t.Fatalf("packager run %s collides with an earlier run", packagerRun)
 	}
 
-	// The sealed LANDING walk (packaged -> approve -> merge -> archived) belongs
-	// here and is NOT yet written, because it cannot pass: `mc dispatch` on
-	// Darwin routes through the private helper frame, which refuses a landing
-	// candidate outright (dispatchprivate.go privateFrameRefusesLanding). The
-	// lane is live on the native single-process path only. Repro, evidence and
-	// the intended fix: docs/ledger/phase-3.md (2026-07-21, "the lane is live
-	// on the wrong platform").
+	// ── The sealed LANDING walk: packaged -> approve -> merge -> archived ───
+	//
+	// Everything above proves the sealed pipeline PRODUCES a reviewed commit.
+	// This proves the sealed landing lane CONSUMES it: dispatch selects the
+	// assignment-backed row, the resident runs the landing container, the fixed
+	// mc-land program merges into the operator's real repository, and
+	// `mc land report success` archives the task.
+	//
+	// It is the only test that exercises the lane's JOB rather than its
+	// refusals, and it is the acceptance evidence for the Darwin private-frame
+	// landing carrier: `mc dispatch` here self-delegates through
+	// __dispatch-prepare/__dispatch-commit, so a landing that cannot cross that
+	// frame never dispatches at all. Every in-process test of this lane stayed
+	// green while exactly that was true.
+	mainBefore := f.git("rev-parse", "main")
+	if mainBefore == sealedSHA {
+		t.Fatalf("the operator's main is already at the sealed commit %s; the merge would be a no-op", sealedSHA)
+	}
+
+	// Approve is the operator's write, and for an assignment-backed row it must
+	// HOLD the task for landing rather than archive it.
+	if got := f.mcRun("", "packet", "decide", strconv.FormatInt(taskID, 10), "--approve"); got.code != 0 {
+		t.Fatalf("mc packet decide --approve exited %d: %s", got.code, got.stderr)
+	}
+	approved := f.mcOK("", "task", "get", strconv.FormatInt(taskID, 10))
+	if approved["archived"].(float64) != 0 {
+		t.Fatalf("approve archived the sealed task instead of holding it for landing: %v", approved)
+	}
+
+	// From here the real timer drives again: step (0c) selects the sealed row,
+	// prepare/attest/commit freezes the landing plan across the helper frame,
+	// and the resident runs the landing container.
+	f.waitFor(120*time.Second, "sealed task archived after landing", func() (bool, string) {
+		task := f.mcOK("", "task", "get", strconv.FormatInt(taskID, 10))
+		if task["archived"].(float64) != 1 {
+			return false, fmt.Sprintf("archived=%v blocked=%v (%v)",
+				task["archived"], task["blocked"], task["blocked_reason"])
+		}
+		return true, ""
+	})
+
+	// The merge itself, against the operator's real repository.
+	mainAfter := f.git("rev-parse", "main")
+	if mainAfter == mainBefore {
+		t.Fatalf("main did not advance after the sealed landing")
+	}
+	if p1 := f.git("rev-parse", "main^1"); p1 != mainBefore {
+		t.Fatalf("merge first parent = %s, want prior main %s (--no-ff)", p1, mainBefore)
+	}
+	if p2 := f.git("rev-parse", "main^2"); p2 != sealedSHA {
+		t.Fatalf("merge second parent = %s, want the verified sealed commit %s (§7)", p2, sealedSHA)
+	}
+	// The Worker's actual bytes reached the operator's checkout. Without this,
+	// the parent assertions above could pass on a merge carrying no tree.
+	if got := f.git("show", "main:WORKED.md"); !strings.Contains(got, "worker change") {
+		t.Fatalf("the landed merge does not carry the Worker's file: %q", got)
+	}
+	if p := f.packets(); p[0]["archived"].(float64) != 1 {
+		t.Fatalf("packet not archived with the landed sealed task (cascade trigger)")
+	}
 }
 
 // ───────────────────────────── fixtures ─────────────────────────────────

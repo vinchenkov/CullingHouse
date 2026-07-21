@@ -52,6 +52,9 @@ func dlsMountState() PrivateDispatchMountState {
 		Worksources: []PrivateDispatchWorksource{{
 			WorksourceID: "ws-test", Kind: "repo", Status: "active",
 			ProfilePresent: true, ProfileID: "default", WorkspaceRoot: "/srv/ws-test",
+			// Explicit empty collections, as the real loader always produces:
+			// the private frame refuses a nil path projection outright.
+			ArtifactRoots: []string{}, ReadonlyMounts: []string{}, DeniedPaths: []string{},
 		}},
 		SubjectAcceptedCompletionSeal: &substrate.DispatchAcceptedCompletionSeal{
 			RunID:             "0123456789abcdef",
@@ -800,30 +803,38 @@ func TestLandingRefusalIsNeverCandidateClass(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// The private (Darwin broker/helper) frame.
+// The private (Darwin broker/helper) frame — the landing must CROSS it.
 //
-// It has no landing carrier yet, and there is no safe fallback: serializing a
-// landing through the candidate frame would hand the far side a candidate whose
-// Spawn is nil. This is also the standing guard on the lane's whole safety
-// argument — if a future edit ever routes a landing into preparedCandidate,
-// this is where it should fail first and loudly.
+// This block used to assert the opposite: that the frame REFUSED a landing.
+// That guard was correct while no carrier existed — serializing a landing
+// through the spawn shape would have handed the far side a candidate whose
+// Spawn is nil. But `mc dispatch` on Darwin self-delegates through this frame,
+// so refusing here meant the sealed landing lane could not dispatch at all on
+// the platform this deployment targets, while every in-process test stayed
+// green. The E2E is what caught it.
+//
+// So the assertion inverts: the frame must carry a landing, and it must carry
+// it as a LANDING rather than as a spawn candidate.
 // ---------------------------------------------------------------------------
 
-func TestPrivateFrameRefusesALandingCandidate(t *testing.T) {
+func TestPrivateFrameCarriesALandingAsItsOwnKind(t *testing.T) {
 	prepared := dlsPrepare(t, dlsTask(), dlsMountState())
 	if prepared.candidate != nil {
 		t.Fatal("a prepared landing occupied the spawn candidate slot")
 	}
-	if err := privateFrameRefusesLanding(prepared); err == nil {
-		t.Fatal("the private frame would serialize a landing as a candidate, handing the far side a candidate whose Spawn is nil")
+
+	carrier := privateLandingFromPrepared(prepared.landing)
+	if carrier == nil {
+		t.Fatal("the private frame produced no landing carrier; the lane cannot dispatch on Darwin")
+	}
+	if carrier.TaskID != prepared.landing.taskID || carrier.LandingID != prepared.landing.landingID {
+		t.Fatalf("the carrier lost the landing's identity: %+v", carrier)
 	}
 
-	// ...and it must not refuse an ordinary spawn, which is the whole of the
-	// frame's existing traffic.
-	if err := privateFrameRefusesLanding(preparedDispatch{
-		candidate: &preparedCandidate{spawn: &dispatch.Spawn{Role: dispatch.RoleWorker}},
-	}); err != nil {
-		t.Fatalf("the landing guard refused a spawn candidate: %v", err)
+	// And a spawn must still produce no landing carrier, so the two lanes
+	// cannot be confused at the boundary either.
+	if got := privateLandingFromPrepared(nil); got != nil {
+		t.Fatalf("a nil landing produced a carrier: %+v", got)
 	}
 }
 
@@ -1112,5 +1123,67 @@ func TestSealedLandingIsReachableEndToEnd(t *testing.T) {
 	}
 	if runCount != 1 {
 		t.Fatalf("runs table holds %d rows, want only the accepted Worker seal's; the landing opened a Run", runCount)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// The private (Darwin broker/helper) frame — the landing carrier.
+//
+// `mc dispatch` on Darwin does NOT call Dispatch() in process; it self-delegates
+// through __dispatch-prepare/__dispatch-commit over the one-shot control
+// descriptor. Every other test of this lane calls the in-process entry point, so
+// the whole lane could be — and for one commit was — completely dead on the
+// platform this deployment targets while every one of them stayed green.
+//
+// The round trip is what makes the frame trustworthy: the helper recomputes the
+// preparation token from the tuple it received, so anything the carrier drops or
+// mangles must show up as a token mismatch rather than as a landing committed
+// from a doctored frame.
+// ---------------------------------------------------------------------------
+
+func TestPrivateFrameRoundTripsALandingCandidate(t *testing.T) {
+	prepared := dlsPrepare(t, dlsTask(), dlsMountState())
+
+	carrier := privateLandingFromPrepared(prepared.landing)
+	if carrier == nil {
+		t.Fatal("no landing carrier was produced")
+	}
+
+	back, err := preparedFromPrivateLanding(prepared.identity,
+		prepared.deploymentUUID, prepared.requestID, carrier)
+	if err != nil {
+		t.Fatalf("preparedFromPrivateLanding: %v", err)
+	}
+	if back.landing == nil {
+		t.Fatal("the round trip produced no landing")
+	}
+	if back.candidate != nil {
+		t.Fatal("the round trip produced a spawn candidate; every unguarded cand.spawn deref is now reachable")
+	}
+	if !reflect.DeepEqual(*back.landing, *prepared.landing) {
+		t.Fatalf("the landing did not survive the private frame\n got: %+v\nwant: %+v",
+			*back.landing, *prepared.landing)
+	}
+}
+
+func TestPrivateFrameRefusesAMalformedLandingCarrier(t *testing.T) {
+	prepared := dlsPrepare(t, dlsTask(), dlsMountState())
+	base := privateLandingFromPrepared(prepared.landing)
+
+	for name, mutate := range map[string]func(*PrivateDispatchLandingCandidate){
+		"task id":        func(c *PrivateDispatchLandingCandidate) { c.TaskID = 0 },
+		"landing id":     func(c *PrivateDispatchLandingCandidate) { c.LandingID = "nothex" },
+		"token":          func(c *PrivateDispatchLandingCandidate) { c.Token = "short" },
+		"workspace root": func(c *PrivateDispatchLandingCandidate) { c.WorkspaceRoot = "" },
+		"relative root":  func(c *PrivateDispatchLandingCandidate) { c.WorkspaceRoot = "relative/path" },
+	} {
+		t.Run(name, func(t2 *testing.T) {
+			c := *base
+			mutate(&c)
+			if _, err := preparedFromPrivateLanding(prepared.identity,
+				prepared.deploymentUUID, prepared.requestID, &c); err == nil {
+				t2.Fatalf("the helper accepted a landing carrier with a bad %s", name)
+			}
+		})
 	}
 }

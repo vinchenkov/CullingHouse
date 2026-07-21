@@ -163,7 +163,17 @@ func brokerPrepareCommit(deploymentUUID string, stdout, stderr io.Writer) int {
 		}
 		return 0
 	}
-	if prepared.Kind != "candidate" || prepared.Candidate == nil || prepared.Final != nil {
+	// A candidate carries a spawn; a landing carries the sealed landing lane.
+	// Both owe attest and commit, and the legs below select on the frame kind,
+	// so the only thing checked here is that the frame carries EXACTLY the one
+	// payload its kind names — a frame carrying both would let the far side
+	// pick the other lane's.
+	switch {
+	case prepared.Kind == "candidate" && prepared.Candidate != nil &&
+		prepared.Landing == nil && prepared.Final == nil:
+	case prepared.Kind == "landing" && prepared.Landing != nil &&
+		prepared.Candidate == nil && prepared.Final == nil:
+	default:
 		return writeBrokerRefusal(stdout, stderr, "preflight.frame_invalid", fmt.Errorf("malformed private candidate response"))
 	}
 	home, err := verbs.ResolveDispatchHome()
