@@ -162,6 +162,27 @@ func (t Task) SealedLandingPending() bool {
 		t.VerifiedSHA != "" && t.TargetRef != ""
 }
 
+// LandingBranch is the branch this row would land, from whichever of the two
+// branch homes it actually has.
+//
+// `tasks.branch` is the legacy home. A SEALED row is branchless there by
+// construction — the column's only writer is closed to assigned tasks, which is
+// precisely what makes the two lanes partition — and carries its branch on the
+// immutable closure assignment instead. Reading `t.Branch` directly would
+// therefore hand the sealed lane an empty branch.
+//
+// This is a no-op today: every row `nextLanding` can currently select satisfies
+// LandingPending, which requires a non-empty `t.Branch`.
+func (t Task) LandingBranch() string {
+	if t.Branch != "" {
+		return t.Branch
+	}
+	if t.Sealed != nil {
+		return t.Sealed.Branch
+	}
+	return ""
+}
+
 // LandingPending reports whether this row is owed the §10 step (0c) land
 // effect: approved, branch-carrying, not yet landed (unarchived).
 //
@@ -403,7 +424,7 @@ func Decide(rec Records, lock Lock, cfg Config, clk Clock) Action {
 	if t, ok := nextLanding(rec); ok {
 		return Action{Kind: KindLand, Land: &Land{
 			TaskID:      t.ID,
-			Branch:      t.Branch,
+			Branch:      t.LandingBranch(),
 			VerifiedSHA: t.VerifiedSHA,
 			TargetRef:   t.TargetRef,
 		}}

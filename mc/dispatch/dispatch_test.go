@@ -1153,3 +1153,32 @@ func TestPlanReviewGateAtCap(t *testing.T) {
 		t.Fatalf("(2a) dispatched the unreviewed child")
 	}
 }
+
+// A landing row has two possible branch homes and the effect must read
+// whichever one it actually has. A sealed row is branchless in `tasks` by
+// construction, so reading t.Branch directly would hand the sealed lane an
+// empty branch — and the lander would have nothing to merge.
+func TestLandingBranchPrefersWhicheverHomeTheRowHas(t *testing.T) {
+	legacy := Task{ID: 1, Branch: "mc/task-1"}
+	if got := legacy.LandingBranch(); got != "mc/task-1" {
+		t.Fatalf("legacy landing branch = %q", got)
+	}
+
+	sealed := Task{ID: 2, Branch: "", Sealed: &SealedAssignment{Branch: "mc/task-2"}}
+	if got := sealed.LandingBranch(); got != "mc/task-2" {
+		t.Fatalf("sealed landing branch = %q, want the assignment's branch", got)
+	}
+
+	neither := Task{ID: 3}
+	if got := neither.LandingBranch(); got != "" {
+		t.Fatalf("a row with no branch home reported %q", got)
+	}
+
+	// An incoherent row carrying BOTH homes belongs to neither lane
+	// (SealedLandingPending refuses it), so this preference is unreachable in
+	// practice; it is pinned only so the function is total.
+	both := Task{ID: 4, Branch: "mc/task-4", Sealed: &SealedAssignment{Branch: "mc/other"}}
+	if got := both.LandingBranch(); got != "mc/task-4" {
+		t.Fatalf("both-homes row = %q", got)
+	}
+}
