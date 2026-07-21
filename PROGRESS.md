@@ -6,7 +6,7 @@ REPO PATH: `~/dev/ai/homie`. Never relocate this repo into `~/Documents`,
 `~/Desktop`, or `~/Downloads`: macOS TCC can revoke an agent session's own
 filesystem access there during fan-out. Full Disk Access does not fix it.
 
-LAST GREEN SHA: `0ce5b66` — five-leg fast lane green. Docker suite last 8/8 at
+LAST GREEN SHA: `ca8d47e` — five-leg fast lane green. Docker suite last 8/8 at
 `4a69d15`. The operator pushes manually; agents do not push.
 
 PHASES PASSING: Phase 0 COMPLETE; Phase 1 COMPLETE; Phase 2 COMPLETE. Phase 3
@@ -124,12 +124,16 @@ reaches them until the selector flips. Only the last step must be atomic.
    `|| t.SealedLandingPending()`, and `Approve` stops refusing an assigned
    sealed row. Neither works alone.
 
-   DONE: steps 1-6 (canonical sibling; `loadDispatchLandingMountState`;
+   DONE: steps 1-8 — canonical sibling; `loadDispatchLandingMountState`;
    `landingWorkspaceRoot`; `attestDeploymentPreamble`; the projections, frozen
-   tuple and `sealedLandingSubject`; `dispatchLandingPrepare`). Three places
-   the code intentionally diverges from the written plan are recorded in
-   `docs/ledger/phase-3.md` (2026-07-20 cont.) — read it, not just the plan.
-   NEXT MICRO-STEP: 7, `dispatchAttestLanding`.
+   tuple and `sealedLandingSubject`; `dispatchLandingPrepare`;
+   `dispatchAttestLanding`; the recheck selector. Places the code intentionally
+   diverges from the written plan are recorded in `docs/ledger/phase-3.md`
+   (2026-07-20 cont.) — read it, not just the plan.
+   NEXT MICRO-STEP: 9, `dispatchCommitLanding` — the full-tuple recheck that
+   writes NOTHING to the spine. Its refusal candidate must be
+   `RefusalSubjectlessPipeline`, which is what makes `domain.Block`
+   unreachable by type rather than by an enumeration of today's refusal codes.
 
    HARD ORDERING: do not run step 16 until step 15 is green. Step 15 closes
    ADR-016:373-375's confirmed-absence gate resident-side; without it a crashed
@@ -180,4 +184,4 @@ advancing to Phase 4.
   canonical landing row derived; use the assignment's frozen `target_ref` and
   refuse divergence. Details are in the Phase 3 ledger.
 
-NEXT: Sealed-lane activation step 3, micro-steps 1-6 are green and committed — continue at micro-step 7 (`dispatchAttestLanding`), then 8-15 in order, TDD, committing each green; the lane stays inert throughout. The plan is `docs/ledger/phase-3.md` (2026-07-20, "step 3 planned"); read it first, it names every test, insertion point, and corpus basis. Do NOT run step 16 (the atomic switch) until step 15 is green.
+NEXT: Sealed-lane activation step 3, micro-steps 1-8 are green and committed — continue at micro-step 9 (`dispatchCommitLanding`), then 10-15 in order, TDD, committing each green; the lane stays inert throughout. The plan is `docs/ledger/phase-3.md` (2026-07-20, "step 3 planned"); read it first, it names every test, insertion point, and corpus basis. Do NOT run step 16 (the atomic switch) until step 15 is green.
