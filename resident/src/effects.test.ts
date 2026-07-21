@@ -1222,10 +1222,14 @@ describe("sealed landing", () => {
 
 	test("runs the landing class envelope over the four-row table, then reports success", async () => {
 		const rig = makeRig();
+		rig.docker.enqueue(ok("")); // the confirmed-absence probe: no such container
 		rig.docker.enqueue(ok(""));
 		rig.mc.enqueue(ok("{}"));
 		await runSealedLanding(landingStep, rig.deps);
-		expect(rig.docker.calls).toEqual([[
+		expect(rig.docker.calls[0]).toEqual([
+			"ps", "-aq", "--filter", "name=^mc-landing-0011223344556677$",
+		]);
+		expect(rig.docker.calls[1]).toEqual([
 			"run", "--rm",
 			"--name", "mc-landing-0011223344556677",
 			"--network", "none",
@@ -1243,7 +1247,8 @@ describe("sealed landing", () => {
 			"-v", "/host/workspace/.mission-control/tasks/task-42:/repo/task:ro",
 			"-v", "/tmp/mc-home/runs/landing-0011223344556677.json:/mc/landing.json:ro",
 			"mc-fake-e2e:test", "mc", "__land-sealed", "/mc/landing.json",
-		]]);
+		]);
+		expect(rig.docker.calls).toHaveLength(2);
 		expect(rig.mc.calls).toEqual([["land", "report", "42", "--status", "success"]]);
 	});
 
@@ -1251,6 +1256,7 @@ describe("sealed landing", () => {
 	// out the sealed task bytes RW through the `.mission-control` alias.
 	test("creates the cover directory and the envelope before the container", async () => {
 		const rig = makeRig();
+		rig.docker.enqueue(ok(""));
 		rig.docker.enqueue(ok(""));
 		rig.mc.enqueue(ok("{}"));
 		await runSealedLanding(landingStep, rig.deps);
@@ -1267,6 +1273,7 @@ describe("sealed landing", () => {
 	test("keys its host files on the landing id, never a run id", async () => {
 		const rig = makeRig();
 		rig.docker.enqueue(ok(""));
+		rig.docker.enqueue(ok(""));
 		rig.mc.enqueue(ok("{}"));
 		await runSealedLanding(landingStep, rig.deps);
 		for (const event of rig.fakeFs.events) {
@@ -1275,22 +1282,83 @@ describe("sealed landing", () => {
 		}
 	});
 
-	test("a nonzero lander exit blocks the task with its reason", async () => {
+	// ADR-016:576 — "runtime failure is never mislabeled as a failed reviewed
+	// change". An earlier draft reported failure on ANY nonzero exit, which
+	// turned a broken image or a bad mount into a durable blocked row the
+	// operator had to clear by hand. Only mc's domain-rejection exit (1) is
+	// evidence about the change itself.
+	test("a semantic mc-land refusal (exit 1) reports failure", async () => {
 		const rig = makeRig();
-		rig.docker.enqueue(fail(3, "target moved"));
+		rig.docker.enqueue(ok(""));
+		rig.docker.enqueue(fail(1, "target moved"));
 		rig.mc.enqueue(ok("{}"));
 		await runSealedLanding(landingStep, rig.deps);
 		expect(rig.mc.calls).toEqual([[
 			"land", "report", "42", "--status", "failure",
-			"--reason", "mc __land-sealed exited 3",
+			"--reason", "mc __land-sealed refused the merge: target moved",
 		]]);
-		expect(rig.logs.some((l) => l.includes("sealed landing") && l.includes("target moved"))).toBe(true);
+		expect(rig.logs.some((l) => l.includes("refused by mc-land"))).toBe(true);
+	});
+
+	test.each([2, 125, 126, 127])(
+		"an infrastructure exit (%i) reports nothing and leaves the landing pending",
+		async (exitCode) => {
+			const rig = makeRig();
+			rig.docker.enqueue(ok(""));
+			rig.docker.enqueue(fail(exitCode, "no such image"));
+			await runSealedLanding(landingStep, rig.deps);
+			expect(rig.mc.calls).toEqual([]);
+			expect(rig.logs.some((l) => l.includes("did not run to a verdict"))).toBe(true);
+		},
+	);
+
+	// The confirmed-absence gate (ADR-016:373-375). The container name is
+	// stable across attempts by construction, so a crashed prior attempt leaves
+	// a container this one collides with. Without this gate the collision exits
+	// nonzero and — before the classification above — reported a failure this
+	// attempt never actually observed.
+	// The lane discriminator. applyEffect routes on the PRESENCE of the landing
+	// carrier alone, so these two tests are what keep the legacy lane from
+	// being swallowed by the sealed one and vice versa.
+	test("a land effect carrying a landing routes to the sealed lane", async () => {
+		const rig = makeRig();
+		rig.docker.enqueue(ok(""));
+		rig.docker.enqueue(ok(""));
+		rig.mc.enqueue(ok("{}"));
+		await applyEffect({
+			action: "land", task_id: 42, branch: "mc/task-42",
+			verified_sha: "a".repeat(40), target_ref: "main",
+			landing: landingStep,
+		}, rig.deps);
+		expect(rig.docker.calls[1]).toContain("__land-sealed");
+	});
+
+	test("a land effect with no landing still routes to the legacy lane", async () => {
+		const rig = makeRig();
+		rig.docker.enqueue(ok(""));
+		rig.mc.enqueue(ok("{}"));
+		await applyEffect({
+			action: "land", task_id: 42, branch: "mc/task-42",
+			verified_sha: "a".repeat(40), target_ref: "main",
+		}, rig.deps);
+		expect(rig.docker.calls).toHaveLength(1);
+		expect(rig.docker.calls[0]).not.toContain("__land-sealed");
+	});
+
+	test("an existing landing container aborts the attempt without reporting", async () => {
+		const rig = makeRig();
+		rig.docker.enqueue(ok("abc123def456\n")); // the probe finds one
+		await runSealedLanding(landingStep, rig.deps);
+		expect(rig.docker.calls).toHaveLength(1);
+		expect(rig.mc.calls).toEqual([]);
+		expect(rig.logs.some((l) => l.includes("already exists"))).toBe(true);
 	});
 
 	// A refused report is logged, never thrown: the lane must not take the
 	// resident down, and the landing row stays pending for a later tick.
 	test("a refused land report is logged rather than thrown", async () => {
 		const rig = makeRig();
+		rig.docker.enqueue(ok(""));
 		rig.docker.enqueue(ok(""));
 		rig.mc.enqueue(fail(1, "task 42 has no branch"));
 		await runSealedLanding(landingStep, rig.deps);

@@ -203,6 +203,11 @@ export type Effect =
       branch: string;
       verified_sha: string;
       target_ref: string;
+      /** The SEALED lane's carrier. Present only on a sealed landing, absent on
+       * the legacy branch-carrying one — its presence IS the lane
+       * discriminator, which is why it is optional rather than nullable and why
+       * the five keys above must stay identical between the two producers. */
+      landing?: NonNullable<MountPlan["landing"]>;
     }
   | { action: "reap"; run_id: string; stop_container?: boolean }
 	| { action: "interrupt"; task_id: number; run_id: string; stop_container: true }

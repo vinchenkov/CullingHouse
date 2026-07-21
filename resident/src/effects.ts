@@ -39,7 +39,11 @@ export async function applyEffect(effect: Effect, deps: TickDeps): Promise<void>
     case "spawn":
       return spawn(effect, deps);
     case "land":
-      return land(effect, deps);
+      // The carrier's PRESENCE is the lane discriminator: the sealed lane
+      // supplies it, the legacy branch-carrying lane never does.
+      return effect.landing
+        ? runSealedLanding(effect.landing, deps)
+        : land(effect, deps);
     case "reap":
       return reap(effect, deps);
 		case "interrupt":
@@ -713,6 +717,19 @@ export async function runSealedLanding(
 	deps: TickDeps,
 ): Promise<void> {
 	const { config, log } = deps;
+	const containerName = `mc-landing-${step.landing_id}`;
+	// ADR-016:373-375's confirmed-absence gate. The landing id — and so the
+	// container name — is STABLE across attempts by construction, so a crashed
+	// prior attempt leaves a container this one would collide with. Docker
+	// would fail the name, the exit code would be non-zero, and the
+	// classification below would have to guess. Refuse to guess: if the name is
+	// taken, this attempt never runs and never reports, and the landing stays
+	// pending for a tick that finds the name free.
+	const existing = await deps.docker(["ps", "-aq", "--filter", `name=^${containerName}$`]);
+	if (existing.exitCode === 0 && existing.stdout.trim() !== "") {
+		log(`sealed landing ${step.landing_id}: container ${containerName} already exists; leaving the landing pending rather than reporting an outcome this attempt did not produce`);
+		return;
+	}
 	const envelope = {
 		schema_version: 1, operation: "sealed-landing",
 		task_id: step.task_id, object_format: step.object_format,
@@ -737,7 +754,7 @@ export async function runSealedLanding(
 		"run", "--rm",
 		// ADR-016:831's deterministic name. Stable across attempts by
 		// construction, because every input to the landing id is.
-		"--name", `mc-landing-${step.landing_id}`,
+		"--name", containerName,
 		"--network", "none",
 		"--label", "mc-managed=true",
 		// ADR-016:846: component, then landing/subject/approved-run identity, and
@@ -768,16 +785,37 @@ export async function runSealedLanding(
 		config.image,
 		"mc", "__land-sealed", "/mc/landing.json",
 	]);
-	const report = res.exitCode === 0
-		? ["land", "report", String(step.task_id), "--status", "success"]
-		: ["land", "report", String(step.task_id), "--status", "failure",
-			"--reason", `mc __land-sealed exited ${res.exitCode}`];
-	if (res.exitCode !== 0) {
-		log(`sealed landing ${step.landing_id}: task ${step.task_id} failed (exit ${res.exitCode}): ${res.stderr.trim()}`);
+	// ADR-016:576 — "runtime failure is never mislabeled as a failed reviewed
+	// change". Only the fixed mc-land program's own SEMANTIC refusal is a
+	// failed landing; everything else is infrastructure and must leave the
+	// landing pending rather than blocking the task.
+	//
+	// The mapping follows mc's exit contract (mc/cmd/mc/main.go:91-107):
+	//   0 -> the landing succeeded
+	//   1 -> domain rejection: mc-land looked at the repository and refused.
+	//        This is the reviewed change failing to land, and the ONLY case
+	//        that reports failure and blocks.
+	//   * -> 2 is usage/environment, and 125/126/127 are docker's own
+	//        "couldn't create/couldn't exec/not found". None of them are
+	//        evidence about the change, so reporting failure here would
+	//        convert a broken image or a bad mount into a durable blocked row
+	//        that an operator must clear by hand.
+	let report: string[] | null;
+	if (res.exitCode === 0) {
+		report = ["land", "report", String(step.task_id), "--status", "success"];
+	} else if (res.exitCode === 1) {
+		report = ["land", "report", String(step.task_id), "--status", "failure",
+			"--reason", `mc __land-sealed refused the merge: ${res.stderr.trim()}`];
+		log(`sealed landing ${step.landing_id}: task ${step.task_id} refused by mc-land: ${res.stderr.trim()}`);
+	} else {
+		report = null;
+		log(`sealed landing ${step.landing_id}: task ${step.task_id} did not run to a verdict (exit ${res.exitCode}): ${res.stderr.trim()} — leaving the landing pending, this is deployment health and not a failed change`);
 	}
-	const reported = await deps.runMc(report);
-	if (reported.exitCode !== 0) {
-		log(`sealed landing ${step.landing_id}: land report refused (exit ${reported.exitCode}): ${reported.stderr.trim()}`);
+	if (report) {
+		const reported = await deps.runMc(report);
+		if (reported.exitCode !== 0) {
+			log(`sealed landing ${step.landing_id}: land report refused (exit ${reported.exitCode}): ${reported.stderr.trim()}`);
+		}
 	}
 	// The envelope goes; the cover does NOT. Removing a directory that was just
 	// a bind target is safe, but it is also the one piece of evidence that the
