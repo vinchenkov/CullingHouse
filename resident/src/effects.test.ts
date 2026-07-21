@@ -1192,33 +1192,37 @@ describe("config sanity", () => {
   });
 });
 
+// Hoisted to module scope: the container-class divergence guard at the bottom
+// of this file needs the same fixture, and a second copy would be free to drift
+// away from the one the envelope test pins.
+const landingStep: NonNullable<MountPlan["landing"]> = {
+	approved_run_id: "a1b2c3d4e5f60718",
+	branch: "mc/task-42",
+	closure_digest: "d".repeat(64),
+	cover_dest: "/repo/source/.mission-control",
+	landing_id: "0011223344556677",
+	local_repo_uuid: "0f9c1e2a-3b4c-4d5e-8f60-112233445566",
+	object_format: "sha1",
+	pinned_base_sha: "c".repeat(40),
+	pre_merge_sha: "b".repeat(40),
+	target_ref: "main",
+	task_id: 42,
+	task_root: {
+		canonical: "/host/workspace/.mission-control/tasks/task-42",
+		device: "16777232", inode: "9001", owner_uid: 501,
+	},
+	verified_sha: "a".repeat(40),
+	worksource_root: {
+		canonical: "/host/workspace", device: "16777232", inode: "42", owner_uid: 501,
+	},
+};
+
 // The SEALED landing class (ADR-017:697-702), sibling of the legacy land
 // effect above. Exercised DIRECTLY rather than through applyEffect, because no
 // effect arm dispatches it yet — the seam that would is the activation step
 // after this one. Testing it here pins the container envelope now, so the
 // wiring step changes routing alone.
 describe("sealed landing", () => {
-	const landingStep: NonNullable<MountPlan["landing"]> = {
-		approved_run_id: "a1b2c3d4e5f60718",
-		branch: "mc/task-42",
-		closure_digest: "d".repeat(64),
-		cover_dest: "/repo/source/.mission-control",
-		landing_id: "0011223344556677",
-		local_repo_uuid: "0f9c1e2a-3b4c-4d5e-8f60-112233445566",
-		object_format: "sha1",
-		pinned_base_sha: "c".repeat(40),
-		pre_merge_sha: "b".repeat(40),
-		target_ref: "main",
-		task_id: 42,
-		task_root: {
-			canonical: "/host/workspace/.mission-control/tasks/task-42",
-			device: "16777232", inode: "9001", owner_uid: 501,
-		},
-		verified_sha: "a".repeat(40),
-		worksource_root: {
-			canonical: "/host/workspace", device: "16777232", inode: "42", owner_uid: 501,
-		},
-	};
 
 	test("runs the landing class envelope over the four-row table, then reports success", async () => {
 		const rig = makeRig();
@@ -1363,5 +1367,48 @@ describe("sealed landing", () => {
 		rig.mc.enqueue(fail(1, "task 42 has no branch"));
 		await runSealedLanding(landingStep, rig.deps);
 		expect(rig.logs.some((l) => l.includes("land report refused"))).toBe(true);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Row 7 (setuid gate) — the class divergence guard.
+//
+// The setuid gate depends on `no-new-privileges` being ABSENT from the AGENT
+// container, so the setuid `mc` binary can raise privilege to reach the spine.
+// The setup and landing classes are the opposite: they never touch the spine,
+// so they set it and are hardened by it.
+//
+// Landing was the newest class to add that flag, and nothing anywhere asserts
+// the two classes disagree. A perfectly reasonable future refactor — hoisting
+// "the hardening flags" into one shared envelope builder because three call
+// sites repeat them — would silently add `no-new-privileges` to the agent
+// container and kill the setuid gate, with every existing test still green.
+// This is the tripwire for that refactor.
+// ---------------------------------------------------------------------------
+
+describe("container class hardening divergence", () => {
+	const NNP = "no-new-privileges=true";
+
+	test("the agent container omits no-new-privileges so the setuid gate survives", async () => {
+		const rig = makeRig();
+		rig.docker.enqueue(ok("container-id"));
+		rig.docker.enqueue(ok(""));
+		await applyEffect(spawnEffect, rig.deps);
+
+		const create = rig.docker.calls.find((c) => c[0] === "create");
+		expect(create).toBeDefined();
+		expect(create).not.toContain(NNP);
+	});
+
+	test("the landing container sets no-new-privileges", async () => {
+		const rig = makeRig();
+		rig.docker.enqueue(ok(""));
+		rig.docker.enqueue(ok(""));
+		rig.mc.enqueue(ok("{}"));
+		await runSealedLanding(landingStep, rig.deps);
+
+		const run = rig.docker.calls.find((c) => c[0] === "run");
+		expect(run).toBeDefined();
+		expect(run).toContain(NNP);
 	});
 });
