@@ -296,3 +296,142 @@ func TestLandingHasNoNetworkDockerBoundary(t *testing.T) {
 		t.Fatalf("a --network none landing has %s non-loopback interfaces:\n%s", got, out)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Row 10 — the realized landing mount table (ADR-017:699-702).
+//
+// "Setup and landing receive their separate exact minimal tables; landing alone
+// receives the real repository RW plus the reviewed task store RO."
+//
+// The resident's own tests compare the docker ARGV to a literal. That proves
+// the table was requested. This proves it was APPLIED, and — the part argv can
+// never show — that the ACCESS MODES mean what they say to a process inside the
+// container. A bind requested `:ro` that the runtime silently mounted RW would
+// look identical in every host-side test in the tree.
+//
+// The count assertion is as load-bearing as the contents. "Exact minimal table"
+// is a ceiling, not a floor: a fifth bind is a boundary violation even if all
+// four required rows are present and correct.
+// ---------------------------------------------------------------------------
+
+func TestLandingMountTableMatchesDockerInspectDockerBoundary(t *testing.T) {
+	requireDocker(t)
+	repo := operatorRepo(t)
+
+	taskRoot := filepath.Join(repo, ".mission-control", "tasks", "task-7")
+	if err := os.MkdirAll(taskRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(taskRoot, "REVIEWED"), []byte("reviewed\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	scratch := sharedTempDir(t)
+	cover := filepath.Join(scratch, "cover")
+	if err := os.MkdirAll(cover, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	envelope := filepath.Join(scratch, "landing.json")
+	if err := os.WriteFile(envelope, []byte(`{"schema_version":1}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	name := "mc-landing-boundarytable01"
+	_ = exec.Command("docker", "rm", "-f", name).Run()
+	t.Cleanup(func() { _ = exec.Command("docker", "rm", "-f", name).Run() })
+
+	// The exact four rows landingMountRows() declares, in the resident's order.
+	create := exec.Command("docker", "create", "--name", name,
+		"--network", "none", "--user", "10002:10002",
+		"-v", repo+":/repo/source",
+		"-v", cover+":/repo/source/.mission-control:ro",
+		"-v", taskRoot+":/repo/task:ro",
+		"-v", envelope+":/mc/landing.json:ro",
+		probeImage, "true")
+	if out, err := create.CombinedOutput(); err != nil {
+		t.Fatalf("create: %v\n%s", err, out)
+	}
+
+	out, err := exec.Command("docker", "inspect", "-f",
+		"{{range .Mounts}}{{.Destination}}={{.RW}} {{end}}", name).CombinedOutput()
+	if err != nil {
+		t.Fatalf("inspect mounts: %v\n%s", err, out)
+	}
+	realized := strings.Fields(strings.TrimSpace(string(out)))
+
+	want := map[string]string{
+		"/repo/source":                  "true",  // the only real-repository RW grant in the system
+		"/repo/source/.mission-control": "false", // the cover
+		"/repo/task":                    "false", // the reviewed store
+		"/mc/landing.json":              "false", // the envelope
+	}
+	if len(realized) != len(want) {
+		t.Fatalf("landing realized %d mounts, want exactly %d — the table is a ceiling, "+
+			"not a floor:\n%v", len(realized), len(want), realized)
+	}
+	for _, entry := range realized {
+		dest, rw, ok := strings.Cut(entry, "=")
+		if !ok {
+			t.Fatalf("unparsable mount entry %q", entry)
+		}
+		wantRW, known := want[dest]
+		if !known {
+			t.Fatalf("landing carries an unexpected mount at %q", dest)
+		}
+		if rw != wantRW {
+			t.Fatalf("landing mount %s is RW=%s, want RW=%s", dest, rw, wantRW)
+		}
+		delete(want, dest)
+	}
+	if len(want) != 0 {
+		t.Fatalf("landing is missing required mounts: %v", want)
+	}
+}
+
+// What inspect cannot show: whether the declared modes actually govern a
+// process. Every RO row must refuse a write from inside, and the one RW row
+// must accept one.
+func TestLandingMountModesGovernInsideTheContainerDockerBoundary(t *testing.T) {
+	requireDocker(t)
+	repo := operatorRepo(t)
+
+	taskRoot := filepath.Join(repo, ".mission-control", "tasks", "task-7")
+	if err := os.MkdirAll(taskRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	scratch := sharedTempDir(t)
+	cover := filepath.Join(scratch, "cover")
+	if err := os.MkdirAll(cover, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	envelope := filepath.Join(scratch, "landing.json")
+	if err := os.WriteFile(envelope, []byte(`{"schema_version":1}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := dockerRun(t,
+		"--user", "10002:10002",
+		"-v", repo+":/repo/source",
+		"-v", cover+":/repo/source/.mission-control:ro",
+		"-v", taskRoot+":/repo/task:ro",
+		"-v", envelope+":/mc/landing.json:ro",
+		probeImage, "sh", "-c",
+		`touch /repo/source/w        2>/dev/null && echo SOURCE_RW   || echo SOURCE_RO;`+
+			`touch /repo/task/w          2>/dev/null && echo TASK_RW     || echo TASK_RO;`+
+			`touch /repo/source/.mission-control/w 2>/dev/null && echo COVER_RW || echo COVER_RO;`+
+			`echo x >> /mc/landing.json 2>/dev/null && echo ENV_RW      || echo ENV_RO;`+
+			`cat /mc/landing.json > /dev/null       && echo ENV_READABLE`)
+	if err != nil {
+		t.Fatalf("mode probe: %v\n%s", err, out)
+	}
+
+	for _, want := range []string{"SOURCE_RW", "TASK_RO", "COVER_RO", "ENV_RO", "ENV_READABLE"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("landing mount modes do not govern inside the container: missing %s\n%s", want, out)
+		}
+	}
+	// The reviewed task store is the sealed evidence a landing merges FROM.
+	// A writable one would let the landing rewrite the thing it is proving.
+	if strings.Contains(out, "TASK_RW") {
+		t.Fatalf("the reviewed task store is WRITABLE inside the landing container:\n%s", out)
+	}
+}
