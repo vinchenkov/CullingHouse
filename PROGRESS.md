@@ -6,8 +6,12 @@ REPO PATH: `~/dev/ai/homie`. Never relocate this repo into `~/Documents`,
 `~/Desktop`, or `~/Downloads`: macOS TCC can revoke an agent session's own
 filesystem access there during fan-out. Full Disk Access does not fix it.
 
-LAST GREEN SHA: `a6b5bf8` — five-leg fast lane green. Docker suite last 8/8 at
-`4a69d15`. The operator pushes manually; agents do not push.
+LAST GREEN SHA: `f21f11c` — five-leg fast lane green. Docker E2E last 8/8 at
+`f21f11c` (2026-07-21), WITH the sealed landing lane live — so activation
+disturbed no existing crossing. Tag compile/vet lanes (`docker_boundary`,
+`docker_e2e`, `test_fake_routing`) also clean at that SHA.
+
+The operator pushes manually; agents do not push.
 
 PHASES PASSING: Phase 0 COMPLETE; Phase 1 COMPLETE; Phase 2 COMPLETE. Phase 3
 is in progress. Completed implementation history is in
