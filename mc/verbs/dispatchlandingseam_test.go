@@ -877,3 +877,68 @@ func TestLegacyLandStillReturnsFromPrepare(t *testing.T) {
 		t.Fatal("the legacy land effect grew a landing key; the resident's lane discriminator is broken")
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Broken routing must not suppress the sealed landing lane.
+//
+// cli_test.go:1193-1206 pins this for the LEGACY lane and cannot cover the
+// sealed one: its fixture is branch-carrying, so it satisfies LandingPending
+// rather than SealedLandingPending, returns from prepare as a final effect, and
+// never reaches any attest leg. It would stay green if the sealed lane grew a
+// routing dependency tomorrow. This is the sealed twin it cannot be.
+//
+// The property is stronger for the sealed lane than the legacy one, because the
+// sealed lane DOES attest. If routing were read there, a deployment whose
+// routing.md is broken would stop landing approved, already-reviewed work —
+// with the operator given no signal connecting the two.
+// ---------------------------------------------------------------------------
+
+func TestBrokenRoutingNeverSuppressesASealedLanding(t *testing.T) {
+	home, prepared := dlsPreparedOverRepo(t)
+	if err := os.WriteFile(filepath.Join(home, "routing.md"),
+		[]byte("\x00 not routing at all \x00"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	// The whole host half of the lane, in order, over a deployment whose
+	// routing.md a spawn could not parse.
+	attested, err := dispatchAttestLanding(home, prepared)
+	if err != nil {
+		t.Fatalf("attest: %v", err)
+	}
+	attested = dispatchRecheckAttestation(home, prepared, attested)
+	if attested.refusal != nil {
+		t.Fatalf("broken routing suppressed a sealed landing at %s: %+v",
+			"attest/recheck", attested.refusal)
+	}
+	if attested.mountPlan == nil || attested.mountPlan.Landing == nil {
+		t.Fatal("no landing plan survived a broken-routing deployment")
+	}
+
+	// And the effect the commit leg would return is a real land effect.
+	effect := landingEffect(prepared.landing.taskID, attested.mountPlan.Landing)
+	if effect["action"] != "land" {
+		t.Fatalf("effect action = %v", effect["action"])
+	}
+	if effect["landing"] == nil {
+		t.Fatal("the sealed land effect lost its landing carrier")
+	}
+
+	// The negative half: a SPAWN over this same home must still refuse, or the
+	// test proves only that the fixture's routing.md was fine.
+	spawnPrepared := preparedDispatch{
+		deploymentUUID: prepared.deploymentUUID,
+		requestID:      prepared.requestID,
+		identity:       prepared.identity,
+		candidate: &preparedCandidate{
+			spawn: &dispatch.Spawn{Role: dispatch.RoleWorker},
+		},
+	}
+	spawnAttested, err := dispatchAttest(home, spawnPrepared)
+	if err != nil {
+		t.Fatalf("spawn attest: %v", err)
+	}
+	if spawnAttested.refusal == nil {
+		t.Fatal("the fixture's routing.md parsed after all; the landing arm above proved nothing")
+	}
+}
