@@ -3,6 +3,7 @@ package verbs
 import (
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -225,6 +226,107 @@ func TestSealedMergeNeverAutostashesOperatorBytes(t *testing.T) {
 	if _, err := os.Lstat(filepath.Join(repo, ".git", "refs", "stash")); err == nil {
 		t.Fatal("the refused merge created a stash")
 	}
+}
+
+// Ported from legacy mc-land.test.ts:289,328, and it closes the last two of the
+// four knobs 7364503 found were held by nothing.
+//
+// RENAME INFERENCE IS A HEURISTIC, and the merge stage is the one place it can
+// move bytes. The reviewed side renames `old.txt` to `new.txt` and edits it; the
+// operator edits `old.txt` where it still is. With `merge.renames=false` git
+// sees a delete against a modify and refuses. With detection ON it "helpfully"
+// carries the operator's edit onto `new.txt` and commits — a landing that writes
+// a path no reviewer saw and that the reviewed-path dirty fence therefore never
+// checked, because that fence derives its set with `--no-renames`. The two
+// halves must agree, and this is what makes them agree.
+//
+// MUTATION-CONFIRMED (2026-07-20): removing `merge.renames=false` alone makes
+// this merge SUCCEED and the test fail. `merge.directoryRenames=false` is
+// CORRECT AND UNREACHABLE — git disables directory-rename detection whenever
+// rename detection is off, so with the first knob pinned no input can reach it.
+// It is retained as the explicit statement that neither heuristic is wanted, and
+// recorded here so it is not counted as a live fence.
+func TestSealedMergeNeverInfersARename(t *testing.T) {
+	repo, base, verified, pre, branch := renameMergeReady(t)
+	g := landingGit{dir: repo}
+
+	// FIXTURE GUARD. The whole case is vacuous if git would not infer this
+	// rename in the first place: a fixture whose similarity drifts below the
+	// detection threshold keeps passing while testing nothing.
+	status, err := g.out("diff-tree", "-M", "-r", "--no-commit-id", "--name-status", base, verified)
+	if err != nil || !strings.HasPrefix(status, "R") {
+		t.Fatalf("fixture is not rename-inferable; the case proves nothing: %q (err %v)", status, err)
+	}
+
+	if err := createLandingRefCAS(g, branch, verified); err != nil {
+		t.Fatal(err)
+	}
+	if err := mergeSealedLanding(g, "main", verified, pre, "0011223344556677", 7); err == nil {
+		t.Fatal("the merge inferred a rename and relocated the operator's edit onto an unreviewed path")
+	}
+	if now := srcGit(t, repo, "rev-parse", "refs/heads/main"); now != pre {
+		t.Fatalf("the refused merge moved the target: %q", now)
+	}
+	// The operator's file is still committed where it was, under its own name,
+	// and the reviewed path was never created on the target.
+	body := srcGit(t, repo, "show", "refs/heads/main:old.txt")
+	if !strings.Contains(body, "operator line 20") {
+		t.Fatalf("the operator's bytes at the original path did not survive: %q", body)
+	}
+	if _, err := g.out("cat-file", "-e", "refs/heads/main^{tree}:new.txt"); err == nil {
+		t.Fatal("the refused merge created the renamed path on the target")
+	}
+}
+
+// renameMergeReady is a bespoke pair, because `mergeReady`'s sealed content is
+// fixed and shares no path with the target beyond README.md. Here the two sides
+// must touch THE SAME tracked file by different names for the heuristic to have
+// anything to infer.
+//
+// The two edits are deliberately at opposite ends of the file: were they to
+// overlap, the merge would conflict with rename detection either on or off, and
+// the test would pass without pinning anything.
+func renameMergeReady(t *testing.T) (repo, base, verified, pre, branch string) {
+	t.Helper()
+	var lines []string
+	for i := 1; i <= 20; i++ {
+		lines = append(lines, "line "+strconv.Itoa(i))
+	}
+	body := func(mutate func([]string)) string {
+		out := append([]string{}, lines...)
+		mutate(out)
+		return strings.Join(out, "\n") + "\n"
+	}
+
+	repo = t.TempDir()
+	srcGit(t, repo, "init", "-q", "-b", "main")
+	srcGit(t, repo, "config", "commit.gpgsign", "false")
+	writeFile(t, filepath.Join(repo, "old.txt"), body(func([]string) {}))
+	srcGit(t, repo, "add", "-A")
+	srcGit(t, repo, "commit", "-qm", "base")
+	base = srcGit(t, repo, "rev-parse", "HEAD")
+
+	// The reviewed side: rename, then edit the head of the file.
+	sealed := filepath.Join(t.TempDir(), "sealed")
+	srcGit(t, filepath.Dir(sealed), "clone", "-q", "--no-hardlinks", repo, sealed)
+	srcGit(t, sealed, "config", "commit.gpgsign", "false")
+	srcGit(t, sealed, "checkout", "-q", "-b", taskAssignmentBranch(7))
+	srcGit(t, sealed, "mv", "old.txt", "new.txt")
+	writeFile(t, filepath.Join(sealed, "new.txt"), body(func(l []string) { l[0] = "reviewed line 1" }))
+	srcGit(t, sealed, "add", "-A")
+	srcGit(t, sealed, "commit", "-qm", "reviewed renames and edits the file")
+	verified = srcGit(t, sealed, "rev-parse", "HEAD")
+
+	// The operator, meanwhile, edits the tail of the file at its original path.
+	writeFile(t, filepath.Join(repo, "old.txt"), body(func(l []string) { l[19] = "operator line 20" }))
+	srcGit(t, repo, "add", "-A")
+	srcGit(t, repo, "commit", "-qm", "operator edits the original path")
+	pre = srcGit(t, repo, "rev-parse", "refs/heads/main")
+
+	if err := importSealedClosure(sealed, repo, base, verified); err != nil {
+		t.Fatalf("import: %v", err)
+	}
+	return repo, base, verified, pre, taskAssignmentBranch(7)
 }
 
 // Fixed metadata (ADR-017:752): author and committer are pinned so the merge is
