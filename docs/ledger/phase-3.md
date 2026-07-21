@@ -4347,3 +4347,69 @@ landing mount table, RO alias/cover behaviour, the network-none/uid/capability
 envelope, VirtioFS import durability, and the five ADR-017:758-760 crash cuts,
 then carry the production E2E through packaged → approve → merge → archived and
 satisfy `docs/phase3-contract.md` §8.
+
+## 2026-07-21 — the completion lane opens, and two deferred canaries come back green
+
+Docker E2E is 8/8 at `f21f11c` WITH the sealed lane live, and all three tag
+compile/vet lanes are clean. Activation disturbed no existing crossing.
+
+**Finding that changes the phase picture: `docker_boundary` has ZERO
+implementing files.** No `//go:build docker_boundary` exists anywhere in the
+tree; the only tagged suite is `docker_e2e` (`mc/e2e/e2e_test.go`). Verified by
+grep, not taken on report. So the §8 lane
+`go test -run '^$' -tags docker_boundary ./...` has been passing VACUOUSLY since
+it was written — it compiles the untagged packages and finds no tests. Every §3
+row whose required evidence names "Docker inspect", "in-container probes", or
+kernel behaviour is therefore unproven, and §8's "run the real `docker_boundary`
+suite at Phase 3 completion" names a suite that does not exist.
+
+Spot-checked the rest rather than trusting the survey wholesale. Mixed picture:
+`per-container scope` has a production owner (`runtime_scope_prod.go`), the warm
+helper does (`main.go`, `resident_control.go`); but there is no forbidden-env
+builder in `mc/boundary` and no gateway implementation anywhere — only refusal
+codes and control-descriptor plumbing mention the word. Those are unimplemented
+mechanisms, not merely untested ones.
+
+**Two deferred canaries, run directly, both GREEN.** These are the landing
+lane's architecture-kill risks and they were worth answering before building any
+test scaffolding, because a red on either would have made the entire lane
+non-functional on this Mac and every other completion test moot.
+
+- **ADR-019:183-188's final-uid VirtioFS canary.** uid `10002:10002` CAN create
+  a file inside a RW bind of an operator-owned host directory (0755, `501:0`)
+  under Docker Desktop 29.4.0 / aarch64. This is the question ADR-017:76-86
+  explicitly refused to assert anything about and deferred here.
+  Better still, and NOT what the design assumed: the created file lands on the
+  host owned by the OPERATOR (`501:0`), not by 10002. So a landing's merge
+  commit produces operator-owned bytes with nothing chowning anything, which is
+  why no permission-widening fallback was ever needed. `effects.ts:768-771`
+  chose 10002 over an operator-uid exception on corpus grounds alone; that
+  choice is now also empirically correct.
+- **ADR-017:700's nested cover.** A RO bind of an empty directory at
+  `/repo/source/.mission-control` genuinely SHADOWS the same path inside the
+  already-RW `/repo/source` bind: a host sentinel under it is invisible from
+  inside, a write into it is `EROFS`, and the host sentinel is intact
+  afterwards. This is the single mechanism preventing the RW real-repository
+  grant from exposing every sealed task store as writable, and it had been
+  asserted by the ADR and verified by nothing.
+
+That second one matters more than it looks. `fenceLandingCover`
+(`landsealedrun.go:65-84`) only checks that the path is an EMPTY DIRECTORY — it
+passes identically if the bind silently did nothing and the real
+`.mission-control` happened to be empty. The fence is not evidence of shadowing;
+the probe above is.
+
+Neither canary is yet a test. They were run as direct `docker run` probes to get
+the answer cheaply; committing them as `docker_boundary` tests is the next step,
+and is what makes them regression evidence rather than one-time observations.
+
+NEXT (outgoing): create the `docker_boundary` package — it does not exist — and
+land the landing-lane rows in it, cheapest-first: the final-uid canary and the
+resource-bounds/`--network none` inspect (one container each), then the cover
+shadow and the realized mount table, then landing's host-scope/no-`run.json`
+inversion. Two cheap host-side gaps can land first with no Docker at all: that
+the landing class sets `no-new-privileges` while the setuid class must NOT
+(a shared-envelope refactor would silently kill the setuid gate), and that
+landing's own mount table is still governed by the shared blocked floor
+(`landingplan.go:11-22` says outright that neither `planMounts` nor
+`validatePrivateMountPlan` knows this table).
