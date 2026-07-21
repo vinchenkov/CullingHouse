@@ -35,6 +35,32 @@ type landingCaptureInputs struct {
 	LocalRepoUUID string
 }
 
+// landingWorkspaceRoot resolves the selected Worksource's workspace root out of
+// the frozen mount state, mirroring the spawn attester's own resolution.
+//
+// It REFUSES rather than yielding the empty path, and that is the whole point
+// of it being a named step. captureLandingPlan resolves every host anchor
+// relative to the root it is handed, so "" would resolve them against the
+// process working directory — the one place in this lane where a landing could
+// interrogate, and then write into, a repository that is not the operator's.
+// A downstream Lstat failure is not an acceptable substitute: by then the paths
+// probed are real paths on the host.
+func landingWorkspaceRoot(state PrivateDispatchMountState) (string, error) {
+	if state.SelectedWorksource == "" {
+		return "", Domainf("landing: the frozen mount state selected no Worksource")
+	}
+	for _, ws := range state.Worksources {
+		if ws.WorksourceID != state.SelectedWorksource {
+			continue
+		}
+		if ws.WorkspaceRoot == "" {
+			return "", Domainf("landing: selected Worksource %q has no workspace root", state.SelectedWorksource)
+		}
+		return ws.WorkspaceRoot, nil
+	}
+	return "", Domainf("landing: selected Worksource %q has no projection in the frozen mount state", state.SelectedWorksource)
+}
+
 // captureLandingPlan assembles the frozen landing carrier over a live host.
 //
 // Order is deliberate and fail-closed: the structural anchors resolve BEFORE

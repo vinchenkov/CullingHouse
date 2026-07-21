@@ -183,3 +183,54 @@ func TestCaptureLandingPlanRefusesWhatTheLanderWouldRefuse(t *testing.T) {
 		})
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Workspace-root resolution.
+//
+// This is its own fence for one reason: captureLandingPlan resolves every host
+// anchor RELATIVE to the root it is handed, so an empty root resolves them
+// against the process working directory. That is the single place in this lane
+// where a landing could interrogate — and then write into — a repository that
+// is not the operator's. A refusal is the only safe answer; returning "" and
+// letting a downstream Lstat fail is not, because the paths it would probe are
+// real paths on the host.
+// ---------------------------------------------------------------------------
+
+func lcState(selected, root string) PrivateDispatchMountState {
+	return PrivateDispatchMountState{
+		SelectedWorksource: selected,
+		Worksources: []PrivateDispatchWorksource{{
+			WorksourceID: "ws-test", Kind: "repo", Status: "active",
+			ProfilePresent: true, ProfileID: "default", WorkspaceRoot: root,
+		}},
+	}
+}
+
+func TestLandingWorkspaceRootResolvesTheSelectedWorksource(t *testing.T) {
+	got, err := landingWorkspaceRoot(lcState("ws-test", "/srv/ws-test"))
+	if err != nil {
+		t.Fatalf("landingWorkspaceRoot: %v", err)
+	}
+	if got != "/srv/ws-test" {
+		t.Fatalf("workspace root = %q, want /srv/ws-test", got)
+	}
+}
+
+func TestLandingWorkspaceRootRefusesUnresolvedWorksource(t *testing.T) {
+	for name, state := range map[string]PrivateDispatchMountState{
+		"no selected worksource":    lcState("", "/srv/ws-test"),
+		"selection names no row":    lcState("ws-absent", "/srv/ws-test"),
+		"selected row has no root":  lcState("ws-test", ""),
+		"no worksource rows at all": {SelectedWorksource: "ws-test"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			got, err := landingWorkspaceRoot(state)
+			if err == nil {
+				t.Fatalf("resolved %q instead of refusing; an unresolved root resolves the landing's host anchors against the process working directory", got)
+			}
+			if got != "" {
+				t.Fatalf("refusal still yielded a root %q", got)
+			}
+		})
+	}
+}
