@@ -1,936 +1,160 @@
-# PROGRESS — Mission Control implementation ledger
+# PROGRESS — Mission Control implementation state
 
-<!-- Header block: kept current by every session. -->
-REPO PATH: `~/dev/ai/homie`. **Never relocate this repo into `~/Documents`,
-`~/Desktop`, or `~/Downloads`.** Those three are macOS's TCC-protected triad;
-agent fan-out breaks TCC attribution there and silently revokes the session's
-own filesystem access mid-run (claude-code#59065, open). Moved out of
-`~/Documents` on 2026-07-15 after exactly that killed a session. Full Disk
-Access does NOT fix it — the failure precedes any policy lookup. Symptom:
-`stat` works, reads return `Operation not permitted`, git says
-`Unable to read current working directory`.
+<!-- Live cross-session state only. Narrative history is in docs/ledger/. -->
 
-LAST GREEN SHA: 7364503 — five-leg fast lane (Docker suite last 8/8 at 4a69d15; the operator pushes manually — decided 2026-07-14. Agents: do not push.)
+REPO PATH: `~/dev/ai/homie`. Never relocate this repo into `~/Documents`,
+`~/Desktop`, or `~/Downloads`: macOS TCC can revoke an agent session's own
+filesystem access there during fan-out. Full Disk Access does not fix it.
 
-PHASES PASSING: Phase 0 COMPLETE (S1–S8 all green, no fallback ADRs; only operator-leg deferrals remain); Phase 1 COMPLETE (1a substrate 172; 1b walking skeleton reviewed-and-fixed — fake-harness 43, agent-runner 13, runner/image 40, resident 42, dispatch + cmd/mc suites; Docker e2e PASS ×4 total); Phase 2 COMPLETE for every unparked acceptance line (domain/§18 surface, deterministic split-brain convergence, bounded honesty + five mutants, tagged dispatch/metamorphic/twin-spine lifecycle properties; the initiative-wave CLI is no longer isolated — ADR-020 landed 2026-07-14 and closed the last Phase 2 acceptance line)
-KNOWN-FAILING: `TestOnboardConcurrentFreshHomeNeverDeletesTheWinner` (mc/verbs),
-INTERMITTENT — ~1 in 21 full-suite runs; 0/21 at HEAD, 15/15 and 60/60 green in a
-clean worktree, so the rate is chance and the race is pre-existing, NOT caused by
-the D4 slice (Go runs a package's tests in file order and onboard_test.go sorts
-first, so the new tests cannot influence it). Real bug, fail-closed, breaks no
-invariant. Repro: `cd mc && for i in $(seq 1 25); do mise exec -- go test ./verbs/
--count=1 || break; done`. Cause: `onboard.go:446` refuses a spine that
-`exists && bytes > 0` with no meta identity as corruption — but that is also the
-transient state of a *concurrent provisioner* (SQLite writes its first 4096-byte
-page before the schema transaction commits), so a loser hard-fails with
-`restore from backup (§16.4)`. Fix direction: that ambiguous state should
-await/retry like the existing `awaitConcurrentProvision`/`recoverConcurrentProvision`
-paths (which already handle the *later* stages of this same race) and refuse only
-if it stays table-less. Owner: whoever next touches onboarding — not a Phase 3
-blocker. Full diagnosis in IMPLEMENTATION-NOTES.md (2026-07-15).
-Sighting 2026-07-20 (at 4757df2): 1 failure in a full `mc/check.sh` run, with
-the exact documented message (`non-empty (4096 bytes) but has no meta
-identity`). Then 8/8 green isolated and the full suite green on re-run — the
-~1-in-21 rate holds and the profile is unchanged. Not caused by the sealed
-landing work, which touches no onboarding path.
+LAST GREEN SHA: `7364503` — five-leg fast lane green. Docker suite last 8/8 at
+`4a69d15`. The operator pushes manually; agents do not push.
 
-KNOWN-FAILING (2): `resident one-use dispatch control > rejects every identity
-mismatch before accepting child output` (resident/src/resident-control.test.ts),
-INTERMITTENT and load-sensitive — 2 failures during a concurrent five-leg run
-on 2026-07-17, then 16/16 green on an idle machine and 8/8 green at f2680b8.
-The test's mismatch child exits immediately after writing its hello
-(waitForAck=false); Bun.spawn's subprocess reaping and BunControlChannel's
-Bun.connect both believe they own the parent's fd-3 descriptor, so under load
-the reap-side close can win before the socket poller drains the hello, and the
-channel surfaces `EBADF: bad file descriptor, close` instead of the mismatch
-refusal. Fail-closed either way; production mc waits for the ack, so the
-immediate-exit shape is test-only. Repro (under load):
-`for i in $(seq 1 8); do ./resident/check.sh || break; done` while another
-suite runs. Owner: whoever next touches the resident control crossing — not a
-Phase 3 blocker.
-Sighting 2026-07-20: 1 failure in the five-leg run at 55c2949, then 9/9 green
-(5 idle, 3 under concurrent runner/image load, 1 clean). The NAME WAS NOT
-CAPTURED, so identity with the above is inferred from the profile only —
-load-sensitive, single, unreproducible. Whoever fixes this: capture the failing
-test name on first sight; `check.sh`'s summary alone does not carry it.
+PHASES PASSING: Phase 0 COMPLETE; Phase 1 COMPLETE; Phase 2 COMPLETE. Phase 3
+is in progress. Completed implementation history is in
+`docs/ledger/chronology-phase-0-2.md` and `docs/ledger/phase-3.md`; do not read
+either at startup.
 
-Note the spine is now schema v11 (substrate.CurrentSchemaVersion): `mc onboard home` migrates older spines in place (v1→…→v11); scratch MC_HOME spines need no action. v4 closed the D2 BLOB hole; v5 is the task_setup_receipts table; v6 is the task-keyed immutable `task_assignments` table (first-task closure assignment: base/target SHA, object format, sole branch, path-free task-root key, local repo UUID, closure digest — a retry reuses it, never rebases; ADR-016 D5). v7 is the immutable run-keyed completion-seal state record; v8 binds every newly published seal to an immutable manifest digest; v9 makes each worked task point to its exact accepted completion run/request; v10 is the immutable verifier-run-fenced accepted-seal rebuild receipt; v11
-widens the §7 approve landing fence to cover the second branch home (an
-assignment arms it, not just `tasks.branch`). Only accepted, manifest-bound seals can rebuild the canonical task store, while cleanup is durable history.
-Note the mc fast lane now shells to host `git` (git 2.50 on this machine): the first-task setup extraction/materialize/record/envelope tests build real temp repos. Production runs the identical Go inside the network=none setup container against the pinned image git; the host never invokes it.
-FAST SUITE: mc/check.sh (gofmt + vet on the untagged build AND on the nightly/docker_e2e/test_fake_routing tagged builds — they must compile every commit, added 2026-07-14 after a tagged suite rotted invisibly — + go test ./...; includes substrate + promoted dispatch) + runner/fake-harness/check.sh + runner/agent-runner/check.sh + runner/image/check.sh + resident/check.sh. Docker e2e (phase-completion lane): cd mc && mise exec -- go test -tags docker_e2e -timeout 15m ./e2e/...
+FAST SUITE:
+`./mc/check.sh && ./runner/fake-harness/check.sh && ./runner/agent-runner/check.sh && ./runner/image/check.sh && ./resident/check.sh`
 
-## Phases
+Phase-completion Docker regression:
+`cd mc && mise exec -- go test -tags docker_e2e -timeout 15m ./e2e/...`
 
-Phases 0–2 are COMPLETE; their detail lived here long after it stopped being
-state. It is in `docs/ledger/` (narrative), `spikes/*/RESULT.md` (spike
-evidence), and the phase contracts (acceptance). Only what is still live is
-kept below. Operator legs that remain open are under `## Parked`, not here.
+Schema is v11. `mc onboard home` migrates v1 through v11 in place. v11 widens
+the approve landing fence so an immutable task assignment, not only
+`tasks.branch`, arms it.
 
-- [x] Phase 0 — Architecture-kill spikes S1–S8, all GREEN, no fallback ADR
-      signed (so ADRs 002–006 stay empty stubs — see docs/adr/INDEX.md).
-      Still live from the spike findings:
-      - S3: the canonical codex refresh token may be consumed on a race;
-        recovery copy at `~/.mc-dev-home/spike03/race-codex/auth.json`
-      - S2/S3/S4 deferred legs (30-min hold, DD-restart-mid-refresh, DD-restart)
-        belong to the Phase 3/4 suites; S7's sleep drill + Resource Saver are
-        operator legs (Parked)
-      - S6's 8 interpretation notes are cited in-code as NOTE(S6.n)
-- [x] Phase 1 — Substrate + walking skeleton. 1a schema/trigger lattice +
-      155-case backstop (771480e); 1b contract, fake harness, agent runner, mc
-      binary, resident tick loop, mc-fake-e2e image, Docker e2e behind the
-      `docker_e2e` tag; adversarial review closed (12 findings → 9 fixed incl. 4
-      majors, 4 refuted with reasons).
-- [x] Phase 2 — Dispatch + domain correctness, every unparked acceptance line:
-      dispatch table + SQL differential, domain aggregates, completion/fencing/
-      two budgets, process flock + independent CAS, strict role/runner identity,
-      immutable routing/directives/briefs, the full §18 verb/error/scope
-      surface, the nine-kill-point split-brain convergence suite, and the
-      nightly randomized/metamorphic/lifecycle properties with planted mutants.
-      ADR-020 landed 2026-07-14 and closed the last line (the Editor's holistic
-      wave review has a durable state, a dispatch arm, and a terminal).
-- [ ] Phase 3 — Boundary conformance (Docker)
-  - [x] Contract + adversarial mechanism/ownership review
-        (`docs/phase3-contract.md`)
-  - [x] Delegated boundary ADRs accepted after adversarial review: ADR-016
-        spawn/wake crossing, ADR-017 mount/file plane, ADR-018 gateway/network
-        topology, ADR-019 finite resource envelopes
-  - [x] Pure mount policy: strict allowlist TOML/limits, POSIX targets and
-        collision rejection, immutable blocked floor + additive patterns,
-        bilateral RO/RW access (`mc/boundary`)
-  - [x] Cross-harness takeover review of the Codex range (72a39db..4380e0d):
-        no majors; mount-target control grammar deviation fixed red-first
-        (67c4b61). ADR-vs-spec lens re-run separately (credit exhaustion)
-  - [x] Filesystem identity + containment: trust seams, canonical resolution,
-        raw+resolved blocked matching, `os.SameFile` allow-root uniqueness and
-        ancestry, derived/validated suffix, symlink stays-vs-escapes (e01a2af)
-  - [x] ADR-016..019 findings VERIFIED (operator decision 2 of 2026-07-14) and
-        closed: 10 confirmed / 7 refuted, only 1 of 6 alleged majors survived;
-        ADR-017's unrealizable privileged-tree ownership fixed (c6ca202), six
-        deviations logged (69c19be), evidence in docs/reviews/ (6636e1e)
-  - [x] Protected set + cross-Worksource jurisdiction (Dec. 3 step 5, Dec. 5):
-        ADR-021 steps 1–8 complete after takeover repair, D8 absent-root/case
-        semantics, D9/D11 reconstruction drift, and the planted-mutant sweep
-        (3ad3411..ebb7613)
-  - [x] macOS ACL leg of the trust seam: native no-follow volume/object
-        snapshot, any non-owner allow grant rejected, membership UUID aliases
-        resolved fail-closed, portable/static builds retained (942985e)
-  - [x] ADR-016 D4 refusal taxonomy + closed detail, the pure half of the
-        invalid-plan/no-claim transaction (`mc/refusal`, 315e932): whole
-        consequence table by code, authority as a mount-only discriminator,
-        allowlist carve-out always health, unknown/incoherent input refused;
-        detail is enumerated-only so hostile text is leak-proof by
-        construction. Anti-drift guard in boundary/codes_test.go. 4 mutants
-        dead
-  - [x] ADR-016 D4 consequence router at the dispatch seam (`verbs.applyRefusal`,
-        8aa679e): the impure half. Stale → no mutation; Health → one
-        `dispatch.health` activity; Candidate → subject task blocked with
-        `confinement:<code>` / subjectless → health / Homie → ended in the same
-        transaction. D4's four-part invariant (zero Runs, free lock, no spawn, no
-        fall-through) asserted on every arm via a seeded fall-through bait task.
-        20 tests / 109 subtests. `homieEndTx` factored so the seam can end inside
-        its own transaction. 9 of 10 mutants dead (M6 equivalent by construction).
-        Three deviations logged: the Homie end is unfenced-but-vacuous (D3's
-        launch columns absent), `dispatch_key` is an input (no prepare step to
-        derive it), the health action is one activity row (no §15.6 outbox
-        fan-out — no block path has one yet). NOT YET REACHABLE from `mc
-        dispatch`: nothing produces a Refusal, so the router has no caller but
-        its tests
-  - [x] ADR-016 D3 storage + fences (5fb4221..747f077): the eleven
-        launch-fencing/resume-debt columns as the v2→v3 migration, pairing
-        lattice as CHECKs with typeof pins and the closed (0,0) empty-prefix
-        encoding; the D4 Homie end's `current_launch_id` generation fence
-        (miss = no consequence, stale posture); the `homie.preflight_health`
-        marker write half with its golden-vectored candidate key. Adversarial
-        review (6 confirmed findings, all fixed; 2 refuted) closed the slice.
-        The launch columns have NO production writer yet (`homie start` uses
-        their defaults; resume does not clear/set them) — that is the
-        selector/effector slices' work
-  - [x] ADR-016 D1 command frame (49e29d1..8ad73d6): `verbs.Dispatch` is
-        prepare→attest→commit in D1's native single-process form (broker/
-        helper CLI split is a later wrapper; deviations logged 2026-07-16).
-        Golden-vectored canonical projection + preparation token; D2 receipt
-        fence live (reap/reenter receipts, byte-for-byte replay); spawn
-        candidates allocated at prepare, committed under token byte-equality
-        (`preflight.stale`) + re-decide (`preflight.candidate_mismatch`);
-        dispatch_key DERIVED at commit — applyRefusal's honesty gap closed,
-        first production refusals (routing failures → `health.routing_invalid`
-        with keyed dispatch.health rows; dispatch on un-onboarded MC_HOME
-        refuses on the deployment mirror). `planMounts` + the sixteen-code
-        MountError→Refusal adapter exist test-driven; attest skips an empty
-        request set. Adversarial review: 1 confirmed minor (fixed 8ad73d6),
-        rest held. Docker-lane obligation: verify the e2e deployment-mirror
-        write across the VirtioFS bind at the phase-completion run
-  - [x] ADR-016 D1 deployment-mirror Docker crossing: the tagged resident/helper
-        probe reads the helper's RO `/mc/home/deployment.uuid` bind, proves a
-        foreign host mirror reaches and fails private prepare before any Run,
-        task mutation, or lease, then restores the exact bytes and observes
-        resident dispatch recovery. It also caught and corrected the resident
-        control handshake's stale schema-version pin (v5 → v10).
-  - [x] The D2 BLOB fence (schema v4): typeof INSERT triggers over
-        activity.dispatch_key/dispatch_request_id/dispatch_result and
-        outbox.event_destination_key, as the v3→v4 migration + fresh shape;
-        BLOB forgeries (hex twin, NUL-embedded) proven rejected on fresh and
-        v1/v2/v3-migrated spines; testdata/schema-v3.sql frozen at b9bff07
-  - [x] Cross-harness takeover repair of the Claude D1/v4 range
-        (`ed55b2c..a1767cd`): review found four majors and one minor fixture
-        regression. The resident deployment-mirror fixture is fixed (96fffbf),
-        attest now reopens/binds the mirror across the released-lock window
-        (891bf2f), and every mutating attested outcome has one atomic
-        dispatch_key + request/result receipt with exact lost-response replay
-        (add7f2e: spawn, health, task block, Homie end). The remaining crossing
-        is now real: resident-only AF_UNIX fd 3 hello/ack and direct-shell
-        refusal (f4341dd), then closed private prepare/commit helper frames with
-        host-only attest, final host-file recheck, exact container-side absolute
-        deadlines, fixed production helper/spine scope, and scalar admission
-        backstops (06406df). Three adversarial review rounds closed every
-        finding; the full five-leg fast lane is green. Schema v4 and the
-        mount-code adapter held
-  - [x] Mount-attest projection prerequisite (36fc91f): prepare now freezes the
-        selected Worksource plus every normalized Worksource/profile row into
-        the token and private candidate; commit reloads and rejects drift. The
-        exact canonical projection has one shared 256 KiB admission fence at
-        migration, every current writer, and private decode. A focused reviewer
-        found and then verified the status-writer rollback boundary; the full
-        five-leg fast lane is green
-  - [x] Ordinary selected-profile mount attest (d7babcb): artifact RW and
-        reference RO requests derive only from the token-bound selected
-        profile; the host assembles own/other Worksource, runtime, HOME,
-        MC_HOME, control, and typed-root jurisdiction and calls `planMounts`
-        only in the released-lock attest leg. Invalid requests and nonempty
-        invalid denied policy commit a typed refusal with zero Run/spawn. The
-        single-pass boundary error marks only denied-path construction as
-        candidate-authored; deployment inventory races stay health-owned.
-        Production Git candidates fail health until the authoritative control/
-        projection registry exists; valid nonempty ordinary plans also fail
-        health until their authorization carrier replaces the fake resident
-        bind. Four adversarial rounds closed five then two blockers; all five
-        fast-lane legs pass
-  - [x] Cross-harness takeover review of the Codex range (a1767cd..e423780):
-        partial on quota (3 of 4 lenses; verifiers died) — 17 findings triaged
-        by direct code reading, none block the range; 5 confirmed items fold
-        into the carrier slice, 4 recorded for later slices, 1 alleged major
-        refuted. Disposition in IMPLEMENTATION-NOTES.md (2026-07-16); design
-        pins for the carrier slice in docs/ledger/phase-3.md (same date)
-  - [x] The authorization carrier (acf78f0..b1de870): attest builds the
-        bounded evidence-backed plan (class-prefixed destinations, decimal
-        device/inode + kind/owner/mode evidence, 32 KiB bound); the private
-        attestation frames it, plan_digest binds into dispatch_key, the spawn
-        effect replays it byte-exactly; `mc __mount-recheck` repeats
-        identity/trust before create and after create/before start and drift
-        removes the unstarted container; the resident consumes only the plan
-        (static workspace spawn bind gone; land keeps config.workspaceRoot).
-        Slice review: 1 major logged with owner (`-v` strings vs ADR-017 D3
-        structured binds — production-resident slice), residuals logged
-        (ACL/containment recheck halves, after-create Docker inspect, D6
-        production workspace RO row, launch-bind receipts). Docker-lane
-        obligations at phase completion: e2e with the carrier fixtures + the
-        D1 deployment-mirror check
-  - [x] The authoritative Git control/projection registry + typed task plan
-        class (6d07b79..c24e319): live per-attest resolution of repo
-        Worksource Git administrative identities (dir or worktree-pointer
-        chase; absence stays a D8 member; ambiguity denies) feeding
-        Own/OtherGitControls — no spine table (ADR-021 D9/D11). The closed
-        15-row ADR-017 D6 standalone-task table rides the carrier as typed
-        claims (allowlist bypassed, blocked floor kept, named-edge nesting
-        only), derived only for a production repo Worker with a subject
-        over an existing exact skeleton — proven through the real host
-        capture and full Dispatch; every other repo arm health-refuses
-        naming its missing materialization. Pins owed to later slices:
-        empty git/config until setup's sanitized grammar; worktree name
-        mc-task-<id>; fake lane keeps empty GitControls. Session
-        self-review fixed a pre-existing helper overlap gap (c24e319)
-  - [x] Spawned adversarial re-review of the registry/typed-plan slice
-        (8799370..c24e319), with independent cross-verification. Six confirmed
-        gaps closed red-first (aded102..0733f7b): initiative children cannot
-        enter the standalone task-plan class; bare Git roots are protected;
-        plan digests bind both declared and D8 effective protected identities;
-        fixed Git-control bytes and empty directories recheck at launch; and a
-        denied-path evidence race retains candidate authority. Two hostile-
-        broker completeness claims were refuted because ADR-016 D1 makes the
-        Darwin broker trusted and production derivation supplies the evidence
-  - [x] First skeleton-materialization slice (31e1127): resident primitive
-        exclusively precreates empty `task-<id>/{source,git}` as the host
-        operator beneath the exact preclaim parent identity, children first,
-        final canary-supplied writable mode, root 0555, and returned registered
-        root identity. Existing/residual paths, parent drift, and raced child
-        replacement/population refuse without cleanup. Spawned verifier:
-        VERIFIED
-  - [x] Post-claim skeleton carrier/effect integration (8aea935): a first
-        standalone repo Worker now attests exact absence beneath the
-        operator-owned mode-0700 tasks parent, carries its decimal identity
-        plus the closed child mode inside the digest-covered plan, claims, and
-        returns that step without fabricating any of the 15 not-yet-existing
-        task mount rows. The resident repeats identity/mode/native-ACL/absence,
-        exclusively precreates, validates and registers the returned root in
-        its per-resident run context, then stops before setup or launch. The
-        private helper rejects hostile candidate/step pairings and widened
-        modes; lost-response replay is byte-exact with one Run/activity.
-        Cross-harness takeover review of 31e1127..d2f3e68: PASS (administrative
-        only). Spawned slice review found the missing mode/ACL repetition; fixed
-        and reverified PASS. Full five-leg fast lane green (resident 63)
-  - [x] Durable first-task setup receipt: schema v5 carries only the
-        run/task-fenced returned root device/inode/owner identity (never a host
-        path); exact retry is idempotent and a changed identity or lost lease
-        refuses. The resident replaces its process-local registration map with
-        host-scoped `mc task setup-register`, so restart cannot attach a later
-        root to the claimed Worker.
-  - [x] Fixed first-task setup entry gate: consumes the live durable receipt,
-        derives the task root only from its task id under the canonical
-        Worksource root, and re-attests non-symlink directory shape, 0555 mode,
-        operator ownership, and device/inode identity before any setup can
-        populate it. It creates no Git state or task mount rows.
-  - [x] Cross-harness takeover review of c27616e..9c5d6c3 (two lenses +
-        adversarial verification, 5 confirmed / 0 refuted → 3 defects): the
-        inspection walk now re-binds the resolved KindTaskRoot row to the
-        receipt's device/inode/owner (7a5c4e8, same-path swap test); the
-        masked deleted-cover test arm unmasked; the untestable attest-side
-        Getuid clause retained and logged (IMPLEMENTATION-NOTES 2026-07-17)
-  - [x] First-task setup closure writer (8f896a9): digest-pinned pack/index
-        pair materialized with the generated covers/relative Git controls
-        derived from taskPlanRows, O_EXCL beneath the receipt-attested root's
-        empty resident children, landed bytes re-digested, success only
-        through the joined receipt-plus-15-row inspection; residue refuses
-        without cleanup. Caller-supplied pin + no production caller are logged
-        [owed: setup-container extraction slice]
-  - [x] Dispatch-attest typed task plan gated by the setup receipt: the
-        standalone-Worker arm (mountattest.go:489) now admits the resolved
-        task skeleton into an agent plan only when its device/inode/owner
-        matches a durable `task_setup_receipts` identity for the subject task,
-        frozen at prepare into `DispatchMountState.SubjectTaskSetupRoots`
-        (new `substrate.LoadSubjectTaskSetupRoots`, task-keyed — the run-keyed
-        `InspectFirstTaskSetup` fence is unsatisfiable at spawn attest, logged
-        2026-07-17). A materialized-but-unattested skeleton health-refuses
-        `mount.runtime_unappliable`; proven through full Dispatch both ways.
-        Rides the existing token/DeepEqual/plan_digest fences; helper-boundary
-        validator mirrors the receipt CHECKs. No unlocked spine read added to
-        attest
-  - [x] First-task setup-container closure extraction — the closure writer's
-        production caller (a3c0bf2..3793fee). The resident now writes the
-        credential-free envelope, runs the bounded network=none setup class,
-        records the host-verified result, and preserves the executor result
-        bytes exactly across that handoff (8faf1a8, 3793fee). Landed: the
-        task-keyed immutable `task_assignments` pin table (v5→v6);
-        `extractClosurePack` (synthetic config/ref-free git context reads the
-        real object dir, streams the reachable-closure pack, proves object-set
-        equality, refuses alternates/grafts/replace/shallow/promisor);
-        `MaterializeFirstTaskStore` (full in-place store: pack, generated
-        closed-grammar config, HEAD, sole ref at the pinned SHA, relative
-        worktree, index, materialized tree, fsck-clean); the git/config
-        empty→closed-grammar flip at the dispatch-attest resolver with the
-        config cover content-pinned to the landed bytes; the host
-        `RecordFirstTaskSetupClosure` superseding `WriteFirstTaskSetupClosure`
-        (re-attest receipt, cross-check landed store vs SetupResult, record
-        assignment, inspect); the `/mc/setup.json` SetupEnvelope +
-        `mc __setup-first-task` executor (host-scope, spineless, bypasses helper
-        delegation) + `mc task setup-record`; and D5 exact retry-residue
-        acceptance (`verifyLandedStoreMatches`). Two verified-git deviations
-        logged (2026-07-17): `extensions.relativeWorktrees` is the real
-        relative-worktree key (not ADR-017:466's `worktree.useRelativePaths`),
-        and the empty git/shallow cover makes git report is-shallow=true
-        (harmless for a complete store; the object-set proof is the completeness
-        guard). Docker-lane owed: the real container run + closure e2e fixtures.
-  - [x] D5 first-task setup Docker boundary: the shipped image receives the
-        exact network=none setup mount table — Worksource RO with an empty
-        `.mission-control` cover, root 0555, and only the `source`/`git`
-        children RW — and emits the closure result. A live Worker receipt then
-        re-attests and records the canonical root's 15 typed rows and immutable
-        assignment. The fixture caught a real source-RO bug: `pack-objects`
-        used the source object store for scratch space. Extraction now makes
-        the task object store primary and uses source objects only as a
-        non-persistent alternate; an untagged read-only-source regression test
-        retains that guarantee.
-  - [x] Post-setup Worker continuation (ADR-016 D6): `mc task
-        setup-continue --run` atomically proves the registered receipt plus
-        immutable assignment, ends only the setup-only Worker as
-        `setup-complete`, and frees its exact lease without spending
-        `dispatch_retries`. Its lost-response replay is idempotent; a stale,
-        unrecorded, wrong-role, or otherwise terminal run cannot mutate state.
-        The resident calls it only after successful `setup-record`, retaining
-        the envelope on refusal. The next normal dispatch then produces a
-        second, newly attested 15-row Worker plan (never an agent launch from
-        the zero-row precreate plan). The failed/interrupted setup recovery
-        path and its end-to-end failure/lost-response timeline are completed
-        below.
-  - [x] Failed/interrupted first-task recovery carrier and host cleanup
-        (ADR-016 D6): an existing root with no immutable assignment may spawn
-        only when its exact identity is frozen in a prior setup receipt. The
-        immutable plan carries that root as `recover_root`; the host helper
-        descriptor-opens the attested parent/root, exact-empties only that root
-        without following child paths, restores its 0555 mode, and returns the
-        same identity for the replacement Worker receipt. The resident cannot
-        route this plan through ordinary precreate; it invokes only the
-        host-scope helper, re-registers the returned identity, then performs a
-        fresh setup/record/continue handoff. Setup containers have the exact
-        `mc-setup-<run>` name; the reaper stops it before the ordinary agent
-        name, so no stale writer races recovery cleanup. The full timeline
-        proves failed setup reaping/one retry charge → zero-row recovery →
-        fresh record; a lost `setup-record` response stays lease-held, then
-        reaping it leads directly to the authoritative 15-row plan without a
-        second scrub. Host/resident focused tests plus the five-leg fast lane
-        are green.
-  - [x] D6 Worker completion-seal acceptance foundation: a published seal is
-        accepted only for its exact live task Worker + singleton lease and is
-        atomically coupled to `seeded → worked`, the terminal Run receipt, and
-        lease release; an exact accepted replay is inert (no stale-lease
-        dependency). Wrong producer/request leaves every terminal fact unchanged.
-  - [x] D6 completion-seal manifest identity foundation (schema v8): every new
-        publication carries a canonical sha256 manifest digest, immutable from
-        insert; v7 history migrates without inventing a digest and is therefore
-        deliberately non-consumable by the rebuild path.
-  - [x] D6 accepted-seal authority reader: setup can load only the exact
-        accepted/completed Worker receipt with its immutable manifest digest and
-        seal identity; published, wrong, or terminal-mismatched receipts refuse.
-  - [x] D6 sealed-pack reconstruction core: a manifest-verified accepted seal
-        forms a throwaway bare source from only its pack/index bytes, then the
-        existing materializer rebuilds and fsck-checks the canonical task store.
-        Its seal root is re-attested to the receipt device/inode/owner before any
-        manifest or pack read, rejecting a same-path replacement. The manifest
-        must name exactly one matching `pack-*.pack`/`.idx` basename pair before
-        either filename is opened. The closed, credential-free setup envelope
-        and host-scope executor arm now carry only that accepted receipt over
-        fixed `/repo/seal` and `/repo/task` destinations; resident plan/absence
-        integration remains open.
-  - [x] D6 completion-seal publication transaction: a privileged publisher can
-        now record only canonical path-free seal evidence under its live seeded
-        Worker lease. Exact response replay is inert even after acceptance and
-        Worker terminal; changed facts, wrong role/stage, and a lost lease refuse.
-  - [x] D6 immutable sealed-pack publisher: fixed-control task-store checks
-        refuse dirty/untracked state, extra refs, alternates, branch drift, or
-        bad config; a complete closure pack/index and manifest are fsynced,
-        atomically renamed to the run-keyed seal, frozen read-only, and carry
-        SHA/tree/count/closure identity. Rebuild verifies all of those facts.
-  - [x] D6 trusted Worker completion terminal: `mc complete <task> --run
-        <run> --seal-request <16-hex>` first publishes only through the fixed
-        `/workspace` and gated `/mc/private/completion-seal` paths, then binds
-        the path-free receipt to the exact Worker identity and accepts it.
-        Assigned standalone tasks refuse the old unsealed `--status worked`
-        bypass; legacy/unassigned Phase-2 rows retain their original terminal.
-        The mounted exact seal root uses a manifest-last publication marker
-        because Docker cannot rename a bind mount; its scoped D6 deviation is
-        logged in IMPLEMENTATION-NOTES.md (2026-07-18).
-  - [x] D6 sealed Worker completion image boundary: the shipped image now has
-        the 0700 uid-10001 `/mc/private` gate and a completion-only setuid/setgid
-        wrapper. Its public dispatcher forwards only a sealed `mc complete`
-        invocation to that wrapper; ordinary verbs remain at model uid 10002.
-        The wrapper permanently drops to uid/gid 10001, installs the fixed
-        spine/run-identity paths, and admits only the closed Worker
-        `--seal-request` grammar. The real-image Docker probe starts as uid
-        10002, publishes/accepts the exact canonical closure, proves the
-        model cannot traverse the private seal path, and observes 0444 manifest
-        bytes from uid 10001. It caught the publisher's cross-bind temporary
-        pack rename, fixed by using an ephemeral staging-local object directory.
-  - [x] D6 task-scoped accepted completion pointer (schema v9): acceptance
-        atomically records its exact Worker run/request on the task, and the
-        dispatch projection loads only that state-accepted immutable receipt.
-        A later task cycle cannot select an earlier seal by timestamp or run
-        ordering; pre-v9 rows without the pointer remain non-consumable.
-  - [x] D6 accepted-seal rebuild record/continuation: the host derives and
-        re-attests only the live Verifier lease's canonical task root, proves
-        the landed result matches the task-pointed accepted Worker seal, then
-        durably records its v10 receipt before ending only that setup run and
-        releasing its lease. Exact retries are inert; host-scope record and
-        continuation verbs are reachable through dedicated `mc task` commands.
-  - [x] D6 resident accepted-seal rebuild execution: after exact former-producer
-        absence and seal re-attestation, the resident runs only the fixed
-        network=none setup class over the canonical task-root bind, then passes
-        the untouched result through the dedicated host record/continue verbs;
-        it cannot fall through to Verifier-agent creation.
-  - [x] D6 accepted-seal rebuild Docker boundary: a real published and accepted
-        Worker seal (pack/index/manifest) is the only source mounted into the
-        shipped network=none setup image, alongside the canonical root's 0555
-        parent and RW children. The result reaches the live Verifier
-        record/continuation gate and releases only its lease. The fixture found
-        two crossing defects: Docker Desktop exposes namespace-local filesystem
-        device/inode values, so host receipt re-attestation remains at the
-        resident's pre-bind boundary; and the envelope now explicitly carries
-        the accepted Worker producer run rather than conflating it with the
-        live Verifier setup run. Immutable manifest/pack verification remains
-        in the image.
-  - [x] D6 production Worker completion seal through the real resident: the
-        tagged E2E dispatches a production (non-fake, `codex/chatgpt`) Worker on
-        the run-keyed completion-seal plan carrier through the live timer, and
-        the image's setuid publisher reaches the same accepted immutable seal
-        fence proven directly by the sealed-completion probe. Because the
-        shipped image ships only the fake adapter, two fail-closed allowlists
-        authorize it to stand in for the one non-fake route: the resident's
-        `agentRunnerRoutes` (default unset ⇒ fake-only) and the symmetric
-        in-container `MC_AGENT_RUNNER_ROUTES`. Driving the full loop caught a
-        real image defect — `bun` under 0700 `/root` is unreachable by the
-        model uid a production Worker runs as — now installed to `/opt/bun`.
-        No Go dispatch/attest change. Deviation logged (2026-07-18)
-  - [x] D6 sealed Verifier disposable projection: the accepted rebuild receipt
-        freezes a distinct projection setup action; the resident materializes
-        its sealed tree through the fixed network=none setup container, overlays
-        it RW at `/workspace/source`, and covers its Git and Mission Control
-        controls RO from the canonical store. Reaping removes only that
-        run-keyed projection. Immediately before a Verifier verdict crosses to
-        the spine, the in-container wrapper requires a clean index/tree and
-        the exact accepted sealed HEAD (with read-only Git operations). The
-        resident effects tests prove setup precedes agent creation, control
-        covers follow the RW overlay, setup containers retain their boundary
-        labels, and failed/existing roots cannot be adopted or deleted. The
-        tagged Docker probe runs the shipped setup image against a real sealed
-        task store, inspects the full RW/RO overlay, and proves a dirty
-        disposable source is refused by the actual in-container verdict fence.
-  - [x] The setup-record crossing splits into a host attest frame and a
-        path-free spine frame (d3471f5): both `mc task setup-record` and
-        `mc task accepted-seal-record` read HOST files AND write the spine, so
-        the delegated whole-verb form resolved a Worksource path inside the
-        helper — which has no Worksource bind — and refused on a loop. Binding
-        the Worksource into the helper is unsound (Docker Desktop's
-        namespace-local device/inode, the 690fb08 defect), so the host now
-        attests canonical Worksource / 0555 operator-owned task root /
-        landed-store cross-check / 15-row walk and hands the spine half only
-        device/inode/owner. The new `--task` is an input, not an authority: the
-        spine half refuses unless it equals the live lease's task AND the
-        identity reproduces the durable receipt. `setup-record` had the
-        identical latent bug and is fixed with it. Full Docker suite 7/7;
-        control worktree at the parent commit reproduces the exact old refusal.
-        Deviation logged (2026-07-19). Spawned adversarial review:
-        PASS-WITH-MINORS — 4 majors refuted (no authority laundering via the
-        new `--task`, no lost check, no widened principal set), 5 minors, all
-        closed or already logged (ac6e0fa)
-  - [x] The sealed pipeline reaches `verified` (6657541): driving the
-        production E2E past the rebuild surfaced two defects reachable only
-        through the real resident and real containers. (1) The Verifier
-        projection DUPLICATED the canonical source rows instead of replacing
-        them — Docker refused the create, and had it not, the Verifier would
-        have held the canonical task store RW, defeating the disposable
-        projection. (2) The D6 verdict fence resolved the projection by ambient
-        CWD (an agent container's is `/`), so every git call failed as "not a
-        repository" and that error was reported as drift — a CLEAN projection
-        was refused exactly like a dirty one, making the sealed verdict
-        unreachable; `GIT_CONFIG_NOSYSTEM=1` also disabled the image's
-        `safe.directory=*`. The fence now takes the fixed path from the CLI and
-        re-grants safe.directory for that one path. Both suites were green
-        throughout because every test of this fence asserted only that a DIRTY
-        projection is REFUSED, never that a clean one is ADMITTED — and the
-        resident's fixture plan had 1 entry where the real one has 15. Both
-        directions now pinned; E2E extended through the sealed verdict
-  - [x] The E2E spine returns to the lock domain (103d1a1), closing the
-        long-running `TestProductionWorkerCompletionSealDockerBoundary` flake.
-        The controlled A/B refuted its own latency hypothesis — passing runs are
-        ~5s in BOTH arms — and identified CORRUPTION: several containers sharing
-        one SQLite database across a VirtioFS bind, surfacing both as a
-        misaligned row read (a worksource string scanned from the integer
-        `subject` column, which is why it read as a domain refusal and sent four
-        corrections hunting fd-3) and as `database disk image is malformed (11)`.
-        Named volume 42/42 green (idle, interleaved under load, extended); host
-        bind 20/22. Seeding survives via a `withSeededSpine` hook that builds and
-        closes the spine in an unmounted temp dir and `docker cp`s it in before
-        any container opens it. a3928f1 removed one kernel but not the sharing
-  - [x] S5's fail-closed lock-domain guard is in `mc` (b1c6187, 34fc63b):
-        `substrate.Open` and the onboard read-only inspection — the only two
-        spine opens — refuse before `sql.Open` unless the spine's directory AND
-        the spine file sit on a block-device-backed local filesystem. The parse
-        and decision are pure (13 fast-lane cases); only the
-        `/proc/self/mountinfo` read is `//go:build linux`, and accepting off
-        Linux is scope, not weakening (Inv. 24/§11.5: darwin cannot open the
-        spine at all). `check.sh` gained a `GOOS=linux` vet so the guard's only
-        production implementation cannot rot invisibly. On its first Docker run
-        it refused the two probes still binding a host dir at `/mc/spine`, with
-        S5's exact predicted `fstype=fakeowner` — one of which held the DB open
-        on the host while a container wrote it; both now use per-probe named
-        volumes with copy-back. `TestSpineLockDomainGuardDockerBoundary` pins
-        BOTH directions against a real container's real mountinfo (writing it
-        found the directory-only hole a single-file bind slipped through).
-        Spawned adversarial review (83ed9e9): no bypasses, darwin's no-op
-        unreachable from a real spine, 4 attacks refuted; 3 findings closed —
-        a symlinked spine FILE laundered past the guard (major), an
-        unparseable mountinfo line was skipped into a false accept, and the
-        WIRING was unpinned (darwin's inert platform hid call-site deletion,
-        the same rot as 6657541). Logged not fixed: the allowlist refuses
-        ZFS/f2fs/bcachefs, so a Linux host on ZFS has no path forward
-        (IMPLEMENTATION-NOTES 2026-07-20; macOS is the primary target)
-  - [x] The Packager's production mount arm is the SEALED VIEW, read-only
-        (5957cc9): `mountattest.go` health-refused every production repo role
-        but the standalone Worker and seal-consuming Verifier. The outgoing
-        `NEXT:` guessed artifact-root-only; the ADRs win — ADR-017:637,640
-        inherit BOTH canonical children "through the RO task-root bind for
-        Packager/Refiner", :1218 has them "fail representative writes while
-        their separate record outputs remain writable", and ADR-016:765 forbids
-        only a MUTABLE view. So the arm is the seal-consumer row shape with
-        every row RO, gated on the accepted seal (phase3-contract:249). Writing
-        the absent-root case found a real defect fixed with it: the host
-        snapshot picks precreate-vs-resolve from the task root's PRESENCE
-        alone, with no role in the predicate, so any reader arriving before its
-        store existed would silently acquire first-task setup authority and run
-        a mutating setup container — already reachable for a seal-consuming
-        Verifier. Setup is Worker-only (ADR-016 D6), fenced, with the Worker's
-        own precreate path pinned so the guard cannot over-fence
-  - [x] The E2E carries the sealed pipeline to `packaged` + packet birth: the
-        Packager routes `claude-sdk/minimax` (its canonical spec §9.1 route;
-        Inv. 9 binds only strategist↔editor and worker↔verifier) and its
-        in-container behavior refuses to complete unless BOTH canonical
-        children are present AND unwritable — so a plan regressing any row to
-        `rw`, or dropping a child, fails there instead of passing silently.
-        Controlled A/B run per 6657541's lesson: arm disabled ⇒ stalls at
-        `verified`, never reaches `packaged` (126s timeout); arm enabled ⇒ PASS
-        in 5.2s. The test deliberately STOPS at `packaged` — see the next line
-  - [x] The silent-archive hole is closed (step 1 of sealed landing):
-        `domain.Approve` now refuses a task carrying an immutable closure
-        assignment with `landing-fence`, instead of seeing `branch = NULL`,
-        classifying it as an artifact-plane deliverable, and archiving it. The
-        seal, the packet, and the task all survive for the landing slice. The
-        fence keys on the ASSIGNMENT, not the status, so legacy Phase-2
-        branchless rows keep their original synchronous archive (pinned by its
-        own test, so the fence cannot over-reach)
-  - [x] Sealed landing, steps 1–2 of the lane (8490c97, bf3904b). The
-        branch-home question is ANSWERED: read the assignment, never project it
-        into `tasks.branch`. Projecting arms `LandingPending()`, which emits the
-        frozen four-scalar `KindLand`, which routes to legacy `mc-land`, which
-        hard-fails `missing branch` and writes a durable `blocked_reason` — so
-        it converts "unimplemented" into a task-level block wearing a
-        Git-sounding reason, unwindable only by a backfill rather than a revert
-        (§6(c) decides it). Landed: the §7 approve fence widened so an
-        assignment arms it too, as the v10→v11 migration, with its over-reach
-        direction pinned; and `dispatch.Task.Sealed` + a `task_assignments`
-        LEFT JOIN in `loadRecords` + `SealedLandingPending`. The two lanes
-        partition by construction, a both-homes row is refused by both, and an
-        assignment whose frozen `target_ref` drifted stays IN the lane so
-        landing refuses it loudly instead of it going silently unlandable. All
-        INERT: `Decide` does not consult the predicate and `Approve` still
-        refuses a sealed task
-  - [x] Sealed landing, the landing mount table and host anchors
-        (7fee4e4..55c2949, after adversarial review reversed the first draft).
-        THE `/repo` PLANE IS NOT PLAN-ADDRESSABLE: `effects.ts:90-95` has
-        refused every plan entry outside `/workspace` since Phase 1b, so the
-        D5 plan is an agent-plane carrier and landing — like the whole setup
-        class — is composed by the resident. The first draft taught
-        `mountplan.go`/`dispatchprivate.go` the `/repo` grammar; that bought
-        no capability and silently moved two guards those predicates share
-        (agent/landing class separation, and the task-precreate fabrication
-        guard, which let a precreate plan carry RW to the real Worksource
-        checkout). Reverted; both defects regression-guarded.
-        SURVIVING: `landingMountRows()` is ADR-017:699-702 verbatim
-        (`/repo/source` is the system's only RW grant of a real repository,
-        :699, which is why setup's RO row at :691 cannot share its table);
-        `validLandingDestination` is the CLASS grammar for validating the
-        landing instruction; `resolveLandingRoots` resolves the two
-        host-backed anchors (the other two rows are `Generated` per run by the
-        resident) as unaliased operator-owned canonical dirs, sealed root at
-        0555, RW anchor refusing group/world-writable and requiring a real
-        `.git`. INERT: no production caller, nothing in
-        `dispatchMountHostSnapshot`, jurisdiction digest unmoved.
-        OWED to step 3: the landing instruction must carry BOTH the resolved
-        anchors and the `.mission-control` cover obligation, validated at the
-        helper boundary — a landing container run without the cover hands the
-        sealed root out RW through the source alias
-  - [x] Sealed landing step 3, the envelope arm + carrier instruction
-        (28c5df5, comment fix 8912869+). `sealed-landing` is the fourth arm of
-        the closed operation union; cross-arm bleed is refused BOTH ways, with
-        the landing-only fields refused from one hoisted preamble check so a
-        fifth arm inherits it. Landing refuses a run id — it holds no lease and
-        opens no Run (§7) — which is the bleed direction that hides, since all
-        three setup arms legitimately carry one. `PrivateDispatchLanding`
-        carries the two host anchors plus the cover obligation (step 3's OWED
-        line, closed); the task root is DERIVED from the Worksource root and
-        task id, never named; landing is mutually exclusive with every setup
-        step and with every plan entry (ADR-017:711 has no agent process here).
-        Destinations come from `landingMountRows()` via named constants.
-        Adversarial review (4 lenses, each finding facing a 3-angle refutation
-        panel): PASS — 7 raised, 0 survived. One residue fixed: the
-        `landingDest` comment asserted a FALSE invariant (callers compare
-        against omitempty fields with no non-empty check, so a "" constant
-        would fail OPEN); the code is safe because the "" branch is dead and
-        two guards pin the table, one by parsing ADR-017 itself. Logged not
-        fixed: `decimalIdentity` (envelope) refuses a leading zero while
-        `validDecimalText` (helper boundary) accepts one — a PRE-EXISTING
-        asymmetry on a predicate four other steps share, so 55c2949's lesson
-        says landing inherits it and pins it rather than tightening it here.
-        STILL INERT: no attester produces either, no lander consumes them
-  - [x] Sealed landing step 4 COMPLETE — the composed lander (7847a23). The
-        five stages become `landSealed`; `RunSealedLanding` binds it to the
-        envelope's fixed destinations; `mc __land-sealed <file>` is the
-        host-scope verb, in main.go's local-execution bypass list because it
-        reads the `/repo` plane the helper has no bind for. THE ADR's FENCE
-        ORDER WAS BUILDABLE after all: the reviewed set is derived from the
-        SEALED store (which holds base..verified by construction), so the
-        dirty fence runs BEFORE the import instead of after it — a refused
-        landing now writes nothing, and a test asserts both the refusal and
-        the absence of the objects so the order cannot silently invert.
-        `fenceReviewedPathsCleanAt` is the additive split; 4c's tests are
-        untouched. The `.mission-control` cover obligation (step 3's OWED
-        line) is CLOSED: absent, populated, symlinked, and foreign-path all
-        refuse. 9 fences mutated, 4 survived → 3 labelled REDUNDANT, 1 was a
-        wrong scenario now fixed; 1 DEAD guard removed. Two gaps logged, both
-        fail-closed and additive: `pinned_closure_digest` is unverified
-        (UNDEFINED at landing time — see Parked) and retry has no adoption
-        path (ADR-017:750-753), so a retry after a successful merge refuses
-        at the pre-merge fence. STOPS at the merge. STILL INERT end to end
-- [ ] Phase 4 — E2E control loops (six scenario families)
-- [ ] Phase 5 — Real-subscription acceptance (operator-scheduled)
-- [ ] Release prep (after Phase 5): swap the repo's construction face for
-      its distribution face — rewrite CLAUDE.md/AGENTS.md
-      operator/contributor-facing (front door = install.sh + /onboard per
-      spec §16.1/§17), ship the /onboard skill, operator decides fate of
-      PROGRESS.md / IMPLEMENTATION-NOTES.md / spikes/ (keep-as-history vs
-      docs/history/); specs/ and docs/adr/ stay. This repo IS the final
-      deliverable (handoff §4.2 row 1) — no separate folder.
+## Known intermittent failures
+
+1. `TestOnboardConcurrentFreshHomeNeverDeletesTheWinner` (`mc/verbs`), roughly
+   1 in 21 full-suite runs. Repro:
+   `cd mc && for i in $(seq 1 25); do mise exec -- go test ./verbs/ -count=1 || break; done`
+   A concurrent provisioner creates a non-empty SQLite file before its schema
+   transaction commits; `onboard.go` temporarily mistakes that state for
+   corruption. It should await/retry and refuse only if the file stays
+   table-less. Fail-closed, pre-existing, not a Phase 3 blocker. Diagnosis:
+   `IMPLEMENTATION-NOTES.md` (2026-07-15). Seen again at `4757df2`, followed by
+   8/8 isolated greens and a green full-suite rerun.
+
+2. `resident one-use dispatch control > rejects every identity mismatch before
+   accepting child output` (`resident/src/resident-control.test.ts`),
+   load-sensitive. Repro while another suite runs:
+   `for i in $(seq 1 8); do ./resident/check.sh || break; done`
+   The test-only child exits immediately after its hello, allowing subprocess
+   reaping to race the fd-3 socket poller and surface `EBADF`. Production waits
+   for the ack. Fail-closed and not a Phase 3 blocker. Capture the exact failing
+   test name on the next sighting.
+
+## Phase state
+
+- [x] Phase 0 — architecture-kill spikes S1–S8 green; no fallback ADRs.
+- [x] Phase 1 — substrate and walking skeleton.
+- [x] Phase 2 — dispatch, domain correctness, §18 verbs, split-brain
+      convergence, initiative-wave review, and randomized properties.
+- [ ] Phase 3 — boundary conformance.
+  - [x] ADR-016 through ADR-021 boundary design and adversarial review.
+  - [x] Mount policy, jurisdiction, identity/ACL containment, refusal
+        taxonomy, prepare/attest/commit crossing, authorization carrier, and
+        lock-domain guard.
+  - [x] First-task setup, recovery, completion seal, accepted-seal rebuild,
+        disposable Verifier projection, and production Worker/Verifier Docker
+        crossings.
+  - [x] Production sealed pipeline reaches `verified` and `packaged`.
+  - [x] Sealed landing steps 1–4: assignment lane, mount grammar and host
+        anchors, closed envelope arm, fenced lander, closure import, CAS ref,
+        and merge. The lane remains inert end to end.
+  - [ ] Finish the adversarial Git corpus gap analysis: rename inference is the
+        last open corpus item.
+  - [ ] Implement and review the operator-approved scoped self-abort.
+  - [ ] Turn on sealed landing atomically across all four production seams.
+  - [ ] Run and record the complete Phase 3 real-mechanism/Docker acceptance
+        lane before advancing.
+- [ ] Phase 4 — six E2E control-loop scenario families.
+- [ ] Phase 5 — operator-scheduled real-subscription acceptance.
+- [ ] Release prep — install/onboard front door and construction-document
+      disposition.
 
 ## Parked
 
-Operator-only decisions. **No tombstones** (AGENTS.md §5): a resolved item is
-deleted, not struck through. History is in `docs/ledger/`.
+- **S7 sleep drill**: the 30-minute Mac sleep mid-lease test requires the
+  operator. Instructions: `spikes/07-launchd-clock/RESULT.md`. All other S7
+  sub-tests passed.
 
-- **S7 sleep drill**: the 30-min Mac sleep mid-lease test needs the operator (an
-  agent cannot sleep the machine it runs on). Instructions in
-  `spikes/07-launchd-clock/RESULT.md`. All other S7 sub-tests passed.
+## Current work: sealed landing
 
-The completion-seal Docker line is closed: D1 deployment-mirror, D5 first-task
-setup, D6 accepted-seal rebuild, D6 image completion-wrapper, the carrier/unit +
-legacy-route crossings, AND the production resident Worker seal (dace2c6) are
-all green. The resident-driven Verifier accepted-seal REBUILD attest is proven
-on the NON-fake production path: `TestAttestCandidateMountsSealConsumerCarries
-ResidentTaskRootBind` shows it emits the `/workspace` RO task-root entry the
-resident effector strips; the resident half is proven by effects.test.ts:415.
+Steps 1–4 are complete. Keep every remaining addition inert until the
+coordinated activation step; a partially active lane can convert today's loud
+`Approve` refusal into a durable blocked row.
 
-Two defects the live E2E surfaced (2026-07-18/19) are both now FIXED:
-1. a fake-routed verifier over a sealed task took the legacy-workspace path
-   (only `workspace:source`, no task rows) yet still got an
-   `accepted_seal_rebuild` step — an incoherent plan the resident refused every
-   tick, churning the lease. Both downstream setup steps are now gated on
-   `!allowLegacyFakeWorkspace`.
-2. the completion seal's device/inode/owner are recorded by the in-container
-   setuid publisher (namespace-local, uid 10001), so the resident's
-   `recheckAcceptedSeal` now proves host CUSTODY, not namespace-local identity
-   (690fb08).
+### 1. Close the corpus gap
 
-The carry-through is CLOSED. All three layers are fixed — (a) seal custody
-(690fb08), (b) the rebuild's empty-root defect (b31a038), (c) the setup-record
-helper-scope crossing (d3471f5) — and
-`TestProductionWorkerCompletionSealDockerBoundary` reaches its
-`accepted_seal_rebuild_receipts` row and its Verifier continuation. Full Docker
-suite 7/7 green at 485a7f2. Diagnoses in docs/ledger/phase-3.md (2026-07-19).
+The source corpus is `runner/image/mc-land.test.ts`; this is a gap analysis, not
+a blind port. Existing sealed tests already cover most legacy hazards. Landed
+ports include the already-ancestor retry refusal, structurally spaced paths,
+sealed-side index-visibility flags, executable-control rechecks at merge time,
+and autostash refusal.
 
-Owed, not blocking: production's spine-volume OWNERSHIP is unspecified. Docker
-materializes a fresh named volume as root:root 0755, while the seal path runs
-agent containers `--user 10002:10002` and the completion wrapper drops to
-uid 10001 — and both write the spine plus its `-wal`/`-shm` siblings. Nothing
-outside `spikes/` creates the volume; the E2E fixture papers over it with a
-`chmod 0777` on the volume root. Belongs to the install.sh/onboarding
-deliverable (spec §17).
+The last open corpus item is rename inference (`mc-land.test.ts:289,328`).
+Create a repository where the reviewed side renames and modifies a tracked
+file while the target modifies its original path. With rename detection on,
+Git relocates the operator edit onto the new path; with it off, the same input
+conflicts. Assert refusal and an unmoved target, then remove
+`merge.renames=false` and `merge.directoryRenames=false` to prove the test
+dies. This needs a bespoke fixture because `mergeReady` has fixed sealed
+content.
 
-Owed, not blocking: the clearing mechanism chosen in (b) (in-container replace,
-over the host exact-empty primitive or staging-then-swap) is a design the ADRs
-delegate and mandate-without-specifying; it has a code comment but no ADR.
-This file is ~550 lines against §5's ~200 target, nearly all of it the Phase 3
-sub-checklist. That checklist is live acceptance state while Phase 3 is open, so
-it compacts at the phase boundary (the precedent Phases 0–2 set), not before.
-Keep committed-tree projections, structured Engine-API binds, and launchd in
-their named later slices.
+Do not port legacy cleanup, branch deletion, worktree removal, receipt, or
+caller-supplied `mc/task-*` namespace cases. Sealed landing deliberately stops
+at the merge and takes its branch from the immutable assignment. Keep every Git
+call inside `landingGit`.
 
-NEXT: Sealed landing — STEPS 1-4 ARE DONE; the remaining work is the corpus
-port owed by step 4, then step 5 (turning the lane on, all at once) and step 6
-(the Docker lane at phase completion). ALSO NOW UNBLOCKED, its own slice, before
-step 5: the conflicted-merge SELF-ABORT the operator approved 2026-07-20 (abort
-iff MERGE_HEAD is our verified SHA; invert TestLandSealedLeavesAConflictedMerge
-InPlace, do not delete it; keep the preflight operator-merge refusal proven).
-Terms in IMPLEMENTATION-NOTES.md (2026-07-20 operator decision). Read item 4 below for the port and item
-5 for the four things that must land together. The branch-home question is settled
-(read the assignment) and the mount grammar + typed-root producer are IN
-(7fee4e4, 8273616 — see the checklist and docs/ledger/phase-3.md 2026-07-20).
-Build the remaining pieces INERT, in this order, and turn the lane on only at
-the end — a half-built lane converts today's loud `Approve` refusal into
-durable blocked rows, which is the Inv. 25 hole rebuilt one layer up.
+### 2. Scoped self-abort
 
-Steps 1-2 are DONE (the mount table, its class grammar, and the host-anchor
-resolver). Three facts they leave for step 3, the first of which reshapes it:
-   - THE `/repo` PLANE IS NOT PLAN-ADDRESSABLE. `effects.ts:90-95` refuses
-     every plan entry outside `/workspace`. So landing's mounts do NOT ride
-     the ADR-016 D5 carrier as entries; the landing INSTRUCTION carries them
-     and the resident composes the binds, exactly as setup does today
-     (`effects.ts:598-603`). Do not re-teach the plan grammar `/repo` — that
-     was the first draft's error and it moved two unrelated guards
-     (docs/ledger/phase-3.md, IMPLEMENTATION-NOTES 2026-07-20).
-   - The landing instruction MUST carry the `.mission-control` cover
-     obligation, validated at the helper boundary. A landing container run
-     without the cover hands the sealed root out RW through the source alias.
-   - `mountattest.go:161` keys the jurisdiction digest off `kind.String()`.
-     No landing kind is in `TypedRoots`, so the digest has NOT moved. If step
-     5 puts the landing anchors there, that is the commit to pin it.
+Operator decision `e42fce7`: on a merge failure, abort only if `MERGE_HEAD`
+equals the verified SHA created by this landing attempt. Invert
+`TestLandSealedLeavesAConflictedMergeInPlace`: assert no residual `MERGE_HEAD`
+and that a later unrelated landing can proceed. Preserve the negative case:
+an operator merge already in flight is refused during preflight and is never
+aborted. This is its own reviewed slice before activation.
 
-Step 3 is DONE (28c5df5) — see the checklist. Its review was PASS.
+### 3. Activate all four seams together
 
-Step 4 prep is DONE (f58498f): the landing target is a BARE local branch name
-(`validLandingTargetBranch`), enforced on both sides of the crossing, and a
-target equal to the task's own sealed branch is refused. This CORRECTED step 3,
-which had checked only non-empty and whose fixture used `refs/heads/main` — a
-shape guessed at, not read off the spine. `tasks.target_ref` is free-form text
-and the first-task setup arm legitimately resolves it as a rev (even "HEAD"),
-so landing needed its own grammar rather than the shared looseness. Write the
-lander against the bare form.
+1. `Approve` holds a sealed assignment-backed task instead of refusing it.
+2. `LandReport` accepts an assignment-backed row without `tasks.branch`.
+3. The resident effects path executes the sealed landing instruction.
+4. `Decide`/`nextLanding` consult `SealedLandingPending`.
 
-Step 4a is DONE (4d17602): the fenced git wrapper (`landingGit` — env
-CONSTRUCTED not inherited, so hostile GIT_* cannot reach git; every call
-through one entry point) and the repository stage
-(`revalidateLandingRepository` — core.worktree, bare, symlink-resolved toplevel
-identity, executable merge drivers/content filters at local+worktree scope,
-non-symbolic existing target, HEAD on target, index visibility flags, operator
-merge in flight). It returns the target tip = the pre-merge SHA for the next
-stage, and applies NO dirty fence by design (ADR-017:742 scopes that to the
-reviewed paths, unknown until the closure stage; pinned by its own test).
-All eight fences mutation-tested; the symbolic-target one is REDUNDANT with the
-HEAD fence (git resolves symref chains transitively) — retained, documented,
-test relabelled.
+The branch comes from the immutable assignment and is never projected into
+`tasks.branch`. `/repo` is not plan-addressable; the resident composes the
+landing binds. The nested `.mission-control` cover must prevent the RW source
+alias from exposing the sealed task root as writable.
 
-Step 4b is DONE (f5a0129): `revalidateSealedTaskStore` — exact fixed-grammar
-config reproduction, no alternates, pristine worktree, sole managed branch,
-HEAD on it, HEAD == the frozen verified SHA, canonical tree, fsck clean. It is
-NOT `inspectCompletableTaskStore`: that asks whether a store is COMPLETABLE
-(held RW by its producer, identity facts as OUTPUTS); this asks whether it IS
-the exact sealed artifact already named (held RO, identity facts as INPUTS).
-It runs under the landing fences, not `sourceGitEnv()`. Mutation found three
-vacuous fences — one tautological (removed), one with a non-isolating test
-(fixed), one with no test at all (added).
+### 4. Phase 3 completion lane
 
-Step 4c is DONE (224b58a): single merge base bound to the assignment's frozen
-base (target may ADVANCE, but a rewritten target refuses loudly), the reviewed
-path set, the path-scoped dirty fence (unrelated dirt permitted, reviewed-path
-dirt refused — both pinned), untracked/ignored collision at created paths, and
-the ancestor-component fence.
+Prove the realized landing mount table, RO alias/cover behavior,
+network-none/uid/capability envelope, VirtioFS import durability, and the five
+ADR-017:758–760 crash cuts. Carry the production E2E through
+`packaged → approve → merge → archived`.
 
-Step 4d is DONE (505e6d1): `importSealedClosure` — pack-objects piped to
-index-pack, bounded to verified-minus-base. No hardlink/alternate/speculative
-delete, all three STRUCTURAL rather than disciplinary (objects cross as a byte
-stream; nothing writes alternates; index-pack only adds). Empty closure refused
-via a pack-header object count. Idempotent, leaves pre-existing unreachable
-objects alone, creates NO ref.
+Then satisfy `docs/phase3-contract.md` §8: every §3 row has a named green
+real-mechanism test; production image has no fake route; no production override
+redirects spine/identity; `doctor` has no Phase-3-owned deferral; fast, tagged,
+Phase 3 Docker, and Docker E2E lanes are green. Record image digest,
+architecture, capability probes, commands, and green evidence here before
+advancing to Phase 4.
 
-Step 4e is DONE (5c72585) — STEP 4's STAGES ARE ALL BUILT. `createLandingRefCAS`
-(zero old-value CAS against absence, --no-deref, retry accepts only the same
-SHA) and `mergeSealedLanding` (SHA fence recheck, merge --no-ff, every
-merge-behaviour knob pinned, fixed identity, no hooks). Stops at the merge.
+## Known later obligations
 
-STEP 4 IS COMPLETE (7847a23): `landSealed` composes the five stages,
-`RunSealedLanding` is the envelope entrypoint, and `mc __land-sealed` is the
-host-scope verb. See the checklist for what it deliberately does not do. The
-lane is still INERT end to end — nothing produces a landing instruction and no
-resident arm invokes the verb. That is step 5, and it is now the whole job.
+- Production spine-volume ownership is unspecified; the E2E fixture currently
+  uses permissive volume-root setup. This belongs to install/onboarding.
+- The setup clearing mechanism is delegated by the ADRs but lacks its own ADR.
+- Landing currently cannot validate `pinned_closure_digest` because the
+  assignment digest describes the initial closure, not the accepted rebuilt
+  seal. Retry after a successful merge deliberately refuses rather than
+  adopting. Details: `IMPLEMENTATION-NOTES.md` (2026-07-20).
+- Landing failure taxonomy/backoff, serialized expected Git topology, and
+  initiative-child sealed landing remain explicitly unresolved. Keep the
+  canonical landing row derived; use the assignment's frozen `target_ref` and
+  refuse divergence. Details are in the Phase 3 ledger.
 
-The stat-cache question raised at 4c is CLOSED: core.checkStat/core.trustctime
-do not matter for read-tree/add -u/write-tree either. A FRESH index has no stat
-cache, so `add -u` must re-read every file — a disposable index is the defence,
-not those settings. Assumed twice, measured twice, wrong both times. They stay
-as cheap defence for a future PERSISTENT-index path, labelled live-nowhere.
-
-MUTATION IS NOT OPTIONAL ON THIS LANE. Across 4a-4e plus the step-4
-composition, 49 fences written, 19 vacuous — two in five, every one with a
-green test under it. The rate is
-NOT falling with practice, which is the point: what produces them is the gap
-between "this check is correct" and "this check is reachable and load-bearing
-given every check around it". Mutate each new
-fence to `false` and confirm its subtest dies before committing.
-
-AND WHEN A FENCE SURVIVES MUTATION, MEASURE GIT RATHER THAN ADJUST THE TEST.
-In 4c three of four survivors were wrong ASSUMPTIONS about git, not weak
-scenarios, and each took one scratch-repo probe to settle:
-  - `diff-tree` is plumbing and IGNORES `diff.renames`, so `--no-renames` is
-    inert there (kept as intent against a future `-M`, not a fence).
-  - `git diff --name-only HEAD` detects a same-length mtime-restored edit even
-    under `checkStat=minimal` + `trustctime=false`, so those overrides are NOT
-    what defeat the stat-cache evasion on that command. They ARE expected to
-    matter for 4e's read-tree/write-tree comparison — VERIFY THERE with a
-    probe; that claim has now been assumed twice and measured never.
-  - git resolves symref chains transitively (4a).
-  - an EMPTY rev range still emits a 32-byte pack, so `len(pack)==0` can never
-    fire (4d) — check the pack header's object count instead.
-Watch for three distinct shapes, they have different remedies: TAUTOLOGICAL
-(re-reads the same source of truth) -> delete it; REDUNDANT (a later fence
-catches everything it does) -> keep if it fails faster or names the problem
-better, and LABEL it; DEAD (cannot fire at all) -> it is not a fence, replace
-it with one that can. A fourth exists: SPEC-MANDATED with no reachable failure
-(ADR-017:744's post-import verify) -> retain and label, so the next reader
-neither hunts for the missing scenario nor deletes it for lacking one.
-A FIFTH, found at step 4 and the subtlest: the fence is live and load-bearing
-but the TEST NEVER REACHES IT, because an EARLIER fence refuses the scenario
-first. The suite is green, the mutation survives, and nothing distinguishes it
-from a vacuous fence except asking WHICH fence actually refused. At step 4 the
-frozen-base test set base = the reviewed commit, which empties the sealed diff,
-so path derivation refused and the base binding never ran. Remedy: build the
-scenario that passes every earlier stage (there, a rewritten target needing a
-two-commit fixture), and assert on the refusal MESSAGE, not just on error != nil
-— a message assertion turns this shape into an immediate, legible failure.
-Probes go in the session scratchpad, not /tmp (there is a deny rule on `rm`).
-
-4. DONE (7847a23). The corpus port is UNDER WAY (4757df2) and the triage's
-   "24 portable tests" estimate is now known to be too high: 4a-4e already
-   absorbed most of those hazards organically, so the real job is a GAP
-   ANALYSIS against the sealed lane's existing tests, not a blind port — a
-   blind port would have added duplicates. Verified so far:
-   - PORTED :882 (already-ancestor reviewed SHA) — refuses at the frozen-base
-     binding. Doubles as the retry-after-success case; asserts the MESSAGE.
-   - PORTED :90 (spaced paths) STRUCTURALLY — the landing fixture's repo now
-     lives under "work space", so every test exercises it at every stage.
-   - PORTED :128 (sealed-side index-visibility flags) and it found a REAL
-     HOLE: only the real repository's index was fenced, so --assume-unchanged
-     hid a TAMPERED reviewed file from the sealed store's pristine check.
-     Mutation-proved. This is the payoff that justifies the whole exercise.
-   - COVERED, no port needed: :100/:112 (sealed dirt, incl. untracked),
-     :168 (stat-cache primary), :198 (primary index flags), :219 (untracked
-     collision), :244 (unrelated bytes survive), :261 (operator merge in
-     flight), :827 (core.worktree), :919 (refs/replace — defended on BOTH
-     sides: landsealed_test.go:107 wrapper + landsealedstore_test.go:93
-     sole-ref), :782 (hooks/hostile identity), :738/:750 (mergeOptions).
-   TIMING CASES ASSESSED (71297ca), and the answer is that `mergeSealedLanding`
-   rechecks ONLY the SHA fence:
-   - :683 is a REAL GAP, not yet fixed. Executable config is not rechecked at
-     merge time, and an in-tree `.gitattributes` naming a driver is NOT
-     suppressed by `core.attributesFile=/dev/null` or `GIT_ATTR_NOSYSTEM`
-     (`-c merge.ours.driver=false` pins only `ours`). Repair: re-run the
-     executable-config and index-visibility fences immediately before the
-     merge, mirroring what ADR-017:750 already does for the SHA. Cheap;
-     narrows the window without pretending to close it. DO THIS ONE — it is
-     small, additive, and fail-closed.
-   - :413/:368 is PARKED, not a coding task: a conflicting merge leaves
-     MERGE_HEAD and wedges the single landing slot. Unwedging needs a MUTATING
-     failure path, which is an operator decision (see ## Parked). Today's
-     behaviour is pinned by TestLandSealedLeavesAConflictedMergeInPlace, so it
-     cannot drift while the decision is outstanding.
-   - :763 (autostash) is PORTED (7364503), and asking "is a test holding this
-     knob?" was the right question: deleting `merge.autoStash=false`,
-     `--no-autostash`, `merge.renames=false` AND `merge.directoryRenames=false`
-     together left the whole mc/verbs suite GREEN. Four knobs pinned in code and
-     held by nothing — the 6657541 / 83ed9e9 rot again. autostash is now pinned
-     and mutation-confirmed (without it git really does stash the operator's
-     uncommitted work and merge).
-   - :289/:328 (rename inference) is the LAST OPEN ITEM and is a REAL GAP, not
-     a maybe: `merge.renames=false` / `merge.directoryRenames=false` are still
-     held by no test — the mutation above proves it. Recipe: build a repo where
-     the reviewed side RENAMES a tracked file and modifies it, while the target
-     modifies the ORIGINAL path. With rename detection on, git follows the
-     rename and merges the operator's edit onto the new path — relocating a
-     change onto a path nobody reviewed. With it off the same input is a
-     delete/modify conflict and the merge refuses. Assert the REFUSAL and that
-     the target is unmoved, then mutate the two knobs away and confirm the test
-     dies. It needs a bespoke fixture (mergeReady's sealed content is fixed),
-     which is the only reason it was not done in this session.
-   N/A by construction — do NOT port: everything about cleanup, branch
-   deletion, worktree removal, and receipts (:463, :506, :557, :590, :808,
-   :846, :868, :897, :946, :965, :1026), plus :1011 (the `mc/task-*`
-   NAMESPACE fence, which exists only because legacy's branch is
-   caller-supplied; sealed takes it from the immutable assignment).
-   Keep every git call inside `landingGit`: ADR-017:704-711 reads as a
-   whole-program property, and legacy's isolation was by accident.
-5. Turn it on, together: `Approve` holds instead of refusing; `LandReport`
-   accepts an assignment-carrying row (`land.go:37-39` today refuses "no
-   branch"); the resident's sealed arm in `effects.ts:696`; and `Decide`/
-   `nextLanding` consulting `SealedLandingPending`.
-6. Docker lane at phase completion: the RO-alias property (that the nested
-   `.mission-control` cover really shadows the real path, so sealed bytes are
-   reachable only through RO `/repo/task` — a daemon property a plan-level
-   `:ro` assertion cannot prove, and the one today's `land()` violates
-   outright), the realized mount table, network=none/uid/caps in force, import
-   durability across VirtioFS, the five ADR-017:758-760 crash cuts, and the E2E
-   carried past `packaged` through approve -> merge -> archived.
-
-Owed decisions, none blocking, all named in docs/ledger/phase-3.md: the landing
-failure taxonomy has no spine channel and no retry bound (ADR-016:569-576 wants
-infra failure to record health and leave the tuple pending, but `mc land report`
-has two statuses and step (0c) has no backoff — a permanently unappliable
-landing head-of-line-blocks the single landing slot); "the canonical landing
-row" is derived, not stored (recommend keeping it derived); the envelope's
-"expected Git topology" has no specified serialization; frozen vs current
-`target_ref` (use the assignment's, refuse on divergence); and sealed landing
-for an initiative child is undefined and should be explicitly refused.
+NEXT: Finish the sealed-landing rename-inference corpus test, then implement the approved scoped self-abort; keep both inert before the four-seam activation and Phase 3 Docker completion lane.
