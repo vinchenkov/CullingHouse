@@ -96,17 +96,64 @@ commit as `refs/heads/mc/task-<id>`, so an operator can produce that same
 their MERGE_MSG, so a substring match on the trailer is forgeable. Details:
 `IMPLEMENTATION-NOTES.md` (2026-07-20 finding, and the review disposition).
 
-### 1. Activate all four seams together
+### 1. Activate the sealed lane
 
-1. `Approve` holds a sealed assignment-backed task instead of refusing it.
-2. `LandReport` accepts an assignment-backed row without `tasks.branch`.
-3. The resident effects path executes the sealed landing instruction.
-4. `Decide`/`nextLanding` consult `SealedLandingPending`.
+SCOPE CORRECTION (2026-07-20, verified against the tree): this is not four
+edits. The four seams are SWITCHES, and three PRODUCERS they depend on do not
+exist yet. Confirmed by grep, not assumed:
+
+- Nothing constructs `PrivateDispatchLanding` (`mountplan.go:212`). The
+  attester at `mountattest.go:884` never sets `.Landing`; the only construction
+  site is the test fixture at `landingprivate_test.go:19`, whose own header says
+  "INERT: no attester produces this yet". `dispatchprivate.go:460` validates a
+  carrier nothing emits.
+- `resident/src/types.ts` has NO `landing` member on `MountPlan` and no sealed
+  arm on `Effect` — zero occurrences of the word. `effects.ts:696` `land()` is
+  the legacy worktree lane only: one whole-workspace bind and the baked
+  `mc-land` script.
+- `LandingID`, `PreMergeSHA` and `PinnedBaseSHA` have no host-side producer.
+
+`SealedLandingPending` (`dispatch.go:158`) and `resolveLandingRoots`
+(`landingplan.go:177`) also have no production caller. The Go-side executor and
+CLI arm DO exist and are reachable only by hand: `mc __land-sealed`
+(`main.go:279`).
+
+Build the producers FIRST. They are naturally inert, because nothing reaches
+them until the selector flips — which is the last step, and the only one that
+must be atomic:
+
+1. Attester produces the landing carrier for a sealed landing action. Settle
+   where `PreMergeSHA` and `PinnedBaseSHA` come from (attest-time target
+   observation vs the assignment's frozen base) before writing it; ADR-017 and
+   ADR-016 govern, and the answer decides whether attest must observe the
+   target under the landing fences.
+2. Resident: `MountPlan.landing`, a sealed `Effect` arm, and execution beside
+   `runAcceptedSealRebuild` (`effects.ts:651`) — envelope to
+   `${runsDir}/<id>.setup.json`, resident-derived binds, result passed through
+   byte-exactly. The envelope destination for this class is `/mc/landing.json`,
+   not `/mc/setup.json`.
+3. THEN flip seams 1, 2 and 4 in one commit: `Approve` (`task.go:426`) holds
+   instead of refusing, `LandReport` (`land.go:37`) accepts an
+   assignment-backed row, `Decide`/`nextLanding` (`dispatch.go:549`, payload
+   `:403`) consult `SealedLandingPending`.
+
+Exactly two tests assert the inert behaviour AS CORRECT and must be inverted,
+not deleted: `TestApprove/assigned sealed task refuses rather than archiving`
+(`mc/domain/task_test.go:823`) and `TestStep0c_ApprovedBranchlessRow_NeverLands`
+(`mc/dispatch/dispatch_test.go:412`) — the latter stays green on its literal
+fixture, so it is its stated INTENT that must be re-scoped. `LandReport` against
+an assignment-backed row is currently untested in either direction.
+
+MUST NOT RELAX: `TestNoLandingCellIsPlanAddressable` and
+`TestPlanMountsRefusesEveryLandingCell` (`landingplan_test.go:77,103`). An
+earlier draft widened them and review rejected it (`landingplan_test.go:70`).
 
 The branch comes from the immutable assignment and is never projected into
-`tasks.branch`. `/repo` is not plan-addressable; the resident composes the
-landing binds. The nested `.mission-control` cover must prevent the RW source
-alias from exposing the sealed task root as writable.
+`tasks.branch`; `complete.go:163` is the only writer of that column and is
+closed to assigned tasks, which is what makes the two lanes partition. `/repo`
+is not plan-addressable; the resident composes the landing binds. The nested
+`.mission-control` cover must prevent the RW source alias from exposing the
+sealed task root as writable.
 
 ### 2. Phase 3 completion lane
 
@@ -136,4 +183,4 @@ advancing to Phase 4.
   canonical landing row derived; use the assignment's frozen `target_ref` and
   refuse divergence. Details are in the Phase 3 ledger.
 
-NEXT: Activate the four sealed-landing seams together (Approve, LandReport, resident effects, Decide/nextLanding + SealedLandingPending), then run and record the Phase 3 real-mechanism/Docker completion lane.
+NEXT: Sealed-lane activation step 1 — settle where PreMergeSHA and PinnedBaseSHA come from (ADR-017/ADR-016), then have the attester produce PrivateDispatchLanding; it stays inert until the selector flips in step 3.
