@@ -25,8 +25,28 @@ package verbs
 // dispatch time — the writes come later, through `mc land report`.
 
 import (
+	"context"
+
 	"mc/dispatch"
 )
+
+// preparedLanding is what one landing prepare froze: the tuple under the token,
+// the deterministic id, and the workspace root attest will resolve its host
+// anchors against.
+//
+// `inputs` is held as the exact struct captureLandingPlan takes, so attest
+// passes it straight through with no field-by-field copy that could drift from
+// the tuple the token was computed over.
+type preparedLanding struct {
+	taskID        int64
+	landingID     string
+	inputs        landingCaptureInputs
+	assignedRef   string
+	workspaceRoot string
+	tun           tunables
+	token         string
+	mountState    PrivateDispatchMountState
+}
 
 // landingCandidateProjection puts a landing in the same bounded candidate slot
 // a spawn occupies, naming NO run and NO role.
@@ -116,4 +136,82 @@ func sealedLandingSubject(rec dispatch.Records, taskID int64) (dispatch.Task, bo
 		}
 	}
 	return dispatch.Task{}, false
+}
+
+// dispatchLandingPrepare is the sealed lane's step 1 (ADR-016 D1). It loads the
+// subject's mount state under prepare's transaction, then freezes the tuple.
+func dispatchLandingPrepare(ctx context.Context, q Q, identity dispatchProtocolIdentity,
+	uuid, requestID string, sel spineSelection, t dispatch.Task) (preparedDispatch, error) {
+	mountState, err := loadDispatchLandingMountState(ctx, q, t.ID, sel.rec)
+	if err != nil {
+		return preparedDispatch{}, err
+	}
+	return landingPrepareFromState(identity, uuid, requestID, sel, t, mountState)
+}
+
+// landingPrepareFromState is the freezing half, pure over already-loaded state.
+//
+// The landing id is derived HERE rather than at attest, which contradicts the
+// original siting in landingid.go and is the stronger reading: ADR-016:371
+// names the deterministic id as a member of the candidate TUPLE, and a tuple
+// member must be inside the preparation token or commit cannot detect its
+// drift. All four of its inputs are in prepare's scope.
+func landingPrepareFromState(identity dispatchProtocolIdentity, uuid, requestID string,
+	sel spineSelection, t dispatch.Task, mountState PrivateDispatchMountState) (preparedDispatch, error) {
+	seal := mountState.SubjectAcceptedCompletionSeal
+	if seal == nil {
+		return preparedDispatch{}, Domainf("landing: task %d has no accepted completion seal to identify its approved run", t.ID)
+	}
+	landingID, err := deriveLandingID(canonicalLandingIdentity{
+		DeploymentUUID:    uuid,
+		SubjectID:         t.ID,
+		ApprovedRunID:     seal.RunID,
+		ApprovedRequestID: seal.CompletionRequest,
+	})
+	if err != nil {
+		return preparedDispatch{}, err
+	}
+	tuple, err := landingTupleProjection(t, mountState, landingID)
+	if err != nil {
+		return preparedDispatch{}, err
+	}
+	// Resolved at PREPARE, under the transaction, so attest never has to reach
+	// back into spine-derived state to find out where on the host it is allowed
+	// to look. It refuses rather than yielding "".
+	workspaceRoot, err := landingWorkspaceRoot(mountState)
+	if err != nil {
+		return preparedDispatch{}, err
+	}
+	canonical, err := buildCanonicalLandingPrepare(identity, uuid, requestID,
+		sel.rec, sel.lk, sel.tun, sel.homies, mountState, t.ID, tuple).bytes()
+	if err != nil {
+		return preparedDispatch{}, err
+	}
+	return preparedDispatch{
+		requestID:      requestID,
+		deploymentUUID: uuid,
+		identity:       identity,
+		landing: &preparedLanding{
+			taskID:    t.ID,
+			landingID: landingID,
+			// Built from the tuple the token was computed over, never
+			// re-assembled from the task, so the two cannot drift apart.
+			inputs: landingCaptureInputs{
+				TaskID:        tuple.TaskID,
+				LandingID:     tuple.LandingID,
+				ApprovedRunID: tuple.ApprovedRunID,
+				TargetRef:     tuple.TargetRef,
+				VerifiedSHA:   tuple.VerifiedSHA,
+				ObjectFormat:  tuple.ObjectFormat,
+				PinnedBaseSHA: tuple.PinnedBaseSHA,
+				ClosureDigest: tuple.ClosureDigest,
+				LocalRepoUUID: tuple.LocalRepoUUID,
+			},
+			assignedRef:   tuple.AssignedTargetRef,
+			workspaceRoot: workspaceRoot,
+			tun:           sel.tun,
+			token:         preparationToken(canonical),
+			mountState:    mountState,
+		},
+	}, nil
 }

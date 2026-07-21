@@ -6,9 +6,13 @@ package verbs
 // so a landing digest can never collide with a prepare token, a dispatch key,
 // or a plan digest computed over the same bytes.
 //
-// Derived ATTEST-side, not in the dispatch table: all three inputs are already
-// in attest scope, whereas the `Land` effect payload carries none of them and
-// the dispatch table has no other use for a landing id.
+// Derived at PREPARE, not in the dispatch table and not at attest. An earlier
+// draft sited this attest-side on availability alone; ADR-016:371 is the
+// stronger argument, because it names the deterministic id as a member of the
+// candidate TUPLE, and a tuple member must be inside the preparation token or
+// commit cannot detect its drift. All four inputs are in prepare's scope. The
+// dispatch table stays out of it either way: the `Land` effect payload carries
+// none of these inputs and has no other use for a landing id.
 
 import (
 	"crypto/sha256"

@@ -494,6 +494,16 @@ type preparedDispatch struct {
 	identity       dispatchProtocolIdentity
 	final          map[string]any
 	candidate      *preparedCandidate
+	// landing is the ADR-016:369-379 sealed-landing arm. Exactly one of
+	// {final, candidate, landing} is ever non-nil.
+	//
+	// It is a SIBLING of candidate, never a variant of it, and that is
+	// load-bearing rather than stylistic: this file dereferences cand.spawn
+	// unguarded in dozens of places, so a landing routed through
+	// preparedCandidate would make every one of them reachable with a nil
+	// Spawn. Keeping it out here is what makes them unreachable by TYPE.
+	// Do not "simplify" this into preparedCandidate.
+	landing *preparedLanding
 }
 
 type preparedCandidate struct {
