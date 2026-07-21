@@ -136,6 +136,54 @@ func TestSealedMergeRechecksTheSHAFence(t *testing.T) {
 	}
 }
 
+// Ported from legacy mc-land.test.ts:683. The preflight stage cannot see a
+// merge driver inserted AFTER it ran, and an in-tree .gitattributes naming that
+// driver survives `core.attributesFile=/dev/null` (which replaces the
+// attributes FILE, not in-tree ones) and `GIT_ATTR_NOSYSTEM=1` (system scope).
+// The pinned `-c merge.ours.driver=false` covers only `ours`.
+//
+// So the merge stage rechecks the executable-control fences itself. The window
+// is narrowed, not closed — a writer racing the merge invocation still wins —
+// and that residual is documented at the call site rather than papered over.
+func TestSealedMergeRechecksExecutableConfigInsertedAfterPreflight(t *testing.T) {
+	late := map[string]func(t *testing.T, repo string){
+		"a merge driver inserted after preflight": func(t *testing.T, repo string) {
+			srcGit(t, repo, "config", "--local", "merge.evil.driver", "sh -c 'echo pwned >&2' %A %O %B")
+			writeFile(t, filepath.Join(repo, ".gitattributes"), "* merge=evil\n")
+		},
+		// MEASURED REDUNDANT: this arm survives mutation of the merge-time
+		// recheck, because git's own checkout fails when the filter cannot run —
+		// so it is git refusing, not our fence. Retained because the OUTCOME is
+		// the property that matters (no merge, target unmoved) and it would
+		// still hold if git ever succeeded here, but it must not be read as
+		// evidence that the recheck works. The other two arms are that evidence.
+		"a clean filter inserted after preflight": func(t *testing.T, repo string) {
+			srcGit(t, repo, "config", "--local", "filter.evil.clean", "sh -c 'echo pwned >&2'")
+			writeFile(t, filepath.Join(repo, ".gitattributes"), "* filter=evil\n")
+		},
+		"an index visibility flag set after preflight": func(t *testing.T, repo string) {
+			srcGit(t, repo, "update-index", "--assume-unchanged", "README.md")
+		},
+	}
+	for name, plant := range late {
+		t.Run(name, func(t *testing.T) {
+			repo, _, _, verified, branch := mergeReady(t)
+			g := landingGit{dir: repo}
+			pre := srcGit(t, repo, "rev-parse", "refs/heads/main")
+			if err := createLandingRefCAS(g, branch, verified); err != nil {
+				t.Fatal(err)
+			}
+			plant(t, repo)
+			if err := mergeSealedLanding(g, "main", verified, pre, "0011223344556677", 7); err == nil {
+				t.Fatalf("merged with %s", name)
+			}
+			if now := srcGit(t, repo, "rev-parse", "refs/heads/main"); now != pre {
+				t.Fatalf("the refused merge moved the target: %q", now)
+			}
+		})
+	}
+}
+
 // Fixed metadata (ADR-017:752): author and committer are pinned so the merge is
 // byte-reproducible on replay, and a hostile environment cannot forge identity.
 // The env is constructed, so the hostile values below never reach git.

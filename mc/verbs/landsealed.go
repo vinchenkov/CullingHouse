@@ -732,6 +732,31 @@ func mergeSealedLanding(g landingGit, target, verifiedSHA, preMergeSHA, landingI
 		return Domainf("landing target moved from %s to %s since the fence; refusing to merge", preMergeSHA, tip)
 	}
 
+	// Recheck the EXECUTABLE-CONTROL fences here too, for the same reason
+	// ADR-017:750 rechecks the SHA here: the repository stage ran arbitrarily
+	// long ago, and everything it proved about repository-local config is a
+	// statement about the past.
+	//
+	// This is the one that bites. `refuseExecutableLandingConfig` at preflight
+	// cannot see a merge driver inserted afterwards, and an in-tree
+	// `.gitattributes` naming that driver is NOT suppressed by
+	// `core.attributesFile=/dev/null` (which replaces the ATTRIBUTES FILE, not
+	// the in-tree ones) nor by `GIT_ATTR_NOSYSTEM=1` (system scope only). The
+	// pinned `-c merge.ours.driver=false` covers only the `ours` driver, not an
+	// arbitrary named one. Legacy pinned exactly this as mc-land.test.ts:683.
+	//
+	// HONEST ABOUT WHAT THIS DOES NOT DO: it narrows the window, it does not
+	// close it. Git reads config when it runs, so a writer racing between this
+	// check and the merge below still wins. Closing it properly needs config
+	// isolation, and the merge genuinely needs the repository's own config — so
+	// the residual TOCTOU is accepted and named rather than papered over.
+	if err := refuseExecutableLandingConfig(g); err != nil {
+		return err
+	}
+	if err := refuseHiddenLandingIndexEntries(g); err != nil {
+		return err
+	}
+
 	message := "Land task " + strconv.FormatInt(taskID, 10) + "\n\n" +
 		"MC-Landing-Id: " + landingID + "\n" +
 		"MC-Landing-Task: task " + strconv.FormatInt(taskID, 10) + "\n" +
