@@ -98,75 +98,49 @@ their MERGE_MSG, so a substring match on the trailer is forgeable. Details:
 
 ### 1. Activate the sealed lane
 
-SCOPE CORRECTION (2026-07-20, verified against the tree): this is not four
-edits. The four seams are SWITCHES, and three PRODUCERS they depend on do not
-exist yet. Confirmed by grep, not assumed:
+NOT four edits. The seams are SWITCHES; three PRODUCERS they consume do not
+exist (verified by grep 2026-07-20): nothing constructs `PrivateDispatchLanding`
+(`mountattest.go:884` never sets `.Landing`; `dispatchprivate.go:460` validates
+a carrier nothing emits), the resident has no landing concept at all (zero
+occurrences in `types.ts`; `effects.ts:696` is the legacy lane), and
+`LandingID`/`PreMergeSHA`/`PinnedBaseSHA` have no host-side producer.
+`SealedLandingPending` and `resolveLandingRoots` have no production caller
+either. Full survey: `docs/ledger/phase-3.md` (2026-07-20).
 
-- Nothing constructs `PrivateDispatchLanding` (`mountplan.go:212`). The
-  attester at `mountattest.go:884` never sets `.Landing`; the only construction
-  site is the test fixture at `landingprivate_test.go:19`, whose own header says
-  "INERT: no attester produces this yet". `dispatchprivate.go:460` validates a
-  carrier nothing emits.
-- `resident/src/types.ts` has NO `landing` member on `MountPlan` and no sealed
-  arm on `Effect` — zero occurrences of the word. `effects.ts:696` `land()` is
-  the legacy worktree lane only: one whole-workspace bind and the baked
-  `mc-land` script.
-- `LandingID`, `PreMergeSHA` and `PinnedBaseSHA` have no host-side producer.
+Build the producers FIRST — they stay inert on their own, because nothing
+reaches them until the selector flips. Only step 3 must be atomic.
 
-`SealedLandingPending` (`dispatch.go:158`) and `resolveLandingRoots`
-(`landingplan.go:177`) also have no production caller. The Go-side executor and
-CLI arm DO exist and are reachable only by hand: `mc __land-sealed`
-(`main.go:279`).
+1. The landing carrier. Facts SETTLED from the ADRs, do not re-derive:
+   `PinnedBaseSHA` ← `task_assignments.base_sha`; `PreMergeSHA` ← the target tip
+   observed AT ATTEST and carried frozen (which is why attest must observe the
+   target at all); `LandingID` ← ADR-016:830-833, first 16 hex of a
+   domain-separated digest of deployment, subject, approved packet/run identity
+   — DETERMINISTIC, because the abort path matches `MERGE_MSG` on it and the
+   container is `mc-landing-<id>`. Follow `dispatchseam.go:184-206`'s idiom with
+   its own domain constant; `DeploymentUUID` is at `dispatchprivate.go:54`.
+2. Resident: `MountPlan.landing`, a sealed `Effect` arm, execution beside
+   `runAcceptedSealRebuild` (`effects.ts:651`), binds resident-derived. The
+   envelope destination for this class is `/mc/landing.json`, not
+   `/mc/setup.json`.
+3. THEN flip together: `Approve` (`task.go:426`) holds instead of refusing,
+   `LandReport` (`land.go:37`) accepts an assignment-backed row,
+   `Decide`/`nextLanding` (`dispatch.go:549`, payload `:403`) consult
+   `SealedLandingPending`.
 
-Build the producers FIRST. They are naturally inert, because nothing reaches
-them until the selector flips — which is the last step, and the only one that
-must be atomic:
-
-1. Attester produces the landing carrier for a sealed landing action. The three
-   missing facts are SETTLED (2026-07-20, from the ADRs — do not re-derive):
-   - `PinnedBaseSHA` ← `task_assignments.base_sha`, the assignment's frozen
-     base (schema `substrate.go:327`).
-   - `PreMergeSHA` ← observed at ATTEST time as the target ref's tip, and
-     carried frozen into the envelope. `landingRepoFacts.TargetSHA`
-     (`landsealed.go:112`) already documents itself as that value, and the
-     lander rechecks it twice against the frozen one. So attest must observe
-     the target, which is what makes a moved target refuse before the import.
-   - `LandingID` ← ADR-016:830-833: "the first 16 lowercase hex of the
-     domain-separated digest of deployment, subject, and exact approved
-     packet/run identity". DETERMINISTIC, not random — so a retry of the same
-     landing derives the same id, which is what the abort path's MERGE_MSG
-     match and the container name `mc-landing-<landing_id>` (ADR-016:830) both
-     rely on. No derivation exists yet; follow the existing domain-separated
-     idiom (`mountPlanDigest`, `preparationToken`, `dispatchseam.go:184-206`)
-     with its own domain constant, and take `DeploymentUUID` from the dispatch
-     frame (`dispatchprivate.go:54`).
-2. Resident: `MountPlan.landing`, a sealed `Effect` arm, and execution beside
-   `runAcceptedSealRebuild` (`effects.ts:651`) — envelope to
-   `${runsDir}/<id>.setup.json`, resident-derived binds, result passed through
-   byte-exactly. The envelope destination for this class is `/mc/landing.json`,
-   not `/mc/setup.json`.
-3. THEN flip seams 1, 2 and 4 in one commit: `Approve` (`task.go:426`) holds
-   instead of refusing, `LandReport` (`land.go:37`) accepts an
-   assignment-backed row, `Decide`/`nextLanding` (`dispatch.go:549`, payload
-   `:403`) consult `SealedLandingPending`.
-
-Exactly two tests assert the inert behaviour AS CORRECT and must be inverted,
-not deleted: `TestApprove/assigned sealed task refuses rather than archiving`
-(`mc/domain/task_test.go:823`) and `TestStep0c_ApprovedBranchlessRow_NeverLands`
-(`mc/dispatch/dispatch_test.go:412`) — the latter stays green on its literal
-fixture, so it is its stated INTENT that must be re-scoped. `LandReport` against
-an assignment-backed row is currently untested in either direction.
-
-MUST NOT RELAX: `TestNoLandingCellIsPlanAddressable` and
-`TestPlanMountsRefusesEveryLandingCell` (`landingplan_test.go:77,103`). An
-earlier draft widened them and review rejected it (`landingplan_test.go:70`).
+Invert, do not delete: `TestApprove/assigned sealed task refuses rather than
+archiving` (`task_test.go:823`) and `TestStep0c_ApprovedBranchlessRow_NeverLands`
+(`dispatch_test.go:412`) — the latter stays green on its fixture, so it is its
+INTENT that goes stale. `LandReport` against an assignment-backed row is
+untested in either direction. MUST NOT RELAX:
+`TestNoLandingCellIsPlanAddressable` and `TestPlanMountsRefusesEveryLandingCell`
+(`landingplan_test.go:77,103`) — an earlier draft widened them and review
+rejected it.
 
 The branch comes from the immutable assignment and is never projected into
-`tasks.branch`; `complete.go:163` is the only writer of that column and is
-closed to assigned tasks, which is what makes the two lanes partition. `/repo`
-is not plan-addressable; the resident composes the landing binds. The nested
-`.mission-control` cover must prevent the RW source alias from exposing the
-sealed task root as writable.
+`tasks.branch`; `complete.go:163` is that column's only writer and is closed to
+assigned tasks, which is what makes the lanes partition. `/repo` is not
+plan-addressable. The nested `.mission-control` cover must prevent the RW source
+alias from exposing the sealed task root as writable.
 
 ### 2. Phase 3 completion lane
 

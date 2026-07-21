@@ -3761,3 +3761,46 @@ as its concrete requirements.
 
 NEXT (outgoing): abort slice reviewed, hardened, and still inert. The four-seam
 activation is next, then the Phase 3 real-mechanism/Docker completion lane.
+
+## 2026-07-20 — the activation is not four edits
+
+A read-only survey of the four seams, verified by grep rather than taken on
+report, found the activation plan under-scoped. The four seams are SWITCHES.
+Three PRODUCERS they consume do not exist:
+
+- Nothing constructs `PrivateDispatchLanding`. `mountattest.go:884` never sets
+  `.Landing`; the only construction site is a test fixture whose header already
+  says "INERT: no attester produces this yet". `dispatchprivate.go:460`
+  validates a carrier that nothing emits — a validator with no producer, which
+  is easy to mistake for a live seam when reading the file.
+- The resident has no landing concept at all: zero occurrences of the word in
+  `types.ts`, no `landing` member on `MountPlan`, no sealed arm on `Effect`.
+  `effects.ts:696` `land()` is the legacy worktree lane and nothing else.
+- `LandingID`, `PreMergeSHA` and `PinnedBaseSHA` have no host-side producer.
+
+`SealedLandingPending` and `resolveLandingRoots` likewise have no production
+caller. The Go executor and its CLI arm exist and are reachable only by hand.
+
+This matters for sequencing rather than for design. The producers can be built
+FIRST and stay inert on their own, because nothing reaches them until the
+selector flips — so the atomicity requirement ("turn all four on together")
+applies to the last step alone, not to the whole slice. That is what makes this
+buildable incrementally without ever leaving a half-active lane.
+
+The three missing facts were then settled from the ADRs, so the next session
+implements rather than re-derives: `PinnedBaseSHA` is the assignment's frozen
+`base_sha`; `PreMergeSHA` is the target tip observed AT ATTEST and carried
+frozen, which is why attest must observe the target at all; and `landing_id` is
+DETERMINISTIC — ADR-016:830-833's first 16 hex of a domain-separated digest of
+deployment, subject and approved packet/run identity. That last one is
+load-bearing in a way worth stating: the abort path added this session matches
+`MERGE_MSG` on the landing id, and the container name is `mc-landing-<id>`, so
+a random id would break replay identity in two places at once.
+
+Two tests assert the inert behaviour AS CORRECT and must be inverted rather than
+deleted; one of them (`TestStep0c_ApprovedBranchlessRow_NeverLands`) stays green
+on its literal fixture, so it is its stated INTENT that goes stale — the quiet
+kind of rot, and the reason it is named here.
+
+NEXT (outgoing): activation step 1 — the deterministic landing_id, then the
+attester's landing carrier. Both inert until the selector flips.
