@@ -184,6 +184,49 @@ func TestSealedMergeRechecksExecutableConfigInsertedAfterPreflight(t *testing.T)
 	}
 }
 
+// Ported from legacy mc-land.test.ts:763, and it closes an UNPINNED knob.
+//
+// Mutation found this: deleting `merge.autoStash=false`, `--no-autostash`,
+// `merge.renames=false` and `merge.directoryRenames=false` together left the
+// whole mc/verbs suite green. They were pinned in code and held by nothing —
+// the same invisible rot as 6657541 and 83ed9e9, where an implementation stayed
+// correct while no test reached it.
+//
+// autostash is the dangerous one because it MOVES OPERATOR BYTES. With it on,
+// a merge blocked by local changes silently stashes them, merges, and pops —
+// so a landing would rewrite the operator's working tree as a side effect. The
+// lane's own dirty fence normally refuses this case earlier; this exercises the
+// merge stage directly, because defence in depth that nothing tests is not
+// defence.
+func TestSealedMergeNeverAutostashesOperatorBytes(t *testing.T) {
+	repo, _, _, verified, branch := mergeReady(t)
+	g := landingGit{dir: repo}
+	pre := srcGit(t, repo, "rev-parse", "refs/heads/main")
+	if err := createLandingRefCAS(g, branch, verified); err != nil {
+		t.Fatal(err)
+	}
+	// The repository asks for autostash, and a reviewed path is dirty — the
+	// exact combination where git would otherwise stash and pop.
+	srcGit(t, repo, "config", "--local", "merge.autoStash", "true")
+	writeFile(t, filepath.Join(repo, "README.md"), "operator uncommitted work\n")
+
+	if err := mergeSealedLanding(g, "main", verified, pre, "0011223344556677", 7); err == nil {
+		t.Fatal("merged by stashing the operator's uncommitted work")
+	}
+	// The operator's bytes are still exactly where they were: not stashed, not
+	// popped, not reconstructed.
+	body, err := os.ReadFile(filepath.Join(repo, "README.md"))
+	if err != nil || string(body) != "operator uncommitted work\n" {
+		t.Fatalf("operator bytes were moved by the refused merge: %q (err %v)", body, err)
+	}
+	if now := srcGit(t, repo, "rev-parse", "refs/heads/main"); now != pre {
+		t.Fatalf("the refused merge moved the target: %q", now)
+	}
+	if _, err := os.Lstat(filepath.Join(repo, ".git", "refs", "stash")); err == nil {
+		t.Fatal("the refused merge created a stash")
+	}
+}
+
 // Fixed metadata (ADR-017:752): author and committer are pinned so the merge is
 // byte-reproducible on replay, and a hostile environment cannot forge identity.
 // The env is constructed, so the hostile values below never reach git.
