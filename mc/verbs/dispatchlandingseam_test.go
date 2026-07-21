@@ -6,9 +6,14 @@ package verbs
 // `mc dispatch` would assert on the legacy lane and quietly prove nothing.
 
 import (
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"mc/dispatch"
+	"mc/refusal"
+	"mc/routing"
 	"mc/substrate"
 )
 
@@ -323,5 +328,160 @@ func TestDispatchLandingPrepareRefusesAnUnresolvableWorkspace(t *testing.T) {
 		"de41cafe-0000-4000-8000-000000000001", "00112233445566ff",
 		dlsSelection(dlsTask()), dlsTask(), st); err == nil {
 		t.Fatal("prepared a landing with no workspace root; attest would resolve the host anchors against the process working directory")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// The attest leg.
+//
+// The landing attests the operator's Git views and NOTHING ELSE. It reads no
+// routing.md, resolves no role, and has no path to CodeRoutingInvalid.
+// ADR-016:53-60 is explicit that a land candidate "instead attests ADR-017's
+// exact task-store/real-repository Git views ... without a gateway probe", and
+// spec §7:231 puts no agent in the landing path, so there is no role to route.
+// ---------------------------------------------------------------------------
+
+const dlsUUID = "de41cafe-0000-4000-8000-000000000001"
+
+// dlsHome is an MC_HOME carrying only the deployment identity mirror — the one
+// host file both attest legs read before anything else.
+func dlsHome(t *testing.T) string {
+	t.Helper()
+	home := t.TempDir()
+	if err := os.WriteFile(filepath.Join(home, deploymentUUIDFilename), []byte(dlsUUID+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return home
+}
+
+// dlsPreparedOverRepo prepares a landing whose frozen inputs describe a real
+// git Worksource, so attest's capture can actually succeed.
+func dlsPreparedOverRepo(t *testing.T) (string, preparedDispatch) {
+	t.Helper()
+	home := dlsHome(t)
+	ws, _ := lcRepo(t, "7")
+
+	task := dlsTask()
+	task.TargetRef = "main"
+	task.Sealed.TargetRef = "main"
+	task.VerifiedSHA = strings.Repeat("a", 40)
+	task.Sealed.BaseSHA = strings.Repeat("c", 40)
+	task.Sealed.ClosureDigest = strings.Repeat("d", 64)
+	task.Sealed.LocalRepoUUID = "0f9c1e2a-3b4c-4d5e-8f60-112233445566"
+
+	st := dlsMountState()
+	st.Worksources[0].WorkspaceRoot = ws
+
+	prepared, err := landingPrepareFromState(defaultDispatchProtocolIdentity,
+		dlsUUID, "00112233445566ff", dlsSelection(task), task, st)
+	if err != nil {
+		t.Fatalf("landingPrepareFromState: %v", err)
+	}
+	return home, prepared
+}
+
+func TestDispatchAttestLandingCarriesAValidMountPlan(t *testing.T) {
+	home, prepared := dlsPreparedOverRepo(t)
+	attested, err := dispatchAttestLanding(home, prepared)
+	if err != nil {
+		t.Fatalf("dispatchAttestLanding: %v", err)
+	}
+	if attested.refusal != nil {
+		t.Fatalf("attest over a sound repository refused: %+v", attested.refusal)
+	}
+	if attested.mountPlan == nil || attested.mountPlan.Landing == nil {
+		t.Fatalf("attest produced no landing plan: %+v", attested.mountPlan)
+	}
+	// The plan must satisfy the SAME validator the commit side and the resident
+	// apply. A zero Version or a nil Entries is hard-refused by both, and a
+	// producer that emitted one would surface only once the lane is armed.
+	if err := validatePrivateMountPlan(attested.mountPlan); err != nil {
+		t.Fatalf("the attested landing plan does not satisfy validatePrivateMountPlan: %v", err)
+	}
+	if len(attested.mountPlan.Entries) != 0 {
+		t.Fatalf("landing plan carried mount entries: %+v", attested.mountPlan.Entries)
+	}
+}
+
+func TestDispatchAttestLandingNeverReadsRouting(t *testing.T) {
+	home, prepared := dlsPreparedOverRepo(t)
+	// Bytes that routing.Parse cannot possibly accept. A spawn attesting this
+	// home returns a routing-invalid deployment-health refusal; a landing must
+	// not notice it at all.
+	if err := os.WriteFile(filepath.Join(home, "routing.md"), []byte("\x00 not routing \x00"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	attested, err := dispatchAttestLanding(home, prepared)
+	if err != nil {
+		t.Fatalf("dispatchAttestLanding: %v", err)
+	}
+	if attested.refusal != nil {
+		t.Fatalf("broken routing suppressed a landing: %+v — routing brokenness is never the landing's fault", attested.refusal)
+	}
+	if attested.route != (routing.Route{}) || attested.routingDigest != "" {
+		t.Fatalf("landing attest resolved a route it has no use for: %+v / %q", attested.route, attested.routingDigest)
+	}
+}
+
+func TestDispatchAttestLandingRefusesDivergedTargetRefAsHealth(t *testing.T) {
+	home, prepared := dlsPreparedOverRepo(t)
+	prepared.landing.assignedRef = "refs/heads/somewhere-else"
+
+	attested, err := dispatchAttestLanding(home, prepared)
+	if err != nil {
+		t.Fatalf("dispatchAttestLanding returned an error rather than a classified refusal: %v", err)
+	}
+	if attested.refusal == nil {
+		t.Fatal("a landing whose assignment ref diverged from the task's was planned anyway")
+	}
+	class, cerr := refusal.Classify(*attested.refusal)
+	if cerr != nil || class != refusal.ClassHealth {
+		t.Fatalf("diverged-ref refusal classified %v/%v, want health — a candidate-class refusal here would BLOCK the task", class, cerr)
+	}
+	if attested.mountPlan != nil {
+		t.Fatal("a refused landing still carried a plan")
+	}
+}
+
+func TestDispatchAttestLandingCaptureFailureIsHealthNotError(t *testing.T) {
+	// Runtime, mount and shared-Git applicability failures are deployment
+	// health and RETAIN the pending landing. Only the fixed mc-land program's
+	// semantic Git refusal blocks, and it reports through `mc land report
+	// failure` — never from here. An error return would be worse than either:
+	// it would surface as a command failure with no classified consequence.
+	home := dlsHome(t)
+	task := dlsTask()
+	st := dlsMountState()
+	st.Worksources[0].WorkspaceRoot = t.TempDir() // a real path, but no repository
+	prepared, err := landingPrepareFromState(defaultDispatchProtocolIdentity,
+		dlsUUID, "00112233445566ff", dlsSelection(task), task, st)
+	if err != nil {
+		t.Fatalf("landingPrepareFromState: %v", err)
+	}
+
+	attested, aerr := dispatchAttestLanding(home, prepared)
+	if aerr != nil {
+		t.Fatalf("a capture failure errored the command instead of classifying: %v", aerr)
+	}
+	if attested.refusal == nil {
+		t.Fatal("a landing over a non-repository was planned anyway")
+	}
+	class, cerr := refusal.Classify(*attested.refusal)
+	if cerr != nil || class != refusal.ClassHealth {
+		t.Fatalf("capture-failure refusal classified %v/%v, want health", class, cerr)
+	}
+}
+
+func TestDispatchAttestLandingStillOwesTheDeploymentFence(t *testing.T) {
+	// The landing reads no routing, but it owes the same deployment-identity
+	// fence every attest leg owes. Dropping it alongside the routing read is
+	// the easy mistake this asserts against.
+	home, prepared := dlsPreparedOverRepo(t)
+	if err := os.WriteFile(filepath.Join(home, deploymentUUIDFilename),
+		[]byte("de41cafe-0000-4000-8000-999999999999\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dispatchAttestLanding(home, prepared); err == nil {
+		t.Fatal("a deployment identity that moved between prepare and attest was accepted")
 	}
 }

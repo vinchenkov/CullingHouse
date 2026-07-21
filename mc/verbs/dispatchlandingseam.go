@@ -26,8 +26,10 @@ package verbs
 
 import (
 	"context"
+	"os"
 
 	"mc/dispatch"
+	"mc/refusal"
 )
 
 // preparedLanding is what one landing prepare froze: the tuple under the token,
@@ -214,4 +216,75 @@ func landingPrepareFromState(identity dispatchProtocolIdentity, uuid, requestID 
 			mountState:    mountState,
 		},
 	}, nil
+}
+
+// dispatchAttestLanding is the sealed lane's step 2: the host-authority leg,
+// run with the flock and transaction released.
+//
+// It attests the operator's Git views and NOTHING ELSE. There is no routing.md
+// read, no route resolution, and no path from here to CodeRoutingInvalid.
+// ADR-016:53-60 is explicit that a land candidate "instead attests ADR-017's
+// exact task-store/real-repository Git views ... without a gateway probe", and
+// spec §7:231 puts no agent in the landing path, so there is no role to
+// resolve. Routing brokenness is a deployment fault that must never suppress an
+// approved landing — the pending row would simply retry forever with the
+// operator given no signal about the real cause.
+//
+// `route` and `routingDigest` therefore stay zero. That is the honest encoding
+// of "no routing input", the same way an empty PlanDigest encodes "this refusal
+// carries no plan"; it is not an omission to be filled in later.
+//
+// Every failure here is deployment HEALTH, never candidate class. ADR-016:576
+// forbids mislabeling runtime failure as a failed reviewed change, and a
+// candidate-class refusal against this subject would block the task. Only the
+// fixed mc-land program's semantic Git refusal blocks, and it reports through
+// `mc land report failure`, never from this leg.
+func dispatchAttestLanding(home string, prepared preparedDispatch) (attestedDispatch, error) {
+	land := prepared.landing
+	if land == nil {
+		return attestedDispatch{}, Domainf("dispatch: landing attest requires a prepared landing")
+	}
+	uuid, err := attestDeploymentPreamble(home, prepared)
+	if err != nil {
+		return attestedDispatch{}, err
+	}
+	// The assignment's frozen ref against the task's current one. The lane
+	// admits a diverged row deliberately so that it refuses LOUDLY here rather
+	// than being filtered out of selection and left silently unlandable
+	// forever; both refs are inside the preparation token, so commit reproduces
+	// this decision instead of re-observing it.
+	if land.inputs.TargetRef != land.assignedRef {
+		return landingHealthRefusal(uuid, refusal.FieldProjection, refusal.SummaryMismatch,
+			Domainf("task %d: the assignment's frozen target ref %q has diverged from the task's %q",
+				land.taskID, land.assignedRef, land.inputs.TargetRef)), nil
+	}
+	plan, err := captureLandingPlan(land.workspaceRoot, os.Getuid(), land.inputs)
+	if err != nil {
+		return landingHealthRefusal(uuid, refusal.FieldFilePlane, refusal.SummaryUnappliable, err), nil
+	}
+	return attestedDispatch{
+		deploymentUUID: uuid,
+		// Version and Entries are not boilerplate: validatePrivateMountPlan and
+		// the resident's own invalidMountPlanReason both hard-refuse a zero
+		// Version or a nil Entries, so a landing plan built without them would
+		// fail only once the lane was armed. The landing rides as a SIBLING of
+		// Entries because every entry destination must be under /workspace,
+		// which no landing cell is.
+		mountPlan: &PrivateDispatchMountPlan{
+			Version: 1,
+			Entries: []PrivateDispatchMountEntry{},
+			Landing: &plan,
+		},
+	}, nil
+}
+
+// landingHealthRefusal classifies one landing attestation failure as deployment
+// health. The raw error text rides only in Message, which DetailFor drops.
+func landingHealthRefusal(deploymentUUID string, field refusal.Field, summary refusal.Summary, err error) attestedDispatch {
+	return attestedDispatch{deploymentUUID: deploymentUUID, refusal: &refusal.Refusal{
+		Code:    refusal.CodeProjectionUnavailable,
+		Field:   field,
+		Summary: summary,
+		Message: err.Error(),
+	}}
 }
