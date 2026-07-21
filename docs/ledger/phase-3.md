@@ -4457,3 +4457,55 @@ that table, so the sealed lane introduced a second validator row 1's named owner
 does not govern). Then the remaining Docker rows: landing's host-scope /
 no-`run.json` inversion, the realized four-row mount table against inspect, and
 the sealed production E2E through `packaged -> approve -> merge -> archived`.
+
+## 2026-07-21 (cont.) — the class divergence guard, and a row-1 hole under it
+
+Row 7's divergence guard landed. The setuid gate depends on
+`no-new-privileges` being ABSENT from the AGENT container so the setuid `mc`
+binary can raise privilege to reach the spine; setup and landing never touch the
+spine and are hardened by it (`effects.ts:334,678,774` set it, the agent
+`create` at `:497-509` does not). Nothing asserted the two classes disagree, and
+the refactor that would break it is an attractive one — three call sites repeat
+the same hardening flags, so hoisting them into a shared envelope builder is the
+obvious tidy-up, and it would kill the setuid gate with every test still green.
+
+**The proposed row-1 test was based on a misreading, and checking first was the
+right call.** The gap analysis proposed asserting that landing's mount table
+runs through `planMounts`/`validatePrivateMountPlan`. `landingplan.go:11-22`
+says the opposite deliberately: the `/repo` plane is NOT plan-addressable,
+because the D5 carrier is an agent-plane carrier that structurally cannot reach
+it, and teaching the validators a plane they cannot reach costs a
+defence-in-depth layer for no capability. It also records that a first draft did
+exactly that and review rejected it. Writing that test would have re-litigated a
+settled decision from the losing side.
+
+**But looking for the honest version of row 1 found a real hole.** Row 1 names
+its production owner as "shared `mc/boundary` policy used by profile save AND
+both sides of `mc dispatch`". The dispatch side exists (`mountattest.go:876`,
+`mountplan.go:260` carry a `BlockPolicy`). The PROFILE-SAVE side does not exist
+at all:
+
+- `mc/verbs/init.go:85` inserts `sandbox_profiles.workspace_root` with no
+  `boundary` call anywhere in the file — `grep 'boundary\.' init.go` is empty.
+- There is no profile-save verb; `worksource.go` makes no `boundary` call either.
+- `resolveLandingRoots` (`landingplan.go:177-217`) resolves the landing's host
+  anchors through `boundary.ResolveSource` and its own canonical-path fence, but
+  applies no `BlockPolicy`.
+
+So the workspace root that anchors the landing's RW real-repository grant — the
+strongest grant in the system — has never been checked against the shipped
+blocked-pattern floor at any point in its life. This is pre-existing and not
+landing-specific: every mount class uses that same root. Landing raises the
+stakes because it is the one that makes it RW on the operator's real checkout.
+
+Recorded rather than fixed in this pass, because the fix is a real behaviour
+change (validate `workspace_root` against `BlockPolicy` at init/profile-save,
+and decide what happens to an existing deployment whose root would now fail)
+and it deserves its own red-first step rather than being smuggled into a
+landing commit.
+
+NEXT (outgoing): close the row-1 profile-save hole above, red-first — it is the
+most valuable remaining non-Docker row and it is not landing-specific. Then the
+remaining Docker rows: landing's host-scope / no-`run.json` inversion, the
+realized four-row mount table against `docker inspect`, and the sealed
+production E2E through `packaged -> approve -> merge -> archived`.

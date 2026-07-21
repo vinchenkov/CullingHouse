@@ -6,7 +6,7 @@ REPO PATH: `~/dev/ai/homie`. Never relocate this repo into `~/Documents`,
 `~/Desktop`, or `~/Downloads`: macOS TCC can revoke an agent session's own
 filesystem access there during fan-out. Full Disk Access does not fix it.
 
-LAST GREEN SHA: `f21f11c` — five-leg fast lane green. Docker E2E last 8/8 at
+LAST GREEN SHA: `6bc52a0` — five-leg fast lane green. Docker E2E last 8/8 at
 `f21f11c` (2026-07-21), WITH the sealed landing lane live — so activation
 disturbed no existing crossing. Tag compile/vet lanes (`docker_boundary`,
 `docker_e2e`, `test_fake_routing`) also clean at that SHA.
@@ -181,4 +181,4 @@ advancing to Phase 4.
   canonical landing row derived; use the assignment's frozen `target_ref` and
   refuse divergence. Details are in the Phase 3 ledger.
 
-NEXT: The Phase 3 completion lane (§2 above). The sealed landing lane is live and green in the fast suite but has never run a real container. Prove the realized landing mount table, RO alias/cover behavior, the network-none/uid/capability envelope, VirtioFS import durability, and the five ADR-017:758-760 crash cuts; carry the production E2E through `packaged -> approve -> merge -> archived`; then satisfy `docs/phase3-contract.md` §8 and record the image digest, architecture, capability probes, commands, and green evidence here before Phase 4.
+NEXT: Phase 3 completion lane. `mc/boundarydocker` now exists (it did not before) with four landing rows green: final-uid VirtioFS canary, nested-cover shadowing, applied-not-requested envelope inspect, and `--network none`. Row 7's class-divergence guard is green host-side. CONTINUE AT: the row-1 profile-save hole — `mc init` writes `sandbox_profiles.workspace_root` with no `boundary` validation at all, so the root anchoring landing's RW real-repository grant has never met the blocked floor; red-first, and decide what happens to an existing deployment whose root would now fail. Then landing's host-scope/no-`run.json` inversion, the four-row mount table against `docker inspect`, and the sealed production E2E through `packaged -> approve -> merge -> archived`. Details and the misreading to avoid: `docs/ledger/phase-3.md` (2026-07-21).
