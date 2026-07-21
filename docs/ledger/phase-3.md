@@ -3535,3 +3535,54 @@ The known onboard flake fired once during this session's full run and was
 confirmed as the documented one (exact message, then 8/8 green isolated). Its
 sighting is recorded in PROGRESS; the sealed landing work touches no onboarding
 path.
+
+## 2026-07-20 (later still) — the timing cases, and four knobs held by nothing
+
+The corpus gap analysis reached the timing cases, and the answer to "does
+`mergeSealedLanding` recheck anything at merge time?" was: only the SHA fence.
+
+**:683 is now closed.** Preflight's executable-config fence cannot see a merge
+driver inserted after it ran, and an in-tree `.gitattributes` naming that driver
+survives BOTH `core.attributesFile=/dev/null` (which replaces the attributes
+FILE, not the in-tree ones) and `GIT_ATTR_NOSYSTEM=1` (system scope only), while
+`-c merge.ours.driver=false` pins only `ours`. The merge stage now re-runs the
+executable-config and index-visibility fences itself. The residual TOCTOU is
+named at the call site rather than papered over: git reads config when it runs,
+so a writer racing the merge invocation still wins, and only config isolation
+would truly close it — which the merge cannot have, because it needs the
+repository's own config.
+
+Writing that test corrected it, twice over. Of three arms, two die under
+mutation (merge driver, index flag) and one SURVIVES: the clean filter is
+refused by git's own checkout failing, not by our fence. It is relabelled as
+measured-redundant, because an arm that reads as evidence for a fence it does
+not exercise is worse than no arm at all.
+
+**The finding that mattered more was not in the corpus.** Asking "is a test
+actually holding this?" of the merge stage's pinned knobs: deleting
+`merge.autoStash=false`, `--no-autostash`, `merge.renames=false` and
+`merge.directoryRenames=false` TOGETHER left the entire mc/verbs suite green.
+Four knobs, correct in code, reachable by no test. This is the third time this
+exact rot has appeared (6657541's fence that only ever tested the REFUSED
+direction, 83ed9e9's unpinned wiring hidden behind darwin's inert platform), and
+it is worth stating as a standing habit rather than a lesson: after pinning a
+behaviour with configuration, mutate the configuration away and confirm
+something dies. Correct-and-unreachable is the default state of a config knob,
+not an unusual one.
+
+autostash is the one with teeth, because it MOVES OPERATOR BYTES: with it
+enabled and a reviewed path dirty, git stashes the operator's uncommitted work,
+merges, and pops — a landing quietly rewriting the working tree as a side
+effect. Now pinned, mutation-confirmed. `merge.renames`/`merge.directoryRenames`
+remain unpinned; the recipe for closing them is in PROGRESS rather than left to
+be rediscovered, because it needs a bespoke fixture and a guessed one would
+reproduce the very problem being fixed.
+
+**Parked, not coded:** a conflicting merge leaves `MERGE_HEAD` and wedges the
+single landing slot (verified, not reasoned). Unwedging it means "abort only
+what we started" — a MUTATING failure path in a lane that has deliberately had
+none. That is an operator decision, and the current behaviour is pinned by a
+characterizing test so it cannot drift while the decision is outstanding.
+
+NEXT (outgoing): the corpus port — timing cases assessed, autostash pinned,
+rename inference still unpinned.

@@ -10,7 +10,7 @@ Access does NOT fix it — the failure precedes any policy lookup. Symptom:
 `stat` works, reads return `Operation not permitted`, git says
 `Unable to read current working directory`.
 
-LAST GREEN SHA: 71297ca — five-leg fast lane (Docker suite last 8/8 at 4a69d15; the operator pushes manually — decided 2026-07-14. Agents: do not push.)
+LAST GREEN SHA: 7364503 — five-leg fast lane (Docker suite last 8/8 at 4a69d15; the operator pushes manually — decided 2026-07-14. Agents: do not push.)
 
 PHASES PASSING: Phase 0 COMPLETE (S1–S8 all green, no fallback ADRs; only operator-leg deferrals remain); Phase 1 COMPLETE (1a substrate 172; 1b walking skeleton reviewed-and-fixed — fake-harness 43, agent-runner 13, runner/image 40, resident 42, dispatch + cmd/mc suites; Docker e2e PASS ×4 total); Phase 2 COMPLETE for every unparked acceptance line (domain/§18 surface, deterministic split-brain convergence, bounded honesty + five mutants, tagged dispatch/metamorphic/twin-spine lifecycle properties; the initiative-wave CLI is no longer isolated — ADR-020 landed 2026-07-14 and closed the last Phase 2 acceptance line)
 KNOWN-FAILING: `TestOnboardConcurrentFreshHomeNeverDeletesTheWinner` (mc/verbs),
@@ -899,11 +899,24 @@ Probes go in the session scratchpad, not /tmp (there is a deny rule on `rm`).
      failure path, which is an operator decision (see ## Parked). Today's
      behaviour is pinned by TestLandSealedLeavesAConflictedMergeInPlace, so it
      cannot drift while the decision is outstanding.
-   Still unassessed: :289/:328 (rename inference relocating a reviewed path
-   onto ignored operator bytes — note `merge.renames=false` and
-   `merge.directoryRenames=false` are already pinned at the merge, so this may
-   well be COVERED; check whether a test proves it) and :763 (merge autostash,
-   likewise pinned via `merge.autoStash=false` + `--no-autostash`).
+   - :763 (autostash) is PORTED (7364503), and asking "is a test holding this
+     knob?" was the right question: deleting `merge.autoStash=false`,
+     `--no-autostash`, `merge.renames=false` AND `merge.directoryRenames=false`
+     together left the whole mc/verbs suite GREEN. Four knobs pinned in code and
+     held by nothing — the 6657541 / 83ed9e9 rot again. autostash is now pinned
+     and mutation-confirmed (without it git really does stash the operator's
+     uncommitted work and merge).
+   - :289/:328 (rename inference) is the LAST OPEN ITEM and is a REAL GAP, not
+     a maybe: `merge.renames=false` / `merge.directoryRenames=false` are still
+     held by no test — the mutation above proves it. Recipe: build a repo where
+     the reviewed side RENAMES a tracked file and modifies it, while the target
+     modifies the ORIGINAL path. With rename detection on, git follows the
+     rename and merges the operator's edit onto the new path — relocating a
+     change onto a path nobody reviewed. With it off the same input is a
+     delete/modify conflict and the merge refuses. Assert the REFUSAL and that
+     the target is unmoved, then mutate the two knobs away and confirm the test
+     dies. It needs a bespoke fixture (mergeReady's sealed content is fixed),
+     which is the only reason it was not done in this session.
    N/A by construction — do NOT port: everything about cleanup, branch
    deletion, worktree removal, and receipts (:463, :506, :557, :590, :808,
    :846, :868, :897, :946, :965, :1026), plus :1011 (the `mc/task-*`
