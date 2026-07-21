@@ -4413,3 +4413,47 @@ the landing class sets `no-new-privileges` while the setuid class must NOT
 landing's own mount table is still governed by the shared blocked floor
 (`landingplan.go:11-22` says outright that neither `planMounts` nor
 `validatePrivateMountPlan` knows this table).
+
+## 2026-07-21 (cont.) — the docker_boundary suite exists, and four rows are green
+
+Created `mc/boundarydocker` (`//go:build docker_boundary`). It is the first file
+in the tree carrying that tag, so the §8 lane for it stops being vacuous here.
+
+Four landing rows green on Docker Desktop 29.4.0 / aarch64: the final-uid
+VirtioFS canary, the nested cover's actual shadowing, the applied-not-requested
+envelope inspect, and the `--network none` negative probe. The two canaries that
+were run as ad-hoc probes last entry are now regression evidence.
+
+The package's own reason for existing, stated in its doc comment so it is not
+diluted later: an argv assertion proves a bound was REQUESTED; only an inspect
+or an in-container probe proves it was APPLIED. The landing lane had argv-level
+tests for its whole envelope and no evidence the kernel agreed with any of it.
+
+**Fixture fact that cost a cycle and will cost another if forgotten.** Bind
+mountpoint fixtures must NOT live under `t.TempDir()`. A directory under
+`/var/folders` that has served as a nested bind mountpoint acquires a
+`com.apple.provenance` xattr from Docker Desktop and then resists
+`os.RemoveAll` with EPERM — so the test body passes and the harness fails the
+test during teardown, which reads exactly like a real failure. Under
+`/private/tmp` the same directory removes cleanly; emptying-then-`rmdir` works in
+both. Verified in both locations rather than assumed. `sharedTempDir` exists for
+this and says why. Deliberately NOT solved by ignoring the cleanup error, since
+that would hide a real residue problem if one ever appeared.
+
+Parked for the operator: `docs/phase3-contract.md` §3 requires a forbidden-env
+builder and a gateway with three egress modes, and NEITHER is implemented — not
+merely untested. There is no env builder in `mc/boundary`, and the only
+occurrences of "gateway" in the tree are refusal codes and control-descriptor
+plumbing. Every other §3 row has a real production owner. That is a scope
+question, not an implementation choice, so it is a one-line request under
+`## Parked` and the independent landing/envelope work continues meanwhile.
+
+NEXT (outgoing): two cheap host-side rows that need no Docker — the landing
+class sets `no-new-privileges` while the setuid class must NOT (a shared
+envelope builder would silently kill the setuid gate), and landing's own mount
+table is still governed by the shared blocked floor (`landingplan.go:11-22`
+states outright that neither `planMounts` nor `validatePrivateMountPlan` knows
+that table, so the sealed lane introduced a second validator row 1's named owner
+does not govern). Then the remaining Docker rows: landing's host-scope /
+no-`run.json` inversion, the realized four-row mount table against inspect, and
+the sealed production E2E through `packaged -> approve -> merge -> archived`.

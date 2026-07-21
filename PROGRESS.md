@@ -85,6 +85,16 @@ the approve landing fence so an immutable task assignment, not only
   operator. Instructions: `spikes/07-launchd-clock/RESULT.md`. All other S7
   sub-tests passed.
 
+- **Phase 3 scope: two §3 mechanisms appear unimplemented, not merely
+  untested.** `docs/phase3-contract.md` §3 requires a forbidden-env builder
+  (`mc/boundary` env builder + `doctor`) and a gateway with three egress modes
+  (resident-hosted gateway + Docker network layer). Neither exists: there is no
+  env builder in `mc/boundary`, and the only occurrences of "gateway" anywhere
+  are refusal codes and control-descriptor plumbing. Every other §3 row has a
+  production owner. DECISION NEEDED: are these in Phase 3, or deferred to a
+  later phase with the contract amended? Until answered, the landing and
+  envelope rows continue; they are independent.
+
 ## Current work: sealed landing
 
 The lane is LIVE as of `d91e388`: an approved, assignment-backed row is
