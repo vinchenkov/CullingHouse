@@ -287,6 +287,60 @@ func TestSealedMergeNeverAbortsAMergeItDidNotStart(t *testing.T) {
 	}
 }
 
+// THE HOLE THE REVIEWED-SHA GATE ALONE LEAVES, and the reason the abort matches
+// on the landing id as well.
+//
+// It is tempting to argue that `MERGE_HEAD == the reviewed SHA` proves the merge
+// is ours, because the reviewed commit entered this repository moments ago
+// through our own import. It does not. Stage (7) publishes that commit under a
+// NAME the operator can reach: `refs/heads/mc/task-<id>`, created by our own CAS.
+// An operator who runs `git merge mc/task-7` in the window between that ref
+// appearing and our merge completing produces a merge state whose MERGE_HEAD is
+// exactly the reviewed SHA — and a SHA-only gate would abort it, destroying
+// their half-resolved conflict.
+//
+// ADR-017:752-753 asks for more than a SHA: "Merge-in-progress files are
+// accepted or aborted only when they match THIS ACTION." The landing id in
+// MERGE_MSG is that match — git preserves the message verbatim through a
+// conflict, and an operator's own merge carries git's default message instead.
+func TestSealedMergeNeverAbortsAnOperatorMergeOfTheSameReviewedCommit(t *testing.T) {
+	repo, _, _, verified, branch := mergeReady(t)
+	g := landingGit{dir: repo}
+	// Stage (7): the CAS ref is what makes the reviewed commit reachable by name.
+	if err := createLandingRefCAS(g, branch, verified); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(repo, "README.md"), "operator\nconflicting\n")
+	srcGit(t, repo, "add", "-A")
+	srcGit(t, repo, "commit", "-qm", "operator edits the same reviewed path")
+	pre := srcGit(t, repo, "rev-parse", "refs/heads/main")
+
+	// The operator merges the task branch themselves, and it conflicts.
+	if _, err := gitOutput(repo, sourceGitEnv(), nil, "merge", branch); err == nil {
+		t.Fatal("fixture is invalid: the operator's own merge did not conflict")
+	}
+	if got := srcGit(t, repo, "rev-parse", "MERGE_HEAD"); got != verified {
+		t.Fatalf("fixture is invalid: MERGE_HEAD = %q, want the reviewed SHA %q", got, verified)
+	}
+	conflicted, err := os.ReadFile(filepath.Join(repo, "README.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := mergeSealedLanding(g, "main", verified, pre, "0011223344556677", 7); err == nil {
+		t.Fatal("the landing merged on top of the operator's merge")
+	}
+	if got := srcGit(t, repo, "rev-parse", "MERGE_HEAD"); got != verified {
+		t.Fatalf("the landing aborted the operator's own merge of the reviewed commit: MERGE_HEAD = %q", got)
+	}
+	if now := srcGit(t, repo, "rev-parse", "refs/heads/main"); now != pre {
+		t.Fatalf("the refused merge moved the target: %q", now)
+	}
+	if body, err := os.ReadFile(filepath.Join(repo, "README.md")); err != nil || string(body) != string(conflicted) {
+		t.Fatalf("the operator's half-resolved conflict was rewritten: %q (err %v)", body, err)
+	}
+}
+
 // Ported from legacy mc-land.test.ts:289,328, and it closes the last two of the
 // four knobs 7364503 found were held by nothing.
 //

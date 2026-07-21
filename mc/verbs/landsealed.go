@@ -672,6 +672,11 @@ func packObjectCount(pack []byte) (uint32, error) {
 const (
 	landingIdentityName  = "mission control"
 	landingIdentityEmail = "mc@mission-control.invalid"
+	// landingIDTrailer names the landing action inside the merge message. It is
+	// a constant precisely because the abort path MATCHES on it: were the writer
+	// and the matcher to spell it differently, the abort would silently stop
+	// recognising its own merges and start leaving residue forever.
+	landingIDTrailer = "MC-Landing-Id: "
 )
 
 // createLandingRefCAS creates `refs/heads/mc/task-<id>` at the reviewed commit,
@@ -758,7 +763,7 @@ func mergeSealedLanding(g landingGit, target, verifiedSHA, preMergeSHA, landingI
 	}
 
 	message := "Land task " + strconv.FormatInt(taskID, 10) + "\n\n" +
-		"MC-Landing-Id: " + landingID + "\n" +
+		landingIDTrailer + landingID + "\n" +
 		"MC-Landing-Task: task " + strconv.FormatInt(taskID, 10) + "\n" +
 		"MC-Landing-Verified-SHA: " + verifiedSHA + "\n" +
 		"MC-Landing-Target-Preimage: " + preMergeSHA + "\n"
@@ -794,7 +799,7 @@ func mergeSealedLanding(g landingGit, target, verifiedSHA, preMergeSHA, landingI
 		"GIT_COMMITTER_EMAIL="+landingIdentityEmail,
 	)
 	if _, err := gitOutput(g.dir, env, nil, args...); err != nil {
-		return abortOwnConflictedMerge(g, verifiedSHA, err)
+		return abortOwnConflictedMerge(g, verifiedSHA, landingID, err)
 	}
 	return nil
 }
@@ -807,14 +812,27 @@ func mergeSealedLanding(g landingGit, target, verifiedSHA, preMergeSHA, landingI
 // attempt trips the merge-in-flight fence and refuses, forever, until a human
 // intervenes. So the lane undoes the merge it started.
 //
-// THE GATE IS OWNERSHIP, and it is the entire safety argument. `MERGE_HEAD` is
-// only ours when it is the reviewed SHA — a commit that entered this repository
-// moments ago via our own import, and which no operator has any reason to be
-// merging. Preflight already refused a merge in flight before we began, so the
-// only other way a merge state can be here is an operator winning the race
-// after preflight passed; that state is theirs, possibly half-resolved by hand,
-// and it is left exactly as found. This is the one MUTATING failure path in a
-// lane that otherwise has none, which is why it is scoped this tightly.
+// THE GATE IS ACTION IDENTITY, and it is the entire safety argument.
+// ADR-017:752-753: "Merge-in-progress files are accepted or aborted only when
+// they match this action." Two facts have to agree before anything is undone:
+//
+//   - MERGE_HEAD is the reviewed SHA, and
+//   - MERGE_MSG carries THIS landing's id.
+//
+// The first alone is NOT sufficient, and believing it was is a hole this code
+// shipped with for one commit. Stage (7) publishes the reviewed commit under a
+// name the operator can reach — `refs/heads/mc/task-<id>`, created by our own
+// CAS — so an operator running `git merge mc/task-7` in the window before our
+// merge completes produces a MERGE_HEAD equal to the reviewed SHA. A SHA-only
+// gate would abort their half-resolved conflict. The landing id is what
+// distinguishes the two: git preserves our `-m` message verbatim through a
+// conflict, and an operator's merge carries git's default message instead.
+//
+// Preflight already refused a merge in flight before we began, so any merge
+// state here appeared after it — a race the operator won. This is the one
+// MUTATING failure path in a lane that otherwise has none, which is why it is
+// scoped this tightly, and why an unreadable or unrecognised message refuses to
+// abort rather than guessing.
 //
 // `merge --abort` is a `reset --merge`: it restores the merge's own paths and
 // preserves local changes outside them. The path-scoped dirty fence deliberately
@@ -824,7 +842,7 @@ func mergeSealedLanding(g landingGit, target, verifiedSHA, preMergeSHA, landingI
 // The cause is always reported. An abort — successful or not — never converts a
 // failed landing into a quiet one, and a FAILED abort is louder still, because
 // then the residue really is there and the operator needs to know which.
-func abortOwnConflictedMerge(g landingGit, verifiedSHA string, cause error) error {
+func abortOwnConflictedMerge(g landingGit, verifiedSHA, landingID string, cause error) error {
 	head, err := g.out("rev-parse", "--verify", "-q", "MERGE_HEAD")
 	if err != nil || head == "" {
 		// The merge failed before recording any merge state — a refused
@@ -835,6 +853,12 @@ func abortOwnConflictedMerge(g landingGit, verifiedSHA string, cause error) erro
 	if head != verifiedSHA {
 		return Domainf("landing merge failed: %v; a merge of %s is in progress and is not this landing's %s, so it was left untouched",
 			cause, head, verifiedSHA)
+	}
+	// Same commit, but is it OUR merge of it? Only the message can say.
+	message, msgErr := os.ReadFile(filepath.Join(gitDirOf(g, g.dir), "MERGE_MSG"))
+	if msgErr != nil || !strings.Contains(string(message), landingIDTrailer+landingID) {
+		return Domainf("landing merge failed: %v; a merge of the reviewed commit %s is in progress but does not carry landing %s, so it was left untouched",
+			cause, head, landingID)
 	}
 	if _, abortErr := g.run("merge", "--abort"); abortErr != nil {
 		return Domainf("landing merge failed: %v; and aborting its own conflicted merge failed too, so the merge state is still present: %v",
