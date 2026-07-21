@@ -4509,3 +4509,55 @@ most valuable remaining non-Docker row and it is not landing-specific. Then the
 remaining Docker rows: landing's host-scope / no-`run.json` inversion, the
 realized four-row mount table against `docker inspect`, and the sealed
 production E2E through `packaged -> approve -> merge -> archived`.
+
+## 2026-07-21 (cont.) — the row-1 hole, correctly bounded and closed
+
+**Correction to the previous entry.** It said the workspace root "has never been
+checked against the shipped blocked-pattern floor at any point in its life".
+That is wrong and was written without checking the agent plane. `planMounts`
+DOES apply the floor: `in.Blocked.Rejects(id.RawClean, id.Canonical)` at
+`mountplan.go:336`, and the policy is passed into `Authorize` at `:353`. The
+agent plane has always been covered.
+
+The real hole was narrower and sharper than the overstatement, and worth stating
+precisely because the precise version is the one that explains WHY it matters:
+
+- Agent plane: floor applied at dispatch. Covered.
+- Landing plane: `resolveLandingRoots` applied no `BlockPolicy` at all.
+- `mc init`: writes `sandbox_profiles.workspace_root` with no boundary call
+  (`grep 'boundary\.' init.go` is empty), and there is no profile-save verb — so
+  nothing vets the path at registration time either.
+
+Which means the asymmetry ran exactly backwards. Landing binds "the only grant
+in the system that gets a real Worksource repository RW, intentionally including
+its primary checkout" (ADR-017:699) — the STRONGEST grant in the system — and it
+had the WEAKEST source check. A Worksource registered under, say, a `secrets/`
+or `.ssh/` component would be refused for every agent spawn and still bound RW
+into a landing container.
+
+Closed by applying the zero-value `BlockPolicy` in `resolveLandingRoots`,
+matching `mountattest.go:876`: the shipped patterns are always evaluated, and a
+landing has no operator extension of its own to honor. Red-first across four
+blocked components, with a paired accept test — without that, a rejection bug
+that refused every Worksource would have read as a passing fence.
+
+Still open and deliberately not fixed here: `mc init` performs no boundary
+validation of `workspace_root`. That is now defence-in-depth rather than the
+only line, since both planes check at use time, and changing it is a real
+behaviour change for existing deployments whose registered root would newly
+fail. It belongs to the install/onboarding slice already named under "Known
+later obligations".
+
+The lesson worth keeping: the gap analysis proposed a row-1 test that would have
+re-litigated a REJECTED design (teaching `planMounts` about the `/repo` plane),
+and the previous entry then overstated the hole in the other direction. Both
+were fixed by reading the actual call sites rather than reasoning from the
+contract's prose. Check which plane a claim is about before writing it down.
+
+NEXT (outgoing): the remaining Docker rows — landing's host-scope /
+no-`run.json` inversion (`mc __land-sealed` calls `RequireHostScope`, and the
+landing container deliberately carries no `run.json`, so its security argument
+is the INVERSE of every other class: absent run.json means trusted; nothing
+proves that holds inside the image, or that a run.json cannot be injected), the
+realized four-row mount table against `docker inspect`, and the sealed
+production E2E through `packaged -> approve -> merge -> archived`.
