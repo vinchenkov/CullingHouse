@@ -10,7 +10,7 @@ Access does NOT fix it — the failure precedes any policy lookup. Symptom:
 `stat` works, reads return `Operation not permitted`, git says
 `Unable to read current working directory`.
 
-LAST GREEN SHA: 4757df2 — five-leg fast lane (Docker suite last 8/8 at 4a69d15; the operator pushes manually — decided 2026-07-14. Agents: do not push.)
+LAST GREEN SHA: 71297ca — five-leg fast lane (Docker suite last 8/8 at 4a69d15; the operator pushes manually — decided 2026-07-14. Agents: do not push.)
 
 PHASES PASSING: Phase 0 COMPLETE (S1–S8 all green, no fallback ADRs; only operator-leg deferrals remain); Phase 1 COMPLETE (1a substrate 172; 1b walking skeleton reviewed-and-fixed — fake-harness 43, agent-runner 13, runner/image 40, resident 42, dispatch + cmd/mc suites; Docker e2e PASS ×4 total); Phase 2 COMPLETE for every unparked acceptance line (domain/§18 surface, deterministic split-brain convergence, bounded honesty + five mutants, tagged dispatch/metamorphic/twin-spine lifecycle properties; the initiative-wave CLI is no longer isolated — ADR-020 landed 2026-07-14 and closed the last Phase 2 acceptance line)
 KNOWN-FAILING: `TestOnboardConcurrentFreshHomeNeverDeletesTheWinner` (mc/verbs),
@@ -678,6 +678,21 @@ deleted, not struck through. History is in `docs/ledger/`.
   agent cannot sleep the machine it runs on). Instructions in
   `spikes/07-launchd-clock/RESULT.md`. All other S7 sub-tests passed.
 
+- **May the sealed lander mutate on a failure path?** A conflicting
+  `merge --no-ff` leaves `MERGE_HEAD` behind and the next attempt refuses at the
+  operator-merge-in-flight fence, so one conflicting landing wedges the single
+  landing slot until a human clears the checkout. Verified, not reasoned
+  (`TestLandSealedLeavesAConflictedMergeInPlace`); conflicts are reachable
+  because the target may advance from the frozen base to the pre-merge SHA
+  touching the same reviewed paths. Legacy's answer is "abort only what we
+  started" (`mc-land.test.ts:368`): on failure, abort iff `MERGE_HEAD` is our
+  verified SHA. That unwedges the lane and cannot touch an operator's own merge
+  — but it adds a MUTATING failure path to a lane that has deliberately had
+  none. Decision request: allow the scoped self-abort (then it gets its own
+  slice + adversarial review), or keep refusing and treat a wedged lane as an
+  operator-visible event needing manual clearing? Full diagnosis in
+  IMPLEMENTATION-NOTES.md (2026-07-20).
+
 The completion-seal Docker line is closed: D1 deployment-mirror, D5 first-task
 setup, D6 accepted-seal rebuild, D6 image completion-wrapper, the carrier/unit +
 legacy-route crossings, AND the production resident Worker seal (dace2c6) are
@@ -869,14 +884,26 @@ Probes go in the session scratchpad, not /tmp (there is a deny rule on `rm`).
      flight), :827 (core.worktree), :919 (refs/replace — defended on BOTH
      sides: landsealed_test.go:107 wrapper + landsealedstore_test.go:93
      sole-ref), :782 (hooks/hostile identity), :738/:750 (mergeOptions).
-   STILL TO ASSESS, and where the remaining value is concentrated — the
-   TIMING cases, which concern hostile state introduced BETWEEN preflight and
-   merge: :683 (executable merge config inserted after preflight) and :413
-   (an operator merge won after preflight). Read `mergeSealedLanding` and
-   answer honestly whether the lane re-checks anything at merge time beyond
-   the SHA fence; if it does not, that is a GAP with a real attack. Also
-   unassessed: :289/:328 (rename inference relocating a reviewed path onto
-   ignored operator bytes) and :763 (merge autostash).
+   TIMING CASES ASSESSED (71297ca), and the answer is that `mergeSealedLanding`
+   rechecks ONLY the SHA fence:
+   - :683 is a REAL GAP, not yet fixed. Executable config is not rechecked at
+     merge time, and an in-tree `.gitattributes` naming a driver is NOT
+     suppressed by `core.attributesFile=/dev/null` or `GIT_ATTR_NOSYSTEM`
+     (`-c merge.ours.driver=false` pins only `ours`). Repair: re-run the
+     executable-config and index-visibility fences immediately before the
+     merge, mirroring what ADR-017:750 already does for the SHA. Cheap;
+     narrows the window without pretending to close it. DO THIS ONE — it is
+     small, additive, and fail-closed.
+   - :413/:368 is PARKED, not a coding task: a conflicting merge leaves
+     MERGE_HEAD and wedges the single landing slot. Unwedging needs a MUTATING
+     failure path, which is an operator decision (see ## Parked). Today's
+     behaviour is pinned by TestLandSealedLeavesAConflictedMergeInPlace, so it
+     cannot drift while the decision is outstanding.
+   Still unassessed: :289/:328 (rename inference relocating a reviewed path
+   onto ignored operator bytes — note `merge.renames=false` and
+   `merge.directoryRenames=false` are already pinned at the merge, so this may
+   well be COVERED; check whether a test proves it) and :763 (merge autostash,
+   likewise pinned via `merge.autoStash=false` + `--no-autostash`).
    N/A by construction — do NOT port: everything about cleanup, branch
    deletion, worktree removal, and receipts (:463, :506, :557, :590, :808,
    :846, :868, :897, :946, :965, :1026), plus :1011 (the `mc/task-*`
