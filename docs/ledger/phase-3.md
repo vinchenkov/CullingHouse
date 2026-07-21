@@ -4561,3 +4561,63 @@ is the INVERSE of every other class: absent run.json means trusted; nothing
 proves that holds inside the image, or that a run.json cannot be injected), the
 realized four-row mount table against `docker inspect`, and the sealed
 production E2E through `packaged -> approve -> merge -> archived`.
+
+## 2026-07-21 (cont.) — the production image did not exist either
+
+Row 8's landing scope inversion is green, and closing it required first building
+an artifact §8 names and the tree did not have.
+
+**Third structural §8 gap this session.** §8 requires "the production image
+contains no fake route and has its own untagged build". The ONLY image in the
+tree was `mc-fake-e2e`, built with `-tags test_fake_routing`
+(`runner/image/build.sh:10`). So the row-7 setuid requirement — "under the real
+untagged image and real production `mc`" — named an image that did not exist,
+as did every other production-image claim. Added `build-prod.sh` and an
+`MC_BIN` build arg, so the two images differ in exactly one thing: the tag on
+the mc binary.
+
+Evidence for §8's record:
+- production image `mc-prod`: `sha256:8f12cc425a6d8f37e364b1627bb0e349a7fdbccf59035a25f58a57224a044a02`
+- e2e image `mc-fake-e2e`: `sha256:04ab037a4039b3f4d7c546e8c9075c6b1dc93b187e3fdac281dc72de1ac57742`
+- architecture: `arm64/linux` (native, no emulation, no --platform)
+- Docker Desktop 29.4.0, aarch64
+
+**A vacuous test caught before it shipped, and worth recording as a pattern.**
+The first draft of the fake-route proof grepped the baked binary for a
+`fake-decorrelation` symbol. It returned 0 for BOTH images, so it would have
+passed for the fake build too — a green test proving nothing, of exactly the
+kind this session has now hit three times. The real discriminator is behavioural
+and self-validating:
+- production: `invalid routing.md ... unresolved binding "fake"` — it refuses
+  the binding, which is what denies fake spawn and mount authority.
+- fake image: parses those same bindings and fails FURTHER ON, at
+  `missing role "homie"`.
+The control arm asserts the fake image does NOT reject the binding, so a fixture
+malformed for an unrelated reason cannot make the production assertion pass.
+
+**Row 8's inversion, now proved inside an image for the first time.** Every other
+container class proves authority by the PRESENCE of `/mc/run.json`, which pins
+the tier/role/run it may act as. The landing container's argument is the exact
+inverse: it carries no run.json, `LoadIdentity` returns `(nil, nil)`
+(`verbs.go:187-199`), and `RequireHostScope` passes only for nil. Three
+directions pinned: no run.json ships in the image, host scope is actually
+granted (a scope refusal would mean the landing class cannot execute at all),
+and an injected run.json REVOKES it rather than being ignored.
+
+**More evidence for the parked scope question.** §8 requires "`doctor` has no
+Phase-3-owned deferred finding". Running `mc doctor` in the production image
+returns three Phase-3-owned deferrals, verbatim:
+- `container-runtime`: "capability probe (setuid gate, helper exec) runs in
+  Phase 3 (§16.4, §17)"
+- `gateway`: "egress gateway health probe runs in Phase 3 (§11.4, §17)"
+- `runtime-auth`: "per-binding runtime-auth health runs in Phase 3/5"
+(`supervision` is Phase 5 and correctly deferred.) So `doctor` itself agrees
+that the gateway is Phase-3-owned and unbuilt — which is the parked question,
+now with the tool's own words behind it rather than my inference from grep.
+
+NEXT (outgoing): the realized four-row landing mount table against
+`docker inspect` (the argv is pinned host-side but the applied table is not),
+then the sealed production E2E through `packaged -> approve -> merge ->
+archived`. The three §8 structural gaps found so far — no `docker_boundary`
+suite, no production image, no gateway/forbidden-env — are all recorded; the
+first two are now closed.
