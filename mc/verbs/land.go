@@ -35,7 +35,19 @@ func LandReport(db *sql.DB, id *RunIdentity, task int64, status, reason string) 
 			return Domainf("task %d is not approved; nothing was landing (§7)", task)
 		}
 		if !branch.Valid || branch.String == "" {
-			return Domainf("task %d has no branch; nothing was landing (§7)", task)
+			// The sealed lane's branch home is the immutable assignment, not
+			// `tasks.branch` — which is empty for every assigned row by
+			// construction, because its only writer is closed to them. So
+			// branchlessness alone no longer means "nothing was landing"; it
+			// means that only for a row with no assignment either.
+			var assigned int
+			if err := q.QueryRowContext(ctx,
+				`SELECT count(*) FROM task_assignments WHERE task_id = ?`, task).Scan(&assigned); err != nil {
+				return err
+			}
+			if assigned == 0 {
+				return Domainf("task %d has no branch and no closure assignment; nothing was landing (§7)", task)
+			}
 		}
 		if wasArchived {
 			if status == "success" {

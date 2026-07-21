@@ -7,6 +7,7 @@ package verbs
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -940,5 +941,72 @@ func TestBrokenRoutingNeverSuppressesASealedLanding(t *testing.T) {
 	}
 	if spawnAttested.refusal == nil {
 		t.Fatal("the fixture's routing.md parsed after all; the landing arm above proved nothing")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// `mc land report` and the second branch home.
+//
+// The fence was "no branch ⇒ nothing was landing". That is still true for an
+// unassigned row, but `tasks.branch` is empty for every SEALED row by
+// construction — its only writer is closed to assigned tasks, which is exactly
+// what makes the two lanes partition. So the fence had to widen to "no branch
+// AND no assignment", or the sealed lane could dispatch a landing that could
+// never report its outcome.
+// ---------------------------------------------------------------------------
+
+func dlsReportableTask(t *testing.T, db *sql.DB, id int64, assigned bool) {
+	t.Helper()
+	decided := dvOld.Add(time.Hour)
+	task := dvTask(id, dispatch.ScopeTask, dispatch.StatusPackaged, 0)
+	task.TargetRef, task.VerifiedSHA = "main", strings.Repeat("3", 40)
+	if !assigned {
+		task.Branch = "mc/task-legacy"
+	}
+	fixture := task
+	fixture.Decision, fixture.DecidedAt = "", nil
+	dvInsertTask(t, db, fixture)
+	if assigned {
+		dvExec(t, db, `INSERT INTO task_assignments
+			(task_id, target_ref, branch, task_root_key, object_format, base_sha, local_repo_uuid, closure_digest)
+			VALUES (?, 'main', ?, '.mission-control/tasks/task-x', 'sha1', ?, ?, ?)`,
+			id, fmt.Sprintf("mc/task-%d", id), strings.Repeat("c", 40),
+			"0f9c1e2a-3b4c-4d5e-8f60-112233445566", strings.Repeat("d", 64))
+	}
+	dvExec(t, db, `INSERT INTO review_packets (task_id, created_at) VALUES (?, ?)`, id, dvOld.Format(spineTime))
+	dvExec(t, db, `UPDATE tasks SET decision='approved', decided_at=? WHERE id=?`, decided.Format(spineTime), id)
+}
+
+func TestLandReportAcceptsAnAssignmentBackedRow(t *testing.T) {
+	db := dvSpine(t)
+	dlsReportableTask(t, db, 1, true)
+
+	if _, err := LandReport(db, nil, 1, "success", ""); err != nil {
+		t.Fatalf("land report over an assignment-backed row: %v — the sealed lane could dispatch a landing that can never report its outcome", err)
+	}
+	var archived int
+	if err := db.QueryRow(`SELECT archived FROM tasks WHERE id = 1`).Scan(&archived); err != nil {
+		t.Fatal(err)
+	}
+	if archived != 1 {
+		t.Fatal("a successful sealed landing did not archive its task")
+	}
+}
+
+func TestLandReportStillRefusesABranchlessUnassignedRow(t *testing.T) {
+	// The widening must not become "anything approved can report a landing".
+	// An artifact-plane deliverable has no branch and no assignment; approve
+	// archives it synchronously and no land effect ever exists for it.
+	db := dvSpine(t)
+	decided := dvOld.Add(time.Hour)
+	task := dvTask(1, dispatch.ScopeTask, dispatch.StatusPackaged, 0)
+	fixture := task
+	fixture.Decision, fixture.DecidedAt = "", nil
+	dvInsertTask(t, db, fixture)
+	dvExec(t, db, `INSERT INTO review_packets (task_id, created_at) VALUES (1, ?)`, dvOld.Format(spineTime))
+	dvExec(t, db, `UPDATE tasks SET decision='approved', decided_at=? WHERE id=1`, decided.Format(spineTime))
+
+	if _, err := LandReport(db, nil, 1, "success", ""); err == nil {
+		t.Fatal("a branchless, unassigned row reported a landing it never had")
 	}
 }
