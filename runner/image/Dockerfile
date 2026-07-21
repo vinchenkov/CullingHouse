@@ -50,7 +50,12 @@ RUN groupadd --gid 10001 mc-completion \
  && useradd --uid 10002 --gid 10002 --no-create-home --shell /usr/sbin/nologin mc-model \
  && install -d -o 10001 -g 10001 -m 0700 /mc/private \
  && install -d -o 10001 -g 10001 -m 0711 /usr/local/libexec
-COPY mc /usr/local/libexec/mc-real
+# MC_BIN selects WHICH mc binary is baked, and it is the only difference
+# between the fake-route e2e image and the production image (contract §8:
+# "the production image contains no fake route and has its own untagged
+# build"). Defaulting to `mc` keeps the existing e2e build unchanged.
+ARG MC_BIN=mc
+COPY ${MC_BIN} /usr/local/libexec/mc-real
 COPY mc-dispatch /usr/local/bin/mc
 COPY mc-complete /usr/local/libexec/mc-complete
 COPY mc-land /usr/local/bin/mc-land

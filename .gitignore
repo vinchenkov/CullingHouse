@@ -19,3 +19,6 @@ spikes/01-setuid-gate/probe/mcprobe
 
 # OS noise
 .DS_Store
+
+# build-prod.sh output (contract §8 production image binary)
+runner/image/mc-prod-bin
