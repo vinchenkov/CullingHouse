@@ -796,3 +796,31 @@ func TestLandingRefusalIsNeverCandidateClass(t *testing.T) {
 		t.Fatalf("the subjectless refusal candidate named a subject %v; it can reach domain.Block", got)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// The private (Darwin broker/helper) frame.
+//
+// It has no landing carrier yet, and there is no safe fallback: serializing a
+// landing through the candidate frame would hand the far side a candidate whose
+// Spawn is nil. This is also the standing guard on the lane's whole safety
+// argument — if a future edit ever routes a landing into preparedCandidate,
+// this is where it should fail first and loudly.
+// ---------------------------------------------------------------------------
+
+func TestPrivateFrameRefusesALandingCandidate(t *testing.T) {
+	prepared := dlsPrepare(t, dlsTask(), dlsMountState())
+	if prepared.candidate != nil {
+		t.Fatal("a prepared landing occupied the spawn candidate slot")
+	}
+	if err := privateFrameRefusesLanding(prepared); err == nil {
+		t.Fatal("the private frame would serialize a landing as a candidate, handing the far side a candidate whose Spawn is nil")
+	}
+
+	// ...and it must not refuse an ordinary spawn, which is the whole of the
+	// frame's existing traffic.
+	if err := privateFrameRefusesLanding(preparedDispatch{
+		candidate: &preparedCandidate{spawn: &dispatch.Spawn{Role: dispatch.RoleWorker}},
+	}); err != nil {
+		t.Fatalf("the landing guard refused a spawn candidate: %v", err)
+	}
+}

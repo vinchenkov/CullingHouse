@@ -165,9 +165,30 @@ func DispatchPreparePrivate(ctx context.Context, q Q, req PrivateDispatchPrepare
 		response.Final = &rawFinal
 		return response, nil
 	}
+	if err := privateFrameRefusesLanding(prepared); err != nil {
+		return PrivateDispatchPrepareResponse{}, err
+	}
 	response.Kind = "candidate"
 	response.Candidate = privateCandidateFromPrepared(prepared.candidate)
 	return response, nil
+}
+
+// privateFrameRefusesLanding is the fail-closed guard on the Darwin
+// broker/helper split, which has no landing carrier yet.
+//
+// There is no safe fallback here. privateCandidateFromPrepared is only ever
+// handed prepared.candidate, which a landing leaves nil, so serializing one
+// through the candidate frame would hand the far side a candidate whose Spawn
+// is nil — and every consumer on that side dereferences it unguarded.
+//
+// It is also the standing guard on this lane's whole safety argument: if a
+// future edit ever routes a landing into preparedCandidate, this is where it
+// should fail first and loudly.
+func privateFrameRefusesLanding(prepared preparedDispatch) error {
+	if prepared.landing != nil {
+		return Domainf("dispatch: the private frame does not yet carry a landing candidate")
+	}
+	return nil
 }
 
 func DispatchAttestPrivate(home string, prepared PrivateDispatchPrepareResponse) (PrivateDispatchCommitRequest, error) {

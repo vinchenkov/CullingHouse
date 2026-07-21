@@ -63,6 +63,9 @@ func dispatchWithIdentity(db *sql.DB, identity dispatchProtocolIdentity) (any, e
 	if prepared.final != nil {
 		return prepared.final, nil
 	}
+	if prepared.landing != nil {
+		return dispatchLandingRound(db, home, prepared)
+	}
 
 	attested, err := dispatchAttest(home, prepared)
 	if err != nil {
@@ -74,6 +77,29 @@ func dispatchWithIdentity(db *sql.DB, identity dispatchProtocolIdentity) (any, e
 	if err := underDispatchLock(db, func(ctx context.Context, q Q) error {
 		var e error
 		effect, e = dispatchCommit(ctx, q, prepared, attested)
+		return e
+	}); err != nil {
+		return nil, err
+	}
+	return effect, nil
+}
+
+// dispatchLandingRound is the sealed lane's attest/commit half, mirroring the
+// spawn round above with the landing's own legs. It is a separate function
+// rather than three conditionals inside one round so that the two lanes cannot
+// half-mix: there is no arrangement of flags that attests a landing and commits
+// it as a spawn.
+func dispatchLandingRound(db *sql.DB, home string, prepared preparedDispatch) (map[string]any, error) {
+	attested, err := dispatchAttestLanding(home, prepared)
+	if err != nil {
+		return nil, err
+	}
+	attested = dispatchRecheckAttestation(home, prepared, attested)
+
+	var effect map[string]any
+	if err := underDispatchLock(db, func(ctx context.Context, q Q) error {
+		var e error
+		effect, e = dispatchCommitLanding(ctx, q, prepared, attested)
 		return e
 	}); err != nil {
 		return nil, err
