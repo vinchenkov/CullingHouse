@@ -4098,3 +4098,65 @@ No operator input is required: the one obligation that would have needed sign-of
 NEXT (outgoing): execute micro-steps 1-15 in order, TDD, committing each green.
 Do NOT run step 16 until step 15 is green — the absence gate is what keeps a
 crashed prior attempt from becoming a durable blocked row.
+
+## 2026-07-20 (cont.) — step 3 micro-steps 1-6: the lane's spine, still inert
+
+Six of the fifteen inert micro-steps. Nothing selects a sealed row, so every
+function below is reachable only from its own tests.
+
+`preparedDispatch` now has its third variant and the comment on it is a
+directive, not description: DO NOT simplify `landing` into `preparedCandidate`.
+That edit is the one thing that would re-arm the seam's dozens of unguarded
+`cand.spawn` dereferences with a nil Spawn, and it is exactly the edit a future
+reader tidying up "two nearly-identical candidate types" would make.
+
+Three things came out differently than the plan wrote them, all recorded here so
+the next session does not read the plan and expect the code to match it:
+
+- **Prepare is split** into `dispatchLandingPrepare` (loads mount state) and
+  `landingPrepareFromState` (pure). The plan had one function. The reason is
+  testability: exercising the freezing behaviour through the DB would have
+  required standing up an accepted-seal spine fixture, and the loading half is
+  already pinned by `TestLoadDispatchLandingMountStateMatchesSubjectSpawn`. The
+  part with teeth — that every one of the tuple's members moves the preparation
+  token — is now tested field by field over plain values.
+- **`landingTupleProjection` returns an error.** The plan had it return the
+  struct alone. Neither missing half has a safe default: with no assignment
+  there is no branch, base, object format or repo identity to land against, and
+  with no accepted seal the landing id loses its approved-run input, so an id
+  derived over empty strings would be IDENTICAL for every task in the
+  deployment — colliding both the container name and the `MERGE_MSG` trailer the
+  abort path matches on. Defaulting there would have been a silent collision,
+  not a loud refusal.
+- **The role-blindness of `loadDispatchMountState` is now asserted**, not
+  assumed. The landing wrapper synthesizes a role-less `dispatch.Spawn`, which is
+  only honest while the loader ignores `sp.Role` entirely. That is true today
+  (it reads `sp.SubjectID` at six sites and `sp.Role` at none), and
+  `TestLoadDispatchMountStateIsRoleBlind` fails loudly if it stops being true.
+  The disposition if it ever does: narrow the loader to `*int64`, do not teach
+  the wrapper to lie.
+
+The landing id moved from attest to prepare, and `landingid.go`'s header was
+corrected in the same commit rather than left contradicting the code. The
+earlier siting argued from availability; ADR-016:371 names the id as a member of
+the candidate TUPLE, and a tuple member must be inside the preparation token or
+commit cannot detect its drift.
+
+Also worth not re-deriving: `landingWorkspaceRoot` is its own micro-step and its
+own fence because `captureLandingPlan` resolves every host anchor RELATIVE to
+the root it is handed. An empty root resolves them against the process working
+directory — the single place in this lane where a landing could interrogate, and
+then write into, a repository that is not the operator's. Letting a downstream
+`Lstat` fail is not an acceptable substitute, because by then the probed paths
+are real host paths.
+
+Steps done: 1 canonical sibling (omitempty, golden vectors byte-identical);
+2 `loadDispatchLandingMountState`; 3 `landingWorkspaceRoot`;
+4 `attestDeploymentPreamble` (pure extraction); 5 the projections, the frozen
+tuple, and `sealedLandingSubject`; 6 `dispatchLandingPrepare`.
+
+NEXT (outgoing): micro-step 7, `dispatchAttestLanding` — routing-free, health
+refusals via `refusal.CodeProjectionUnavailable`, plan literal
+`{Version: 1, Entries: []{}, Landing: &plan}` because `validatePrivateMountPlan`
+hard-refuses a zero Version or a nil Entries. Then 8-15, then the switch. Do NOT
+run step 16 before 15 is green.
