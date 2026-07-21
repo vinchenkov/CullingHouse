@@ -686,3 +686,41 @@ date/title; delete a line here when its slice lands.
   plus `MERGE_MSG` is the whole of the available evidence. An unreadable or
   unrecognised message refuses to abort rather than guessing, so the failure
   direction is residue left behind, never an operator's merge destroyed.
+
+## 2026-07-20 (review disposition) — the self-abort's adversarial review
+
+Six defects were raised against the abort slice. Three were fixed (`2d2cffb`),
+two are recorded below as accepted residuals, and one was REFUTED by
+measurement. The refuted one matters most, because it was rated the most severe
+and would otherwise be re-raised.
+
+- REFUTED — "unrelated STAGED operator work is destroyed by the abort". The
+  mechanism is real in isolation: `merge --abort` is a `reset --merge`, which
+  resets the whole index to HEAD, so a staged unrelated file whose worktree and
+  index agree is reverted with its content recoverable only as a dangling blob.
+  The premise that it is reachable here is not. `git merge` REFUSES TO START
+  with anything staged — "Your local changes to the following files would be
+  overwritten by merge", exit 2, no MERGE_HEAD written — so a merge state cannot
+  coexist with pre-existing staged work, and the abort path is never entered.
+  Measured directly, twice, rather than argued. The same measurement refutes the
+  companion claim that the abort would FAIL and wedge the slot when a file
+  differs from both HEAD and the index: that merge never starts either.
+  The reasoning error is worth naming: the review tested `reset --merge`
+  standalone and inferred reachability from the path-scoped dirty fence
+  permitting unrelated work. The fence does permit it — but git's own
+  clean-index precondition, not our fence, is what excludes it here.
+- ACCEPTED RESIDUAL — an operator who stages something in the window between
+  our merge failing and the abort running would have it reverted. Milliseconds
+  wide, and closing it costs the abort a reviewed-path set it does not have, for
+  a guard no reachable test could exercise. Named, not guarded.
+- ACCEPTED RESIDUAL — TOCTOU between reading MERGE_HEAD and running the abort:
+  an operator concluding our merge and starting their own in between would have
+  theirs aborted. Same class as the merge-time config recheck's documented
+  residual, and closing it needs a lock this lane does not hold.
+- DEFERRED, and it belongs to an already-owed decision — callers cannot
+  distinguish "aborted, slot free, retry safe" from "foreign merge, wedged, do
+  not retry" from "abort failed, residue present". All three are one
+  `*DomainError` carrying prose, and the repo's own test substring-matches
+  "abort" to tell them apart. This is the landing failure taxonomy already
+  listed as unresolved in PROGRESS; the three post-conditions above are the
+  concrete cases it must name. Do not invent the taxonomy inside the abort.
