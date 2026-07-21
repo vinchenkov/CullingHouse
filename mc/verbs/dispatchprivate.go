@@ -471,6 +471,7 @@ func validatePrivateMountPlan(plan *PrivateDispatchMountPlan) error {
 		}
 		if step.TaskID < 1 || step.TaskID > maxJavaScriptSafeInteger ||
 			!validLowercaseHex(step.LandingID, 16) ||
+			!validStructuralText(step.ApprovedRunID, maxPrivateScalarBytes) || step.ApprovedRunID == "" ||
 			step.Branch != taskAssignmentBranch(step.TaskID) ||
 			!validLandingTargetBranch(step.TargetRef) || step.TargetRef == step.Branch ||
 			(step.ObjectFormat != "sha1" && step.ObjectFormat != "sha256") ||

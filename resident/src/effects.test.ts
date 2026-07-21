@@ -4,9 +4,9 @@
 // `mc land report` handoff, exact-name reap, and idle/reenter as no-ops.
 
 import { describe, expect, test } from "bun:test";
-import { applyEffect, requireAcceptedSealProducerAbsent } from "./effects";
+import { applyEffect, requireAcceptedSealProducerAbsent, runSealedLanding } from "./effects";
 import { fail, makeRig, ok, testConfig } from "./test-helpers";
-import type { Effect } from "./types";
+import type { Effect, MountPlan } from "./types";
 
 const workspaceEntry = {
   access: "rw" as const,
@@ -1190,4 +1190,110 @@ describe("config sanity", () => {
       expect(testConfig.roleBehaviors[role]).toBeDefined();
     }
   });
+});
+
+// The SEALED landing class (ADR-017:697-702), sibling of the legacy land
+// effect above. Exercised DIRECTLY rather than through applyEffect, because no
+// effect arm dispatches it yet — the seam that would is the activation step
+// after this one. Testing it here pins the container envelope now, so the
+// wiring step changes routing alone.
+describe("sealed landing", () => {
+	const landingStep: NonNullable<MountPlan["landing"]> = {
+		approved_run_id: "a1b2c3d4e5f60718",
+		branch: "mc/task-42",
+		closure_digest: "d".repeat(64),
+		cover_dest: "/repo/source/.mission-control",
+		landing_id: "0011223344556677",
+		local_repo_uuid: "0f9c1e2a-3b4c-4d5e-8f60-112233445566",
+		object_format: "sha1",
+		pinned_base_sha: "c".repeat(40),
+		pre_merge_sha: "b".repeat(40),
+		target_ref: "main",
+		task_id: 42,
+		task_root: {
+			canonical: "/host/workspace/.mission-control/tasks/task-42",
+			device: "16777232", inode: "9001", owner_uid: 501,
+		},
+		verified_sha: "a".repeat(40),
+		worksource_root: {
+			canonical: "/host/workspace", device: "16777232", inode: "42", owner_uid: 501,
+		},
+	};
+
+	test("runs the landing class envelope over the four-row table, then reports success", async () => {
+		const rig = makeRig();
+		rig.docker.enqueue(ok(""));
+		rig.mc.enqueue(ok("{}"));
+		await runSealedLanding(landingStep, rig.deps);
+		expect(rig.docker.calls).toEqual([[
+			"run", "--rm",
+			"--name", "mc-landing-0011223344556677",
+			"--network", "none",
+			"--label", "mc-managed=true",
+			"--label", "mc-component=landing",
+			"--label", "mc-landing-id=0011223344556677",
+			"--label", "mc-task-id=42",
+			"--label", "mc-approved-run-id=a1b2c3d4e5f60718",
+			"--user", "10002:10002",
+			"--cap-drop", "ALL",
+			"--security-opt", "no-new-privileges=true",
+			"--cpus", "1", "--memory", "1024m", "--pids-limit", "128",
+			"-v", "/host/workspace:/repo/source",
+			"-v", "/tmp/mc-home/runs/landing-0011223344556677.cover:/repo/source/.mission-control:ro",
+			"-v", "/host/workspace/.mission-control/tasks/task-42:/repo/task:ro",
+			"-v", "/tmp/mc-home/runs/landing-0011223344556677.json:/mc/landing.json:ro",
+			"mc-fake-e2e:test", "mc", "__land-sealed", "/mc/landing.json",
+		]]);
+		expect(rig.mc.calls).toEqual([["land", "report", "42", "--status", "success"]]);
+	});
+
+	// The cover must exist BEFORE the container runs, or `/repo/source` hands
+	// out the sealed task bytes RW through the `.mission-control` alias.
+	test("creates the cover directory and the envelope before the container", async () => {
+		const rig = makeRig();
+		rig.docker.enqueue(ok(""));
+		rig.mc.enqueue(ok("{}"));
+		await runSealedLanding(landingStep, rig.deps);
+		const cover = rig.fakeFs.events.indexOf("mkdir:/tmp/mc-home/runs/landing-0011223344556677.cover");
+		const wrote = rig.fakeFs.events.indexOf("write:/tmp/mc-home/runs/landing-0011223344556677.json");
+		expect(cover).toBeGreaterThanOrEqual(0);
+		expect(wrote).toBeGreaterThanOrEqual(0);
+		expect(rig.fakeFs.events).toContain("rm:/tmp/mc-home/runs/landing-0011223344556677.json");
+	});
+
+	// Landing has NO run id — it opens no Run — so every per-landing host file
+	// keys on the landing id. A run-keyed path here would collide with, or be
+	// swept by, the run-keyed setup machinery.
+	test("keys its host files on the landing id, never a run id", async () => {
+		const rig = makeRig();
+		rig.docker.enqueue(ok(""));
+		rig.mc.enqueue(ok("{}"));
+		await runSealedLanding(landingStep, rig.deps);
+		for (const event of rig.fakeFs.events) {
+			expect(event).not.toContain(".setup.json");
+			expect(event).not.toContain(".mounts.json");
+		}
+	});
+
+	test("a nonzero lander exit blocks the task with its reason", async () => {
+		const rig = makeRig();
+		rig.docker.enqueue(fail(3, "target moved"));
+		rig.mc.enqueue(ok("{}"));
+		await runSealedLanding(landingStep, rig.deps);
+		expect(rig.mc.calls).toEqual([[
+			"land", "report", "42", "--status", "failure",
+			"--reason", "mc __land-sealed exited 3",
+		]]);
+		expect(rig.logs.some((l) => l.includes("sealed landing") && l.includes("target moved"))).toBe(true);
+	});
+
+	// A refused report is logged, never thrown: the lane must not take the
+	// resident down, and the landing row stays pending for a later tick.
+	test("a refused land report is logged rather than thrown", async () => {
+		const rig = makeRig();
+		rig.docker.enqueue(ok(""));
+		rig.mc.enqueue(fail(1, "task 42 has no branch"));
+		await runSealedLanding(landingStep, rig.deps);
+		expect(rig.logs.some((l) => l.includes("land report refused"))).toBe(true);
+	});
 });

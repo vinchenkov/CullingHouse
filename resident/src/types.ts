@@ -142,6 +142,37 @@ export interface MountPlan {
 		sealed_sha: string;
 		task_id: number;
 	};
+	/** The sealed landing instruction (ADR-017:699-702), mirroring Go's
+	 * `PrivateDispatchLanding`. It is a SIBLING of `entries`, not a member of
+	 * it, and a landing plan carries no entries at all: the landing table lives
+	 * on the `/repo` plane, while `invalidMountPlanReason` admits only
+	 * `/workspace` destinations. So the four landing rows are composed by the
+	 * resident from this instruction rather than authorized as binds.
+	 *
+	 * The two host-backed anchors arrive as identities; the cover and the
+	 * envelope are generated per run and have none. `cover_dest` is an
+	 * obligation, not decoration — without the generated empty RO cover the
+	 * sealed task bytes are reachable through the RW `/repo/source` alias,
+	 * which is the single thing ADR-017:700 exists to prevent. */
+	landing?: {
+		/** The accepted Worker seal's run, for ADR-016:846's label. Carried for
+		 * discovery, never matched against — and deliberately NOT surfaced as
+		 * `mc-run-id`, which everywhere else means "the run this container IS". */
+		approved_run_id: string;
+		branch: string;
+		closure_digest: string;
+		cover_dest: string;
+		landing_id: string;
+		local_repo_uuid: string;
+		object_format: "sha1" | "sha256";
+		pinned_base_sha: string;
+		pre_merge_sha: string;
+		target_ref: string;
+		task_id: number;
+		task_root: PathIdentity;
+		verified_sha: string;
+		worksource_root: PathIdentity;
+	};
   entries: MountPlanEntry[];
 	task_precreate?: TaskSkeletonRequest;
   version: number;

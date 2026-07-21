@@ -20,6 +20,7 @@ func landingPlanFixture() *PrivateDispatchMountPlan {
 	return &PrivateDispatchMountPlan{
 		Version: 1, Entries: []PrivateDispatchMountEntry{},
 		Landing: &PrivateDispatchLanding{
+			ApprovedRunID: "a1b2c3d4e5f60718",
 			Branch:        taskAssignmentBranch(7),
 			ClosureDigest: strings.Repeat("d", 64),
 			CoverDest:     "/repo/source/.mission-control",
@@ -47,8 +48,11 @@ func TestPrivateMountPlanLandingEvidenceIsClosed(t *testing.T) {
 		t.Fatalf("valid landing plan: %v", err)
 	}
 	bad := map[string]func(*PrivateDispatchLanding){
-		"task":          func(l *PrivateDispatchLanding) { l.TaskID = 0 },
-		"landing-id":    func(l *PrivateDispatchLanding) { l.LandingID = "not-hex" },
+		"task":       func(l *PrivateDispatchLanding) { l.TaskID = 0 },
+		"landing-id": func(l *PrivateDispatchLanding) { l.LandingID = "not-hex" },
+		// ADR-016:846 puts the approved-run identity on the landing container's
+		// labels. A carrier without it cannot be labelled as the ADR requires.
+		"approved-run":  func(l *PrivateDispatchLanding) { l.ApprovedRunID = "" },
 		"landing-len":   func(l *PrivateDispatchLanding) { l.LandingID = strings.Repeat("a", 15) },
 		"branch-drift":  func(l *PrivateDispatchLanding) { l.Branch = "mc/task-8" },
 		"target":        func(l *PrivateDispatchLanding) { l.TargetRef = "" },

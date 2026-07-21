@@ -690,6 +690,103 @@ async function runAcceptedSealRebuild(
 	await deps.fs.rm(setupJsonPath);
 }
 
+/** The SEALED §7 landing (ADR-017:697-702), the sibling of the legacy `land()`
+ * below. It runs the baked `mc __land-sealed` program over the four-row
+ * landing table and reports the outcome through host `mc`.
+ *
+ * Landing is its own class, not a setup arm: it holds no lease, opens no Run,
+ * and is the only class that receives a real operator Worksource RW. So it
+ * keys its per-run files on the LANDING id rather than a run id — it has none —
+ * and its envelope is `/mc/landing.json`, never `/mc/setup.json`.
+ *
+ * The cover is the load-bearing bind. `/repo/source` is RW, so without the
+ * generated empty RO directory shadowing `.mission-control` the sealed task
+ * bytes under it are reachable and WRITABLE through that alias — the single
+ * thing ADR-017:700 exists to prevent. The lander re-proves it is really
+ * covering (`fenceLandingCover`), because a bind that silently did not happen
+ * looks identical from inside except for what is visible underneath.
+ *
+ * INERT: nothing dispatches this yet. `mc land report` still refuses an
+ * assignment-backed row, which is one of the switches the activation flips. */
+export async function runSealedLanding(
+	step: NonNullable<MountPlan["landing"]>,
+	deps: TickDeps,
+): Promise<void> {
+	const { config, log } = deps;
+	const envelope = {
+		schema_version: 1, operation: "sealed-landing",
+		task_id: step.task_id, object_format: step.object_format,
+		landing_id: step.landing_id, branch: step.branch, target_ref: step.target_ref,
+		verified_sha: step.verified_sha, pre_merge_sha: step.pre_merge_sha,
+		pinned_base_sha: step.pinned_base_sha,
+		pinned_closure_digest: step.closure_digest,
+		pinned_local_repo_uuid: step.local_repo_uuid,
+		// Container destinations, never host paths: the resident composes the
+		// `/repo` plane and the envelope only restates where it put things.
+		source_repo: "/repo/source", task_root: "/repo/task",
+		cover_root: step.cover_dest,
+	};
+	const landingJsonPath = `${runsDir(config.mcHome)}/landing-${step.landing_id}.json`;
+	const coverDir = `${runsDir(config.mcHome)}/landing-${step.landing_id}.cover`;
+	await deps.fs.mkdir(runsDir(config.mcHome));
+	await deps.fs.mkdir(coverDir);
+	// 0644, not 0600: mounted RO into a uid-10002 container and carrying no
+	// secret by construction.
+	await deps.fs.writeFile(landingJsonPath, JSON.stringify(envelope, null, 2) + "\n", { mode: 0o644 });
+	const res = await deps.docker([
+		"run", "--rm",
+		// ADR-016:831's deterministic name. Stable across attempts by
+		// construction, because every input to the landing id is.
+		"--name", `mc-landing-${step.landing_id}`,
+		"--network", "none",
+		"--label", "mc-managed=true",
+		// ADR-016:846: component, then landing/subject/approved-run identity, and
+		// NO `mc-tier` — a landing must not be able to masquerade as an agent to
+		// a liveness sweep. `mc-approved-run-id` rather than `mc-run-id` for the
+		// same reason: that key means "the run this container IS" everywhere else.
+		"--label", "mc-component=landing",
+		"--label", `mc-landing-id=${step.landing_id}`,
+		"--label", `mc-task-id=${step.task_id}`,
+		"--label", `mc-approved-run-id=${step.approved_run_id}`,
+		// ADR-019:85 puts setup and landing on one row: uid 10002, NNP on.
+		// Landing writing into an operator-owned bind is NOT an exception to it;
+		// ADR-017:76-86 asserts no fact about how VirtioFS presents ownership and
+		// defers the question to ADR-019:183-188's final-uid canary instead.
+		"--user", "10002:10002",
+		"--cap-drop", "ALL",
+		"--security-opt", "no-new-privileges=true",
+		// ADR-019:30's landing row.
+		"--cpus", "1",
+		"--memory", "1024m",
+		"--pids-limit", "128",
+		// The only RW real-repository grant in the system, and the cover that
+		// keeps it from reaching the sealed bytes beneath it.
+		"-v", `${step.worksource_root.canonical}:/repo/source`,
+		"-v", `${coverDir}:${step.cover_dest}:ro`,
+		"-v", `${step.task_root.canonical}:/repo/task:ro`,
+		"-v", `${landingJsonPath}:/mc/landing.json:ro`,
+		config.image,
+		"mc", "__land-sealed", "/mc/landing.json",
+	]);
+	const report = res.exitCode === 0
+		? ["land", "report", String(step.task_id), "--status", "success"]
+		: ["land", "report", String(step.task_id), "--status", "failure",
+			"--reason", `mc __land-sealed exited ${res.exitCode}`];
+	if (res.exitCode !== 0) {
+		log(`sealed landing ${step.landing_id}: task ${step.task_id} failed (exit ${res.exitCode}): ${res.stderr.trim()}`);
+	}
+	const reported = await deps.runMc(report);
+	if (reported.exitCode !== 0) {
+		log(`sealed landing ${step.landing_id}: land report refused (exit ${reported.exitCode}): ${reported.stderr.trim()}`);
+	}
+	// The envelope goes; the cover does NOT. Removing a directory that was just
+	// a bind target is safe, but it is also the one piece of evidence that the
+	// cover existed for this landing, and ADR-016:344-349 makes a later tick
+	// responsible for landing residue. Left for that sweep rather than raced
+	// against a container the resident no longer tracks.
+	await deps.fs.rm(landingJsonPath);
+}
+
 /** §7 Landing: run the baked mc-land script, then report its exit code.
  * The land container gets only the workspace — landing holds no lease and
  * never touches the spine; the resident reports via host mc. */

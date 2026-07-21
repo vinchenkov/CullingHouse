@@ -26,6 +26,7 @@ import (
 type landingCaptureInputs struct {
 	TaskID        int64
 	LandingID     string
+	ApprovedRunID string
 	TargetRef     string
 	VerifiedSHA   string
 	ObjectFormat  string
@@ -73,7 +74,8 @@ func captureLandingPlan(workspaceRoot string, ownerUID int, in landingCaptureInp
 		return zero, err
 	}
 	return PrivateDispatchLanding{
-		TaskID: in.TaskID,
+		TaskID:        in.TaskID,
+		ApprovedRunID: in.ApprovedRunID,
 		// Derived, never carried. `complete.go:163` is tasks.branch's only
 		// writer and it is closed to assigned tasks; deriving here is what keeps
 		// the sealed lane from ever reading that column.

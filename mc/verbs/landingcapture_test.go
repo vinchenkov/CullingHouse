@@ -20,6 +20,7 @@ func lcInputs(landingID string) landingCaptureInputs {
 	return landingCaptureInputs{
 		TaskID:        7,
 		LandingID:     landingID,
+		ApprovedRunID: "a1b2c3d4e5f60718",
 		TargetRef:     "main",
 		VerifiedSHA:   strings.Repeat("a", 40),
 		ObjectFormat:  "sha1",
@@ -113,6 +114,7 @@ func TestCaptureLandingPlanCarriesTheSpineFactsVerbatim(t *testing.T) {
 		"base sha":      {got.PinnedBaseSHA, in.PinnedBaseSHA},
 		"closure":       {got.ClosureDigest, in.ClosureDigest},
 		"repo uuid":     {got.LocalRepoUUID, in.LocalRepoUUID},
+		"approved run":  {got.ApprovedRunID, in.ApprovedRunID},
 	} {
 		if pair[0] != pair[1] {
 			t.Fatalf("%s = %q, want the carried %q", name, pair[0], pair[1])

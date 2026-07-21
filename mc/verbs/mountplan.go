@@ -210,7 +210,19 @@ type PrivateDispatchVerifierProjection struct {
 // Field order is alphabetical because the containing plan is replayed through
 // canonical JSON.
 type PrivateDispatchLanding struct {
-	Branch string `json:"branch"`
+	// ApprovedRunID is the accepted Worker seal's run — the "approved-run
+	// identity" ADR-016:846 requires on the landing container's labels. It is
+	// carried for DISCOVERY, not as a fence: nothing here matches against it,
+	// and the fences are the topology facts below. Its companion request id
+	// stays out because it buys exactness only in the landing-id digest, where
+	// it already participates (landingid.go); a label is a sweep key.
+	//
+	// It is deliberately NOT surfaced as `mc-run-id`. That key means "the run
+	// this container IS" everywhere else, and a landing tagged with the Worker
+	// run it landed FOR could be mistaken for that Worker's own agent container
+	// by a liveness sweep — the exact masquerade ADR-016:857 forbids.
+	ApprovedRunID string `json:"approved_run_id"`
+	Branch        string `json:"branch"`
 	// ClosureDigest, PinnedBaseSHA, LocalRepoUUID and Branch come from the
 	// immutable task assignment; VerifiedSHA and PreMergeSHA are the landing
 	// facts the §7 approve fence guarantees and the target preimage frozen at

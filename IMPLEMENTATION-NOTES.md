@@ -768,3 +768,53 @@ both would tighten replay identity, but ADR-016:831-833 names three inputs and
 adding a fourth is a deviation with no stated need. If a future finding shows
 the trailer must distinguish two landings of the same task at different
 reviewed SHAs, that is the moment to add it — under an ADR, not silently.
+
+## 2026-07-20 — the landing container envelope, and three things it does not do
+
+The sealed landing's container envelope is almost entirely DECIDED by the ADRs;
+the survey that established it is in the Phase 3 ledger. Two decisions inside
+it are worth stating here because they look like mistakes otherwise.
+
+**uid 10002:10002, not the operator.** Landing is the one class that writes into
+a real operator-owned Worksource — it imports objects, creates a ref, and merges
+in the primary checkout — so an unprivileged container uid looks wrong. It is
+not: ADR-019:85 puts setup and landing on one row at 10002 with NNP on, and
+ADR-017:76-86 deliberately asserts NO fact about how the VirtioFS share presents
+host ownership inside a container, deferring the whole question to ADR-019's
+final-uid canary (:183-188) rather than to an ADR claim. Nothing chowns a host
+inode (ADR-017:68-71), and there is no root agent or permission-widening
+fallback. If the canary fails, that is a red Phase-3 mechanism line, not a
+licence to raise the uid.
+
+**`mc-approved-run-id`, not `mc-run-id`.** ADR-016:846 requires landing labels to
+carry "landing/subject/approved-run identity" but never spells the key strings.
+`mc-run-id` was rejected: everywhere else that key means "the run this container
+IS", so a landing tagged with the Worker run it landed FOR could read to a
+liveness sweep as that Worker's own agent container — the exact masquerade
+ADR-016:857 forbids. The carrier grew `ApprovedRunID` to supply it; the
+companion request id stays out, because it buys exactness only in the landing-id
+digest, where it already participates, and a label is a sweep key, not a fence.
+
+Three gaps carried forward rather than closed:
+
+- DEVIATION — ADR-016:350 gives landing a fixed 15-minute foreground wall
+  deadline. Nothing enforces it. `Exec` (`types.ts:18`) takes an argv and
+  nothing else; `main.ts:30` awaits `Bun.spawn` with no kill timer; the only
+  `withTimeout` in the resident lives in `resident-control.ts:290` and is not
+  reachable from `effects.ts`. Every other container class is equally
+  unbounded, so this is a pre-existing hole the landing class inherits rather
+  than one it opens. Closing it needs a deadline seam on `TickDeps.docker`,
+  which is a change every class pays for — hence not smuggled in here.
+- ADR-017:753-755 makes the merge topology (`SealedLandingResult` on the
+  lander's stdout) "the durable merged marker reported into the spine". No
+  spine consumer exists: `mc land report` takes a status and a reason and
+  nothing else. The resident therefore reports status only, and the result JSON
+  is currently discarded. This belongs to the same step that teaches
+  `LandReport` about assignment-backed rows.
+- PRE-EXISTING, found while matching the idiom, NOT fixed here: the setup
+  containers emit `mc-tier=pipeline` where ADR-016:845 says setup has no tier,
+  and omit `mc-component=setup` entirely; and the legacy `land()` emits a
+  valueless `mc-managed` label where ADR-016:837 says `mc-managed=true`. All
+  three are label-conformance bugs against Decision 7 in code the sealed lane
+  does not own. Fixing them touches whole-argv assertions in three test files
+  and belongs in its own change, not in a landing commit.
