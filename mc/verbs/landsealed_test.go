@@ -24,7 +24,15 @@ import (
 // included, which is what makes landing the strongest grant in the system.
 func buildLandingRepo(t *testing.T) (dir, targetSHA string) {
 	t.Helper()
-	dir = t.TempDir()
+	return buildLandingRepoAt(t, t.TempDir())
+}
+
+// buildLandingRepoAt builds the same operator repository at a caller-chosen
+// root, so a test that needs the canonical (symlink-resolved) form can supply
+// one. The fences that compare a mount anchor against its own canonical path
+// care about the difference; the ones that do not can keep using t.TempDir().
+func buildLandingRepoAt(t *testing.T, dir string) (string, string) {
+	t.Helper()
 	srcGit(t, dir, "init", "-q", "-b", "main")
 	srcGit(t, dir, "config", "commit.gpgsign", "false")
 	writeFile(t, filepath.Join(dir, "README.md"), "operator\n")
