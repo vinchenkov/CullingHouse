@@ -6,7 +6,7 @@ REPO PATH: `~/dev/ai/homie`. Never relocate this repo into `~/Documents`,
 `~/Desktop`, or `~/Downloads`: macOS TCC can revoke an agent session's own
 filesystem access there during fan-out. Full Disk Access does not fix it.
 
-LAST GREEN SHA: `1e73179` — five-leg fast lane green. Docker suite last 8/8 at
+LAST GREEN SHA: `a6b5bf8` — five-leg fast lane green. Docker suite last 8/8 at
 `4a69d15`. The operator pushes manually; agents do not push.
 
 PHASES PASSING: Phase 0 COMPLETE; Phase 1 COMPLETE; Phase 2 COMPLETE. Phase 3
@@ -67,7 +67,7 @@ the approve landing fence so an immutable task assignment, not only
   - [x] Operator-approved scoped self-abort, implemented and reviewed.
   - [x] Landing id and attest-side carrier producer; both inert.
   - [x] Resident sealed-landing arm and container envelope; inert.
-  - [ ] Route landing through the dispatch seam, then turn it on atomically.
+  - [x] Landing routed through the dispatch seam and turned on atomically.
   - [ ] Run and record the complete Phase 3 real-mechanism/Docker acceptance
         lane before advancing.
 - [ ] Phase 4 — six E2E control-loop scenario families.
@@ -83,11 +83,13 @@ the approve landing fence so an immutable task assignment, not only
 
 ## Current work: sealed landing
 
-The corpus gap and the scoped self-abort are closed (`96b86a2` through
-`2d2cffb`, the last of which hardens the abort gate after adversarial review).
-The lane remains inert end to end; keep it that way until the coordinated
-activation step, because a partially active lane can convert today's loud
-`Approve` refusal into a durable blocked row.
+The lane is LIVE as of `d91e388`: an approved, assignment-backed row is
+selected by `nextLanding`, routed through prepare/attest/commit, and returns a
+land effect carrying the landing carrier. All five fast-lane legs are green.
+
+It has never run a real container. Everything proved so far is host-side and
+fake-free only in the Go/TS sense; the Docker acceptance lane in §2 below is
+what turns that into evidence.
 
 The self-abort gate is ACTION identity and it has three parts: `MERGE_HEAD` is
 the reviewed SHA, `MERGE_MSG` is a message this landing WROTE (our subject, and
@@ -109,48 +111,27 @@ reaches them until the selector flips. Only the last step must be atomic.
    ADR-019 landing-class envelope pinned by test. Green and inert; it has no
    effect arm, so step 3 changes routing alone. The carrier grew
    `ApprovedRunID` for ADR-016:846's label.
-3. [ ] Route the landing THROUGH prepare/attest/commit, then flip. PLANNED as
-   16 micro-steps; the plan is `docs/ledger/phase-3.md` (2026-07-20, "step 3
-   planned"), which is the working document for this slice — read it before
-   touching the seam. The shape: a landing is a SEPARATE LANE, a third variant
-   of `preparedDispatch` (`landing *preparedLanding`, sibling of `final` and
-   `candidate`), never a variant of `preparedCandidate`. That keeps the ~35
-   unguarded `cand.spawn` derefs unreachable BY TYPE, and leaves
-   `preparedCandidate`, `dispatchAttest`, `dispatchCommit`, `applySpawn` and
-   `loadDispatchMountState` byte-identical.
+3. [x] The landing routes THROUGH prepare/attest/commit and the lane is ON.
+   Sixteen micro-steps; the design, the divergences, and the activation are in
+   `docs/ledger/phase-3.md` (2026-07-20 "step 3 planned", 2026-07-20 cont.,
+   2026-07-21 x3). Six delegated design decisions are in
+   `IMPLEMENTATION-NOTES.md` (2026-07-21).
 
-   Steps 1-15 each leave the lane inert and the fast suite green. Step 16 is
-   the atomic switch and is exactly two edits: `nextLanding`'s filter gains
-   `|| t.SealedLandingPending()`, and `Approve` stops refusing an assigned
-   sealed row. Neither works alone.
+   Shape, for anyone touching the seam: a landing is a SEPARATE lane — a third
+   variant of `preparedDispatch` (`landing *preparedLanding`), never a variant
+   of `preparedCandidate`. DO NOT merge the two. The spawn seam dereferences
+   `cand.spawn` unguarded in dozens of places, and that separation is the only
+   thing keeping them unreachable with a nil Spawn.
 
-   DONE: ALL FIFTEEN inert steps (1-15) are green and committed. The sealed
-   lane exists end to end and is unreachable: nothing selects a sealed row.
-   Step 15 closed the confirmed-absence gate and the exit-code classification,
-   so the flip is UNBLOCKED.
+   A landing takes no lease, opens no Run, and writes nothing to the spine at
+   dispatch time; `mc land report` still does the writes. Reversal is reverting
+   the two reachability edits (`nextLanding`'s filter and `Approve`'s sealed
+   arm), with nothing to unwind.
 
-   ONLY STEP 16 REMAINS — the atomic switch. It is two reachability edits plus
-   the tests that must move with them, and nothing else in that commit. The
-   full instruction, including the fixture trap in the inverted approve test,
-   is in `docs/ledger/phase-3.md` (2026-07-21 cont.) — read it before editing.
-   Places the code intentionally diverges from the written plan are in the
-   2026-07-20 cont. and 2026-07-21 entries; trust the code and the ledger over
-   the plan where they disagree.
-
-   SATISFIED (step 15 is green): the flip was gated on step 15 closing
-   ADR-016:373-375's confirmed-absence gate resident-side; without it a crashed
-   attempt's `mc-landing-<id>` container makes the next attempt collide on the
-   name and report `land report failure`, converting infrastructure trouble
-   into a durable blocked row (ADR-016:576 forbids exactly this).
-
-Invert, do not delete: `TestApprove/assigned sealed task refuses rather than
-archiving` (`task_test.go:823`) and `TestStep0c_ApprovedBranchlessRow_NeverLands`
-(`dispatch_test.go:412`) — the latter stays green on its fixture, so it is its
-INTENT that goes stale. `LandReport` against an assignment-backed row is
-untested in either direction. MUST NOT RELAX:
-`TestNoLandingCellIsPlanAddressable` and `TestPlanMountsRefusesEveryLandingCell`
-(`landingplan_test.go:77,103`) — an earlier draft widened them and review
-rejected it.
+MUST NOT RELAX: `TestNoLandingCellIsPlanAddressable` and
+`TestPlanMountsRefusesEveryLandingCell` (`landingplan_test.go:77,103`) — an
+earlier draft widened them and review rejected it. Also
+`mc/dispatch/sealed_landing_test.go` and `mc/substrate/landing_fence_test.go`.
 
 The branch comes from the immutable assignment and is never projected into
 `tasks.branch`; `complete.go:163` is that column's only writer and is closed to
@@ -186,4 +167,4 @@ advancing to Phase 4.
   canonical landing row derived; use the assignment's frozen `target_ref` and
   refuse divergence. Details are in the Phase 3 ledger.
 
-NEXT: Sealed-lane activation step 3, ALL fifteen inert micro-steps are green and committed — the only remaining work is step 16, the atomic switch in order, TDD, committing each green; the lane stays inert throughout. The plan is `docs/ledger/phase-3.md` (2026-07-20, "step 3 planned"); read it first, it names every test, insertion point, and corpus basis. Do NOT run step 16 (the atomic switch) until step 15 is green.
+NEXT: The Phase 3 completion lane (§2 above). The sealed landing lane is live and green in the fast suite but has never run a real container. Prove the realized landing mount table, RO alias/cover behavior, the network-none/uid/capability envelope, VirtioFS import durability, and the five ADR-017:758-760 crash cuts; carry the production E2E through `packaged -> approve -> merge -> archived`; then satisfy `docs/phase3-contract.md` §8 and record the image digest, architecture, capability probes, commands, and green evidence here before Phase 4.

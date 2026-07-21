@@ -4293,3 +4293,57 @@ MUST NOT RELAX: `TestNoLandingCellIsPlanAddressable`,
 `mc/substrate/landing_fence_test.go`.
 Reversal is reverting the two edits; steps 1-15 all go inert again with nothing
 to unwind, which is a direct consequence of the no-receipt policy.
+
+## 2026-07-21 — step 16: the sealed landing lane is ON
+
+Two reachability edits, in one commit with the tests that pin the behaviour they
+change. `nextLanding` now selects `SealedLandingPending` rows alongside
+`LandingPending` ones, and `Approve` no longer refuses an assigned sealed row.
+
+The switch grew a third edit that the plan did not anticipate, and it matters.
+`Approve`'s landing fence previously required `verified_sha` and `target_ref`
+only of a BRANCH-CARRYING row. Opening the sealed arm without widening that
+fence would have allowed an assigned row to be approved while missing the two
+facts `SealedLandingPending` requires — leaving it approved, unarchived, and
+permanently invisible to the landing lane. Silently unlandable is the exact
+failure this whole slice exists to remove, so the fence now applies to both
+branch homes. The v11 substrate trigger was already the backstop; the Go arm
+names the rule and refuses with `CodeLandingFence` before reaching it.
+
+`TestSealedLandingIsReachableEndToEnd` is the activation proof and it is the only
+test that could have caught the two edits failing to meet in the middle. It
+drives the REAL `Dispatch()` over a real spine and a real git Worksource:
+approve through `domain.Approve`, then dispatch, and assert a land effect
+carrying a `landing` key with the assignment's branch. It also asserts the two
+properties a landing routed through the spawn machinery would have silently
+broken — no lease taken, and no `runs` row beyond the accepted Worker seal's own.
+
+Fixture facts that cost cycles and are worth keeping:
+
+- The acceptance pointer is fenced to `status = 'worked'`
+  (`tasks_accepted_completion_fenced`), so a sealed fixture must be walked
+  through the real lifecycle — insert at `worked`, set the pointer, then advance
+  verified → packaged. Dropping a row in at `packaged` and back-filling the
+  pointer is refused.
+- `workspace_root` lives on `sandbox_profiles`, not `worksources`.
+- `runs` has `subject`/`tier`, not `subject_id`, and its `role` CHECK has no
+  landing member — which is why the E2E asserts on the total run count rather
+  than on `role = 'landing'`, a predicate that can never match by construction.
+
+The inverted approve test is now `assigned_sealed_task_holds_for_landing`, and a
+companion `assigned_sealed_task_without_landing_facts_refuses` covers the widened
+fence in all three missing-fact shapes. `TestStep0c_ApprovedBranchlessRow_NeverLands`
+kept its assertions and had its stated intent corrected: branchlessness alone no
+longer implies the artifact plane, and that fixture qualifies only because its
+`Sealed` is nil.
+
+All five fast-lane legs green with the lane live. Reversal is still just
+reverting the two reachability edits, with nothing to unwind — a direct
+consequence of the no-receipt policy.
+
+NEXT (outgoing): the Phase 3 completion lane (`PROGRESS.md` §2). The lane is
+live in the fast suite but has never run a real container: prove the realized
+landing mount table, RO alias/cover behaviour, the network-none/uid/capability
+envelope, VirtioFS import durability, and the five ADR-017:758-760 crash cuts,
+then carry the production E2E through packaged → approve → merge → archived and
+satisfy `docs/phase3-contract.md` §8.
