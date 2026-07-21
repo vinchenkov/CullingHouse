@@ -4813,3 +4813,59 @@ sweep was never written, so every landing leaks one directory. Then §8's
 remaining bookkeeping. STILL PARKED and still the completion blocker: the
 gateway / forbidden-env question — `doctor` names three Phase-3-owned deferrals
 and §8 forbids any at completion.
+
+## 2026-07-21 — scoping the two unbuilt mechanisms (operator asked for size first)
+
+The operator chose "scope them first, then decide" on the parked gateway /
+forbidden-env question. Read-only scoping pass; no code. Memo:
+`docs/gateway-env-scoping.md`.
+
+Three load-bearing claims verified directly rather than taken from the survey:
+
+- All SIX container launch sites pass `--network none`
+  (`grep -c '"--network", "none"' resident/src/effects.ts` = 6, no other value
+  anywhere). The system has never carried real traffic.
+- The resident has never opened a socket: no `Bun.serve`, no `createServer`, no
+  `.listen(` anywhere in `resident/src/`.
+- Spike S4 (`spikes/04-egress-gateway/RESULT.md`) is GREEN, 2026-07-10.
+
+That last one needs its caveat stated or it will be misread as de-risking the
+build: S4 proved the CONCEPT with throwaway host-side `mitmproxy` under `uvx`,
+in a two-listener shape ADR-018 subsequently rejected. It establishes that TLS
+interception with a Mission Control CA works per harness on this machine. It
+establishes nothing about the production shape, the host process, or the guard
+container.
+
+**Gateway: VERY LARGE.** Fifteen work units; two of them (the MITM
+HTTP/2+WebSocket terminator, and the `mc-netguard` nftables container) each
+individually exceed this repo's "large" anchor, which is the entire sealed
+landing lane. Everything that DECIDES exists — policy columns, deny-by-default
+onboarding refusal, CA mount classification, refusal codes. Everything that
+EXECUTES is absent — no HTTP server, no TLS, no CA custody, no credential store,
+no Docker network creation, no guard container.
+
+**Forbidden-env: MEDIUM (~2-3 sittings), with a ONE-SITTING core.** Both policy
+columns have existed since schema v1, so no migration. Both refusal codes are
+already classified, routed, and consequence-tested — they simply have no
+producer. The container environment is already effectively empty, so the safety
+property currently holds BY ACCIDENT and untested.
+
+Two consequences of deferring that are worth recording because they are not
+obvious:
+
+- Deferring the gateway later INVERTS currently-green assertions. `NetworkMode
+  == "none"` and "no non-loopback interfaces" are asserted in the landing
+  envelope rows added this session, and in orphan-sweep and launch-fencing
+  tests. The topology work reopens all of them.
+- The gateway must deliver a CA environment variable into containers, so it
+  builds the carrier + resident env plumbing anyway. Deferring forbidden-env
+  entirely means reopening the frozen plan carrier TWICE instead of once.
+
+**The unknown that gates every other gateway estimate**, and it is a paper
+decision currently owned by nobody: which process and language hosts the
+gateway. Bun cannot hold locked memory, which the credential custody design
+wants. Until that is settled, five of the fifteen units cannot be sized honestly.
+
+NEXT (outgoing): operator decision — build both, defer both, or split (build the
+one-sitting forbidden-env core, defer the gateway, and settle the host-language
+question).
