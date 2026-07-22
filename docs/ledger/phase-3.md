@@ -5001,3 +5001,30 @@ cli_test.go:4260), swap the docker_boundary/docker_e2e egress assertions to
 the §3 Credential-projection rows, and decide the refusal-code disposition
 (keep CodeGateway*/CodeNetwork* inert — cheaper and reversible). Inventory:
 this ledger's 2026-07-21 S9 entry.
+
+## 2026-07-21 — ADR-022 step 3: deny root, doctor retirement, spawn-seam projection (fast lanes green)
+
+Two green commits (`70d8b6b`, `99fa8d6`) on top of step 2:
+
+- `resolveGatewaySecretRoots(home)` now deny-mounts `MC_HOME/refresh-grants`
+  (absent → registers nothing; present → exactly the store's ProtectedID).
+  The doctor `gateway` finding is RETIRED — `cli_test` asserts absence.
+- spawn() resolves an injected `CredentialProjector` before any launch file:
+  null → token-free launch; `{refused}` → D8 stall (no container, no files,
+  logged); artifacts → sorted `-e` env merge + run-keyed
+  `<run>.codex-auth.json` (0600) bound RW at `/mc/codex/auth.json` with
+  `CODEX_HOME=/mc/codex`. Real routes drop `--network none`; the fake family
+  keeps it (deviation logged in IMPLEMENTATION-NOTES 2026-07-21 step 3).
+  Every prior fake-family argv pin is byte-identical.
+- All three tag lanes vet clean. Docker lanes NOT yet rerun (stale since v12).
+
+Still open in step 3: (e) the Docker-lane agent-class egress assertion swaps —
+do them against real failures at the rerun, not blind (landing/setup-class
+`--network none` sites are KEPT by design); `main.ts` projector wiring blocked
+on the refresh-grant store capture (onboarding obligation).
+
+NEXT: rerun the Docker lanes at this SHA (`cd mc && mise exec -- go test -tags
+docker_boundary ./boundarydocker/... -timeout 15m`, then `-tags docker_e2e
+./e2e/... -timeout 15m`), fix the agent-class egress assertions they surface
+(swap to §3 Credential-projection expectations), then drive the §2 Phase 3
+completion lane and record digests/evidence in PROGRESS.
