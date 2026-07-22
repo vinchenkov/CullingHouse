@@ -103,11 +103,15 @@ the approve landing fence to assignment-armed tasks; v12 retires
   - [x] (2) Correction rally — 3 CORRECTs → 4th ships BUDGET-SPENT. Green.
   - [x] (3) Backpressure — WIP cap blocks dispatch, refiner re-entry at cap,
         drain-frees. Green (saturation arithmetic cited to unit tests).
-  - [~] (4) Initiative lifecycle — BLOCKED at LANDING by parked shared-worktree/
-        branch mechanics (no code sets an initiative branch; landing unwired).
-        The state machine (wave/plan-review/strict-drain/done/arc packet/
-        block-prop/cancel-cascade) is fully unit+property-tested. OPERATOR
-        SCOPE DECISION parked below. Ledger 2026-07-22 "scenario (4) ... BLOCKED".
+  - [x] (4) Initiative lifecycle — UN-PARKED and landed (operator chose to
+        build it). ADR-023: shared branch mc/initiative-<id> cut at promotion,
+        children branchless (only the arc lands), mc-land namespace extended.
+        `TestInitiativeLifecycleDockerBoundary` green — full charter→wave→
+        plan-review→children→drain→done→arc→REAL merge to main. Green. The
+        block-propagation + cancel-cascade E2E variants remain optional (state
+        machine unit/property-tested); the PRODUCTION real-harness child mount
+        rows stay parked for Phase 5 (ADR-023 D6). Ledger 2026-07-22 "(4) ...
+        DONE via ADR-023".
   - [ ] (5) Fault matrix — one kill per kill-class → reap → re-select →
         retry; interrupt, tick discipline, reboot drill, session permanence.
         UNBLOCKED (does not depend on parked mechanics).
@@ -119,19 +123,14 @@ the approve landing fence to assignment-armed tasks; v12 retires
 
 ## Parked
 
-- **Phase 4 family (4) initiative LANDING — operator scope decision**: the
-  initiative lifecycle's landing half is not production-built — no code sets an
-  initiative `tasks.branch`, the done-declaration forbids `--branch`, the
-  shared-worktree/child-mount representation is parked
-  (`mountattest.go:238-249`), and no initiative landing support/test exists.
-  The property walk cancels the arc rather than landing it. So family (4)
-  "→ approve/land" cannot reach LAND without un-parking that representation.
-  The initiative STATE MACHINE is fully unit+property-tested. Options for the
-  operator: (a) un-park the shared-worktree/branch representation (significant,
-  a Phase-3-deferred design item) so family (4) lands through real containers;
-  (b) accept a scoped family-4 E2E through the arc PACKET (no land); (c) defer
-  family (4) and do families (5) fault-matrix and (6) homie-loop first (both
-  UNBLOCKED). Full analysis: ledger 2026-07-22 "scenario (4) ... BLOCKED".
+- **Initiative PRODUCTION real-harness mount rows (Phase 5, ADR-023 D6)**: the
+  fake-harness initiative lifecycle lands via ADR-023 (shared branch, branchless
+  children, legacy land lane). The PRODUCTION per-child shared-worktree
+  Git-control mount rows (the real branch-isolated worktree bound RW, extending
+  ADR-017 D6's closed table) remain owed for when real-harness initiatives run
+  (Phase 5), now constrained by ADR-023 D1/D3/D5. `mountattest.go:238-249` still
+  refuses initiative children under REAL routing (skipped under fake, which is
+  all Phase 4 needs).
 - **Phase 5 live-provider credentials (operator-dependent, NOT a Phase 4
   blocker)**: the ADR-022 credential mechanism is proven with synthetic mints;
   the live legs need a real Claude/Codex subscription refresh grant in
@@ -189,16 +188,16 @@ these are the constraints a Phase 4+ change must not break.
   canonical landing row derived; use the assignment's frozen `target_ref` and
   refuse divergence. Details are in the Phase 3 ledger.
 
-NEXT: Phase 4 families (1)(2)(3) are DONE and green (docker_e2e 14 tests, 99s,
-0 fails). Family (4) initiative LANDING is BLOCKED by parked shared-worktree/
-branch mechanics — an OPERATOR SCOPE DECISION is parked above (un-park vs
-scoped-no-land vs defer). Pending that decision, family (5) fault-matrix and
-(6) homie-loop are UNBLOCKED and can proceed. Recommended next if the operator
-defers (4): family (5) fault matrix — one kill per kill-class → reap on the
-right threshold → same task re-selected → completes on retry; plus interrupt,
-tick-loop discipline, reboot drill, session-folder permanence. Note: the
-family-3 finding (a fast-failing spawn left a run un-reaped ~2 min; sustained
-churn strains the helper) is directly relevant to (5)'s reap paths — probe it
-there. The three non-blocking landing loose ends (15-min deadline;
-`SealedLandingResult` spine consumer; ADR-016 D7 labels) remain open and were
-NOT forced by families (1)-(3).
+NEXT: Phase 4 families (1)(2)(3)(4) are DONE and green — including the
+initiative lifecycle landing a real merge to main via ADR-023 (operator chose
+to build it). Remaining: family (5) fault matrix and (6) homie loop. Recommend
+family (5) next — one kill per kill-class → reap on the right threshold → same
+task re-selected → completes on retry; plus interrupt, tick-loop discipline,
+reboot drill, session-folder permanence. The family-3 finding (a fast-failing
+spawn left a run un-reaped ~2 min; sustained churn strains the helper) is
+directly relevant to (5)'s reap paths — probe it there. Optional pickups: the
+family-(4) block-propagation + cancel-cascade E2E variants (state machine
+unit/property-tested; now that landing works these are cheap add-ons). The
+three non-blocking landing loose ends (15-min deadline; `SealedLandingResult`
+spine consumer; ADR-016 D7 labels) remain open. Confirm the full docker_e2e
+regression (15 tests) is green before advancing (running now).

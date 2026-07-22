@@ -155,3 +155,44 @@ matrix and (6) homie loop, which do not depend on the parked mechanics.
 
 NEXT: awaiting operator scope decision on family (4). Families (5) and (6) are
 unblocked if the operator prefers to proceed there first.
+
+## 2026-07-22 — scenario (4) initiative lifecycle DONE via ADR-023 (real merge)
+
+Un-parked and landed. The operator chose option 1 (build the initiative
+landing). ADR-023 authored (docs/adr/023) extending ADR-017 D6's parked
+initiative/child path; three decisions: D1 shared branch grammar
+mc/initiative-<id> cut at promotion; D3 (load-bearing) children stay BRANCHLESS
+so approving a child archives it synchronously with no merge — only the arc row
+carries the branch and lands, preserving Inv. 25; D4 arc lands via the existing
+legacy branch lane (no new lane/envelope). Code deltas (all green):
+- domain.Promote sets tasks.branch = mc/initiative-<id> on initiative rows
+  (task.go); the §7 landing fence fires on approve, so it is inert until arc
+  approval.
+- complete.go Worker terminal validates a child's --branch against the shared
+  branch but no longer stores it (D3); cli_test updated to worked/null.
+- runner/image/mc-land: branch-namespace allowlist extended from mc/task-<id>
+  to also accept mc/initiative-<id> (the comment there had flagged this as the
+  parked line); new mc-land.test.ts acceptance case. Rebuild picks it up.
+- mc/e2e/initiative_lifecycle_test.go (TestInitiativeLifecycleDockerBoundary,
+  green 10.3s): full loop — initiative add → Editor promote (branch cut) →
+  Strategist(initiative) marker-based wave/done → Editor plan-review pass →
+  two children commit to the ONE shared worktree and archive on approval
+  (branchless, main never moves) → strict drain → done-declaration → arc
+  verify → arc packet → approve → REAL --no-ff merge of the shared branch onto
+  main, both children's files landed, shared branch/worktree deleted. Asserts
+  main stays put through every child approval and moves only on the arc.
+
+New behaviors: strategist(initiative) [marker in .mc-worktrees decides
+wave-vs-done], editor(plan-review) [pass], child worker [reads initiative_id
+via mc task get, shares one worktree, completes --branch mc/initiative-<init>],
+verifier [scope-aware: shared-branch tip for child and arc].
+
+Deliberately deferred (Phase 5, still parked per ADR-023 D6): the PRODUCTION
+real-harness per-child shared-worktree Git-control mount rows (ADR-017 D6
+extension); the block-propagation and cancel-cascade E2E variants (state
+machine fully unit/property-tested; the happy-path merge was the un-parking
+blocker). The wave-boundary "merge main into the branch" drift step (§6.1).
+
+NEXT: full docker_e2e regression (15 tests) to confirm no regression, then
+Phase 4 families (5) fault matrix and (6) homie loop. Optionally the (4)
+block-propagation + cancel-cascade E2E variants now that landing works.
