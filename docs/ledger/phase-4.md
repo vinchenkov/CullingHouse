@@ -367,3 +367,35 @@ homie-runner source mounts RO like the agent-runner (no image rebuild).
 NEXT: S5 outbox delivery loop + native/rows resume (needs a new homie
 register-session verb for native_session_ref/trace_filename). S6 dashboard
 (ADR) + Playwright.
+
+## Homie runtime S5 — native locator registration + functional resume
+
+S5a (76d4529): the homie-runner registers its native session locator on the
+first observed session-start. runHarnessTurn now returns a TurnResult carrying
+the harness's session-start id alongside the reply; the loop registers it once
+via `mc run register-session <session> --native-ref <id> --file native.jsonl`,
+which already delegates to registerHomieSessionLocators for the homie tier (the
+"new verb" the handoff imagined already existed). Idempotent, non-fatal.
+
+S5b (9a8304e): resume was non-functional for two coupled reasons, both fixed:
+- homieEndTx ends a session without clearing current_launch_id, so a resumed
+  session looked already-launched to the wake selector (ADR-016 D3 branch 7
+  requires no launch) and never re-woke. HomieResume now clears the entire dead
+  launch generation in its reactivation UPDATE (the container is gone). A new
+  inbound turn wakes it fresh; true native cross-turn continuity (feeding the
+  recorded native ref to a real harness) is deferred as a real-harness concern.
+- The container name is session-fixed (mc-homie-<session>), so the resume wake
+  raced the first generation's --rm container ("Conflict. The container name is
+  already in use"). Since the launch fence guarantees at most one live
+  generation, the wake effector force-removes any stale same-named container
+  before create.
+
+Proven by TestHomieResumeDockerBoundary (answer -> register native locator ->
+end -> resume -> new turn answered on a fresh wake, ~5s); TestHomieConversation
+still green. Delivery: OutboxPoll/OutboxAck + HomieReply's homie_reply fan
+already exist, so the delivery loop is present at the verb level; a real push
+surface (discord) is separate, and the dashboard is pull-based (history/outbox).
+
+NEXT: S6 dashboard — ADR (TS on Bun, loopback HTTP, reads spine ONLY via mc
+verbs, honoring Inv. 24) + web app (conversation view + send box) + one
+Playwright smoke. Then return to remaining authored deliverables.

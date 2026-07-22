@@ -210,8 +210,20 @@ these are the constraints a Phase 4+ change must not break.
   canonical landing row derived; use the assignment's frozen `target_ref` and
   refuse divergence. Details are in the Phase 3 ledger.
 
-NEXT: Homie runtime S5 — outbox delivery loop + native/rows resume. S1-S4 DONE +
-green, and the FULL loop is proven by a real Docker E2E:
+NEXT: Homie runtime S6 — the dashboard. S1-S5 DONE + green, the full send->wake->
+reply->resume loop proven by real Docker E2E (TestHomieConversation + Resume
+DockerBoundary). S6: write an ADR (framework/read-path: TS on Bun, loopback-only
+HTTP server, reads the spine strictly via `mc homie list`/`mc homie history` +
+`mc` read verbs — never opening the spine db directly, honoring the lock domain
+Inv. 24), build the web app (a conversation view + a send box that calls
+`mc homie send`; sessions list from `mc homie list`), and one Playwright smoke
+(start a session via mc, load the page, send a message, see the reply). Surface
+= "dashboard" already exists in the schema + OutboxPoll/OutboxAck. Then Phase 4
+is functionally complete for the homie runtime; return to the remaining authored
+deliverables (frozen role directives/brief templates, install.sh + /onboard).
+
+--- S5 done (below), for context ---
+S1-S4 DONE + green, and the FULL loop is proven by a real Docker E2E:
 - S1 (82381d9): schema v13 homie_idle_timeout_s; 3 fence verbs; selectHomieWake
   + loadHomieSchedRows + homieWakeRound.
 - S2 (19aadf6, 23b078b): resident homie-wake/homie-stop effectors (tier:"homie"
@@ -222,13 +234,18 @@ green, and the FULL loop is proven by a real Docker E2E:
   pipeline spawn candidate (ADR-016 D3 branch 7) — the KindIdle-only gate
   starved it. TestHomieConversationDockerBoundary PASS (~6s); walking-skeleton
   pipeline e2e still green.
-S5 work: (a) the outbox delivery loop — `mc homie reply` fans homie_reply rows
-into `outbox`; build a resident/host delivery sweep that drains outbox to the
-bound surface (dashboard first) + acks. (b) native/rows RESUME — needs a NEW
-homie register-session verb (set native_session_ref + trace_filename, like
-`mc run register-session`) so the runner registers its native locator; then the
-wake selector's resume-owed path (already emits mode=native/rows) relaunches.
-Then S6 dashboard (ADR) + Playwright.
-DEFERRED: dispatch branch-5 container reconciliation + branch-7 unstarted-launch
-recovery (need resident container inventory); homie credential projection (fake
-route is token-free).
+S5a (76d4529): the homie-runner registers its native locator on the first
+session-start via `mc run register-session` (delegates to
+registerHomieSessionLocators — the verb already existed); TurnResult surfaces
+the native id. S5b (9a8304e): functional resume — HomieResume clears the dead
+launch generation on reactivation (else the wake selector saw the session
+already-launched and never re-woke), and the wake effector force-removes any
+stale same-named container before create (session-fixed name collided with the
+first --rm container not yet idled out). Proven by TestHomieResumeDockerBoundary.
+Delivery: OutboxPoll/OutboxAck + HomieReply's homie_reply fan already exist; a
+real push surface (discord) is a separate integration; the dashboard reads via
+history/outbox (S6).
+DEFERRED: true native cross-turn continuity (real-harness --resume; fake adapter
+starts anew); dispatch branch-5 container reconciliation + branch-7 unstarted-
+launch recovery (need resident container inventory); homie credential projection
+(fake route is token-free).
