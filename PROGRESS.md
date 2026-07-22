@@ -119,35 +119,32 @@ the approve landing fence to assignment-armed tasks; v12 retires
         reap (time-based only), interrupt CONTAINER-STOP (owed to orphan sweep),
         wake-from-sleep immediate tick (unimplemented [P2/P3]). Ledger
         2026-07-22 "(5) ... DONE (scoped; three gaps flagged)".
-  - [~] (6) Homie loop — CONSOLE SCHEDULE done (`TestConsoleScheduleDocker
-        Boundary` green). The conversational RUNTIME (send→tick-wake→reply→
-        outbox→deliver) and the DASHBOARD are UNIMPLEMENTED — a large new
-        workstream (homie wake selector + resident spawn effect + homie runner
-        + a dashboard web app + Playwright), NOT un-parking. Operator scope
-        decision parked below. The homie RECORD layer is built (verb-level
-        record-loop test buildable as interim). Ledger 2026-07-22 "(6) ...
-        UNIMPLEMENTED".
+  - [~] (6) Homie loop — CONSOLE SCHEDULE done. Operator chose to BUILD the
+        conversational runtime + dashboard (2026-07-22). The RUNTIME is
+        SPECIFIED (ADR-016 D3 branch 5-7 selector + fence; §11.5/§15) — an
+        IMPLEMENTATION, not new design; the fence columns, homieCandidateState/
+        key, preflight marker, and loadHomieProjection are already built. Only
+        the DASHBOARD framework/read-path is undecided (short ADR at that stage).
+        STAGED BUILD:
+          - [ ] S1 (Go): dispatch wake selector (consume sel.homies after
+                Decide, lease-free) + the 3 post-commit fence verbs
+                (homie.launch-bind, homie.runner_started, mc homie exit).
+          - [ ] S2 (TS): resident homie spawn EFFECT arm + effector
+                (tier:"homie" run.json, no lease/heartbeat/brief, operator-scope
+                RO mounts, mc-tier=homie, resume re-mount).
+          - [ ] S3 (TS): homie RUNNER (runner/homie-runner) — start/resume
+                harness, loop claim→reply, register locators, no heartbeat, idle.
+          - [ ] S4: E2E — send → tick-wake → reply → outbox (real container).
+          - [ ] S5: outbox DELIVERY loop (resident) + resume relaunch.
+          - [ ] S6: DASHBOARD web app (ADR framework/read-path, TS on Bun,
+                loopback) + one Playwright smoke.
+        Ledger 2026-07-22 "(6) ... UNIMPLEMENTED" + the design investigation.
 - [ ] Phase 5 — operator-scheduled real-subscription acceptance.
 - [ ] Release prep — install/onboard front door and construction-document
       disposition.
 
 ## Parked
 
-- **Homie conversational runtime + dashboard — operator scope decision (LARGE)**:
-  family (6)'s console schedule is DONE, but the conversational loop
-  (send→tick-wake→reply→outbox→deliver) and the dashboard/Playwright smoke are
-  UNIMPLEMENTED — not parked design to un-park, but a substantial NEW
-  workstream: (1) a homie WAKE selector in dispatch (code TODOs at
-  dispatchseam.go:874, homiepreflight.go:26); (2) a homie SPAWN effect in the
-  resident (types.ts Effect union + effects.ts, currently pipeline-only);
-  (3) a homie RUNNER process in runner/ (none exists); (4) resume relaunch
-  (record-only today); (5) an outbox delivery-loop actor; (6) a DASHBOARD web
-  app (none exists — AGENTS.md §3 lists it as a remaining deliverable) for the
-  Playwright smoke. The homie RECORD layer (schema + verbs) is fully built.
-  Options: (a) build the homie runtime + dashboard (large, multi-session);
-  (b) scope family (6) to console + a verb-level homie record-loop test and
-  defer the runtime/dashboard to a dedicated workstream; (c) defer family (6)'s
-  remainder. Full analysis: ledger 2026-07-22 "(6) ... UNIMPLEMENTED".
 - **Initiative PRODUCTION real-harness mount rows (Phase 5, ADR-023 D6)**: the
   fake-harness initiative lifecycle lands via ADR-023 (shared branch, branchless
   children, legacy land lane). The PRODUCTION per-child shared-worktree
@@ -213,15 +210,17 @@ these are the constraints a Phase 4+ change must not break.
   canonical landing row derived; use the assignment's frozen `target_ref` and
   refuse divergence. Details are in the Phase 3 ledger.
 
-NEXT: Phase 4 families (1)-(5) DONE and green; family (6) CONSOLE SCHEDULE done.
-The remaining family-(6) work — the homie conversational RUNTIME
-(send→tick-wake→reply→outbox→deliver) and the DASHBOARD/Playwright smoke — is
-UNIMPLEMENTED and is a LARGE new workstream requiring an OPERATOR SCOPE DECISION
-(parked above: build it / scope to console+record-loop / defer). This is the
-Phase 4 completion gate. Buildable WITHOUT that decision (interim): a
-verb-level homie record-loop test (start→send→echo→claim→reply→reply-outbox→
-ack→resume→history) covering the built record layer. Also optional: family-(4)
-block-propagation + cancel-cascade E2E variants (cheap now that landing works);
-the three non-blocking landing loose ends (15-min deadline; `SealedLandingResult`
-spine consumer; ADR-016 D7 labels). Run the full docker_e2e regression (20
-tests) to confirm green after the console add.
+NEXT: BUILD the homie runtime + dashboard (family 6; operator chose build).
+Start S1 — the dispatch WAKE SELECTOR + the 3 post-commit fence verbs. Design is
+SPECIFIED (ADR-016 D3 branches 5-7: pick oldest (last_activity_at,id) active
+non-idle Homie with unstarted launch-debt OR (no launch AND pending inbound OR
+resume_owed); persist launch id+mode before returning a `wake` effect; adopt-
+and-start a `created` container). Homie is LEASE-FREE and CONCURRENT (Inv.
+1/22, §15.3) — the selector fires AFTER Decide() when no pipeline candidate
+committed, never touching the lease. Reuse the BUILT seams: homiepreflight.go
+(homieCandidateState/key/marker), dispatchseam.go:409 loadHomieProjection,
+dispatchverb.go:139 selectFromSpine (sel.homies), refusalroute.go:278
+homieLaunchFenceHolds. The 3 verbs (homie.launch-bind CAS the docker id,
+homie.runner_started, mc homie exit --launch --container-id) are specified in
+ADR-016:459-474 prose, unbuilt. TDD, each green. Then S2 resident spawn effect,
+S3 homie runner, S4 E2E, S5 delivery+resume, S6 dashboard (ADR)+Playwright.
