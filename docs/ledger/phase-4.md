@@ -399,3 +399,43 @@ surface (discord) is separate, and the dashboard is pull-based (history/outbox).
 NEXT: S6 dashboard — ADR (TS on Bun, loopback HTTP, reads spine ONLY via mc
 verbs, honoring Inv. 24) + web app (conversation view + send box) + one
 Playwright smoke. Then return to remaining authored deliverables.
+
+## 2026-07-22 — S6 dashboard Console (ADR-024) + a pre-existing fast-suite red
+
+Fast-suite red found on session start: TestHomieClaimReply/reply_appends_…
+expected a pipeline `spawn` while an unserved homie turn was pending; red
+since 38d0c36 (S4's deliberate branch-7 preemption), masked afterward by Go
+test caching — PROGRESS's "five-leg fast green at 191719d" was stale. Fixed
+(75b2db5) by absorbing the homie-wake before the spawn expectation, matching
+production ordering (the runner claims from inside the woken launch).
+
+S6a (30af818): ADR-024 pins the delegated dashboard choices — zero-framework
+Bun.serve package `dashboard/`, spine reached ONLY by spawning the real `mc`
+through one injected seam (Inv. 15/24; no SQLite import may appear), thin
+one-to-one verb-mirror API (list/history/start/send/resume + outbox drain),
+fail-closed bind/auth (loopback 127.0.0.1:7333 default; non-loopback refused
+without a token; a configured token gates every request pre-spawn, §15.7),
+per-session DERIVED dashboard channel ref (a (surface,channel_ref) place
+binds one session, so a shared "dashboard:console" ref cannot work; reuse the
+session's dashboard binding from `homie list` or mint dash-<8hex>, stateless
+per Inv. 23), pull-based Console polling (tight 1s for 30s after send, lazy
+10s) with trivial outbox ack. Console tab only; the other four §13 tabs are
+inert placeholders. 25 bun tests; check.sh joined as the fast suite's sixth
+leg.
+
+S6b (75bd35f): the one Playwright smoke (ADR-024 D7), Docker-free —
+smoke.sh builds the test_fake_routing mc, provisions a scratch spine, serves
+the real dashboard, drives real Chromium: new session → send ping → a
+fabricated tier:"homie" run.json claims and replies (the sanctioned fast-lane
+runner stand-in) → the reply renders inside the tight polling window → the
+dashboard outbox drains to zero. Playwright 1.54.0 pinned by the committed
+bun.lock (§16.1); browsers via `bunx playwright install chromium`. Gotcha
+pinned in mc.ts: Bun.spawn does not see process.env mutations made after
+module load unless env is passed explicitly per spawn.
+
+Deferred from S6 (not blockers): LaunchAgent unit generation (install/onboard,
+§16.1); the four remaining tabs with their subsystems; SSE/WebSocket push
+behind the same API if polling ever chafes.
+
+NEXT: adversarial review of the S6 diff, then the remaining authored
+deliverables (frozen role directives + brief templates, install.sh + /onboard).

@@ -6,17 +6,19 @@ REPO PATH: `~/dev/ai/homie`. Never relocate this repo into `~/Documents`,
 `~/Desktop`, or `~/Downloads`: macOS TCC can revoke an agent session's own
 filesystem access there during fan-out. Full Disk Access does not fix it.
 
-LAST GREEN SHA: `c8f37e9`+doctor-tighten — ALL lanes green: five-leg fast,
-all three tag vets, full `docker_boundary` (26 subtests, incl. the two-arm
-doctor capability probe), full `docker_e2e` (10 tests: `ok mc/e2e 58s`, incl.
-both credential-projection legs and the packaged→approve→merge→archived
-walk). Production image `mc-prod` at `5d7f539`:
+LAST GREEN SHA: `75bd35f` — six-leg fast suite green (incl. the new
+dashboard leg) + the Playwright dashboard smoke. Docker lanes last ran green
+at `c8f37e9`-era HEAD (full `docker_boundary` 26 subtests, full `docker_e2e`
+10 tests incl. both credential legs) and are untouched since: commits after
+are test-only or the new `dashboard/` package. Production image `mc-prod` at
+`5d7f539`:
 `sha256:47b27eda69019d1e97c9618466ed391470447ebae6025270abb1931914c487a6`,
-arm64/linux, Docker Desktop 29.4.0 aarch64, native (no --platform, no
-emulation) — unchanged by TS-only commits since. LESSON pinned by `ada715d`:
-the resident's `SPINE_SCHEMA_VERSION` (resident-control.ts:12) mirrors
+arm64/linux, native. LESSON pinned by `ada715d`: the resident's
+`SPINE_SCHEMA_VERSION` (resident-control.ts:12) mirrors
 `substrate.CurrentSchemaVersion` in lockstep — every schema bump must touch
-BOTH, and only the Docker handshake lane catches the miss.
+BOTH, and only the Docker handshake lane catches the miss. LESSON (75b2db5):
+Go test caching can mask a red left by a semantics change — a "suite green"
+claim needs `-count=1` or a cold cache on the affected package.
 
 The operator pushes manually; agents do not push.
 
@@ -26,10 +28,11 @@ families) is in progress. Completed implementation history is in
 phase ledger is `docs/ledger/phase-4.md`. Do not read any of them at startup.
 
 FAST SUITE:
-`./mc/check.sh && ./runner/fake-harness/check.sh && ./runner/agent-runner/check.sh && ./runner/image/check.sh && ./resident/check.sh`
+`./mc/check.sh && ./runner/fake-harness/check.sh && ./runner/agent-runner/check.sh && ./runner/image/check.sh && ./resident/check.sh && ./dashboard/check.sh`
 
 Phase-completion Docker regression:
 `cd mc && mise exec -- go test -tags docker_e2e -timeout 15m ./e2e/...`
+Phase-completion dashboard browser smoke: `./dashboard/smoke.sh` (no Docker).
 
 Schema is v12. `mc onboard home` migrates v1 through v12 in place. v11 widened
 the approve landing fence to assignment-armed tasks; v12 retires
@@ -119,26 +122,10 @@ the approve landing fence to assignment-armed tasks; v12 retires
         reap (time-based only), interrupt CONTAINER-STOP (owed to orphan sweep),
         wake-from-sleep immediate tick (unimplemented [P2/P3]). Ledger
         2026-07-22 "(5) ... DONE (scoped; three gaps flagged)".
-  - [~] (6) Homie loop — CONSOLE SCHEDULE done. Operator chose to BUILD the
-        conversational runtime + dashboard (2026-07-22). The RUNTIME is
-        SPECIFIED (ADR-016 D3 branch 5-7 selector + fence; §11.5/§15) — an
-        IMPLEMENTATION, not new design; the fence columns, homieCandidateState/
-        key, preflight marker, and loadHomieProjection are already built. Only
-        the DASHBOARD framework/read-path is undecided (short ADR at that stage).
-        STAGED BUILD:
-          - [ ] S1 (Go): dispatch wake selector (consume sel.homies after
-                Decide, lease-free) + the 3 post-commit fence verbs
-                (homie.launch-bind, homie.runner_started, mc homie exit).
-          - [ ] S2 (TS): resident homie spawn EFFECT arm + effector
-                (tier:"homie" run.json, no lease/heartbeat/brief, operator-scope
-                RO mounts, mc-tier=homie, resume re-mount).
-          - [ ] S3 (TS): homie RUNNER (runner/homie-runner) — start/resume
-                harness, loop claim→reply, register locators, no heartbeat, idle.
-          - [ ] S4: E2E — send → tick-wake → reply → outbox (real container).
-          - [ ] S5: outbox DELIVERY loop (resident) + resume relaunch.
-          - [ ] S6: DASHBOARD web app (ADR framework/read-path, TS on Bun,
-                loopback) + one Playwright smoke.
-        Ledger 2026-07-22 "(6) ... UNIMPLEMENTED" + the design investigation.
+  - [x] (6) Homie loop — DONE 2026-07-22 (runtime S1–S5 + dashboard S6).
+        Full send→wake→reply→resume loop proven by real Docker E2E; the S6
+        Console (ADR-024) proven by the Playwright smoke. Details below and
+        in the ledger.
 - [ ] Phase 5 — operator-scheduled real-subscription acceptance.
 - [ ] Release prep — install/onboard front door and construction-document
       disposition.
@@ -210,11 +197,11 @@ these are the constraints a Phase 4+ change must not break.
   canonical landing row derived; use the assignment's frozen `target_ref` and
   refuse divergence. Details are in the Phase 3 ledger.
 
-## Homie runtime (ADR-016 D3) — S1-S5 DONE + green (detail in docs/ledger/phase-4.md)
+## Homie runtime (ADR-016 D3) — S1-S6 DONE + green (detail in docs/ledger/phase-4.md)
 
 The full send->wake->reply->resume loop is proven by real Docker E2E
 (TestHomieConversationDockerBoundary, TestHomieResumeDockerBoundary); the
-walking-skeleton pipeline e2e is still green. Last green SHA: 191719d.
+walking-skeleton pipeline e2e is still green.
 - S1 (82381d9): schema v13 homie_idle_timeout_s; launch-bind/runner-started/exit
   fence verbs; selectHomieWake + loadHomieSchedRows + homieWakeRound.
 - S2 (19aadf6, 23b078b): resident homie-wake/homie-stop effectors.
@@ -225,18 +212,19 @@ walking-skeleton pipeline e2e is still green. Last green SHA: 191719d.
   (HomieResume clears the dead launch; wake effector rm -f's the stale
   same-named container before create). Delivery verbs (OutboxPoll/OutboxAck +
   HomieReply's homie_reply fan) already exist.
+- S6 (30af818, 75bd35f): ADR-024 dashboard Console — zero-framework Bun.serve
+  `dashboard/` package, spine ONLY via spawned `mc` (Inv. 15/24), verb-mirror
+  API, fail-closed loopback/auth bind, derived per-session channel ref,
+  pull-based polling with trivial outbox ack. Unit lane = sixth fast-suite
+  leg; browser proof = `./dashboard/smoke.sh` (Playwright, Docker-free).
 
 DEFERRED: true native cross-turn continuity (real-harness --resume; fake adapter
 starts anew); dispatch branch-5 container reconciliation + branch-7 unstarted-
 launch recovery (need resident container inventory); homie credential projection
-(fake route is token-free).
+(fake route is token-free); dashboard LaunchAgent generation (install/onboard);
+the four non-Console tabs (each with its subsystem).
 
-NEXT: Homie runtime S6 — the dashboard. Write an ADR (framework/read-path: TS on
-Bun, loopback-only HTTP, reads the spine STRICTLY via `mc homie list`/`mc homie
-history` + `mc` read verbs — never opening the spine db directly, honoring Inv.
-24). Build the web app (sessions list from `mc homie list`; a conversation view;
-a send box calling `mc homie send`) + one Playwright smoke (mc-start a session,
-load the page, send, see the reply). Surface "dashboard" + OutboxPoll/OutboxAck
-already exist. Then Phase 4's homie runtime is functionally complete; return to
-remaining authored deliverables (frozen role directives/brief templates,
-install.sh + /onboard).
+NEXT: adversarial review of the S6 diff (9d2cdb4..HEAD) against ADR-024 +
+spec §13/§15.4-15.7; then the remaining authored deliverables — frozen role
+directives + brief templates (spec §9.2, Inv. 20), install.sh + /onboard
+(spec §17).
