@@ -234,9 +234,14 @@ func TestEveryPublicMountRejectionIsCoded(t *testing.T) {
 	for name := range mountAPIs {
 		wantExportedErrorAPIs[name] = true
 	}
-	// The one deliberate exception: NewBlockPolicy validates config.toml, so
-	// ADR-016 classifies its eventual integration error as health.config_invalid.
+	// The deliberate exceptions: NewBlockPolicy and NewEnvGuard validate
+	// operator configuration, so ADR-016 classifies their eventual
+	// integration errors as health.config_invalid. BuildEnvPlan is not a
+	// mount API at all: its EnvPolicyError kinds are the D4 candidate codes
+	// env.invalid and env.forbidden (contract §2.2, ADR-022 D7).
 	wantExportedErrorAPIs["NewBlockPolicy"] = true
+	wantExportedErrorAPIs["NewEnvGuard"] = true
+	wantExportedErrorAPIs["BuildEnvPlan"] = true
 	if len(exportedErrorAPIs) != len(wantExportedErrorAPIs) {
 		t.Fatalf("exported error-returning API count = %d, want %d: %#v",
 			len(exportedErrorAPIs), len(wantExportedErrorAPIs), exportedErrorAPIs)
