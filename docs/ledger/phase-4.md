@@ -196,3 +196,42 @@ blocker). The wave-boundary "merge main into the branch" drift step (§6.1).
 NEXT: full docker_e2e regression (15 tests) to confirm no regression, then
 Phase 4 families (5) fault matrix and (6) homie loop. Optionally the (4)
 block-propagation + cancel-cascade E2E variants now that landing works.
+
+## 2026-07-22 — scenario (5) fault matrix DONE (scoped; three gaps flagged)
+
+`mc/e2e/fault_matrix_test.go` — four green tests:
+- TestFaultReapRetry (10.7s): a Worker that dies before session-start (MALFORMED
+  behavior → harness exits before emitting session-start → never heartbeats) is
+  reaped at spawn_grace (5s, spawn-watchdog class), charges dispatch_retries,
+  frees the lease; task re-selects (Inv. 10) and completes when a valid behavior
+  is swapped in; reaped run's session folder survives (Inv. 26).
+- TestFaultBudgetExhaustion (18.2s): a permanently broken Worker drains the
+  retry budget to 0 → task BLOCKED with a stable reason (§10, no silent loop).
+- TestRebootDrill (7.4s): resident killed mid-pipeline + restarted → resumes
+  from spine alone to packaged, one packet, session folders survive.
+- TestInterrupt (4s): hang Worker holds the lease → `mc task interrupt` cancels+
+  archives + frees lease (spine effect).
+
+KILL-CLASS LEVER (recon-confirmed): the fake harness ALWAYS emits session-start
+(→ heartbeat) before any step, so a `crash`-first behavior lands on the slow
+15-min lease-timeout path. A MALFORMED behavior exits before session-start →
+never-heartbeated → fast 5s spawn-watchdog. That is the clean fast-fail lever.
+
+THREE GENUINE GAPS FLAGGED (not asserted; would each need new code, out of the
+fake-harness E2E's scope):
+1. Fast-fail LIVENESS reap: reaping is time-threshold-only; there is no
+   "container confirmed absent → reap now" path. A never-heartbeated fast-fail
+   reaps at spawn_grace (5s, fine); a HEARTBEATED fast-fail waits the full
+   lease-timeout (15 min E2E / 75 min prod). The family-3 finding. A prompt
+   liveness reap needs a resident spawn-liveness probe + a spine reap trigger.
+2. Interrupt CONTAINER-STOP: the resident tick loop never applies an interrupt
+   effect (dispatch emits none); the container-stop is owed to the orphan sweep
+   (IMPLEMENTATION-NOTES 2026-07-20). The spine cancel+lease-free is real.
+3. Wake-from-sleep IMMEDIATE tick: unimplemented, deferred [P2/P3]
+   (phase1b-contract.md:249). The loop is a plain setInterval.
+Also: tick-loop "one dispatch at a time" is unit-covered (tick-loop.test.ts) +
+enforced by the single CAS lease (Inv. 1/3); not re-asserted at E2E.
+
+NEXT: full docker_e2e regression (19 tests), then scenario family (6) homie
+loop — send → tick wake → reply → outbox/ack; resume; console schedule; plus
+one Playwright dashboard smoke.

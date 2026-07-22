@@ -112,9 +112,13 @@ the approve landing fence to assignment-armed tasks; v12 retires
         machine unit/property-tested); the PRODUCTION real-harness child mount
         rows stay parked for Phase 5 (ADR-023 D6). Ledger 2026-07-22 "(4) ...
         DONE via ADR-023".
-  - [ ] (5) Fault matrix — one kill per kill-class → reap → re-select →
-        retry; interrupt, tick discipline, reboot drill, session permanence.
-        UNBLOCKED (does not depend on parked mechanics).
+  - [x] (5) Fault matrix — reap→retry→complete, budget-exhaustion→blocked,
+        reboot drill (resident restart resumes), interrupt (spine effect),
+        session-folder permanence. Green (4 tests). Three gaps flagged not
+        asserted (need new code, out of fake-harness scope): fast-fail LIVENESS
+        reap (time-based only), interrupt CONTAINER-STOP (owed to orphan sweep),
+        wake-from-sleep immediate tick (unimplemented [P2/P3]). Ledger
+        2026-07-22 "(5) ... DONE (scoped; three gaps flagged)".
   - [ ] (6) Homie loop — send → tick wake → reply → outbox/ack; resume;
         console schedule. Plus one Playwright dashboard smoke. UNBLOCKED.
 - [ ] Phase 5 — operator-scheduled real-subscription acceptance.
