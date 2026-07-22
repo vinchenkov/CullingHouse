@@ -890,6 +890,97 @@ describe("spawn effect", () => {
     expect(runJson.harness_config.behavior).toBe("/mc/behaviors/strategist.json");
   });
 
+  // ADR-022 step 3: a real (non-fake) agent route projects credentials
+  // through the injected CredentialProjector and gets an open network — the
+  // egress control is deleted by requirement. The fake family stays
+  // --network none as spawn-side hygiene (it is deterministic and
+  // token-free), which also keeps the Phase 1 contract §1 row intact.
+  describe("credentialed agent spawn (ADR-022)", () => {
+    const claudeEffect: Effect = {
+      ...spawnEffect,
+      run_id: "run-77-worker",
+      harness: "claude",
+      model_binding: "claude-max",
+    };
+    const routedConfig = { ...testConfig, agentRunnerRoutes: ["claude/claude-max", "codex/codex-sub"] };
+
+    test("a claude-channel spawn merges the flag env and drops --network none", async () => {
+      const rig = makeRig({
+        config: routedConfig,
+        credentials: {
+          project: () => ({
+            env: {
+              CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST: "1",
+              CLAUDE_CODE_OAUTH_TOKEN: "host-minted-access",
+            },
+          }),
+        },
+      });
+      rig.docker.enqueue(ok("container-id\n"), ok(""));
+      await applyEffect(claudeEffect, rig.deps);
+      const create = rig.docker.calls[0]!;
+      expect(create).not.toContain("--network");
+      expect(create).toContain("CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST=1");
+      expect(create).toContain("CLAUDE_CODE_OAUTH_TOKEN=host-minted-access");
+      expect(create.join(" ")).not.toContain("ANTHROPIC_API_KEY");
+      expect(rig.docker.calls[1]).toEqual(["start", "mc-run-run-77-worker"]);
+    });
+
+    test("a codex-channel spawn binds the projected auth.json RW and points CODEX_HOME at it", async () => {
+      const rig = makeRig({
+        config: routedConfig,
+        credentials: {
+          project: () => ({
+            env: { CODEX_REFRESH_TOKEN_URL_OVERRIDE: "http://host.docker.internal:7799/oauth/token" },
+            authJson: '{"auth_mode":"chatgpt"}',
+          }),
+        },
+      });
+      rig.docker.enqueue(ok("container-id\n"), ok(""));
+      await applyEffect(
+        { ...claudeEffect, run_id: "run-78-worker", harness: "codex", model_binding: "codex-sub" },
+        rig.deps,
+      );
+      expect(rig.fakeFs.writes.get("/tmp/mc-home/runs/run-78-worker.codex-auth.json")).toBe('{"auth_mode":"chatgpt"}');
+      const create = rig.docker.calls[0]!;
+      expect(create).toContain("/tmp/mc-home/runs/run-78-worker.codex-auth.json:/mc/codex/auth.json");
+      expect(create).toContain("CODEX_HOME=/mc/codex");
+      expect(create).toContain("CODEX_REFRESH_TOKEN_URL_OVERRIDE=http://host.docker.internal:7799/oauth/token");
+      expect(create).not.toContain("--network");
+    });
+
+    test("a refused projection spawns nothing and writes nothing (D8)", async () => {
+      const rig = makeRig({
+        config: routedConfig,
+        credentials: { project: () => ({ refused: "claude credential lapsed" }) },
+      });
+      await applyEffect(claudeEffect, rig.deps);
+      expect(rig.docker.calls).toEqual([]);
+      expect(rig.fakeFs.writes.size).toBe(0);
+      expect(rig.logs.some((line) => line.includes("claude credential lapsed"))).toBe(true);
+    });
+
+    test("without a projector a routed non-fake spawn launches token-free on the open network", async () => {
+      const rig = makeRig({ config: routedConfig });
+      rig.docker.enqueue(ok("container-id\n"), ok(""));
+      await applyEffect(claudeEffect, rig.deps);
+      const create = rig.docker.calls[0]!;
+      expect(create).not.toContain("--network");
+      expect(create.join(" ")).not.toContain("CLAUDE_CODE");
+    });
+
+    test("the fake family keeps --network none as hygiene", async () => {
+      const rig = makeRig({
+        credentials: { project: () => ({ env: { CLAUDE_CODE_OAUTH_TOKEN: "never" } }) },
+      });
+      rig.docker.enqueue(ok("container-id\n"), ok(""));
+      await applyEffect(spawnEffect, rig.deps);
+      const create = rig.docker.calls[0]!;
+      expect(create).toContain("--network");
+      expect(create.join(" ")).not.toContain("CLAUDE_CODE");
+    });
+  });
+
   test("docker create+start argv: --rm, --network none, exact name, labels, plan binds, MC_SPINE", async () => {
     const rig = makeRig();
     rig.docker.enqueue(ok("container-id\n"), ok(""));

@@ -408,6 +408,28 @@ async function spawn(effect: SpawnEffect, deps: TickDeps): Promise<void> {
 		return;
 	}
 
+	// ADR-022: resolve the credential projection BEFORE any launch file
+	// exists. A refused projection is D8 — the run stalls (the lease
+	// machinery retries a later tick); it never launches uncredentialed. The
+	// fake family is deterministic and token-free, so it keeps --network none
+	// as spawn-side hygiene (contract §1); every real agent route gets the
+	// open network by requirement, with the projector as its only credential
+	// material.
+	const isFakeFamily = effect.harness === "fake" && effect.model_binding === "fake";
+	const projection = isFakeFamily
+		? null
+		: deps.credentials?.project(effect.harness, effect.model_binding) ?? null;
+	if (projection !== null && "refused" in projection) {
+		log(`spawn refused: credential projection unavailable for ${routeKey}: ${projection.refused} (ADR-022 D8)`);
+		return;
+	}
+	const credentialEnv = projection === null
+		? []
+		: Object.keys(projection.env).sort().flatMap((name) => ["-e", `${name}=${projection.env[name]}`]);
+	const codexAuthPath = projection !== null && projection.authJson !== undefined
+		? posix.join(runsDir(config.mcHome), `${run_id}.codex-auth.json`)
+		: undefined;
+
   // 1. folder — the trace-only session folder (Inv. 26) plus the sibling
   // envelope dir: run.json must live OUTSIDE the session folder so the RW
   // session mount never aliases the RO /mc/run.json mount (spec §4, §11.3).
@@ -437,9 +459,16 @@ async function spawn(effect: SpawnEffect, deps: TickDeps): Promise<void> {
   await deps.fs.writeFile(runJsonPath, JSON.stringify(runJson, null, 2) + "\n");
   const planPath = mountPlanHostPath(config.mcHome, run_id);
   await deps.fs.writeFile(planPath, JSON.stringify(effect.mount_plan) + "\n", { mode: 0o600 });
+	if (codexAuthPath !== undefined) {
+		// Run-keyed disposable projection: a fresh access token and the dummy
+		// refresh only. Codex rewrites it on a successful broker refresh, so it
+		// binds RW — there is no host secret behind it to protect.
+		await deps.fs.writeFile(codexAuthPath, projection!.authJson!, { mode: 0o600 });
+	}
   const removeLaunchFiles = async () => {
     await deps.fs.rm(runJsonPath);
     await deps.fs.rm(planPath);
+		if (codexAuthPath !== undefined) await deps.fs.rm(codexAuthPath);
 		if (verifierProjection !== undefined) await deps.fs.rm(verifierProjection, { recursive: true });
   };
   const recheck = async (leg: string): Promise<boolean> => {
@@ -496,7 +525,7 @@ async function spawn(effect: SpawnEffect, deps: TickDeps): Promise<void> {
 	}
   const created = await deps.docker([
     "create", "--rm",
-    "--network", "none",
+    ...(isFakeFamily ? ["--network", "none"] : []),
     "--name", name,
     "--label", "mc-managed=true",
     "--label", "mc-tier=pipeline",
@@ -507,8 +536,12 @@ async function spawn(effect: SpawnEffect, deps: TickDeps): Promise<void> {
     "-v", `${config.behaviorsDir}:/mc/behaviors:ro`,
     "-v", `${config.runnerSrcDir}:/app/src:ro`,
     ...planBinds,
+		...(codexAuthPath === undefined
+			? []
+			: ["-v", `${codexAuthPath}:/mc/codex/auth.json`, "-e", "CODEX_HOME=/mc/codex"]),
     "-v", `${config.spineVolume}:${posix.dirname(config.spineDbPath)}`,
     "-e", `MC_SPINE=${config.spineDbPath}`,
+    ...credentialEnv,
     // Authorize the in-container fake adapter to stand in for the same non-fake
     // routes the resident's own launch gate accepts (fail-closed: absent ⇒
     // fake-only inside the container too).
