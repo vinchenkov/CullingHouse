@@ -4950,3 +4950,54 @@ existed only in a prior session's volatile `/private/tmp` scratchpad, which
 
 NEXT (outgoing): build ADR-022 step 2 (token service + writers + broker +
 forbidden-env), TDD, each green and inert, before the step-3 spawn-seam wiring.
+
+## 2026-07-21 — ADR-022 step 2 built end to end: v12, env builder, token service, broker (all green, all inert)
+
+Four green micro-commits (`9c45d2b`, `dd380e0`, `d4e14f0`, `029acc4`), each
+TDD'd red-first, fast lane green after each. Nothing touches the spawn seam
+yet; every surface is inert until step 3 flips the wiring.
+
+- **Schema v12** (`9c45d2b`): retires `egress_policy`/`network_allow`, narrows
+  `runtime_auth_delivery` to `projection|materialized` (default `projection`,
+  `gateway` rows rewritten to `projection`). First rebuild-and-copy in the
+  chain. `PRAGMA defer_foreign_keys` FAILED here — the DROP's deferred
+  violation count survives the rename that satisfies it — so the migration
+  stashes the nullable `worksources.sandbox_profile` references at NULL across
+  the swap and restores them, keeping FK enforcement live end to end. The
+  pre-v12 schema is frozen as `testdata/schema-v11.sql`; migration tests plant
+  a gateway profile + materialized profile + referencing worksource and prove
+  row survival, value mapping, FK integrity, and structural equality with a
+  fresh spine. Onboarding's deny-by-default profile check reduced to the §17
+  rebinding refusal; init's fake-family INSERT drops the column (its
+  `--network none` is spawn-side hygiene now).
+- **Forbidden-env builder** (`dd380e0`, `mc/boundary/envpolicy.go`):
+  `BuildEnvPlan(policyJSON, guard, binding, foreignStaticKeys)` — declared
+  flat JSON base only, `*_API_KEY` wildcard enumeration via `APIKeyShaped()`,
+  compiled-in §16.3 floor (`CODEX_API_KEY`+`ANTHROPIC_API_KEY`) with
+  extend-only `NewEnvGuard` (BlockPolicy idiom), D7 fence (`*_REFRESH_TOKEN`
+  and the binding's provider credential keys reject; D5 static key survives
+  its own plane only). Typed `EnvPolicyError` → `env.invalid`/`env.forbidden`.
+  `codes_test.go`'s closed API set extended deliberately.
+- **Token service + writers** (`d4e14f0`, `resident/src/token-service.ts`):
+  refresh-ahead per-binding service behind an injected `mint` seam — the
+  module has no refresh-grant field to leak (structural D2). Lapsed → null →
+  caller stalls (D8). Claude writer = S9 flag channel; Codex writer preserves
+  `account_id`+`auth_mode:"chatgpt"` with the dummy refresh.
+- **Refresh broker** (`029acc4`, `resident/src/refresh-broker.ts`): loopback
+  Bun.serve `/oauth/token`; never reads/echoes the container refresh token;
+  mint failure → 503, no credential material; real-fetch tested Docker-free.
+
+Delegated shapes logged in `IMPLEMENTATION-NOTES.md` (2026-07-21, "Schema v12
++ forbidden-env builder"): v12 value mapping, onboarding health-check
+reduction, env-policy JSON format. Binding-catalog sourcing of
+`ProviderCredentialKeys`/`DeclaredStaticKey` deliberately deferred to step 3.
+
+NEXT: ADR-022 step 3 — wire the spawn seam: projection writers + forbidden-env
+into `resident/src/effects.ts` spawn() (env + auth.json bind beside the
+run.json envelope), drop `--network none` for the agent class ONLY (log the
+deviation), repurpose `resolveGatewaySecretRoots` as the refresh-grant-store
+deny root, retire the `doctor gateway` finding (ops.go:314, assert absence at
+cli_test.go:4260), swap the docker_boundary/docker_e2e egress assertions to
+the §3 Credential-projection rows, and decide the refusal-code disposition
+(keep CodeGateway*/CodeNetwork* inert — cheaper and reversible). Inventory:
+this ledger's 2026-07-21 S9 entry.

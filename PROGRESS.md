@@ -6,10 +6,12 @@ REPO PATH: `~/dev/ai/homie`. Never relocate this repo into `~/Documents`,
 `~/Desktop`, or `~/Downloads`: macOS TCC can revoke an agent session's own
 filesystem access there during fan-out. Full Disk Access does not fix it.
 
-LAST GREEN SHA: `dbfc553` — five-leg fast lane green. Docker E2E 8/8 at `dbfc553`, INCLUDING
-the sealed landing walk (`packaged -> approve -> merge -> archived` with a real
-`--no-ff` merge). `docker_boundary` 9/9 at the same SHA. All three tag
-compile/vet lanes clean. Production image `mc-prod`
+LAST GREEN SHA: `029acc4` — five-leg fast lane green (ADR-022 step 2 landed
+as four TDD micro-commits `9c45d2b`..`029acc4`). Docker evidence is OLDER:
+Docker E2E 8/8 and `docker_boundary` 9/9 at `dbfc553`, INCLUDING the sealed
+landing walk (`packaged -> approve -> merge -> archived`, real `--no-ff`
+merge) — that predates schema v12, so the Docker lanes must be rerun for the
+Phase 3 completion lane. Production image `mc-prod`
 `sha256:8f12cc425a6d8f37e364b1627bb0e349a7fdbccf59035a25f58a57224a044a02`,
 arm64/linux, Docker Desktop 29.4.0 aarch64, native (no --platform, no
 emulation).
@@ -27,9 +29,11 @@ FAST SUITE:
 Phase-completion Docker regression:
 `cd mc && mise exec -- go test -tags docker_e2e -timeout 15m ./e2e/...`
 
-Schema is v11. `mc onboard home` migrates v1 through v11 in place. v11 widens
-the approve landing fence so an immutable task assignment, not only
-`tasks.branch`, arms it.
+Schema is v12. `mc onboard home` migrates v1 through v12 in place. v11 widened
+the approve landing fence to assignment-armed tasks; v12 retires
+`egress_policy`/`network_allow` and narrows `runtime_auth_delivery` to
+`projection|materialized` (ADR-022) via the chain's first rebuild-and-copy
+(NULL-stash of the worksource references, not deferred FKs — see ledger).
 
 ## Known intermittent failures
 
@@ -195,11 +199,17 @@ Authoritative texts, already written: ADR-022; spec §11.4 amendment (2026-07-21
    as the mandatory reactive-401/long-session fallback (a real fresh JWT skips
    only the startup refresh). ADR-022 D3/D4 + Residuals amended;
    `IMPLEMENTATION-NOTES.md` (2026-07-21 S9) records the delegated choices.
-2. Token service skeleton + refresh-ahead loop; Claude (flag-based) + Codex
-   projection writers; Codex refresh-broker endpoint; forbidden-env builder.
+2. [x] Step 2 COMPLETE (commits `9c45d2b`, `dd380e0`, `d4e14f0`, `029acc4`):
+   schema v12; `mc/boundary/envpolicy.go` forbidden-env builder (§16.3 floor,
+   extend-only guard, D7 fence, typed env.invalid/env.forbidden);
+   `resident/src/token-service.ts` (refresh-ahead behind an injected mint
+   seam, Claude flag writer, Codex auth.json writer);
+   `resident/src/refresh-broker.ts` (loopback /oauth/token). All green, all
+   inert. Ledger: 2026-07-21 "ADR-022 step 2 built end to end".
 3. Wire into the resident spawn seam, removing the gateway wiring; relax the
    `docker_boundary` `--network none`/egress assertions to the §3 credential
-   rows; retire the `doctor gateway` finding.
+   rows; retire the `doctor gateway` finding; source binding-catalog
+   `ProviderCredentialKeys`/`DeclaredStaticKey` for the env builder.
 
 Removal/wiring inventory for steps 2–3 is mapped in the phase-3 ledger
 (2026-07-21 S9 entry) — spawn seam, schema migration, forbidden-env floor,
@@ -226,4 +236,4 @@ lockstep golden bytes.
   canonical landing row derived; use the assignment's frozen `target_ref` and
   refuse divergence. Details are in the Phase 3 ledger.
 
-NEXT: Build the ADR-022 credential surface, step 2 (spike step 1 is DONE — see "Credential design" above; `spikes/09-credential-projection/RESULT.md`). TDD, smallest first: (a) a schema migration turning `runtime_auth_delivery` values into `projection|materialized` and retiring `egress_policy`/`network_allow` (new migration only — never edit `mc/substrate/testdata/schema-v1..v3.sql`); (b) the forbidden-env builder reading `harness_env_policy`/`tool_env_policy` from the non-shrinkable `CODEX_API_KEY`+`ANTHROPIC_API_KEY` floor, `SENTINEL_API_KEY` proving wildcard enumeration, extended to reject provider refresh tokens/API keys for OAuth bindings (ADR-022 D7); (c) the resident token-service module + Claude flag-based writer (`CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST` + `CLAUDE_CODE_OAUTH_TOKEN`) and Codex `auth.json` writer preserving `account_id`+`auth_mode`; (d) the Codex refresh-broker endpoint. Keep each green and inert until the spawn-seam wiring (step 3). Do NOT touch `resolveGatewaySecretRoots` except to repurpose it as the token-store deny root. Full removal/assertion-swap inventory is in the phase-3 ledger (2026-07-21 S9 entry). Everything else in Phase 3 is green and proven end to end on the real platform: sealed landing lane complete, `docker_boundary` 9/9 (note: the `--network none` assertion there is now superseded and to be swapped), `docker_e2e` 8/8 including the merge walk, five-leg fast lane, all tag vet lanes. Non-blocking obligations remain in `IMPLEMENTATION-NOTES.md` (2026-07-21): unenforced 15-minute landing deadline, `SealedLandingResult` has no spine consumer, ADR-016 D7 label non-conformance in setup/legacy-land.
+NEXT: ADR-022 step 3 — wire the spawn seam (TDD, inventory in the phase-3 ledger 2026-07-21 S9 entry + step-2 entry): (a) projection writers + forbidden-env builder into `resident/src/effects.ts` spawn() (env + auth.json bind beside the run.json envelope; token service + broker wired in `main.ts` TickDeps-style); (b) drop `--network none` for the AGENT class only (effects.ts:499) — setup/landing/verifier/rebuild/legacy-land keep isolation as hygiene; log the deviation; (c) repurpose `resolveGatewaySecretRoots` (`mc/verbs/mountattest.go:408`) to deny-mount the on-disk refresh-grant store — never delete it; (d) retire the `doctor gateway` finding (`mc/verbs/ops.go:314`, swap `cli_test.go:4260` to assert absence); (e) swap `docker_boundary`/`docker_e2e` `--network none`/egress assertions to §3 Credential-projection rows (landing_envelope_test.go:210,286,344 + ~10 argv sites in e2e_test.go); (f) keep CodeGateway*/CodeNetwork* refusal codes inert (cheaper, reversible) but KEEP `gateway_control_version` untouched (golden bytes). Then rerun the Docker lanes (stale since v12) and drive the §2 Phase 3 completion lane. Non-blocking obligations remain in `IMPLEMENTATION-NOTES.md` (2026-07-21): unenforced 15-minute landing deadline, `SealedLandingResult` has no spine consumer, ADR-016 D7 label non-conformance in setup/legacy-land.
