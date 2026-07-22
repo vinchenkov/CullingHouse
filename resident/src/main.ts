@@ -12,17 +12,68 @@
 // The e2e (contract §7) spawns this process, points it at its test config,
 // and only ever observes — advancement stays timer-driven.
 
-import { mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, readdir, rename, rm, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 import { startTickLoop } from "./tick-loop";
 import type { Exec, ResidentConfig, TickDeps } from "./types";
 import { CONFIG_SCHEMA_VERSION, execMcVia } from "./resident-control";
 import { precreateCompletionSeal, precreateTaskSkeleton, recheckAcceptedSeal } from "./task-skeleton";
+import {
+  parseRefreshGrant,
+  startCredentialProjector,
+  type CredentialProjectorHandle,
+  type RefreshGrant,
+} from "./credential-projector";
 
 interface MainConfig extends ResidentConfig {
   mcPath: string;
   tickIntervalMs?: number;
   releaseBuildId: string;
   configSchemaVersion: number;
+}
+
+// loadRefreshGrants reads MC_HOME/refresh-grants (ADR-022 D2): the deny-
+// mounted store of real refresh grants captured at onboarding. An absent
+// store means no credentialed bindings; a malformed grant file refuses
+// startup fail-closed rather than silently skipping the binding.
+async function loadRefreshGrants(mcHome: string): Promise<RefreshGrant[]> {
+  const dir = join(mcHome, "refresh-grants");
+  let names: string[];
+  try {
+    names = await readdir(dir);
+  } catch {
+    return [];
+  }
+  const grants: RefreshGrant[] = [];
+  for (const name of names.filter((n) => n.endsWith(".json")).sort()) {
+    grants.push(parseRefreshGrant(await Bun.file(join(dir, name)).json()));
+  }
+  return grants;
+}
+
+function startProjector(mcHome: string, grants: RefreshGrant[], log: (line: string) => void): CredentialProjectorHandle {
+  return startCredentialProjector(grants, {
+    now: () => Date.now(),
+    setTimer: (fn, ms) => setTimeout(fn, ms),
+    clearTimer: (timer) => clearTimeout(timer as ReturnType<typeof setTimeout>),
+    log,
+    fetchToken: async (url, body) => {
+      const res = await fetch(url, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) return { ok: false, status: res.status };
+      return { ok: true, status: res.status, body: (await res.json()) as Record<string, unknown> };
+    },
+    persistGrant: async (grant) => {
+      // Atomic replace: a torn grant file strands the binding permanently.
+      const path = join(mcHome, "refresh-grants", `${grant.binding}.json`);
+      const staged = `${path}.next`;
+      await writeFile(staged, JSON.stringify(grant, null, 2) + "\n", { mode: 0o600 });
+      await rename(staged, path);
+    },
+  });
 }
 
 function execVia(binary: string): Exec {
@@ -79,13 +130,31 @@ async function main(): Promise<void> {
 		releaseBuildId: config.releaseBuildId,
 		configSchemaVersion: config.configSchemaVersion,
 	});
+  const log = (msg: string) => console.error(`[resident ${new Date().toISOString()}] ${msg}`);
+
+  // ADR-022: credentialed bindings exist exactly when the deny-mounted grant
+  // store has entries. A malformed grant refuses startup above (fail-closed);
+  // an empty store leaves every route token-free.
+  let grants: RefreshGrant[];
+  try {
+    grants = await loadRefreshGrants(config.mcHome);
+  } catch (err) {
+    console.error(`resident: refresh grant store is malformed: ${err instanceof Error ? err.message : String(err)}`);
+    process.exit(2);
+  }
+  const credentialHandle = grants.length > 0 ? startProjector(config.mcHome, grants, log) : undefined;
+  if (credentialHandle) {
+    await credentialHandle.ready;
+    log(`credential projector live for ${grants.length} binding(s)`);
+  }
+
   const deps: TickDeps = {
     intervalMs,
     setTimer: (fn, ms) => setInterval(fn, ms),
     clearTimer: (h) => clearInterval(h as ReturnType<typeof setInterval>),
 		runMc,
     docker: execVia("docker"),
-    log: (msg) => console.error(`[resident ${new Date().toISOString()}] ${msg}`),
+    log,
     fs: {
       mkdir: async (path, opts) => {
         await mkdir(path, { recursive: opts?.exclusive !== true });
@@ -168,6 +237,7 @@ async function main(): Promise<void> {
 				throw new Error(`task setup registration refused (exit ${result.exitCode}): ${result.stderr.trim()}`);
 			}
 		},
+    credentials: credentialHandle?.projector,
     config,
   };
 
@@ -176,6 +246,7 @@ async function main(): Promise<void> {
 
   const shutdown = (signal: string) => {
     deps.log(`${signal} received; stopping after any in-flight tick`);
+    credentialHandle?.stop();
     void handle.stop().then(() => process.exit(0));
   };
   process.on("SIGINT", () => shutdown("SIGINT"));
