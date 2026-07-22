@@ -130,73 +130,32 @@ the approve landing fence to assignment-armed tasks; v12 retires
 _(The parked §3 gateway/forbidden-env scope decision is RESOLVED — see
 "Credential design" below.)_
 
-## Sealed landing (COMPLETE host-side; Docker evidence pending)
+## Load-bearing invariants from completed Phase 3 (do not regress)
 
-LIVE since `d91e388`: `nextLanding` selects an approved assignment-backed row,
-routes it through prepare/attest/commit on BOTH paths, and the sealed E2E
-merges `packaged -> approve -> merge -> archived` with a real `--no-ff` merge.
-Design/activation narrative: phase-3 ledger (2026-07-20/21 entries); six
-delegated decisions in `IMPLEMENTATION-NOTES.md` (2026-07-21). The §2 Docker
-acceptance lane below is what turns the host-side proof into evidence.
+Full narratives are in `docs/ledger/phase-3.md` and `IMPLEMENTATION-NOTES.md`;
+these are the constraints a Phase 4+ change must not break.
 
-Constraints for anyone touching the seam:
-
-- The self-abort gate is ACTION identity with three parts — `MERGE_HEAD` is
-  the reviewed SHA, `MERGE_MSG` is a message this landing WROTE (our subject +
-  trailer at column 0), and the target still at the frozen preimage. Do not
-  loosen any of the three; the operator can reproduce `MERGE_HEAD` and
-  `git merge --log` can splice an agent subject into MERGE_MSG. Details:
-  `IMPLEMENTATION-NOTES.md` (2026-07-20).
-- A landing is a SEPARATE lane — the third `preparedDispatch` variant
-  (`landing *preparedLanding`), never a `preparedCandidate`. The spawn seam
-  dereferences `cand.spawn` unguarded in dozens of places; the separation is
-  what keeps those unreachable with a nil Spawn. A landing takes no lease,
-  opens no Run, writes nothing at dispatch time; `mc land report` writes.
-
-MUST NOT RELAX: `TestNoLandingCellIsPlanAddressable` and
-`TestPlanMountsRefusesEveryLandingCell` (`landingplan_test.go:77,103`) — an
-earlier draft widened them and review rejected it. Also
-`mc/dispatch/sealed_landing_test.go` and `mc/substrate/landing_fence_test.go`.
-
-The branch comes from the immutable assignment and is never projected into
-`tasks.branch`; `complete.go:163` is that column's only writer and is closed to
-assigned tasks, which is what makes the lanes partition. `/repo` is not
-plan-addressable. The nested `.mission-control` cover must prevent the RW source
-alias from exposing the sealed task root as writable.
-
-### 2. Phase 3 completion lane — DONE
-
-The realized landing mount table, RO alias/cover, network/uid/capability
-envelope, and the `packaged → approve → merge → archived` walk are proved in
-`docker_e2e`/`docker_boundary`; the §8 mechanical checklist is green (ledger
-2026-07-22 "§8 sweep"). What remains before Phase 4 is operator-owned, parked
-above.
-
-## Credential design (ADR-022) — BUILT and PROVEN (synthetic); live legs parked
-
-ADR-022 (operator-approved 2026-07-21) supersedes ADR-018 whole: free internet
-for agent containers, one property kept — **access token in, refresh token
-out** via a resident-hosted token service. The whole gateway apparatus (egress
-modes, `--network none` for agents, `network_allow`, egress audit, `doctor
-gateway`) is STRUCK. Static keys (MiniMax) can't be split → materialized with
-the D5 scoped-key advisory.
-
-Implementation COMPLETE, all green (`9c45d2b`..`c8f37e9`): schema v12;
-`mc/boundary/envpolicy.go` forbidden-env builder + pre-claim dispatch refusal;
-`resident/src/token-service.ts` + `refresh-broker.ts` + `credential-projector.ts`
-wired through `main.ts` and the spawn seam; `resolveGatewaySecretRoots`
-repurposed to deny-mount `MC_HOME/refresh-grants`; doctor gateway retired +
-container-runtime capability probe added; `TestCredentialProjection*` Docker
-acceptance (synthetic mints). Load-bearing invariants that must not regress:
-`--network none` dropped for the AGENT class only (setup/landing/verifier keep
-it, logged deviation); `resolveGatewaySecretRoots` deny-mounts the grant store
-(never delete); `gateway_control_version` retained (golden bytes). Full design
-narrative and the delegated choices: ledger 2026-07-21/22 + `IMPLEMENTATION-NOTES.md`.
-
-Still open (non-blocking, tracked below/parked): binding-catalog
-`ProviderCredentialKeys`/`DeclaredStaticKey` sourcing and the operator
-env-guard config surface for the forbidden-env builder; the live-provider
-credential legs (parked, need real refresh-grant material).
+- **Sealed landing** is a SEPARATE lane — the third `preparedDispatch` variant
+  (`landing *preparedLanding`), never a `preparedCandidate`; the spawn seam
+  dereferences `cand.spawn` unguarded, so the separation is the only thing
+  keeping those nil-safe. A landing takes no lease, opens no Run, writes
+  nothing at dispatch; `mc land report` writes. The self-abort gate is ACTION
+  identity, three parts (`MERGE_HEAD`=reviewed SHA, `MERGE_MSG`=a message this
+  landing WROTE, target at frozen preimage) — do not loosen any. The branch
+  comes from the immutable assignment, never `tasks.branch` (`complete.go:163`
+  is that column's only writer, closed to assigned tasks — this is what
+  partitions the lanes). MUST NOT RELAX: `TestNoLandingCellIsPlanAddressable`,
+  `TestPlanMountsRefusesEveryLandingCell` (`landingplan_test.go:77,103`),
+  `mc/dispatch/sealed_landing_test.go`, `mc/substrate/landing_fence_test.go`.
+- **ADR-022 credentials** (all green, `9c45d2b`..`c8f37e9`): `--network none`
+  dropped for the AGENT class ONLY (setup/landing/verifier keep it, logged
+  deviation); `resolveGatewaySecretRoots` deny-mounts `MC_HOME/refresh-grants`
+  (repurposed, never delete); `gateway_control_version` retained (golden
+  bytes); the resident's `SPINE_SCHEMA_VERSION` mirror tracks
+  `substrate.CurrentSchemaVersion` in lockstep. Still open (non-blocking):
+  binding-catalog `ProviderCredentialKeys`/`DeclaredStaticKey` sourcing +
+  operator env-guard config surface (the per-binding provider-key fence is
+  inert until threaded; floor + refresh-token fence are live).
 
 ## Known later obligations
 
@@ -212,18 +171,15 @@ credential legs (parked, need real refresh-grant material).
   canonical landing row derived; use the assignment's frozen `target_ref` and
   refuse divergence. Details are in the Phase 3 ledger.
 
-NEXT: Phase 3's §8 mechanical checklist is GREEN and the credential surface is
-built and proven with synthetic mints (ledger 2026-07-22 "§8 sweep"). Advancing
-Phase 3 → Phase 4 is now an OPERATOR SIGN-OFF (see ## Parked) — the remaining
-Phase 3 items (live-provider credential legs, Phase-5 runtime-auth turn, S7
-sleep drill) are operator-owned, not code. While awaiting that sign-off, the
-buildable non-blocking follow-ups, smallest first: (a) source the binding
-catalog's `ProviderCredentialKeys`/`DeclaredStaticKey` into the forbidden-env
-builder (today `attestCandidateEnvPolicy` passes none, so only the floor +
-refresh-token fence are active — the per-binding provider-key rejection is
-inert until the catalog is threaded); (b) the operator env-guard config surface
-for `NewEnvGuard` additions (no loader exists — `BlockPolicy` has the same gap);
-(c) the non-blocking obligations in `IMPLEMENTATION-NOTES.md` (2026-07-21):
-unenforced 15-minute landing deadline, `SealedLandingResult` has no spine
-consumer, ADR-016 D7 label non-conformance in setup/legacy-land. Do NOT start
-Phase 4 without the operator sign-off above.
+NEXT: Phase 4 scenario family (1) — full pipeline + landing. The happy-path
+pipeline is already `TestWalkingSkeleton` (docker_e2e); (1) adds the
+approve/land SPLIT assertion and two variants — landing-FAILURE (a landing
+that refuses/errors and leaves the task recoverably pending, not merged) and
+MULTI-APPROVE-DRAIN (several approved tasks landing in sequence). Build order:
+approve/land split assertion first (mostly assertion over the existing walk),
+then the landing-failure variant, which will force the landing failure
+taxonomy to be observable and close the three non-blocking landing loose ends
+as needed (unenforced 15-min landing deadline; `SealedLandingResult` has no
+spine consumer; ADR-016 D7 label non-conformance in setup/legacy-land — all in
+`IMPLEMENTATION-NOTES.md` 2026-07-20/21). A scenario-1 gap recon is in flight;
+build from its result. Phase 4 is fake-harness — needs no real credentials.
