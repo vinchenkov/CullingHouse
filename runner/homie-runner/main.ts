@@ -35,8 +35,8 @@ export interface HomieEnvelope {
   tier: "homie";
   launch: string;
   container_id: string;
+  /** Historical route key "harness/model_binding" (e.g. "fake/fake"). */
   binding: string;
-  harness: string;
   mode: string;
   harness_config?: { behavior: string };
   mounts: { session: string };
@@ -195,13 +195,13 @@ async function runHarnessTurn(run: HomieEnvelope, turn: string): Promise<string 
 async function main(): Promise<number> {
   const run = (await Bun.file(RUN_JSON).json()) as HomieEnvelope;
   log(`homie run ${run.session_id} binding=${run.binding} mode=${run.mode}`);
-  // This runner ships only the fake adapter. "fake" always runs; any other
-  // harness (e.g. "claude") runs only when the deployment authorized this
-  // adapter to stand in for it via MC_AGENT_RUNNER_ROUTES — symmetric with the
-  // agent-runner gate. Unset ⇒ fake-only, fail-closed.
+  // This runner ships only the fake adapter. The fake/fake route always runs;
+  // any other route ("harness/model_binding") runs only when the deployment
+  // authorized this adapter to stand in for it via MC_AGENT_RUNNER_ROUTES —
+  // symmetric with the agent-runner gate. Unset ⇒ fake-only, fail-closed.
   const routes = (process.env["MC_AGENT_RUNNER_ROUTES"] ?? "").split(",").filter((r) => r !== "");
-  if (run.harness !== "fake" && !routes.includes(run.harness)) {
-    log(`unsupported homie harness ${JSON.stringify(run.harness)}; this runner ships only the fake adapter`);
+  if (run.binding !== "fake/fake" && !routes.includes(run.binding)) {
+    log(`unsupported homie route ${JSON.stringify(run.binding)}; this runner ships only the fake adapter`);
     return 2;
   }
   return runHomieLoop(run, {

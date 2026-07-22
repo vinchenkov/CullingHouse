@@ -93,6 +93,7 @@ export const testConfig: ResidentConfig = {
     verifier: "/mc/behaviors/verifier.json",
     packager: "/mc/behaviors/packager.json",
     strategist: "/mc/behaviors/strategist.json",
+    homie: "/mc/behaviors/homie.json",
   },
 };
 

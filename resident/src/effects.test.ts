@@ -1567,6 +1567,9 @@ describe("homie tier (lease-free)", () => {
     expect(parsed.heartbeat_interval_s).toBeUndefined();
     // Republished with the bound container id before start (the runner reads it).
     expect(parsed.container_id).toBe(cid);
+    // The route key rides as `binding`; the behavior comes from config.
+    expect(parsed.binding).toBe("claude");
+    expect(parsed.harness_config).toEqual({ behavior: "/mc/behaviors/homie.json" });
 
     // docker: create then start; the launch-bind sits between (via mc).
     const create = rig.docker.calls[0];

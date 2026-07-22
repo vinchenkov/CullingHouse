@@ -245,15 +245,20 @@ async function homieWake(effect: HomieWakeEffect, deps: TickDeps): Promise<void>
   await deps.fs.mkdir(sessionDir);
   await deps.fs.mkdir(runsDir(config.mcHome));
 
-  // 2. run.json — lease-free: no heartbeat interval, run_id == session.
+  // 2. run.json — lease-free: no heartbeat interval, run_id == session. The
+  // binding is the historical route key ("harness/model_binding"); the runner
+  // gates on it symmetric with the agent-runner. harness_config.behavior is a
+  // fake-adapter concept, carried only when the deployment supplies a homie
+  // behavior fixture (a real harness needs none).
+  const behavior = config.roleBehaviors["homie"];
   const runJson = {
     run_id: session,
     session_id: session,
     tier: "homie",
     mode,
     binding,
-    harness: binding,
     launch,
+    ...(behavior !== undefined ? { harness_config: { behavior } } : {}),
     mounts: { session: "/mc/session" },
   };
   const runJsonPath = runJsonHostPath(config.mcHome, session);
