@@ -1185,3 +1185,80 @@ func HomieRunnerStarted(db *sql.DB, id *RunIdentity, sessionID, launchID, contai
 	}
 	return result, nil
 }
+
+// HomieExit is the resident-observed exit receipt (ADR-016 D3), private host
+// scope: `mc homie exit <session> --launch <id> --container-id <id> --reason`.
+// It CASes the current active launch and its bound container and is
+// idempotent. If the launch established anything — the runner started, or
+// native locators were registered — it ends the exact session. A truly
+// pre-runner-start null-locator launch instead clears the confirmed-exited
+// bound pair and retains the same launch/mode as effect debt, so the selector
+// re-launches a fresh container for the same generation. A late exit from an
+// old launch (or an already-processed session) is fenced:false and changes
+// nothing.
+func HomieExit(db *sql.DB, id *RunIdentity, sessionID, launchID, containerID, reason string) (any, error) {
+	if err := RequireHostScope(id, "mc homie exit"); err != nil {
+		return nil, err
+	}
+	if !validLowercaseHex(launchID, 16) {
+		return nil, Usagef("mc homie exit --launch must be exactly 16 lowercase hex characters (ADR-016 D3)")
+	}
+	if !validLowercaseHex(containerID, 64) {
+		return nil, Usagef("mc homie exit --container-id must be exactly 64 lowercase hex characters")
+	}
+	if reason == "" {
+		return nil, Usagef("mc homie exit requires --reason")
+	}
+	result := map[string]any{"session": sessionID, "launch": launchID, "container_id": containerID, "reason": reason}
+	err := inTx(db, func(ctx context.Context, q Q) error {
+		var status string
+		var curLaunch, curContainer, startedAt, nativeRef sql.NullString
+		err := q.QueryRowContext(ctx, `
+			SELECT status, current_launch_id, current_container_id,
+			       launch_started_at, native_session_ref
+			FROM homie_sessions WHERE id = ?`, sessionID).Scan(
+			&status, &curLaunch, &curContainer, &startedAt, &nativeRef)
+		if err == sql.ErrNoRows {
+			return Domainf("unknown Homie session %q", sessionID)
+		}
+		if err != nil {
+			return err
+		}
+		// A late exit from an old launch, or an already-processed session,
+		// changes nothing (ADR-016 D3: fenced:false, idempotent).
+		if status != "active" || !curLaunch.Valid || curLaunch.String != launchID ||
+			!curContainer.Valid || curContainer.String != containerID {
+			result["fenced"] = false
+			return nil
+		}
+		if startedAt.Valid || nativeRef.Valid {
+			// The launch established something: end the exact session.
+			if _, _, err := homieEndTx(ctx, q, "resident", sessionID, reason); err != nil {
+				return err
+			}
+			result["fenced"] = true
+			result["ended"] = true
+			return nil
+		}
+		// Pre-runner-start null-locator launch: clear the confirmed-exited bound
+		// pair; the launch/mode stays as effect debt for the selector to retry.
+		if _, err := q.ExecContext(ctx, `
+			UPDATE homie_sessions SET current_container_id = NULL, launch_bound_at = NULL
+			WHERE id = ? AND status = 'active' AND current_launch_id = ? AND current_container_id = ?`,
+			sessionID, launchID, containerID); err != nil {
+			return err
+		}
+		if _, err := q.ExecContext(ctx, `
+			INSERT INTO activity (actor, kind, subject, detail)
+			VALUES ('resident', 'homie.launch_cleared', ?, ?)`, sessionID, reason); err != nil {
+			return err
+		}
+		result["fenced"] = true
+		result["ended"] = false
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return result, nil
+}

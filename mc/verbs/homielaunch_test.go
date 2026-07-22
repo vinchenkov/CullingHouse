@@ -197,3 +197,109 @@ func TestHomieRunnerStarted(t *testing.T) {
 		}
 	})
 }
+
+func TestHomieExit(t *testing.T) {
+	t.Run("a started launch ends the exact session", func(t *testing.T) {
+		db := hbSpine(t)
+		hbBound(t, db)
+		dvExec(t, db, `UPDATE homie_sessions SET launch_started_at = datetime('now') WHERE id='sess-1'`)
+		res, err := HomieExit(db, nil, "sess-1", hbLaunch, hbContainer, "exited")
+		if err != nil {
+			t.Fatal(err)
+		}
+		got := res.(map[string]any)
+		if got["fenced"] != true || got["ended"] != true {
+			t.Fatalf("exit = %v, want fenced+ended", got)
+		}
+		if s := hbStatus(t, db); s != "ended" {
+			t.Fatalf("status = %q, want ended", s)
+		}
+	})
+
+	t.Run("native locators without a start still end the session", func(t *testing.T) {
+		db := hbSpine(t)
+		hbBound(t, db)
+		dvExec(t, db, `UPDATE homie_sessions SET native_session_ref = 'nat-1', trace_filename = 'native.jsonl' WHERE id='sess-1'`)
+		res, _ := HomieExit(db, nil, "sess-1", hbLaunch, hbContainer, "exited")
+		if res.(map[string]any)["ended"] != true || hbStatus(t, db) != "ended" {
+			t.Fatalf("locator-established exit must end: %v", res)
+		}
+	})
+
+	t.Run("a pre-runner-start null-locator launch clears the bound pair and retains debt", func(t *testing.T) {
+		db := hbSpine(t)
+		hbBound(t, db) // bound, but never started and no locators
+		res, err := HomieExit(db, nil, "sess-1", hbLaunch, hbContainer, "exited")
+		if err != nil {
+			t.Fatal(err)
+		}
+		got := res.(map[string]any)
+		if got["fenced"] != true || got["ended"] != false {
+			t.Fatalf("exit = %v, want fenced+not-ended", got)
+		}
+		if hbStatus(t, db) != "active" {
+			t.Fatal("a pre-start exit must keep the session active")
+		}
+		var launch, container sql.NullString
+		if err := db.QueryRow(`SELECT current_launch_id, current_container_id FROM homie_sessions WHERE id='sess-1'`).Scan(&launch, &container); err != nil {
+			t.Fatal(err)
+		}
+		if launch.String != hbLaunch {
+			t.Fatalf("the launch debt must be retained, got %q", launch.String)
+		}
+		if container.Valid {
+			t.Fatal("the confirmed-exited container must be cleared")
+		}
+	})
+
+	t.Run("idempotent: re-exit of an ended session is a fenced no-op", func(t *testing.T) {
+		db := hbSpine(t)
+		hbBound(t, db)
+		dvExec(t, db, `UPDATE homie_sessions SET launch_started_at = datetime('now') WHERE id='sess-1'`)
+		HomieExit(db, nil, "sess-1", hbLaunch, hbContainer, "exited")
+		res, _ := HomieExit(db, nil, "sess-1", hbLaunch, hbContainer, "exited")
+		if res.(map[string]any)["fenced"] != false {
+			t.Fatal("re-exit of an ended session must be fenced")
+		}
+		if hbStatus(t, db) != "ended" {
+			t.Fatal("re-exit must not change the ended state")
+		}
+	})
+
+	t.Run("a stale launch or wrong container is fenced", func(t *testing.T) {
+		db := hbSpine(t)
+		hbBound(t, db)
+		if HomieExit3(t, db, "bbbbbbbbbbbbbbbb", hbContainer)["fenced"] != false {
+			t.Fatal("stale launch must be fenced")
+		}
+		if HomieExit3(t, db, hbLaunch, strings.Repeat("d", 64))["fenced"] != false {
+			t.Fatal("wrong container must be fenced")
+		}
+	})
+
+	t.Run("host scope only", func(t *testing.T) {
+		db := hbSpine(t)
+		hbBound(t, db)
+		if _, err := HomieExit(db, homieRunnerID("sess-1"), "sess-1", hbLaunch, hbContainer, "exited"); err == nil {
+			t.Fatal("a run.json caller must be refused (host scope)")
+		}
+	})
+}
+
+func hbStatus(t *testing.T, db *sql.DB) string {
+	t.Helper()
+	var s string
+	if err := db.QueryRow(`SELECT status FROM homie_sessions WHERE id='sess-1'`).Scan(&s); err != nil {
+		t.Fatal(err)
+	}
+	return s
+}
+
+func HomieExit3(t *testing.T, db *sql.DB, launch, container string) map[string]any {
+	t.Helper()
+	res, err := HomieExit(db, nil, "sess-1", launch, container, "exited")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return res.(map[string]any)
+}

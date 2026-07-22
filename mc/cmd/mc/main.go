@@ -1263,6 +1263,30 @@ func cmdHomie(args []string) (any, error) {
 		return withSpine(func(db *sql.DB) (any, error) {
 			return verbs.HomieRunnerStarted(db, id, sessionID, *launch, *containerID)
 		})
+
+	case "exit":
+		// Resident-observed exit receipt (ADR-016 D3).
+		sessionID, rest, err := positional("mc homie exit", args[1:])
+		if err != nil {
+			return nil, err
+		}
+		fs := newFlags("mc homie exit")
+		launch := fs.String("launch", "", "16-hex current launch id")
+		containerID := fs.String("container-id", "", "64-hex Docker container id")
+		reason := fs.String("reason", "", "exit reason")
+		if err := parse(fs, rest); err != nil {
+			return nil, err
+		}
+		if *launch == "" || *containerID == "" || *reason == "" {
+			return nil, verbs.Usagef("mc homie exit requires --launch, --container-id, and --reason")
+		}
+		id, err := verbs.LoadIdentity()
+		if err != nil {
+			return nil, err
+		}
+		return withSpine(func(db *sql.DB) (any, error) {
+			return verbs.HomieExit(db, id, sessionID, *launch, *containerID, *reason)
+		})
 	}
 	return nil, verbs.Usagef("unknown subverb: mc homie %s", args[0])
 }
