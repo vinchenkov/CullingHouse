@@ -81,7 +81,9 @@ func Init(db *sql.DB) error {
 // Version 10 adds the durable verifier-run-fenced accepted-seal rebuild receipt.
 // Version 12 retires egress_policy/network_allow and narrows
 // runtime_auth_delivery to projection|materialized (ADR-022).
-const CurrentSchemaVersion = 12
+// Version 13 adds the lock's homie_idle_timeout_s tunable (ADR-016 D3 Homie
+// wake selector / launch-bind non-idle CAS).
+const CurrentSchemaVersion = 13
 
 // migrationV1ToV2 is ADR-016 Decision 2's storage step, frozen as history.
 //
@@ -523,6 +525,15 @@ UPDATE worksources SET sandbox_profile = (
 DROP TABLE migration_v12_worksource_profiles;
 `
 
+// migrationV12ToV13 adds the lease-free Homie idle-timeout tunable to the lock
+// row (ADR-016 D3 wake selector / launch-bind non-idle CAS; §15.3). Purely
+// additive — a plain ADD COLUMN with a NOT NULL default, so a migrated spine
+// and a fresh one are indistinguishable and no row is rebuilt.
+const migrationV12ToV13 = `
+ALTER TABLE lock ADD COLUMN homie_idle_timeout_s INTEGER NOT NULL DEFAULT 1800
+    CHECK (homie_idle_timeout_s > 0);
+`
+
 // Migrate brings an existing spine up to CurrentSchemaVersion, reporting
 // whether it changed anything. It is the "present with an older schema →
 // migrate" arm of §16.4; the caller owns the "absent on a non-empty volume →
@@ -548,7 +559,7 @@ func Migrate(db *sql.DB) (bool, error) {
 		return false, err
 	}
 
-	steps := map[int]string{1: migrationV1ToV2, 2: migrationV2ToV3, 3: migrationV3ToV4, 4: migrationV4ToV5, 5: migrationV5ToV6, 6: migrationV6ToV7, 7: migrationV7ToV8, 8: migrationV8ToV9, 9: migrationV9ToV10, 10: migrationV10ToV11, 11: migrationV11ToV12}
+	steps := map[int]string{1: migrationV1ToV2, 2: migrationV2ToV3, 3: migrationV3ToV4, 4: migrationV4ToV5, 5: migrationV5ToV6, 6: migrationV6ToV7, 7: migrationV7ToV8, 8: migrationV8ToV9, 9: migrationV9ToV10, 10: migrationV10ToV11, 11: migrationV11ToV12, 12: migrationV12ToV13}
 	changed := false
 	for version < CurrentSchemaVersion {
 		step, ok := steps[version]

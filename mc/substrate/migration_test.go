@@ -39,6 +39,12 @@ var schemaV3 string
 //go:embed testdata/schema-v11.sql
 var schemaV11 string
 
+// schemaV12 is the spine as frozen before the lock's homie_idle_timeout_s
+// tunable landed, for the same reason.
+//
+//go:embed testdata/schema-v12.sql
+var schemaV12 string
+
 // A migrated spine and a freshly initialized one must be indistinguishable —
 // structurally and, more importantly, in what they refuse. SQLite cannot ALTER
 // a UNIQUE column onto an existing table, so the obvious ALTER-only migration
@@ -477,6 +483,82 @@ func migratedV11Spine(t *testing.T) *sql.DB {
 		t.Fatalf("migration lost profiles: %d before, %d after", profiles, after)
 	}
 	return db
+}
+
+// legacyV12Spine is a real v12 spine carrying a configured lock row, as a live
+// deployment would: its tunables must survive the additive column.
+func legacyV12Spine(t *testing.T) *sql.DB {
+	t.Helper()
+	db, err := substrate.Open(filepath.Join(t.TempDir(), "legacy-v12.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { db.Close() })
+	mustExec(t, db, schemaV12)
+	mustExec(t, db, `INSERT INTO meta (id, deployment_uuid, schema_version) VALUES (1, 'legacy-deployment', 12)`)
+	// The schema seeds the singleton lock row; configure its tunables.
+	mustExec(t, db, `UPDATE lock SET timeout_minutes = 42, console_hour = 9, console_minute = 30,
+		console_tz = 'America/Los_Angeles' WHERE id = 1`)
+	return db
+}
+
+func migratedV12Spine(t *testing.T) *sql.DB {
+	t.Helper()
+	db := legacyV12Spine(t)
+	changed, err := substrate.Migrate(db)
+	if err != nil {
+		t.Fatalf("Migrate v12: %v", err)
+	}
+	if !changed {
+		t.Fatal("Migrate v12 reported no change")
+	}
+	return db
+}
+
+// TestMigrateV12ToCurrentAddsHomieIdleTimeout: the ADR-016 D3 Homie idle-timeout
+// tunable is added to the lock row, defaulted, and the other tunables survive.
+func TestMigrateV12ToCurrentAddsHomieIdleTimeout(t *testing.T) {
+	t.Run("the lock gains a defaulted homie_idle_timeout_s; other tunables preserved", func(t *testing.T) {
+		db := migratedV12Spine(t)
+		if !columnExists(t, db, "lock", "homie_idle_timeout_s") {
+			t.Fatal("migration must add lock.homie_idle_timeout_s")
+		}
+		if got := oneInt(t, db, `SELECT homie_idle_timeout_s FROM lock WHERE id=1`); got != 1800 {
+			t.Fatalf("homie_idle_timeout_s = %d, want 1800 default", got)
+		}
+		if got := oneInt(t, db, `SELECT timeout_minutes FROM lock WHERE id=1`); got != 42 {
+			t.Fatalf("migration disturbed timeout_minutes: %d, want 42", got)
+		}
+	})
+
+	t.Run("migrated lock matches a fresh spine's columns", func(t *testing.T) {
+		migrated := migratedV12Spine(t)
+		fresh := openSpine(t)
+		if got, want := columnsOf(t, migrated, "lock"), columnsOf(t, fresh, "lock"); got != want {
+			t.Errorf("lock columns after migration:\n  got  %s\n  want %s", got, want)
+		}
+	})
+
+	t.Run("the added CHECK refuses a non-positive timeout", func(t *testing.T) {
+		db := migratedV12Spine(t)
+		if _, err := db.Exec(`UPDATE lock SET homie_idle_timeout_s = 0 WHERE id=1`); err == nil {
+			t.Fatal("homie_idle_timeout_s CHECK must refuse a non-positive value")
+		}
+	})
+
+	t.Run("stamps the version and replays idempotently", func(t *testing.T) {
+		db := migratedV12Spine(t)
+		if got := oneInt(t, db, `SELECT schema_version FROM meta WHERE id=1`); got != substrate.CurrentSchemaVersion {
+			t.Fatalf("schema_version = %d, want %d", got, substrate.CurrentSchemaVersion)
+		}
+		changed, err := substrate.Migrate(db)
+		if err != nil {
+			t.Fatalf("Migrate replay: %v", err)
+		}
+		if changed {
+			t.Fatal("Migrate replay reported another change; it must be idempotent")
+		}
+	})
 }
 
 // legacyV3Spine is a real v3 spine carrying data, as a live deployment would:

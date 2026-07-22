@@ -665,13 +665,6 @@ CREATE TABLE lock (
     console_minute        INTEGER NOT NULL DEFAULT 0
                           CHECK (console_minute BETWEEN 0 AND 59),
     console_tz            TEXT    NOT NULL DEFAULT 'UTC',
-    -- homie_idle_timeout_s: how long after a Homie session's last_activity_at
-    -- the wake selector ends it and the launch-bind/runner-started non-idle
-    -- CAS refuses (ADR-016 D3; §15.3 "lives as long as the conversation").
-    -- A lease-free tunable on the lock row (NOTE(P1b.1) additive pattern);
-    -- the default preserves a generous 30-minute idle window.
-    homie_idle_timeout_s  INTEGER NOT NULL DEFAULT 1800
-                          CHECK (homie_idle_timeout_s > 0),
 
     -- Claim fields travel together; a free lock carries no run residue.
     CHECK ((run_id IS NULL) = (owner IS NULL)),

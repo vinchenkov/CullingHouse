@@ -9,7 +9,7 @@ export const GATEWAY_CONTROL_VERSION = 1;
 // Keep this in lockstep with substrate.CurrentSchemaVersion. The resident is
 // intentionally a separate TypeScript artifact, so this value is duplicated
 // and its control-channel handshake test pins the deployed schema fence.
-export const SPINE_SCHEMA_VERSION = 12;
+export const SPINE_SCHEMA_VERSION = 13;
 export const CONFIG_SCHEMA_VERSION = 1;
 const MAX_FRAME_BYTES = 64 * 1024;
 const HELLO_TIMEOUT_MS = 2_000;
