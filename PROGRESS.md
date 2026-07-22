@@ -6,9 +6,9 @@ REPO PATH: `~/dev/ai/homie`. Never relocate this repo into `~/Documents`,
 `~/Desktop`, or `~/Downloads`: macOS TCC can revoke an agent session's own
 filesystem access there during fan-out. Full Disk Access does not fix it.
 
-LAST GREEN SHA: the directives commit (child of `4bc6977`) — six-leg fast
-suite green; the extended Playwright dashboard smoke (send/reply +
-end→resume→send-again) green at `0f8fad2` and untouched since. Docker lanes last ran green
+LAST GREEN SHA: `e7d810b` — six-leg fast suite green; the extended
+Playwright dashboard smoke (send/reply + end→resume→send-again) green at
+`0f8fad2` and untouched since. Docker lanes last ran green
 at `c8f37e9`-era HEAD (full `docker_boundary` 26 subtests, full `docker_e2e`
 10 tests incl. both credential legs) and are untouched since: commits after
 are test-only or the new `dashboard/` package. Production image `mc-prod` at
@@ -225,8 +225,8 @@ launch recovery (need resident container inventory); homie credential projection
 (fake route is token-free); dashboard LaunchAgent generation (install/onboard);
 the four non-Console tabs (each with its subsystem).
 
-NEXT: authored deliverables continued — the frozen role directives + brief
-templates are DONE (§9.2 contract pinned by
-TestDirectivesEncodeTheSelfOrchestrationContract; ledger 2026-07-22).
-Verify ADR-001 satisfies the §18 role-side verbs ADR deliverable (record
-the conclusion in the ledger), then build install.sh + /onboard (§17).
+NEXT: install.sh + /onboard (spec §17) — the last authored deliverable
+(dashboard DONE, directives + brief templates DONE, §18 ADR satisfied by
+pre-existing ADR-001; ledger 2026-07-22). Read spec §17 whole before
+designing; `mc onboard` sections already exist (ADR-015) — the deliverable
+is the front door: install.sh and the /onboard skill wrapping them.

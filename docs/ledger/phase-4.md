@@ -479,3 +479,16 @@ per-role payloads asserted in dispatchverb_test.go).
 
 NEXT: verify ADR-001 satisfies the §18 role-side verbs ADR deliverable
 (likely yes — record the conclusion), then install.sh + /onboard (§17).
+
+## 2026-07-22 — §18 role-side verbs ADR deliverable: already satisfied by ADR-001
+
+Verified against spec §18's delegation wording: ADR-001 ("Role-side verbs +
+verb-by-scope table (spec §18 delegated design)", Accepted) designs and
+names the role-side verbs under the three locked constraints (atomic
+batches, nullable lease subject, pipeline-role scope fencing) and carries
+the verb-by-scope table; its Open Question 1 was resolved by ADR-020. The
+authored-deliverables list is now: dashboard DONE, frozen role directives +
+brief templates DONE, §18 ADR DONE (pre-existing), install.sh + /onboard
+(§17) REMAINING.
+
+NEXT: install.sh + /onboard (spec §17).
