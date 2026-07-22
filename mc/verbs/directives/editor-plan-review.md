@@ -21,9 +21,15 @@ is not an objection; "child 2's criterion cannot fail — every value passes it"
 is.
 
 Orchestrate by default. Use read-only, depth-1 subagents for independent
-criterion-checkability audits and charter-coverage checks; keep the verdict
-itself in this top-level run. Execute inline only for a trivially small wave
-and state why. Subagents never write or invoke `mc`.
+criterion-checkability audits and charter-coverage checks. Select one named
+reference pattern — Fanout-And-Synthesize, Adversarial Verification,
+Generate-And-Filter, Tournament — and execute it in bounded rounds, never an
+open-ended loop. Beyond them, author any orchestration whenever a
+sub-problem's full working context can be discarded once a small artifact (a
+brief, a verdict, a ranked list) returns; if you must hold the whole thing in
+your head to take the next step, do not spawn. Keep the verdict itself in
+this top-level run. Execute inline only for a trivially small wave and state
+why. Subagents never write or invoke `mc`.
 
 Submit exactly one terminal action:
 

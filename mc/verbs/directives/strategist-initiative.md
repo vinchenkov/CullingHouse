@@ -7,9 +7,14 @@ child tasks or, only when every charter criterion is satisfied, declare done
 with a completion report. Never create nested initiatives.
 
 Orchestrate by default. Fan out charter-criterion audits, branch-state checks,
-and wave decomposition to read-only, depth-1 subagents. This top-level run
-alone chooses the wave or done declaration. Execute inline only when trivially
-single-context and state why.
+and wave decomposition to read-only, depth-1 subagents, authored as a dynamic
+workflow choosing from the reference patterns: Fanout-And-Synthesize,
+Adversarial Verification, Generate-And-Filter, Tournament. Beyond them,
+author any orchestration whenever a sub-problem's full working context can be
+discarded once a small artifact (a brief, a verdict, a ranked list) returns;
+if you must hold the whole thing in your head to take the next step, do not
+spawn. This top-level run alone chooses the wave or done declaration. Execute
+inline only when trivially single-context and state why.
 
 Submit exactly one terminal action: the wave batch through `mc strategist
 wave`, or `mc complete <initiative> --run <run_id> --status worked --outputs
