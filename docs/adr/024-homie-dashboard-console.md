@@ -58,16 +58,24 @@ verbs; the server adds no interpretation, no cache, no durable state:
 - `POST /api/sessions/:id/resume`   → `mc homie resume <id> --from dashboard:<ref>`
 - `POST /api/outbox/drain`          → `mc outbox poll --surface dashboard` + `mc outbox ack` each row
 
-Verb failures pass through as `{error:{code,message}}` with HTTP 400 (domain)
-or 500 (environment); error text never instructs a human to run an `mc`
-command (§17). Free operator text travels only as the body of `homie send` —
+Verb failures pass through as `{error:{code,message}}`: caller-caused
+rejections (domain, usage) are 400, genuine environment failures 500 (mc
+exit 2 covers both, disambiguated by the envelope's own code); error text
+never instructs a human to run an `mc` command (§17). Free operator text travels only as the body of `homie send` —
 the dashboard never parses it (§15.2).
 
-**D4 — Bind and auth are fail-closed.** Default bind `127.0.0.1:7333`
-(§15.7). A non-loopback bind in config is refused at startup unless
-`auth_token` is set; when `auth_token` is set, every request must carry
-`Authorization: Bearer <token>` or is rejected 401 before any `mc` spawn.
-Loopback without a token remains the sanctioned default.
+**D4 — Bind and auth are fail-closed, and the browser boundary is
+enforced.** Default bind `127.0.0.1:7333` (§15.7). A non-loopback bind in
+config is refused at startup unless `auth_token` is set; when `auth_token`
+is set, every `/api` request must carry `Authorization: Bearer <token>` or
+is rejected 401 before any `mc` spawn (the data-free static shell stays
+reachable so a browser can load it and present the token, supplied once via
+the URL fragment and held per-tab). Independent of the token, every request
+must name this server: a Host header not matching the bind host or a
+loopback spelling is 403 (DNS rebinding), any present Origin header not
+matching the same set — including `null` — is 403 (cross-site request
+forgery), and JSON bodies are accepted only with an `application/json`
+content type (no cross-site "simple request" smuggling).
 
 **D5 — The dashboard's channel ref is per-session and derived, not stored.**
 A `(surface, channel_ref)` place binds to exactly one session

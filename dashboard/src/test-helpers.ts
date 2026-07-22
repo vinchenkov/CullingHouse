@@ -46,6 +46,7 @@ export function apiReq(method: string, path: string, body?: unknown): [Request, 
   const url = new URL(`http://127.0.0.1${path}`);
   const req = new Request(url, {
     method,
+    headers: body === undefined ? undefined : { "content-type": "application/json" },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
   return [req, url];

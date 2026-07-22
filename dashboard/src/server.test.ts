@@ -26,7 +26,7 @@ describe("fail-closed bind/auth (D4)", () => {
     expect(() => startDashboardServer({ bind: "0.0.0.0:0" }, deps())).toThrow("non-loopback");
   });
 
-  test("a configured token gates every request before any mc spawn", async () => {
+  test("a configured token gates every /api request before any mc spawn", async () => {
     const mc = new FakeMc().on(["homie", "list"], ok({ sessions: [] }));
     const server = startDashboardServer({ ...ephemeral, authToken: "s3cret" }, deps({ mc }));
     try {
@@ -38,6 +38,48 @@ describe("fail-closed bind/auth (D4)", () => {
       });
       expect(authed.status).toBe(200);
       expect(mc.calls).toEqual([["homie", "list"]]);
+      // The data-free static shell stays reachable so a browser can load it
+      // and then present the token.
+      expect((await fetch(server.url)).status).toBe(200);
+    } finally {
+      server.stop();
+    }
+  });
+
+  test("a foreign Host header is refused — DNS rebinding boundary", async () => {
+    const mc = new FakeMc().on(["homie", "list"], ok({ sessions: [] }));
+    const server = startDashboardServer(ephemeral, deps({ mc }));
+    try {
+      const rebound = await fetch(`${server.url}api/sessions`, {
+        headers: { host: "attacker.example:7333" },
+      });
+      expect(rebound.status).toBe(403);
+      expect(mc.calls).toEqual([]);
+    } finally {
+      server.stop();
+    }
+  });
+
+  test("a cross-origin request is refused, same-origin passes — CSRF boundary", async () => {
+    const mc = new FakeMc().on(["homie", "start"], ok({ session_id: "h-1" }));
+    const server = startDashboardServer(ephemeral, deps({ mc }));
+    try {
+      const forged = await fetch(`${server.url}api/sessions`, {
+        method: "POST",
+        headers: { origin: "https://evil.example" },
+      });
+      expect(forged.status).toBe(403);
+      const sandboxed = await fetch(`${server.url}api/sessions`, {
+        method: "POST",
+        headers: { origin: "null" },
+      });
+      expect(sandboxed.status).toBe(403);
+      expect(mc.calls).toEqual([]);
+      const same = await fetch(`${server.url}api/sessions`, {
+        method: "POST",
+        headers: { origin: `http://127.0.0.1:${server.port}` },
+      });
+      expect(same.status).toBe(200);
     } finally {
       server.stop();
     }

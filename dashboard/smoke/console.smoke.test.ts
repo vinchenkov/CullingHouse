@@ -148,9 +148,59 @@ test("start a session, send ping, see the runner's reply render", async () => {
     .waitFor({ timeout: 15000 });
 
   // The session row is listed, and the dashboard outbox drains to empty.
+  // The browser's own drain may still be in flight after the reply renders
+  // (render precedes drain), so poll until the cursor is empty.
   await page
     .locator(`[data-testid="session-row"][data-session="${sessionID}"]`)
     .waitFor({ timeout: 10000 });
-  const drained = await fetch(`${server.url}api/outbox/drain`, { method: "POST" });
-  expect(((await drained.json()) as { polled: number }).polled).toBe(0);
+  let polled = -1;
+  for (let i = 0; i < 40; i++) {
+    const drained = await fetch(`${server.url}api/outbox/drain`, { method: "POST" });
+    polled = ((await drained.json()) as { polled: number }).polled;
+    if (polled === 0) {
+      break;
+    }
+    await Bun.sleep(250);
+  }
+  expect(polled).toBe(0);
+
+  // End the session out-of-band, then resume it from the Console (§15.4).
+  // Resume requires a registered native locator, which the real runner
+  // registers on its first turn.
+  await mc(
+    ["run", "register-session", sessionID, "--native-ref", "smoke-native-1", "--file", "native.jsonl"],
+    { MC_RUN_JSON: runJSON },
+  );
+  await mc(["homie", "end", sessionID, "--reason", "smoke end"]);
+
+  const row = page.locator(`[data-testid="session-row"][data-session="${sessionID}"]`);
+  await row.filter({ hasText: "ended" }).waitFor({ timeout: 15000 });
+  await row.click();
+  const resume = page.locator('[data-testid="resume"]');
+  await resume.waitFor({ timeout: 10000 });
+  await expect(page.locator('[data-testid="send"]').isDisabled()).resolves.toBe(true);
+  await resume.click();
+  await row.filter({ hasText: "active" }).waitFor({ timeout: 15000 });
+
+  const sendBody = page.locator('[data-testid="send-body"]');
+  await sendBody.fill("ping again");
+  await page.locator('[data-testid="send"]').click();
+  let second: Record<string, unknown> | null = null;
+  for (let i = 0; i < 20 && second === null; i++) {
+    const res = await mc(["homie", "claim", sessionID], { MC_RUN_JSON: runJSON });
+    second = (res["message"] as Record<string, unknown> | null) ?? null;
+    if (second === null) {
+      await Bun.sleep(250);
+    }
+  }
+  if (second === null) {
+    throw new Error("the post-resume turn never became claimable");
+  }
+  await mc(
+    ["homie", "reply", sessionID, "--to", String(second["id"]), "--body", "homie ack after resume"],
+    { MC_RUN_JSON: runJSON },
+  );
+  await page
+    .locator('[data-testid="message"][data-direction="reply"]', { hasText: "homie ack after resume" })
+    .waitFor({ timeout: 15000 });
 }, 120000);

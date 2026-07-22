@@ -65,7 +65,12 @@ main { flex: 1; display: flex; min-height: 0; }
 }
 .pane-head h2 { font-size: 0.8rem; text-transform: uppercase; color: var(--dim); margin: 0; }
 
-#new-session, #send {
+#resume {
+  margin: 0.75rem 1rem 0;
+  align-self: flex-start;
+}
+
+#new-session, #send, #resume {
   background: var(--accent);
   color: #fff;
   border: none;

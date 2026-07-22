@@ -17,8 +17,22 @@ const state = {
 
 const $ = (id) => document.getElementById(id);
 
-async function api(path, opts) {
-  const res = await fetch(path, opts);
+// Beyond-loopback deployments require a token (ADR-024 D4): supplied once
+// via the URL fragment (#token=…), kept for the tab's lifetime, attached to
+// every API call. The fragment never leaves the browser.
+const hashToken = new URLSearchParams(location.hash.slice(1)).get("token");
+if (hashToken) {
+  sessionStorage.setItem("mc-dashboard-token", hashToken);
+  history.replaceState(null, "", location.pathname);
+}
+const token = sessionStorage.getItem("mc-dashboard-token");
+
+async function api(path, opts = {}) {
+  const headers = { ...(opts.headers ?? {}) };
+  if (token) {
+    headers["authorization"] = `Bearer ${token}`;
+  }
+  const res = await fetch(path, { ...opts, headers });
   const body = await res.json().catch(() => ({}));
   if (!res.ok) {
     throw new Error(body?.error?.message ?? `request failed (${res.status})`);
@@ -84,13 +98,28 @@ async function refreshSessions() {
   const res = await api("/api/sessions");
   state.sessions = res.sessions ?? [];
   renderSessions();
+  renderControls();
 }
 
 async function refreshHistory() {
   if (!state.selected) return;
-  const history = await api(`/api/sessions/${state.selected}/history`);
+  const requested = state.selected;
+  const history = await api(`/api/sessions/${requested}/history`);
+  // A slow response for a previously selected session must not render under
+  // the newly selected one's header.
+  if (state.selected !== requested || history.session_id !== requested) return;
   renderHistory(history);
   await api("/api/outbox/drain", { method: "POST" });
+}
+
+/** Send is live only for an active session; an ended/reaped one offers
+ * resume instead (spec §15.4: the Console resumes any ended session). */
+function renderControls() {
+  const row = state.sessions.find((s) => s.id === state.selected);
+  const active = row?.status === "active";
+  $("send-body").disabled = !active;
+  $("send").disabled = !active;
+  $("resume").hidden = !row || active;
 }
 
 function schedule() {
@@ -113,12 +142,24 @@ async function tick() {
 function selectSession(id) {
   state.selected = id;
   $("conversation-head").textContent = id;
-  $("send-body").disabled = false;
-  $("send").disabled = false;
   renderSessions();
+  renderControls();
   state.tightUntil = Date.now() + TIGHT_WINDOW_MS;
   tick();
 }
+
+$("resume").addEventListener("click", async () => {
+  if (!state.selected) return;
+  try {
+    await api(`/api/sessions/${state.selected}/resume`, { method: "POST" });
+    state.tightUntil = Date.now() + TIGHT_WINDOW_MS;
+    clearError();
+    await refreshSessions();
+    tick();
+  } catch (err) {
+    showError(err);
+  }
+});
 
 $("new-session").addEventListener("click", async () => {
   try {

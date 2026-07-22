@@ -106,6 +106,29 @@ describe("channel ref derivation (D5)", () => {
     expect(mc.calls).toEqual([]);
   });
 
+  test("a non-JSON content type is refused before parsing (simple-request fence)", async () => {
+    const mc = new FakeMc();
+    const url = new URL("http://127.0.0.1/api/sessions/h-1/send");
+    const req = new Request(url, {
+      method: "POST",
+      headers: { "content-type": "text/plain" },
+      body: '{"body":"smuggled"}',
+    });
+    const res = await handleApi(req, url, deps({ mc }));
+    expect(res?.status).toBe(400);
+    expect(mc.calls).toEqual([]);
+  });
+
+  test("an mc usage envelope (exit 2) is a caller-caused 400, not a 500", async () => {
+    const mc = new FakeMc().on(["homie", "history"], {
+      code: 2,
+      json: { error: { code: "usage", message: "flag provided but not defined" } },
+      stderr: "usage",
+    });
+    const res = await handleApi(...apiReq("GET", "/api/sessions/--x/history"), deps({ mc }));
+    expect(res?.status).toBe(400);
+  });
+
   test("makeGenRef mints dash-<8 hex>", () => {
     const ref = makeGenRef()();
     expect(ref).toMatch(/^dash-[0-9a-f]{8}$/);

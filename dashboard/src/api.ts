@@ -27,11 +27,15 @@ export function makeGenRef(): () => string {
   };
 }
 
-/** Maps one finished mc invocation onto the HTTP response (ADR-024 D3). */
+/** Maps one finished mc invocation onto the HTTP response (ADR-024 D3):
+ * caller-caused rejections (domain, usage) are 4xx; only genuine
+ * environment failures are 500. mc exit 2 covers both, disambiguated by
+ * the error envelope's own code. */
 function verbResponse(res: McResult): Response {
   if (res.code === 0) {
     return Response.json(res.json ?? {}, { status: 200 });
   }
+  const envelopeCode = (res.json?.["error"] as Record<string, unknown> | undefined)?.["code"];
   const envelope =
     res.json !== null && typeof res.json["error"] === "object"
       ? res.json
@@ -41,7 +45,8 @@ function verbResponse(res: McResult): Response {
             message: res.stderr.trim() || "the spine did not answer",
           },
         };
-  return Response.json(envelope, { status: res.code === 1 ? 400 : 500 });
+  const callerCaused = res.code === 1 || envelopeCode === "usage";
+  return Response.json(envelope, { status: callerCaused ? 400 : 500 });
 }
 
 function usageError(message: string): Response {
@@ -67,6 +72,12 @@ async function readBody(req: Request): Promise<Record<string, unknown> | Respons
   const raw = await req.text();
   if (raw.trim() === "") {
     return {};
+  }
+  // Declared JSON only: keeps a cross-site text/plain "simple request" from
+  // smuggling a body past the browser's preflight (defense in depth behind
+  // the server's Origin check).
+  if (!(req.headers.get("content-type") ?? "").toLowerCase().includes("application/json")) {
+    return usageError("request body must be application/json");
   }
   try {
     const parsed: unknown = JSON.parse(raw);
