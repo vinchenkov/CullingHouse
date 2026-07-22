@@ -51,15 +51,16 @@ if [ "$workspace_physical" != "$git_top_physical" ]; then
     exit 1
 fi
 
-# Only the Phase-2 standalone branch shape is authorized here. The initiative
-# lifecycle is still a separately parked line and will add its shared-branch
-# provenance when that contract is implemented. Never let a Worker-provided
-# landing tuple turn this cleanup script into a delete capability over an
-# operator ref.
+# Two authorized branch shapes: the Phase-2 standalone task branch and, per
+# ADR-023, the initiative's one shared branch (its arc lands here; children are
+# branchless and never reach this script). Both resolve to a numeric id below.
+# Never let a Worker-provided landing tuple turn this cleanup script into a
+# delete capability over an operator ref.
 case "$branch" in
     mc/task-*) branch_id=${branch#mc/task-} ;;
+    mc/initiative-*) branch_id=${branch#mc/initiative-} ;;
     *)
-        echo "mc-land: branch namespace: $branch is not an authorized Mission Control task branch" >&2
+        echo "mc-land: branch namespace: $branch is not an authorized Mission Control task or initiative branch" >&2
         exit 1
         ;;
 esac

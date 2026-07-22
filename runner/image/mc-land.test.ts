@@ -97,6 +97,30 @@ describe("mc-land split boundary (§7, Inv. 25)", () => {
     expect(existsSync(f.worktree)).toBe(false);
   });
 
+  test("an initiative shared branch is an authorized namespace (ADR-023)", () => {
+    const root = mkdtempSync(join(tmpdir(), "mc-land-init-test-"));
+    roots.push(root);
+    const repo = join(root, "repo");
+    const worktree = join(root, "initiative-worktree");
+    must(["git", "init", "-b", "main", repo], root);
+    must(["git", "config", "user.name", "test"], repo);
+    must(["git", "config", "user.email", "test@example.invalid"], repo);
+    writeFileSync(join(repo, "base.txt"), "base\n");
+    must(["git", "add", "base.txt"], repo);
+    must(["git", "commit", "-m", "base"], repo);
+    must(["git", "worktree", "add", "-b", "mc/initiative-7", worktree], repo);
+    writeFileSync(join(worktree, "child.txt"), "child work\n");
+    must(["git", "add", "child.txt"], worktree);
+    must(["git", "commit", "-m", "child"], worktree);
+    const sha = must(["git", "rev-parse", "HEAD"], worktree);
+    const res = exec(["sh", SCRIPT, "mc/initiative-7", sha, "main"], repo, {
+      MC_LAND_WORKSPACE: repo,
+    });
+    expect(res.exitCode).toBe(0);
+    expect(must(["git", "rev-parse", "main^2"], repo)).toBe(sha);
+    expect(existsSync(worktree)).toBe(false);
+  });
+
   test("dirty task worktree is refused before main moves", () => {
     const f = repoFixture();
     writeFileSync(join(f.worktree, "unreviewed.txt"), "must not be erased after merge\n");
