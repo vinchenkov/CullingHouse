@@ -552,6 +552,27 @@ func dispatchPrepareWithIdentity(ctx context.Context, q Q, identity dispatchProt
 		return preparedDispatch{}, err
 	}
 
+	// Lease-free Homie tier (Inv. 1/22, §15.3). After the pipeline Decide, a
+	// Homie may owe a wake or an idle end (ADR-016 D3 branches 6-7). A Homie
+	// action PREEMPTS a merely-retained pipeline spawn candidate — the pipeline
+	// candidate is re-decided next tick, costing at most one pipeline turn (ADR-
+	// 016 D3 branch 7) — and the idle result, but never a lock-domain reap /
+	// reenter / landing already owned by branches 1-3. The action is a spine
+	// mutation (launch persist or session end) paired with its effect, so it
+	// carries a receipt like the other mutating branches and returns here. The
+	// health-refusal marker path (a broken projection deferring to the pipeline
+	// candidate) is deliberately deferred with the other branch-5/7 recovery.
+	if sel.action.Kind == dispatch.KindIdle || sel.action.Kind == dispatch.KindSpawn {
+		if homieEffect, handled, err := homieWakeRound(ctx, q, sel.now, sel.tun.homieIdleTimeoutS); err != nil {
+			return preparedDispatch{}, err
+		} else if handled {
+			if err := writeDispatchReceipt(ctx, q, requestID, homieEffect); err != nil {
+				return preparedDispatch{}, err
+			}
+			return preparedDispatch{requestID: requestID, deploymentUUID: uuid, identity: identity, final: homieEffect}, nil
+		}
+	}
+
 	if sel.action.Kind == dispatch.KindSpawn {
 		// Spawn needs native authority; allocate the candidate identity now
 		// (ADR-016:114-124 — it becomes canonical only at commit) and freeze
@@ -587,22 +608,6 @@ func dispatchPrepareWithIdentity(ctx context.Context, q Q, identity dispatchProt
 	if sel.action.Kind == dispatch.KindLand && sel.action.Land != nil {
 		if t, ok := sealedLandingSubject(sel.rec, sel.action.Land.TaskID); ok {
 			return dispatchLandingPrepare(ctx, q, identity, uuid, requestID, sel, t)
-		}
-	}
-
-	// The lease-free Homie tier (Inv. 1/22) is scheduled only when the pipeline
-	// committed nothing this tick. A pipeline-idle result may still owe a Homie
-	// a wake or an idle end (ADR-016 D3 branches 6/7); that is a spine mutation
-	// (launch persist or session end) paired with its effect, so it carries a
-	// receipt like the other mutating branches and returns instead of idling.
-	if sel.action.Kind == dispatch.KindIdle {
-		if homieEffect, handled, err := homieWakeRound(ctx, q, sel.now, sel.tun.homieIdleTimeoutS); err != nil {
-			return preparedDispatch{}, err
-		} else if handled {
-			if err := writeDispatchReceipt(ctx, q, requestID, homieEffect); err != nil {
-				return preparedDispatch{}, err
-			}
-			return preparedDispatch{requestID: requestID, deploymentUUID: uuid, identity: identity, final: homieEffect}, nil
 		}
 	}
 

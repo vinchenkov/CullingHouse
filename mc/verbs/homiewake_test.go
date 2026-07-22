@@ -217,6 +217,36 @@ func TestHomieWakeRoundNothingToDo(t *testing.T) {
 	}
 }
 
+// TestDispatchWakesHomieOverPipelineCandidate proves the full prepare path and
+// the branch-7 preemption: a fresh spine liveness-retains a strategist propose
+// (KindSpawn), yet an eligible Homie wake wins, returning a homie-wake final
+// effect instead of the pipeline candidate (the pipeline turn is re-decided
+// next tick). The resident e2e depends on this preemption.
+func TestDispatchWakesHomieOverPipelineCandidate(t *testing.T) {
+	db := dvSpine(t)
+	hwSession(t, db, "h-1")
+	hwPendingInbound(t, db, "h-1", 1)
+
+	var uuid string
+	if err := db.QueryRow(`SELECT deployment_uuid FROM meta WHERE id = 1`).Scan(&uuid); err != nil {
+		t.Fatalf("read deployment uuid: %v", err)
+	}
+	var prepared preparedDispatch
+	if err := inTx(db, func(ctx context.Context, q Q) error {
+		var e error
+		prepared, e = dispatchPrepareWithIdentity(ctx, q, defaultDispatchProtocolIdentity, uuid, "00112233445566ff")
+		return e
+	}); err != nil {
+		t.Fatalf("dispatchPrepareWithIdentity: %v", err)
+	}
+	if prepared.final == nil {
+		t.Fatalf("no final effect; prepared = %+v (expected a homie-wake)", prepared)
+	}
+	if prepared.final["action"] != "homie-wake" || prepared.final["session"] != "h-1" {
+		t.Fatalf("final effect = %+v, want a homie-wake of h-1", prepared.final)
+	}
+}
+
 func TestHomieWakeRoundAlreadyLaunchedIsSkipped(t *testing.T) {
 	db := dvSpine(t)
 	hwSession(t, db, "h-1")
