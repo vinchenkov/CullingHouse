@@ -517,3 +517,13 @@ frozen role directives + brief templates, §18 ADR (ADR-001), install.sh +
 NEXT: phase-completion Docker regression (docker_boundary + docker_e2e) at
 HEAD; if green, mark Phase 4 complete in PROGRESS and park the Phase 5
 kickoff for the operator.
+
+## 2026-07-22 — PHASE 4 CLOSED
+
+Phase-completion gate green at d0ef4bb: full docker_boundary (ok 0.97s
+cached-build) + full docker_e2e (-count=1, ok mc/e2e 169s) on top of the
+six-leg fast suite, the extended dashboard Playwright smoke, and the
+install.sh dev walk. All six scenario families and all four §16.1 authored
+deliverables stand. Phase 5 kickoff is parked for the operator (go/no-go,
+live provider credentials, one-time launchd load). This ledger is closed;
+the next phase ledger is docs/ledger/phase-5.md.

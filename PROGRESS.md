@@ -6,9 +6,10 @@ REPO PATH: `~/dev/ai/homie`. Never relocate this repo into `~/Documents`,
 `~/Desktop`, or `~/Downloads`: macOS TCC can revoke an agent session's own
 filesystem access there during fan-out. Full Disk Access does not fix it.
 
-LAST GREEN SHA: `e7d810b` — six-leg fast suite green; the extended
-Playwright dashboard smoke (send/reply + end→resume→send-again) green at
-`0f8fad2` and untouched since. Docker lanes last ran green
+LAST GREEN SHA: `d0ef4bb` — ALL lanes green at this HEAD: six-leg fast
+suite, full `docker_boundary` + full `docker_e2e` (-count=1, `ok mc/e2e
+169s`), the extended Playwright dashboard smoke, and the install.sh dev
+walk (green + idempotent). Docker lanes last ran green
 at `c8f37e9`-era HEAD (full `docker_boundary` 26 subtests, full `docker_e2e`
 10 tests incl. both credential legs) and are untouched since: commits after
 are test-only or the new `dashboard/` package. Production image `mc-prod` at
@@ -99,9 +100,12 @@ the approve landing fence to assignment-armed tasks; v12 retires
         incl. the two credential legs and the packaged→approve→merge→archived
         walk) + five-leg fast + all tag vets, all green at HEAD. §8 mechanical
         checklist satisfied (see ledger 2026-07-22 "§8 sweep").
-- [ ] Phase 4 — six fake-harness E2E control-loop scenario families (real
-      containers/spine/resident, timer-driven). Scope: handoff Part 3
-      "Phase 4". Ledger: `docs/ledger/phase-4.md`.
+- [x] Phase 4 — COMPLETE 2026-07-22: all six scenario families green, all
+      four §16.1 authored deliverables stand (dashboard ADR-024, frozen
+      role directives + brief templates, §18 ADR-001, install.sh +
+      /onboard dev tier), and the full Docker regression + fast suite +
+      dashboard smoke are green at `d0ef4bb`. Ledger:
+      `docs/ledger/phase-4.md` (closed).
   - [x] (1) Full pipeline + landing — approve/land split (TestWalkingSkeleton),
         landing-failure+recovery, multi-approve-drain. Green.
   - [x] (2) Correction rally — 3 CORRECTs → 4th ships BUDGET-SPENT. Green.
@@ -133,6 +137,10 @@ the approve landing fence to assignment-armed tasks; v12 retires
 
 ## Parked
 
+- **Phase 5 kickoff (operator-scheduled)**: Phase 4 is complete and all
+  lanes are green at `d0ef4bb`. Phase 5 is the operator-present
+  real-subscription acceptance: schedule it, supply the live provider
+  inputs below, and the one-time launchd load. One-line go/no-go needed.
 - **Initiative PRODUCTION real-harness mount rows (Phase 5, ADR-023 D6)**: the
   fake-harness initiative lifecycle lands via ADR-023 (shared branch, branchless
   children, legacy land lane). The PRODUCTION per-child shared-worktree
@@ -225,9 +233,10 @@ launch recovery (need resident container inventory); homie credential projection
 (fake route is token-free); dashboard LaunchAgent generation (install/onboard);
 the four non-Console tabs (each with its subsystem).
 
-NEXT: all four authored deliverables DONE (dashboard, directives + brief
-templates, §18 ADR = ADR-001, install.sh + /onboard at the dev tier —
-production bootstrap owed to Phase 5, IMPLEMENTATION-NOTES 2026-07-22).
-Phase-completion Docker regression (docker_boundary + docker_e2e, -count=1)
-is running at HEAD; if green, mark Phase 4 COMPLETE and park the Phase 5
-kickoff (operator-scheduled real-subscription acceptance) under ## Parked.
+NEXT: Phase 4 is COMPLETE and Phase 5 is operator-scheduled (see ## Parked:
+kickoff go/no-go + live credentials + one-time launchd load). Until the
+operator schedules it, remaining agent-doable work: release-prep
+construction-document disposition, the production install bootstrap design
+(helper provisioning order, may need a small ADR), and the two known
+intermittent test failures if they resurface. Do not start Phase 5 legs
+without the operator.
