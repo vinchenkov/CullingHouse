@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Mission Control</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <header>
+    <h1>Mission Control</h1>
+    <nav>
+      <!-- The five-tab shell (spec §13); only the Console is live in S6
+           (ADR-024 D8). Each placeholder activates with its subsystem. -->
+      <button class="tab" disabled title="arrives with a later slice">Board</button>
+      <button class="tab" disabled title="arrives with a later slice">Review Queue</button>
+      <button class="tab" disabled title="arrives with a later slice">Activity</button>
+      <button class="tab" disabled title="arrives with a later slice">System Health</button>
+      <button class="tab active" data-testid="tab-console">Console</button>
+    </nav>
+  </header>
+  <main>
+    <aside id="sessions-pane">
+      <div class="pane-head">
+        <h2>Sessions</h2>
+        <button id="new-session" data-testid="new-session">New session</button>
+      </div>
+      <ul id="sessions" data-testid="sessions"></ul>
+    </aside>
+    <section id="conversation-pane">
+      <div id="conversation-head" data-testid="conversation-head">No session selected</div>
+      <ol id="messages" data-testid="messages"></ol>
+      <form id="send-form">
+        <input id="send-body" data-testid="send-body" type="text" autocomplete="off"
+               placeholder="Message Homie…" disabled>
+        <button id="send" data-testid="send" type="submit" disabled>Send</button>
+      </form>
+      <div id="error" data-testid="error" hidden></div>
+    </section>
+  </main>
+  <script type="module" src="/app.js"></script>
+</body>
+</html>

@@ -36,6 +36,7 @@ citation — if the heading is not there, grep the heading text.
 | 021 | Which mount sources does jurisdiction reject, and how does that check get built, placed, and reported? | 71 KB |
 | 022 | Free-internet credential projection: what replaces the egress gateway, and how does each runtime get a host-managed token? | 7 KB |
 | 023 | How does an initiative get its one shared branch, how do children commit without landing individually, and how does the arc merge to main? (extends 017 D6's parked initiative path) | 6 KB |
+| 024 | What stack, spine read path, and API shape does the dashboard use, and how does the S6 Console slice get built and smoke-tested? | 7 KB |
 
 **Relations.** 023 extends 017 D6's Parked initiative/child mount path (the
 follow-on ADR 017 D6 required); it resolves the branch grammar, the branchless

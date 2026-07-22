@@ -1,0 +1,143 @@
+/* Console styling — deliberately framework-free (ADR-024 D1). */
+
+:root {
+  --bg: #10141a;
+  --panel: #171d26;
+  --line: #2a3442;
+  --text: #d7dee8;
+  --dim: #8595a8;
+  --accent: #4f9cf9;
+  --inbound: #1f2a3a;
+  --reply: #21301f;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  font: 14px/1.45 -apple-system, "Helvetica Neue", sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+header {
+  display: flex;
+  align-items: center;
+  gap: 1.5rem;
+  padding: 0.5rem 1rem;
+  border-bottom: 1px solid var(--line);
+  background: var(--panel);
+}
+
+header h1 { font-size: 1rem; margin: 0; }
+
+nav { display: flex; gap: 0.25rem; }
+
+.tab {
+  background: none;
+  border: none;
+  color: var(--dim);
+  padding: 0.4rem 0.75rem;
+  border-radius: 6px;
+  font: inherit;
+}
+.tab.active { color: var(--text); background: var(--line); }
+.tab:disabled { opacity: 0.45; }
+
+main { flex: 1; display: flex; min-height: 0; }
+
+#sessions-pane {
+  width: 280px;
+  border-right: 1px solid var(--line);
+  background: var(--panel);
+  display: flex;
+  flex-direction: column;
+}
+
+.pane-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.6rem 0.75rem;
+}
+.pane-head h2 { font-size: 0.8rem; text-transform: uppercase; color: var(--dim); margin: 0; }
+
+#new-session, #send {
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  padding: 0.35rem 0.7rem;
+  font: inherit;
+  cursor: pointer;
+}
+#new-session:disabled, #send:disabled { opacity: 0.5; cursor: default; }
+
+#sessions { list-style: none; margin: 0; padding: 0; overflow-y: auto; }
+#sessions li {
+  padding: 0.55rem 0.75rem;
+  border-top: 1px solid var(--line);
+  cursor: pointer;
+}
+#sessions li.selected { background: var(--line); }
+#sessions li .sid { font-family: ui-monospace, monospace; font-size: 0.85rem; }
+#sessions li .meta { color: var(--dim); font-size: 0.75rem; display: block; }
+
+#conversation-pane { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+
+#conversation-head {
+  padding: 0.6rem 1rem;
+  border-bottom: 1px solid var(--line);
+  color: var(--dim);
+  font-family: ui-monospace, monospace;
+  font-size: 0.85rem;
+}
+
+#messages {
+  flex: 1;
+  overflow-y: auto;
+  list-style: none;
+  margin: 0;
+  padding: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+#messages li {
+  max-width: 70%;
+  padding: 0.5rem 0.75rem;
+  border-radius: 10px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+#messages li.inbound { align-self: flex-end; background: var(--inbound); }
+#messages li.reply { align-self: flex-start; background: var(--reply); }
+#messages li .who { display: block; color: var(--dim); font-size: 0.7rem; margin-bottom: 0.15rem; }
+
+#send-form {
+  display: flex;
+  gap: 0.5rem;
+  padding: 0.75rem 1rem;
+  border-top: 1px solid var(--line);
+}
+#send-body {
+  flex: 1;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: var(--text);
+  padding: 0.45rem 0.6rem;
+  font: inherit;
+}
+
+#error {
+  margin: 0 1rem 0.75rem;
+  padding: 0.5rem 0.75rem;
+  border-radius: 6px;
+  background: #3a1f22;
+  color: #f0b9bf;
+}

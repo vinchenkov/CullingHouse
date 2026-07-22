@@ -1,0 +1,12 @@
+{
+  "name": "mc-dashboard",
+  "private": true,
+  "type": "module",
+  "description": "Mission Control dashboard (ADR-024). Bun-only, zero runtime dependencies; Playwright is the smoke lane's pinned dev dependency.",
+  "scripts": {
+    "test": "bun test src/"
+  },
+  "devDependencies": {
+    "playwright": "1.54.0"
+  }
+}
