@@ -1106,3 +1106,82 @@ func HomieLaunchBind(db *sql.DB, id *RunIdentity, sessionID, launchID, container
 	}
 	return result, nil
 }
+
+// HomieRunnerStarted is the runner's private lifecycle receipt (ADR-016 D3):
+// after the native harness has successfully started or resumed, the runner
+// CASes launch_started_at onto its own session's bound launch. It is fenced to
+// the current launch and its bound container, idempotent (a second call
+// returns the original start), and repeats the non-idle guard. It runs under
+// the runner's own tier:"homie" identity, never the model's allowlist.
+func HomieRunnerStarted(db *sql.DB, id *RunIdentity, sessionID, launchID, containerID string) (any, error) {
+	if err := requireHomieRunner(id, sessionID, "mc homie runner-started"); err != nil {
+		return nil, err
+	}
+	if !validLowercaseHex(launchID, 16) {
+		return nil, Usagef("mc homie runner-started --launch must be exactly 16 lowercase hex characters (ADR-016 D3)")
+	}
+	if !validLowercaseHex(containerID, 64) {
+		return nil, Usagef("mc homie runner-started --container-id must be exactly 64 lowercase hex characters")
+	}
+	result := map[string]any{"session": sessionID, "launch": launchID, "container_id": containerID}
+	err := inTx(db, func(ctx context.Context, q Q) error {
+		var status string
+		var curLaunch, curContainer, startedAt, lastActivity sql.NullString
+		var idleTimeout int64
+		err := q.QueryRowContext(ctx, `
+			SELECT s.status, s.current_launch_id, s.current_container_id,
+			       s.launch_started_at, s.last_activity_at,
+			       (SELECT homie_idle_timeout_s FROM lock WHERE id = 1)
+			FROM homie_sessions s WHERE s.id = ?`, sessionID).Scan(
+			&status, &curLaunch, &curContainer, &startedAt, &lastActivity, &idleTimeout)
+		if err == sql.ErrNoRows {
+			return Domainf("unknown Homie session %q", sessionID)
+		}
+		if err != nil {
+			return err
+		}
+		// A start from an old launch or a container that is not the bound one
+		// stamps nothing (ADR-016 D3: fenced:false).
+		if status != "active" || !curLaunch.Valid || curLaunch.String != launchID ||
+			!curContainer.Valid || curContainer.String != containerID {
+			result["fenced"] = false
+			return nil
+		}
+		// Idempotent: already started returns the original stamp.
+		if startedAt.Valid {
+			result["fenced"] = true
+			result["started_at"] = startedAt.String
+			return nil
+		}
+		var live int
+		if err := q.QueryRowContext(ctx, `
+			SELECT CASE WHEN datetime('now') < datetime(?, '+' || ? || ' seconds')
+			            THEN 1 ELSE 0 END`,
+			lastActivity.String, idleTimeout).Scan(&live); err != nil {
+			return err
+		}
+		if live == 0 {
+			result["fenced"] = false
+			return nil
+		}
+		if _, err := q.ExecContext(ctx, `
+			UPDATE homie_sessions SET launch_started_at = datetime('now')
+			WHERE id = ? AND status = 'active' AND current_launch_id = ?
+			  AND current_container_id = ? AND launch_started_at IS NULL`,
+			sessionID, launchID, containerID); err != nil {
+			return err
+		}
+		var newStarted string
+		if err := q.QueryRowContext(ctx,
+			`SELECT launch_started_at FROM homie_sessions WHERE id = ?`, sessionID).Scan(&newStarted); err != nil {
+			return err
+		}
+		result["fenced"] = true
+		result["started_at"] = newStarted
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return result, nil
+}

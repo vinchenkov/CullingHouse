@@ -118,3 +118,82 @@ func TestHomieLaunchBind(t *testing.T) {
 		}
 	})
 }
+
+func homieRunnerID(session string) *RunIdentity {
+	return &RunIdentity{Tier: "homie", RunID: session}
+}
+
+// hbBound seeds a session whose current launch is already bound to hbContainer
+// (the state runner-started acts on).
+func hbBound(t *testing.T, db *sql.DB) {
+	t.Helper()
+	dvExec(t, db, `UPDATE homie_sessions
+		SET current_container_id = ?, launch_bound_at = datetime('now') WHERE id = 'sess-1'`, hbContainer)
+}
+
+func TestHomieRunnerStarted(t *testing.T) {
+	rid := homieRunnerID("sess-1")
+
+	t.Run("stamps launch_started_at on the bound current launch", func(t *testing.T) {
+		db := hbSpine(t)
+		hbBound(t, db)
+		res, err := HomieRunnerStarted(db, rid, "sess-1", hbLaunch, hbContainer)
+		if err != nil {
+			t.Fatal(err)
+		}
+		got := res.(map[string]any)
+		if got["fenced"] != true || got["started_at"] == nil {
+			t.Fatalf("started = %v, want fenced+started_at", got)
+		}
+		var started sql.NullString
+		if err := db.QueryRow(`SELECT launch_started_at FROM homie_sessions WHERE id='sess-1'`).Scan(&started); err != nil {
+			t.Fatal(err)
+		}
+		if !started.Valid {
+			t.Fatal("launch_started_at not persisted")
+		}
+	})
+
+	t.Run("idempotent second start returns the original stamp", func(t *testing.T) {
+		db := hbSpine(t)
+		hbBound(t, db)
+		first, _ := HomieRunnerStarted(db, rid, "sess-1", hbLaunch, hbContainer)
+		second, _ := HomieRunnerStarted(db, rid, "sess-1", hbLaunch, hbContainer)
+		if second.(map[string]any)["started_at"] != first.(map[string]any)["started_at"] {
+			t.Fatal("runner-started not idempotent")
+		}
+	})
+
+	t.Run("a start against an unbound container is fenced", func(t *testing.T) {
+		db := hbSpine(t) // bound to nothing yet
+		res, err := HomieRunnerStarted(db, rid, "sess-1", hbLaunch, hbContainer)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if res.(map[string]any)["fenced"] != false {
+			t.Fatal("a start before the bind must be fenced")
+		}
+	})
+
+	t.Run("a stale launch is fenced", func(t *testing.T) {
+		db := hbSpine(t)
+		hbBound(t, db)
+		res, _ := HomieRunnerStarted(db, rid, "sess-1", "bbbbbbbbbbbbbbbb", hbContainer)
+		if res.(map[string]any)["fenced"] != false {
+			t.Fatal("a stale launch must be fenced")
+		}
+	})
+
+	t.Run("only the runner's own session tier may call it", func(t *testing.T) {
+		db := hbSpine(t)
+		hbBound(t, db)
+		// Host scope (nil) is refused.
+		if _, err := HomieRunnerStarted(db, nil, "sess-1", hbLaunch, hbContainer); err == nil {
+			t.Fatal("host scope must not call runner-started")
+		}
+		// A runner for a different session is refused.
+		if _, err := HomieRunnerStarted(db, homieRunnerID("other"), "sess-1", hbLaunch, hbContainer); err == nil {
+			t.Fatal("a foreign-session runner must be refused")
+		}
+	})
+}
