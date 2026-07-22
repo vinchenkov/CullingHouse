@@ -1020,3 +1020,89 @@ func homieEndTx(ctx context.Context, q Q, actor, sessionID, reason string) (bool
 	}
 	return true, "ended", nil
 }
+
+// HomieLaunchBind is the resident's private pre-start bind receipt (ADR-016
+// D3): after creating and inspecting a Homie container but before starting it,
+// the resident CASes the exact Docker id onto the session's current launch. It
+// is idempotent — the same launch plus the same container id returns the
+// original receipt — and fenced: a stale launch, an ended session, or a
+// different already-bound container binds nothing and returns fenced:false so
+// the resident abandons the container. The non-idle guard refuses to bind a
+// launch whose session has idled past homie_idle_timeout_s; that session is
+// owed an end, not a container.
+func HomieLaunchBind(db *sql.DB, id *RunIdentity, sessionID, launchID, containerID string) (any, error) {
+	if err := RequireHostScope(id, "mc homie launch-bind"); err != nil {
+		return nil, err
+	}
+	if !validLowercaseHex(launchID, 16) {
+		return nil, Usagef("mc homie launch-bind --launch must be exactly 16 lowercase hex characters (ADR-016 D3)")
+	}
+	if !validLowercaseHex(containerID, 64) {
+		return nil, Usagef("mc homie launch-bind --container-id must be exactly 64 lowercase hex characters")
+	}
+	result := map[string]any{"session": sessionID, "launch": launchID, "container_id": containerID}
+	err := inTx(db, func(ctx context.Context, q Q) error {
+		var status string
+		var curLaunch, curContainer, boundAt, lastActivity sql.NullString
+		var idleTimeout int64
+		err := q.QueryRowContext(ctx, `
+			SELECT s.status, s.current_launch_id, s.current_container_id,
+			       s.launch_bound_at, s.last_activity_at,
+			       (SELECT homie_idle_timeout_s FROM lock WHERE id = 1)
+			FROM homie_sessions s WHERE s.id = ?`, sessionID).Scan(
+			&status, &curLaunch, &curContainer, &boundAt, &lastActivity, &idleTimeout)
+		if err == sql.ErrNoRows {
+			return Domainf("unknown Homie session %q", sessionID)
+		}
+		if err != nil {
+			return err
+		}
+		// A late bind from an old launch (session ended, or the current launch
+		// moved on) binds nothing (ADR-016 D3: fenced:false).
+		if status != "active" || !curLaunch.Valid || curLaunch.String != launchID {
+			result["fenced"] = false
+			return nil
+		}
+		// Idempotent success iff already bound to this exact container; a
+		// different bound id is fenced.
+		if curContainer.Valid {
+			result["fenced"] = curContainer.String == containerID
+			if curContainer.String == containerID {
+				result["bound_at"] = boundAt.String
+			}
+			return nil
+		}
+		// The launch must bind while the session is still non-idle.
+		var live int
+		if err := q.QueryRowContext(ctx, `
+			SELECT CASE WHEN datetime('now') < datetime(?, '+' || ? || ' seconds')
+			            THEN 1 ELSE 0 END`,
+			lastActivity.String, idleTimeout).Scan(&live); err != nil {
+			return err
+		}
+		if live == 0 {
+			result["fenced"] = false
+			return nil
+		}
+		if _, err := q.ExecContext(ctx, `
+			UPDATE homie_sessions
+			SET current_container_id = ?, launch_bound_at = datetime('now')
+			WHERE id = ? AND status = 'active' AND current_launch_id = ?
+			  AND current_container_id IS NULL`,
+			containerID, sessionID, launchID); err != nil {
+			return err
+		}
+		var newBound string
+		if err := q.QueryRowContext(ctx,
+			`SELECT launch_bound_at FROM homie_sessions WHERE id = ?`, sessionID).Scan(&newBound); err != nil {
+			return err
+		}
+		result["fenced"] = true
+		result["bound_at"] = newBound
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return result, nil
+}

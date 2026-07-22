@@ -1217,6 +1217,29 @@ func cmdHomie(args []string) (any, error) {
 		return withSpine(func(db *sql.DB) (any, error) {
 			return verbs.HomieEnd(db, id, sessionID, *reason)
 		})
+
+	case "launch-bind":
+		// Resident-private pre-start bind receipt (ADR-016 D3).
+		sessionID, rest, err := positional("mc homie launch-bind", args[1:])
+		if err != nil {
+			return nil, err
+		}
+		fs := newFlags("mc homie launch-bind")
+		launch := fs.String("launch", "", "16-hex current launch id")
+		containerID := fs.String("container-id", "", "64-hex Docker container id")
+		if err := parse(fs, rest); err != nil {
+			return nil, err
+		}
+		if *launch == "" || *containerID == "" {
+			return nil, verbs.Usagef("mc homie launch-bind requires --launch and --container-id")
+		}
+		id, err := verbs.LoadIdentity()
+		if err != nil {
+			return nil, err
+		}
+		return withSpine(func(db *sql.DB) (any, error) {
+			return verbs.HomieLaunchBind(db, id, sessionID, *launch, *containerID)
+		})
 	}
 	return nil, verbs.Usagef("unknown subverb: mc homie %s", args[0])
 }
