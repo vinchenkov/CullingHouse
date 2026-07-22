@@ -235,6 +235,7 @@ type tunables struct {
 	consoleHour         int
 	consoleMinute       int
 	consoleTZ           string
+	homieIdleTimeoutS   int
 }
 
 func spineNow(ctx context.Context, q Q) (time.Time, error) {
@@ -255,12 +256,12 @@ func loadLock(ctx context.Context, q Q) (dispatch.Lock, tunables, error) {
 		SELECT run_id, owner, subject, acquired_at, last_heartbeat_at,
 		       hard_deadline_at, timeout_minutes, grace_minutes,
 		       heartbeat_interval_s, spawn_grace_s, hard_deadline_minutes,
-		       console_hour, console_minute, console_tz
+		       console_hour, console_minute, console_tz, homie_idle_timeout_s
 		FROM lock WHERE id = 1`).Scan(
 		&runID, &owner, &subject, &acquiredAt, &lastHB, &hardDeadline,
 		&tun.timeoutMinutes, &tun.graceMinutes, &tun.heartbeatIntervalS,
 		&tun.spawnGraceS, &tun.hardDeadlineMinutes,
-		&tun.consoleHour, &tun.consoleMinute, &tun.consoleTZ)
+		&tun.consoleHour, &tun.consoleMinute, &tun.consoleTZ, &tun.homieIdleTimeoutS)
 	if err != nil {
 		return dispatch.Lock{}, tun, err
 	}

@@ -590,6 +590,22 @@ func dispatchPrepareWithIdentity(ctx context.Context, q Q, identity dispatchProt
 		}
 	}
 
+	// The lease-free Homie tier (Inv. 1/22) is scheduled only when the pipeline
+	// committed nothing this tick. A pipeline-idle result may still owe a Homie
+	// a wake or an idle end (ADR-016 D3 branches 6/7); that is a spine mutation
+	// (launch persist or session end) paired with its effect, so it carries a
+	// receipt like the other mutating branches and returns instead of idling.
+	if sel.action.Kind == dispatch.KindIdle {
+		if homieEffect, handled, err := homieWakeRound(ctx, q, sel.now, sel.tun.homieIdleTimeoutS); err != nil {
+			return preparedDispatch{}, err
+		} else if handled {
+			if err := writeDispatchReceipt(ctx, q, requestID, homieEffect); err != nil {
+				return preparedDispatch{}, err
+			}
+			return preparedDispatch{requestID: requestID, deploymentUUID: uuid, identity: identity, final: homieEffect}, nil
+		}
+	}
+
 	effect, err := applyAction(ctx, q, sel.now, sel.action, sel.tun)
 	if err != nil {
 		return preparedDispatch{}, err
