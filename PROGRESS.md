@@ -98,22 +98,40 @@ the approve landing fence to assignment-armed tasks; v12 retires
 - [ ] Phase 4 — six fake-harness E2E control-loop scenario families (real
       containers/spine/resident, timer-driven). Scope: handoff Part 3
       "Phase 4". Ledger: `docs/ledger/phase-4.md`.
-  - [ ] (1) Full pipeline + landing — approve/land split, landing-failure
-        variant, multi-approve-drain variant.
-  - [ ] (2) Correction rally — 3 CORRECTs → 4th ships BUDGET-SPENT.
-  - [ ] (3) Backpressure — queue cap, Refiner, saturation → idle.
-  - [ ] (4) Initiative lifecycle — charter → wave children → drain → arc
-        packet → land; block-propagation + cancel-cascade variants.
+  - [x] (1) Full pipeline + landing — approve/land split (TestWalkingSkeleton),
+        landing-failure+recovery, multi-approve-drain. Green.
+  - [x] (2) Correction rally — 3 CORRECTs → 4th ships BUDGET-SPENT. Green.
+  - [x] (3) Backpressure — WIP cap blocks dispatch, refiner re-entry at cap,
+        drain-frees. Green (saturation arithmetic cited to unit tests).
+  - [~] (4) Initiative lifecycle — BLOCKED at LANDING by parked shared-worktree/
+        branch mechanics (no code sets an initiative branch; landing unwired).
+        The state machine (wave/plan-review/strict-drain/done/arc packet/
+        block-prop/cancel-cascade) is fully unit+property-tested. OPERATOR
+        SCOPE DECISION parked below. Ledger 2026-07-22 "scenario (4) ... BLOCKED".
   - [ ] (5) Fault matrix — one kill per kill-class → reap → re-select →
         retry; interrupt, tick discipline, reboot drill, session permanence.
+        UNBLOCKED (does not depend on parked mechanics).
   - [ ] (6) Homie loop — send → tick wake → reply → outbox/ack; resume;
-        console schedule. Plus one Playwright dashboard smoke.
+        console schedule. Plus one Playwright dashboard smoke. UNBLOCKED.
 - [ ] Phase 5 — operator-scheduled real-subscription acceptance.
 - [ ] Release prep — install/onboard front door and construction-document
       disposition.
 
 ## Parked
 
+- **Phase 4 family (4) initiative LANDING — operator scope decision**: the
+  initiative lifecycle's landing half is not production-built — no code sets an
+  initiative `tasks.branch`, the done-declaration forbids `--branch`, the
+  shared-worktree/child-mount representation is parked
+  (`mountattest.go:238-249`), and no initiative landing support/test exists.
+  The property walk cancels the arc rather than landing it. So family (4)
+  "→ approve/land" cannot reach LAND without un-parking that representation.
+  The initiative STATE MACHINE is fully unit+property-tested. Options for the
+  operator: (a) un-park the shared-worktree/branch representation (significant,
+  a Phase-3-deferred design item) so family (4) lands through real containers;
+  (b) accept a scoped family-4 E2E through the arc PACKET (no land); (c) defer
+  family (4) and do families (5) fault-matrix and (6) homie-loop first (both
+  UNBLOCKED). Full analysis: ledger 2026-07-22 "scenario (4) ... BLOCKED".
 - **Phase 5 live-provider credentials (operator-dependent, NOT a Phase 4
   blocker)**: the ADR-022 credential mechanism is proven with synthetic mints;
   the live legs need a real Claude/Codex subscription refresh grant in
@@ -171,15 +189,16 @@ these are the constraints a Phase 4+ change must not break.
   canonical landing row derived; use the assignment's frozen `target_ref` and
   refuse divergence. Details are in the Phase 3 ledger.
 
-NEXT: Phase 4 scenario family (1) — full pipeline + landing. The happy-path
-pipeline is already `TestWalkingSkeleton` (docker_e2e); (1) adds the
-approve/land SPLIT assertion and two variants — landing-FAILURE (a landing
-that refuses/errors and leaves the task recoverably pending, not merged) and
-MULTI-APPROVE-DRAIN (several approved tasks landing in sequence). Build order:
-approve/land split assertion first (mostly assertion over the existing walk),
-then the landing-failure variant, which will force the landing failure
-taxonomy to be observable and close the three non-blocking landing loose ends
-as needed (unenforced 15-min landing deadline; `SealedLandingResult` has no
-spine consumer; ADR-016 D7 label non-conformance in setup/legacy-land — all in
-`IMPLEMENTATION-NOTES.md` 2026-07-20/21). A scenario-1 gap recon is in flight;
-build from its result. Phase 4 is fake-harness — needs no real credentials.
+NEXT: Phase 4 families (1)(2)(3) are DONE and green (docker_e2e 14 tests, 99s,
+0 fails). Family (4) initiative LANDING is BLOCKED by parked shared-worktree/
+branch mechanics — an OPERATOR SCOPE DECISION is parked above (un-park vs
+scoped-no-land vs defer). Pending that decision, family (5) fault-matrix and
+(6) homie-loop are UNBLOCKED and can proceed. Recommended next if the operator
+defers (4): family (5) fault matrix — one kill per kill-class → reap on the
+right threshold → same task re-selected → completes on retry; plus interrupt,
+tick-loop discipline, reboot drill, session-folder permanence. Note: the
+family-3 finding (a fast-failing spawn left a run un-reaped ~2 min; sustained
+churn strains the helper) is directly relevant to (5)'s reap paths — probe it
+there. The three non-blocking landing loose ends (15-min deadline;
+`SealedLandingResult` spine consumer; ADR-016 D7 labels) remain open and were
+NOT forced by families (1)-(3).
