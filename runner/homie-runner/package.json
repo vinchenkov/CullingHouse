@@ -1,0 +1,5 @@
+{
+  "name": "mc-homie-runner",
+  "private": true,
+  "type": "module"
+}
