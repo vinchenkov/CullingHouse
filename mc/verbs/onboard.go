@@ -118,7 +118,9 @@ func onboardSection(section string, a OnboardArgs) (string, string, error) {
 	case "routing":
 		return onboardRouting()
 	case "container":
-		return "deferred", "image build, warm helper round-trip, and the two-leg gateway probe run in Phase 3 (§11.4, §17)", nil
+		// ADR-022 deleted the gateway probe; what remains for this section is
+		// the image build and warm-helper provisioning (spec §11.5, §17).
+		return "deferred", "image build and warm helper provisioning run at install/onboarding (§11.5, §17)", nil
 	case "worksource":
 		return onboardWorksource(a)
 	case "tunables":

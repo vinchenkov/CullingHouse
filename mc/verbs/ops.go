@@ -313,7 +313,10 @@ func Doctor(id *RunIdentity, spine string) (any, error) {
 	// The gateway finding is retired, not deferred: ADR-022 deleted the egress
 	// gateway, so there is no probe to defer. Credential-projection health is
 	// the runtime-auth row's job.
-	add("container-runtime", "deferred", "capability probe (setuid gate, helper exec) runs in Phase 3 (§16.4, §17)", "container")
+	{
+		status, detail := containerRuntimeFinding(spine)
+		add("container-runtime", status, detail, "container")
+	}
 	add("runtime-auth", "deferred", "per-binding runtime-auth health runs in Phase 3/5 (§11.4, §17)", "runtime-auth")
 	add("supervision", "deferred", "launchd/resident supervision check runs in Phase 5 (§17)", "supervision")
 
