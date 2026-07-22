@@ -225,8 +225,9 @@ launch recovery (need resident container inventory); homie credential projection
 (fake route is token-free); dashboard LaunchAgent generation (install/onboard);
 the four non-Console tabs (each with its subsystem).
 
-NEXT: install.sh + /onboard (spec §17) — the last authored deliverable
-(dashboard DONE, directives + brief templates DONE, §18 ADR satisfied by
-pre-existing ADR-001; ledger 2026-07-22). Read spec §17 whole before
-designing; `mc onboard` sections already exist (ADR-015) — the deliverable
-is the front door: install.sh and the /onboard skill wrapping them.
+NEXT: all four authored deliverables DONE (dashboard, directives + brief
+templates, §18 ADR = ADR-001, install.sh + /onboard at the dev tier —
+production bootstrap owed to Phase 5, IMPLEMENTATION-NOTES 2026-07-22).
+Phase-completion Docker regression (docker_boundary + docker_e2e, -count=1)
+is running at HEAD; if green, mark Phase 4 COMPLETE and park the Phase 5
+kickoff (operator-scheduled real-subscription acceptance) under ## Parked.

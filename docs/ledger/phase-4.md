@@ -492,3 +492,28 @@ brief templates DONE, §18 ADR DONE (pre-existing), install.sh + /onboard
 (§17) REMAINING.
 
 NEXT: install.sh + /onboard (spec §17).
+
+## 2026-07-22 — authored deliverable: install.sh + /onboard (§17, dev tier)
+
+install.sh: Level-0 bootstrap per spec:812 (prereqs, build/install mc, hand
+off to mc onboard), dual-input (prompts or flags + --yes). --dev builds the
+test_fake_routing binary under a scratch MC_HOME and completes the full §17
+walk: proven green end-to-end (home provisioned, routing written, worksource
+seeded, tunables/surfaces set, verify ok with runtime-auth/container/
+supervision honestly deferred) and idempotent on rerun (all ok/deferred,
+nothing re-done). Production hand-off without the warm helper reports
+DEFERRED (exit 0): the darwin prod binary delegates every verb into
+mc-helper, which the container section itself provisions — bootstrap order
+is Phase 5 front-door work (IMPLEMENTATION-NOTES 2026-07-22, no invariant
+moved). /onboard is the repo-shipped shepherding skill
+(.claude/skills/onboard/SKILL.md): operator-owned inputs conversationally,
+install.sh non-interactively, doctor's section naming for repair, mc never
+named to the operator.
+
+With this, all four §16.1 authored deliverables stand: dashboard (S6),
+frozen role directives + brief templates, §18 ADR (ADR-001), install.sh +
+/onboard (dev tier; production bootstrap owed to Phase 5).
+
+NEXT: phase-completion Docker regression (docker_boundary + docker_e2e) at
+HEAD; if green, mark Phase 4 complete in PROGRESS and park the Phase 5
+kickoff for the operator.
