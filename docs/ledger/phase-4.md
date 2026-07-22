@@ -439,3 +439,22 @@ behind the same API if polling ever chafes.
 
 NEXT: adversarial review of the S6 diff, then the remaining authored
 deliverables (frozen role directives + brief templates, install.sh + /onboard).
+
+## 2026-07-22 — S6c: adversarial review of the S6 diff, six confirmed findings fixed
+
+A 13-agent review workflow (4 dimensions × find, then one skeptic per
+finding prompted to refute) over 9d2cdb4..75bd35f confirmed 6 of 9 raw
+findings; all fixed in one micro-step (see the S6c commit for the list):
+three majors — no Origin/Host browser boundary on the open loopback API
+(CSRF + DNS rebinding could start sessions/inject messages), the §15.4
+resume affordance unreachable from the UI (route built + tested but never
+called), and a smoke drain assertion racing the browser's own drain — plus
+three minors (token mode unusable from a browser since auth gated the
+static shell; mc usage envelopes surfacing as 500; stale history rendering
+under a switched session). Rejected as unreal: drain-only-when-selected,
+localhost-name trust, bearer timing-compare. The smoke now also proves
+end → resume → send-again through the browser. ADR-024 D3/D4 amended to
+record the shipped behavior.
+
+NEXT: remaining authored deliverables — frozen role directives + brief
+templates (spec §9.2, Inv. 20), then install.sh + /onboard (spec §17).
