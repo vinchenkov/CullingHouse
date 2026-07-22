@@ -6,12 +6,15 @@ REPO PATH: `~/dev/ai/homie`. Never relocate this repo into `~/Documents`,
 `~/Desktop`, or `~/Downloads`: macOS TCC can revoke an agent session's own
 filesystem access there during fan-out. Full Disk Access does not fix it.
 
-LAST GREEN SHA: `029acc4` — five-leg fast lane green (ADR-022 step 2 landed
-as four TDD micro-commits `9c45d2b`..`029acc4`). Docker evidence is OLDER:
-Docker E2E 8/8 and `docker_boundary` 9/9 at `dbfc553`, INCLUDING the sealed
-landing walk (`packaged -> approve -> merge -> archived`, real `--no-ff`
-merge) — that predates schema v12, so the Docker lanes must be rerun for the
-Phase 3 completion lane. Production image `mc-prod`
+LAST GREEN SHA: `ada715d` — five-leg fast lane green; `docker_e2e` green
+(`ok mc/e2e 32s`, 8 tests) at `ada715d` on schema v12 with the ADR-022 spawn
+seam live; `docker_boundary` all-PASS (24 subtests) at `bd39089` (the one
+commit between them is resident-TS-only and cannot affect that Go lane). All
+three tag vet lanes clean at `bd39089`. LESSON pinned by `ada715d`: the
+resident's `SPINE_SCHEMA_VERSION` (resident-control.ts:12) mirrors
+`substrate.CurrentSchemaVersion` in lockstep — every future schema bump must
+touch BOTH, and only the Docker lane catches the miss. Production image
+`mc-prod`
 `sha256:8f12cc425a6d8f37e364b1627bb0e349a7fdbccf59035a25f58a57224a044a02`,
 arm64/linux, Docker Desktop 29.4.0 aarch64, native (no --platform, no
 emulation).
@@ -207,4 +210,4 @@ lockstep golden bytes.
   canonical landing row derived; use the assignment's frozen `target_ref` and
   refuse divergence. Details are in the Phase 3 ledger.
 
-NEXT: Rerun the Docker lanes at `99fa8d6`+ (stale since schema v12): `cd mc && mise exec -- go test -tags docker_boundary ./boundarydocker/... -timeout 15m`, then `mise exec -- go test -tags docker_e2e ./e2e/... -timeout 15m`. Fix the agent-class egress assertions they surface by swapping them to §3 Credential-projection expectations — landing/setup-class `--network none` sites are KEPT by design (ADR-022 removes isolation for real agent routes only; the fake family keeps it as hygiene, deviation logged in IMPLEMENTATION-NOTES 2026-07-21). Then drive the §2 Phase 3 completion lane and record image digest/evidence here. Step-3 residue that does NOT block the lane: `main.ts` projector wiring (composition-only, blocked on the refresh-grant store capture — an install/onboarding obligation); ADR-022 residuals for the Docker lane (Claude in-container delivery channel, host-creds 401 rotation, VirtioFS mtime). Steps 3(a)-(d)+(f) are DONE at `70d8b6b`/`99fa8d6`: deny root `MC_HOME/refresh-grants`, doctor gateway finding retired (absence asserted), spawn-seam CredentialProjector (D8 refusal stalls before any launch file; codex auth.json bound RW at CODEX_HOME=/mc/codex), real routes open-network, refusal codes kept inert, `gateway_control_version` untouched. Non-blocking obligations remain in `IMPLEMENTATION-NOTES.md` (2026-07-21): unenforced 15-minute landing deadline, `SealedLandingResult` has no spine consumer, ADR-016 D7 label non-conformance in setup/legacy-land.
+NEXT: Drive the `docs/phase3-contract.md` §8 completion checklist. Both Docker lanes are green at v12 with the spawn seam live (no agent-class egress assertion drift surfaced — the e2e's own fixtures pin their own containers, and resident-spawned fake-family argv is unchanged). What §8 still needs, in buildable order: (1) the doctor `container-runtime` capability probe (its "runs in Phase 3" deferral is Phase-3-owned and §8 forbids it) — real-mechanism probes for the setuid gate and helper exec; (2) the §3 *Credential projection* acceptance row's Docker test — needs the `main.ts` projector wiring, which needs the `MC_HOME/refresh-grants` store capture (install/onboarding obligation) and REAL provider credentials for the live-call legs: park the live legs for the operator if credentials are not in `OPERATOR-INPUTS.md`; the fail-closed/no-refresh-material legs are buildable with synthetic mints; (3) the §3 *Forbidden env* row's mechanism test through the production owner (dispatch-side env-plane wiring: `LoadDispatchWorksourceProjection` grows the two env columns, `BuildEnvPlan` refuses `env.forbidden` before claim, effect carries validated entries; SENTINEL walk + docker-inspect absence proof); (4) §8 sweep: no fake route in the production image, no production override redirecting spine/identity, then record digest/arch/capability-probe evidence here. Steps 2 and 3(a)-(d)+(f) of ADR-022 are DONE (`9c45d2b`..`ada715d`); the SPINE_SCHEMA_VERSION lockstep lesson is pinned above. Non-blocking obligations remain in `IMPLEMENTATION-NOTES.md` (2026-07-21): unenforced 15-minute landing deadline, `SealedLandingResult` has no spine consumer, ADR-016 D7 label non-conformance in setup/legacy-land.

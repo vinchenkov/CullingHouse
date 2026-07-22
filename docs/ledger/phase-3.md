@@ -5028,3 +5028,24 @@ docker_boundary ./boundarydocker/... -timeout 15m`, then `-tags docker_e2e
 ./e2e/... -timeout 15m`), fix the agent-class egress assertions they surface
 (swap to §3 Credential-projection expectations), then drive the §2 Phase 3
 completion lane and record digests/evidence in PROGRESS.
+
+## 2026-07-22 — Docker lanes green on v12 + ADR-022 seam; one lockstep bug found and fixed
+
+`docker_boundary` all-PASS (24 subtests) at `bd39089`. First `docker_e2e` run
+FAILED — three tests idle-timed-out on "resident control hello identity
+mismatch": the v12 migration missed the resident's deliberately-duplicated
+`SPINE_SCHEMA_VERSION` mirror (`resident-control.ts:12`, still 11). The fast
+resident leg cannot catch this (its synthetic child pins the constant on both
+sides); only the real-handshake Docker lane can. Fixed at `ada715d` (mirror +
+test pins to 12); rerun green: `ok mc/e2e 32s`, 8 tests, exit 0. No
+agent-class egress assertion drift surfaced anywhere — the landing/setup-class
+`--network none` sites are kept by design and the e2e's fixtures pin their own
+containers. Also fixed a test-harness hygiene bug in this session's process:
+piping `go test` through `tail` masked the failure exit code; the rerun echoes
+the real rc.
+
+NEXT: the §8 completion checklist (see PROGRESS NEXT): doctor
+container-runtime capability probe, credential-projection Docker acceptance
+(main.ts wiring gated on the refresh-grant store; live legs may need operator
+credentials), dispatch-side forbidden-env wiring, then the §8 sweep and
+evidence record.
