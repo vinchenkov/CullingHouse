@@ -35,8 +35,13 @@ citation — if the heading is not there, grep the heading text.
 | 020 | How does the Editor's holistic wave review get a durable state, a dispatch step, and a terminal? | 49 KB |
 | 021 | Which mount sources does jurisdiction reject, and how does that check get built, placed, and reported? | 71 KB |
 | 022 | Free-internet credential projection: what replaces the egress gateway, and how does each runtime get a host-managed token? | 7 KB |
+| 023 | How does an initiative get its one shared branch, how do children commit without landing individually, and how does the arc merge to main? (extends 017 D6's parked initiative path) | 6 KB |
 
-**Relations.** 021 resolves gaps 017 left open — **017 remains the authority
+**Relations.** 023 extends 017 D6's Parked initiative/child mount path (the
+follow-on ADR 017 D6 required); it resolves the branch grammar, the branchless
+child terminal, and the arc landing lane for the fake-harness control loop,
+and keeps the production real-harness shared-worktree mount rows owed for
+Phase 5. 021 resolves gaps 017 left open — **017 remains the authority
 and is not superseded**; read both. 020 resolves 001's Open Question 1 and
 `docs/phase2-contract.md` A-P2-7. 013 resolves a slice 010 deferred. **022
 supersedes 018 whole** (operator's free-internet requirement): the egress
