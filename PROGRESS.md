@@ -119,14 +119,35 @@ the approve landing fence to assignment-armed tasks; v12 retires
         reap (time-based only), interrupt CONTAINER-STOP (owed to orphan sweep),
         wake-from-sleep immediate tick (unimplemented [P2/P3]). Ledger
         2026-07-22 "(5) ... DONE (scoped; three gaps flagged)".
-  - [ ] (6) Homie loop — send → tick wake → reply → outbox/ack; resume;
-        console schedule. Plus one Playwright dashboard smoke. UNBLOCKED.
+  - [~] (6) Homie loop — CONSOLE SCHEDULE done (`TestConsoleScheduleDocker
+        Boundary` green). The conversational RUNTIME (send→tick-wake→reply→
+        outbox→deliver) and the DASHBOARD are UNIMPLEMENTED — a large new
+        workstream (homie wake selector + resident spawn effect + homie runner
+        + a dashboard web app + Playwright), NOT un-parking. Operator scope
+        decision parked below. The homie RECORD layer is built (verb-level
+        record-loop test buildable as interim). Ledger 2026-07-22 "(6) ...
+        UNIMPLEMENTED".
 - [ ] Phase 5 — operator-scheduled real-subscription acceptance.
 - [ ] Release prep — install/onboard front door and construction-document
       disposition.
 
 ## Parked
 
+- **Homie conversational runtime + dashboard — operator scope decision (LARGE)**:
+  family (6)'s console schedule is DONE, but the conversational loop
+  (send→tick-wake→reply→outbox→deliver) and the dashboard/Playwright smoke are
+  UNIMPLEMENTED — not parked design to un-park, but a substantial NEW
+  workstream: (1) a homie WAKE selector in dispatch (code TODOs at
+  dispatchseam.go:874, homiepreflight.go:26); (2) a homie SPAWN effect in the
+  resident (types.ts Effect union + effects.ts, currently pipeline-only);
+  (3) a homie RUNNER process in runner/ (none exists); (4) resume relaunch
+  (record-only today); (5) an outbox delivery-loop actor; (6) a DASHBOARD web
+  app (none exists — AGENTS.md §3 lists it as a remaining deliverable) for the
+  Playwright smoke. The homie RECORD layer (schema + verbs) is fully built.
+  Options: (a) build the homie runtime + dashboard (large, multi-session);
+  (b) scope family (6) to console + a verb-level homie record-loop test and
+  defer the runtime/dashboard to a dedicated workstream; (c) defer family (6)'s
+  remainder. Full analysis: ledger 2026-07-22 "(6) ... UNIMPLEMENTED".
 - **Initiative PRODUCTION real-harness mount rows (Phase 5, ADR-023 D6)**: the
   fake-harness initiative lifecycle lands via ADR-023 (shared branch, branchless
   children, legacy land lane). The PRODUCTION per-child shared-worktree
@@ -192,16 +213,15 @@ these are the constraints a Phase 4+ change must not break.
   canonical landing row derived; use the assignment's frozen `target_ref` and
   refuse divergence. Details are in the Phase 3 ledger.
 
-NEXT: Phase 4 families (1)(2)(3)(4) are DONE and green — including the
-initiative lifecycle landing a real merge to main via ADR-023 (operator chose
-to build it). Remaining: family (5) fault matrix and (6) homie loop. Recommend
-family (5) next — one kill per kill-class → reap on the right threshold → same
-task re-selected → completes on retry; plus interrupt, tick-loop discipline,
-reboot drill, session-folder permanence. The family-3 finding (a fast-failing
-spawn left a run un-reaped ~2 min; sustained churn strains the helper) is
-directly relevant to (5)'s reap paths — probe it there. Optional pickups: the
-family-(4) block-propagation + cancel-cascade E2E variants (state machine
-unit/property-tested; now that landing works these are cheap add-ons). The
-three non-blocking landing loose ends (15-min deadline; `SealedLandingResult`
-spine consumer; ADR-016 D7 labels) remain open. Confirm the full docker_e2e
-regression (15 tests) is green before advancing (running now).
+NEXT: Phase 4 families (1)-(5) DONE and green; family (6) CONSOLE SCHEDULE done.
+The remaining family-(6) work — the homie conversational RUNTIME
+(send→tick-wake→reply→outbox→deliver) and the DASHBOARD/Playwright smoke — is
+UNIMPLEMENTED and is a LARGE new workstream requiring an OPERATOR SCOPE DECISION
+(parked above: build it / scope to console+record-loop / defer). This is the
+Phase 4 completion gate. Buildable WITHOUT that decision (interim): a
+verb-level homie record-loop test (start→send→echo→claim→reply→reply-outbox→
+ack→resume→history) covering the built record layer. Also optional: family-(4)
+block-propagation + cancel-cascade E2E variants (cheap now that landing works);
+the three non-blocking landing loose ends (15-min deadline; `SealedLandingResult`
+spine consumer; ADR-016 D7 labels). Run the full docker_e2e regression (20
+tests) to confirm green after the console add.

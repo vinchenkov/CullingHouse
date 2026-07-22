@@ -235,3 +235,44 @@ enforced by the single CAS lease (Inv. 1/3); not re-asserted at E2E.
 NEXT: full docker_e2e regression (19 tests), then scenario family (6) homie
 loop — send → tick wake → reply → outbox/ack; resume; console schedule; plus
 one Playwright dashboard smoke.
+
+## 2026-07-22 — scenario (6) homie loop: console DONE; conversational runtime + dashboard UNIMPLEMENTED (operator scope)
+
+Recon (agent, verified against code) found family (6) splits sharply:
+
+BUILT + now tested:
+- Console schedule: `mc/e2e/console_schedule_test.go`
+  (TestConsoleScheduleDockerBoundary, green 8s). dispatch consoleDue (step 0b)
+  + ConsolePublish + outbox poll/ack all exist; only a strategist(console)
+  fixture behavior was missing (no product code).
+- The homie RECORD layer (homie_sessions/conversation_messages/outbox schema +
+  verbs start/bind/send/claim/reply/resume/history/outbox) is fully built and
+  CLI-tested (cli_test.go TestHomieWorksourcePauseArchive etc.). Coverable as a
+  verb-level record-loop test (start→send→echo→claim→reply→reply-outbox→ack→
+  resume→history) — NOT a container E2E (no runtime needed). Not yet written.
+
+UNIMPLEMENTED — the conversational RUNTIME (would need substantial new product
+code, a whole workstream, NOT un-parking existing design):
+- Homie WAKE selector in dispatch: the tick never converts a pending inbound
+  turn into a spawn. Explicit code TODOs: dispatchseam.go:874 "Homie candidates
+  arrive with the future wake selector"; homiepreflight.go:26 "Nothing selects
+  Homie candidates yet (the D1/D5 planner slice)".
+- Homie SPAWN in the resident: types.ts Effect union has no homie action;
+  effects.ts spawn() hardcodes tier:"pipeline"; no homie roleBehavior.
+- Homie RUNNER: does not exist in runner/ (only agent-runner + fake-harness).
+- Resume RELAUNCH: record-only; the resident relaunch authority is the same
+  missing spawn path.
+- Outbox DELIVERY loop: verbs exist, no per-surface actor runs poll/ack.
+- DASHBOARD: does not exist at all (no web app anywhere); AGENTS.md §3 lists it
+  as a remaining authored deliverable. The "one Playwright dashboard smoke" is
+  therefore impossible until the dashboard is built.
+
+So the family-(6) core "send → tick wakes container → reply → outbox → deliver/
+ack" and the dashboard Playwright smoke are BLOCKED on building the homie
+conversational runtime + the dashboard — a large workstream. This is an
+operator scope decision (bigger than the family-4 landing un-park). Parked in
+PROGRESS.
+
+NEXT: operator decision on the homie runtime + dashboard. Buildable interim
+without that decision: the homie record-loop verb test. Phase 4 otherwise
+COMPLETE — families (1)-(5) green + (6) console; full docker_e2e 20 tests.
