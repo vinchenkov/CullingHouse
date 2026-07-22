@@ -240,9 +240,21 @@ func HomieResume(db *sql.DB, id *RunIdentity, sessionID, rawFrom string) (any, e
 				"native continue is impossible and the §15.4 conversation-rows fallback "+
 				"is a separate explicit arm (ADR-012)", sessionID)
 		}
-		// Status flips first: the binding trigger requires an active session.
+		// Status flips first (the binding trigger requires an active session),
+		// and the dead launch generation is cleared in the same statement: the
+		// container the old generation named is gone (the session had ended), so
+		// leaving current_launch_id set would make the wake selector treat the
+		// reactivated session as already-launched and never re-wake it (ADR-016
+		// D3 branch 7 requires no launch). A new inbound turn then wakes it
+		// fresh; true native continuity (feeding the recorded native_session_ref
+		// to a real harness) is a real-harness concern, deferred.
 		if _, err := q.ExecContext(ctx, `
-			UPDATE homie_sessions SET status = 'active', last_activity_at = datetime('now')
+			UPDATE homie_sessions
+			SET status = 'active', last_activity_at = datetime('now'),
+			    current_launch_id = NULL, current_launch_mode = NULL,
+			    current_prime_through_seq = NULL, current_prime_row_count = NULL,
+			    current_container_id = NULL, launch_bound_at = NULL,
+			    launch_started_at = NULL
 			WHERE id = ?`, sessionID); err != nil {
 			return err
 		}

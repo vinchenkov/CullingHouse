@@ -268,9 +268,14 @@ async function homieWake(effect: HomieWakeEffect, deps: TickDeps): Promise<void>
     await deps.fs.rm(runJsonPath);
   };
 
-  // 3. container — labelled mc-tier=homie so the inventory/reap sweep finds it.
-  // --rm so a runner that idles out from inside cleans up after itself. The
-  // mount set is fixed operator read-scope; no committed plan, no covers.
+  // 3. container. The container name is session-fixed (mc-homie-<session>), so a
+  // prior now-dead generation — an ended-then-resumed session whose old --rm
+  // container has not yet idled out — may still hold it. The launch fence
+  // guarantees at most one LIVE generation per session, so force-remove any
+  // stale same-named container before create (a no-op if absent). Labelled
+  // mc-tier=homie for the inventory/reap sweep; --rm so a runner that idles out
+  // cleans up after itself; mount set is fixed operator read-scope.
+  await deps.docker(["rm", "-f", container_name]);
   const created = await deps.docker([
     "create", "--rm",
     ...(config.agentRunnerRoutes && config.agentRunnerRoutes.length > 0 ? [] : ["--network", "none"]),

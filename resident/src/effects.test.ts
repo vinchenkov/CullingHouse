@@ -1551,6 +1551,7 @@ describe("homie tier (lease-free)", () => {
 
   test("wake: folder → run.json → create → launch-bind(id) → start", async () => {
     const rig = makeRig();
+    rig.docker.enqueue(ok("")); // rm -f any stale same-named container
     rig.docker.enqueue(ok(cid + "\n")); // create prints the 64-hex id
     rig.mc.enqueue(ok(JSON.stringify({ session: "h-abc", launch: wake.launch, container_id: cid, bound_at: "t" })));
     rig.docker.enqueue(ok("")); // start
@@ -1571,14 +1572,15 @@ describe("homie tier (lease-free)", () => {
     expect(parsed.binding).toBe("claude");
     expect(parsed.harness_config).toEqual({ behavior: "/mc/behaviors/homie.json" });
 
-    // docker: create then start; the launch-bind sits between (via mc).
-    const create = rig.docker.calls[0];
+    // docker: rm -f (clear stale name), create, then start; launch-bind between.
+    expect(rig.docker.calls[0]).toEqual(["rm", "-f", "mc-homie-h-abc"]);
+    const create = rig.docker.calls[1];
     expect(create[0]).toBe("create");
     expect(create).toContain("mc-tier=homie");
     expect(create).toContain("--rm");
     // Operator read-scope: the workspace is bound RO, never RW.
     expect(create).toContain(`${testConfig.workspaceRoot}:/workspace/source:ro`);
-    expect(rig.docker.calls[1]).toEqual(["start", "mc-homie-h-abc"]);
+    expect(rig.docker.calls[2]).toEqual(["start", "mc-homie-h-abc"]);
 
     // launch-bind CASes the exact docker id onto the launch, before start.
     expect(rig.mc.calls).toEqual([
@@ -1588,22 +1590,24 @@ describe("homie tier (lease-free)", () => {
 
   test("wake: a fenced launch abandons the container and never starts", async () => {
     const rig = makeRig();
+    rig.docker.enqueue(ok("")); // rm -f stale name
     rig.docker.enqueue(ok(cid + "\n")); // create
     rig.mc.enqueue(ok(JSON.stringify({ session: "h-abc", fenced: false })));
-    rig.docker.enqueue(ok("")); // rm
+    rig.docker.enqueue(ok("")); // rm (abandon)
     await applyEffect(wake, rig.deps);
 
-    expect(rig.docker.calls[0][0]).toBe("create");
-    expect(rig.docker.calls[1]).toEqual(["rm", "mc-homie-h-abc"]);
+    expect(rig.docker.calls[1][0]).toBe("create");
+    expect(rig.docker.calls[2]).toEqual(["rm", "mc-homie-h-abc"]);
     expect(rig.docker.calls.some((c) => c[0] === "start")).toBe(false);
   });
 
   test("wake: a failed create removes only the envelope, no bind or start", async () => {
     const rig = makeRig();
+    rig.docker.enqueue(ok("")); // rm -f stale name
     rig.docker.enqueue(fail(1, "boom")); // create
     await applyEffect(wake, rig.deps);
 
-    expect(rig.docker.calls).toEqual([rig.docker.calls[0]]); // create only
+    expect(rig.docker.calls.map((c) => c[0])).toEqual(["rm", "create"]);
     expect(rig.mc.calls).toEqual([]);
     expect(rig.fakeFs.events).toContain(`rm:${testConfig.mcHome}/runs/h-abc.json`);
   });

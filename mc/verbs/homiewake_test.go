@@ -247,6 +247,39 @@ func TestDispatchWakesHomieOverPipelineCandidate(t *testing.T) {
 	}
 }
 
+// TestHomieResumeClearsDeadLaunchAndRewakes proves the resume path: a launched-
+// then-ended session, once resumed, is launch-free (its dead generation cleared)
+// so a new inbound turn re-wakes it (ADR-016 D3 branch 7 requires no launch).
+func TestHomieResumeClearsDeadLaunchAndRewakes(t *testing.T) {
+	db := dvSpine(t)
+	hwSession(t, db, "h-1")
+	// A fully bound + started + native-registered generation, then ended.
+	dvExec(t, db, `UPDATE homie_sessions
+		SET current_launch_id = 'ffffffffffffffff', current_launch_mode = 'fresh',
+		    current_container_id = ?, launch_bound_at = datetime('now'),
+		    launch_started_at = datetime('now'),
+		    native_session_ref = 'native-xyz', trace_filename = 'native.jsonl'
+		WHERE id = 'h-1'`, hbContainer)
+	dvExec(t, db, `UPDATE homie_sessions SET status = 'ended' WHERE id = 'h-1'`)
+
+	if _, err := HomieResume(db, nil, "h-1", "dashboard:chan-1"); err != nil {
+		t.Fatalf("HomieResume: %v", err)
+	}
+	var status string
+	var launch sql.NullString
+	hwGet(t, db, `SELECT status, current_launch_id FROM homie_sessions WHERE id = 'h-1'`, &status, &launch)
+	if status != "active" || launch.Valid {
+		t.Fatalf("after resume: status=%q launch=%v; want active + no launch", status, launch)
+	}
+
+	// A new inbound turn now re-wakes the reactivated session (fresh).
+	hwPendingInbound(t, db, "h-1", 2)
+	effect, handled := hwWakeRound(t, db, 1800)
+	if !handled || effect["action"] != "homie-wake" || effect["session"] != "h-1" {
+		t.Fatalf("resumed session did not re-wake: handled=%v %+v", handled, effect)
+	}
+}
+
 func TestHomieWakeRoundAlreadyLaunchedIsSkipped(t *testing.T) {
 	db := dvSpine(t)
 	hwSession(t, db, "h-1")
