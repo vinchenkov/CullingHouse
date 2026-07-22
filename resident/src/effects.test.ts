@@ -1565,6 +1565,8 @@ describe("homie tier (lease-free)", () => {
     expect(parsed.session_id).toBe("h-abc");
     expect(parsed.launch).toBe(wake.launch);
     expect(parsed.heartbeat_interval_s).toBeUndefined();
+    // Republished with the bound container id before start (the runner reads it).
+    expect(parsed.container_id).toBe(cid);
 
     // docker: create then start; the launch-bind sits between (via mc).
     const create = rig.docker.calls[0];

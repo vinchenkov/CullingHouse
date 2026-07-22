@@ -326,6 +326,12 @@ async function homieWake(effect: HomieWakeEffect, deps: TickDeps): Promise<void>
     return;
   }
 
+  // 4b. Republish run.json with the now-known container id BEFORE start. The
+  // envelope is a RO file bind, so the container reads this updated content at
+  // runtime; it is how the in-container runner learns its own 64-hex id to
+  // report `mc homie runner-started` (the fence needs the exact bound id).
+  await deps.fs.writeFile(runJsonPath, JSON.stringify({ ...runJson, container_id: containerId }, null, 2) + "\n");
+
   // 5. start — the runner reports runner-started from inside once it boots.
   const started = await deps.docker(["start", container_name]);
   if (started.exitCode !== 0) {
