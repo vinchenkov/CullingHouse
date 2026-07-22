@@ -52,18 +52,29 @@ export interface ClaimedMessage {
   attachments: string[];
 }
 
+/** One harness turn's outcome. `reply` is null when the harness produced no
+ * completed turn (crash/hang/failure). `nativeSessionId` is the harness's own
+ * session id from its session-start event, present the first time it is seen —
+ * the loop registers it once as the session's native locator (ADR-012). */
+export interface TurnResult {
+  reply: string | null;
+  nativeSessionId?: string;
+}
+
 /** Injectable seams so the loop is testable without real subprocesses. */
 export interface RunnerDeps {
   /** Run `mc <argv>` and parse its stdout as JSON (null when not JSON). */
   mcJSON: (argv: string[]) => Promise<Record<string, unknown> | null>;
-  /** Run ONE harness turn for `turn`; resolves the reply body, or null when
-   * the harness produced no completed turn (crash/hang/failure). */
-  runHarnessTurn: (run: HomieEnvelope, turn: string) => Promise<string | null>;
+  /** Run ONE harness turn for `turn`; resolves the reply + observed native id. */
+  runHarnessTurn: (run: HomieEnvelope, turn: string) => Promise<TurnResult>;
   sleep: (ms: number) => Promise<void>;
   log: (msg: string) => void;
   maxIdlePolls: number;
   pollMs: number;
 }
+
+/** The trace file every harness writes into the session folder (§15.4). */
+export const NATIVE_FILENAME = "native.jsonl";
 
 /** Incremental line splitter for the harness stdout event stream. */
 export function makeLineSplitter(onLine: (line: string) => void): (chunk: string) => void {
@@ -93,6 +104,20 @@ export function replyFromEvent(line: string): string | undefined {
   return undefined;
 }
 
+/** Scan a harness event line for the session-start's native session id. */
+export function nativeIdFromEvent(line: string): string | undefined {
+  let ev: { event?: string; session_id?: unknown };
+  try {
+    ev = JSON.parse(line) as typeof ev;
+  } catch {
+    return undefined;
+  }
+  if (ev.event === "session-start" && typeof ev.session_id === "string") {
+    return ev.session_id;
+  }
+  return undefined;
+}
+
 /** The lease-free claim→reply loop. Returns the process exit code. */
 export async function runHomieLoop(run: HomieEnvelope, deps: RunnerDeps): Promise<number> {
   // Boot fence: report runner-started once. A fenced report means a newer
@@ -108,6 +133,7 @@ export async function runHomieLoop(run: HomieEnvelope, deps: RunnerDeps): Promis
   }
 
   let idlePolls = 0;
+  let registered = false;
   while (idlePolls < deps.maxIdlePolls) {
     const claimed = await deps.mcJSON(["homie", "claim", run.session_id]);
     const message = (claimed?.["message"] ?? null) as ClaimedMessage | null;
@@ -118,15 +144,25 @@ export async function runHomieLoop(run: HomieEnvelope, deps: RunnerDeps): Promis
     }
     idlePolls = 0;
 
-    const reply = await deps.runHarnessTurn(run, message.body);
-    if (reply === null) {
+    const result = await deps.runHarnessTurn(run, message.body);
+    // Register the native session locator once (ADR-012, Inv. 26): the trace
+    // filename is permanent and enables a later `mc homie resume`. Idempotent
+    // on the same pair; a failure is non-fatal (the next turn retries).
+    if (!registered && result.nativeSessionId !== undefined) {
+      const reg = await deps.mcJSON([
+        "run", "register-session", run.session_id,
+        "--native-ref", result.nativeSessionId, "--file", NATIVE_FILENAME,
+      ]);
+      if (reg !== null) registered = true;
+    }
+    if (result.reply === null) {
       // The turn stays claimed (durable): a fresh runner will reclaim it. A
       // broken harness must not spin the loop, so exit non-zero as evidence.
       deps.log(`turn ${message.id}: harness produced no reply; leaving it claimed`);
       return 1;
     }
     const posted = await deps.mcJSON([
-      "homie", "reply", run.session_id, "--to", String(message.id), "--body", reply,
+      "homie", "reply", run.session_id, "--to", String(message.id), "--body", result.reply,
     ]);
     if (posted === null) {
       deps.log(`turn ${message.id}: reply post failed; leaving the turn claimed`);
@@ -163,22 +199,35 @@ async function mcJSON(argv: string[]): Promise<Record<string, unknown> | null> {
 
 /** Production harness turn: spawn the (fake) harness with the session's
  * behavior, feed the operator's turn on stdin, and read the turn-complete
- * output off the event stream. */
-async function runHarnessTurn(run: HomieEnvelope, turn: string): Promise<string | null> {
+ * output + session-start native id off the event stream. A non-fresh mode
+ * asks the harness to continue the recorded native session; the fake adapter
+ * ignores the flag (each invocation is independent), so cross-turn continuity
+ * is a real-harness concern noted for a later slice. */
+async function runHarnessTurn(run: HomieEnvelope, turn: string): Promise<TurnResult> {
   const behavior = run.harness_config?.behavior;
   if (behavior === undefined) {
     log("run.json carries no harness_config.behavior; cannot run a fake turn");
-    return null;
+    return { reply: null };
+  }
+  if (run.mode !== "fresh") {
+    // A real per-harness adapter would continue the recorded native session
+    // (native mode) or replay conversation rows (rows mode); the fake adapter
+    // is stateless per invocation, so it starts anew. Cross-turn native
+    // continuity is a real-harness concern noted for a later slice.
+    log(`mode ${run.mode}: fake adapter starts anew (no native continuity)`);
   }
   const proc = Bun.spawn(
     ["bun", HARNESS_CLI, "--behavior", behavior, "--session-dir", run.mounts.session],
     { stdin: new TextEncoder().encode(turn), stdout: "pipe", stderr: "inherit" },
   );
   let reply: string | undefined;
+  let nativeSessionId: string | undefined;
   const split = makeLineSplitter((line) => {
     console.log(line); // mirror to docker logs
     const out = replyFromEvent(line);
     if (out !== undefined) reply = out;
+    const nid = nativeIdFromEvent(line);
+    if (nid !== undefined) nativeSessionId = nid;
   });
   const decoder = new TextDecoder();
   for await (const chunk of proc.stdout) {
@@ -187,9 +236,9 @@ async function runHarnessTurn(run: HomieEnvelope, turn: string): Promise<string 
   const code = await proc.exited;
   if (code !== 0 || reply === undefined) {
     log(`harness turn exited ${code}${reply === undefined ? " (no turn-complete)" : ""}`);
-    return null;
+    return { reply: null, nativeSessionId };
   }
-  return reply;
+  return { reply, nativeSessionId };
 }
 
 async function main(): Promise<number> {

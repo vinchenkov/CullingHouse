@@ -5,6 +5,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   makeLineSplitter,
+  nativeIdFromEvent,
   replyFromEvent,
   runHomieLoop,
   type HomieEnvelope,
@@ -41,7 +42,7 @@ function deps(over: Partial<RunnerDeps> = {}): RunnerDeps {
   const logs: string[] = [];
   return {
     mcJSON: async () => ({}),
-    runHarnessTurn: async () => "ok",
+    runHarnessTurn: async () => ({ reply: "ok" }),
     sleep: async () => {},
     log: (m) => logs.push(m),
     maxIdlePolls: 2,
@@ -60,6 +61,16 @@ describe("replyFromEvent", () => {
   });
   test("ignores non-JSON lines", () => {
     expect(replyFromEvent("not json")).toBeUndefined();
+  });
+});
+
+describe("nativeIdFromEvent", () => {
+  test("extracts the session-start native id", () => {
+    expect(nativeIdFromEvent(JSON.stringify({ event: "session-start", session_id: "abc" }))).toBe("abc");
+  });
+  test("ignores other events and non-JSON", () => {
+    expect(nativeIdFromEvent(JSON.stringify({ event: "turn-complete" }))).toBeUndefined();
+    expect(nativeIdFromEvent("x")).toBeUndefined();
   });
 });
 
@@ -105,7 +116,7 @@ describe("runHomieLoop", () => {
     const turns: string[] = [];
     const code = await runHomieLoop(
       envelope(),
-      deps({ mcJSON: mc.mcJSON, runHarnessTurn: async (_r, t) => { turns.push(t); return "pong"; } }),
+      deps({ mcJSON: mc.mcJSON, runHarnessTurn: async (_r, t) => { turns.push(t); return { reply: "pong" }; } }),
     );
     expect(code).toBe(0);
     expect(turns).toEqual(["ping"]);
@@ -113,12 +124,34 @@ describe("runHomieLoop", () => {
     expect(reply).toEqual(["homie", "reply", "h-abc", "--to", "7", "--body", "pong"]);
   });
 
+  test("registers the native locator once on the first observed session-start", async () => {
+    const mc = new FakeMc();
+    mc.enqueue(
+      {}, // runner-started
+      { message: { id: 1, seq: 1, surface: "dashboard", channel_ref: null, body: "a", attachments: [] } },
+      {}, // register-session ack
+      {}, // reply ack
+      { message: { id: 2, seq: 2, surface: "dashboard", channel_ref: null, body: "b", attachments: [] } },
+      {}, // reply ack (no second register)
+      { message: null }, { message: null }, // idle out
+    );
+    const code = await runHomieLoop(
+      envelope(),
+      deps({ mcJSON: mc.mcJSON, runHarnessTurn: async () => ({ reply: "r", nativeSessionId: "native-xyz" }) }),
+    );
+    expect(code).toBe(0);
+    const regs = mc.calls.filter((c) => c[0] === "run" && c[1] === "register-session");
+    expect(regs).toEqual([
+      ["run", "register-session", "h-abc", "--native-ref", "native-xyz", "--file", "native.jsonl"],
+    ]);
+  });
+
   test("a harness that yields no reply leaves the turn claimed and exits 1", async () => {
     const mc = new FakeMc();
     mc.enqueue({}, { message: { id: 9, seq: 1, surface: "dashboard", channel_ref: null, body: "x", attachments: [] } });
     const code = await runHomieLoop(
       envelope(),
-      deps({ mcJSON: mc.mcJSON, runHarnessTurn: async () => null }),
+      deps({ mcJSON: mc.mcJSON, runHarnessTurn: async () => ({ reply: null }) }),
     );
     expect(code).toBe(1);
     expect(mc.calls.some((c) => c[1] === "reply")).toBe(false);
