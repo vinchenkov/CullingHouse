@@ -990,3 +990,25 @@ rules in code the sealed lane does not own.
 - DEFERRAL: `main.ts` production wiring of token service + writers + broker into a live projector is blocked on the refresh-grant store capture (onboarding). The seam, writers, broker, and refusal path are all built and tested; wiring is a composition-only change.
 - Refusal codes: CodeGateway*/CodeNetwork* stay in the closed set, inert (cheaper and reversible than a lockstep removal); `gateway_control_version` untouched (golden bytes).
 - Needs your decision: no.
+
+## 2026-07-22 — install.sh front door: production hand-off defers to the container section
+- Where: `install.sh`, `.claude/skills/onboard/SKILL.md`.
+- Gap: spec §17 has install.sh hand off to `mc onboard`, but the production
+  darwin binary self-delegates every verb into the `mc-helper` container
+  (runtime_scope_prod.go), and the helper is provisioned by the container
+  onboarding section — itself deferred to Phase 5 (ADR-015 D5, ADR-022
+  removed its gateway probe). Bootstrap order is thus unresolved for
+  production: the wizard cannot run before the helper exists, and the helper
+  is the wizard's own later section.
+- Choice — conservative, reversible: install.sh detects the missing helper
+  and reports the hand-off DEFERRED (exit 0, addressed to the shepherding
+  agent) instead of inventing a host-side spine path that would violate
+  Inv. 24 (the spine opens only inside the runtime kernel). The dev tier
+  (`--dev`) builds the test_fake_routing binary and completes the full
+  §17 walk against a direct scratch spine — proven green + idempotent.
+  Resolving production bootstrap (helper provisioning before/within the
+  hand-off) is Phase 5 front-door work and may need a small ADR if the
+  section order moves.
+- Spec impact: none yet; the §17 section order is unchanged. The deferral
+  message is truthful per §17's fail-closed/verified-by-probe posture.
+- Needs your decision: no.
