@@ -51,6 +51,10 @@ export async function applyEffect(effect: Effect, deps: TickDeps): Promise<void>
 				{ action: "reap", run_id: effect.run_id, stop_container: effect.stop_container },
 				deps,
 			);
+    case "homie-wake":
+      return homieWake(effect, deps);
+    case "homie-stop":
+      return homieStop(effect, deps);
     default:
       deps.log(
         `tick: unknown action ${JSON.stringify((effect as { action?: unknown }).action)}; ignored (fail-closed)`,
@@ -219,6 +223,133 @@ function invalidTaskSetupReason(setup: unknown): string | null {
 type SpawnEffect = Extract<Effect, { action: "spawn" }>;
 type LandEffect = Extract<Effect, { action: "land" }>;
 type ReapEffect = Extract<Effect, { action: "reap" }>;
+type HomieWakeEffect = Extract<Effect, { action: "homie-wake" }>;
+type HomieStopEffect = Extract<Effect, { action: "homie-stop" }>;
+
+/** The lease-free Homie wake effector (ADR-016 D3, Inv. 1/22). The dispatch
+ * tick has already minted and persisted the launch generation; the resident's
+ * only authority here is the container: materialize the folder + a heartbeat-
+ * free tier:"homie" run.json, create the container over a FIXED operator-read-
+ * scope mount set (§15.3 — the workspace is bound RO, Inv. 22), CAS the exact
+ * docker id onto the launch (`mc homie launch-bind`) BEFORE start so a fenced
+ * or ended session never gets a running container, then start it. The runner
+ * reports `mc homie runner-started` from inside once it boots (never here).
+ * There is no lease, no heartbeat, and no reservation: many Homie containers
+ * run concurrently. */
+async function homieWake(effect: HomieWakeEffect, deps: TickDeps): Promise<void> {
+  const { config, log } = deps;
+  const { session, launch, mode, binding, container_name } = effect;
+
+  // 1. folder (trace-only, Inv. 26) + the sibling envelope dir.
+  const sessionDir = `${config.mcHome}/sessions/${session}`;
+  await deps.fs.mkdir(sessionDir);
+  await deps.fs.mkdir(runsDir(config.mcHome));
+
+  // 2. run.json — lease-free: no heartbeat interval, run_id == session.
+  const runJson = {
+    run_id: session,
+    session_id: session,
+    tier: "homie",
+    mode,
+    binding,
+    harness: binding,
+    launch,
+    mounts: { session: "/mc/session" },
+  };
+  const runJsonPath = runJsonHostPath(config.mcHome, session);
+  await deps.fs.writeFile(runJsonPath, JSON.stringify(runJson, null, 2) + "\n");
+  const cleanup = async () => {
+    await deps.docker(["rm", container_name]);
+    await deps.fs.rm(runJsonPath);
+  };
+
+  // 3. container — labelled mc-tier=homie so the inventory/reap sweep finds it.
+  // --rm so a runner that idles out from inside cleans up after itself. The
+  // mount set is fixed operator read-scope; no committed plan, no covers.
+  const created = await deps.docker([
+    "create", "--rm",
+    ...(config.agentRunnerRoutes && config.agentRunnerRoutes.length > 0 ? [] : ["--network", "none"]),
+    "--name", container_name,
+    "--label", "mc-managed=true",
+    "--label", "mc-tier=homie",
+    "--label", `mc-session-id=${session}`,
+    "-v", `${sessionDir}:/mc/session`,
+    "-v", `${runJsonPath}:/mc/run.json:ro`,
+    "-v", `${config.behaviorsDir}:/mc/behaviors:ro`,
+    "-v", `${config.runnerSrcDir}:/app/src:ro`,
+    // Operator read-scope: the Homie reads the operator's workspace but never
+    // writes it (Inv. 22, §15.3).
+    "-v", `${config.workspaceRoot}:/workspace/source:ro`,
+    "-v", `${config.spineVolume}:${posix.dirname(config.spineDbPath)}`,
+    "-e", `MC_SPINE=${config.spineDbPath}`,
+    ...(config.agentRunnerRoutes && config.agentRunnerRoutes.length > 0
+      ? ["-e", `MC_AGENT_RUNNER_ROUTES=${config.agentRunnerRoutes.join(",")}`]
+      : []),
+    config.image,
+    ...(config.homieCmd ?? config.agentCmd),
+  ]);
+  if (created.exitCode !== 0) {
+    log(`homie-wake ${session}: docker create failed (exit ${created.exitCode}): ${created.stderr.trim()}`);
+    await deps.fs.rm(runJsonPath);
+    return;
+  }
+  const containerId = created.stdout.trim();
+  if (!/^[0-9a-f]{64}$/.test(containerId)) {
+    log(`homie-wake ${session}: docker create returned a non-canonical id; abandoning container ${container_name}`);
+    await cleanup();
+    return;
+  }
+
+  // 4. launch-bind: CAS the exact docker id onto the current launch BEFORE
+  // start. A non-zero exit or fenced:false means this launch is stale (the
+  // session ended, or a newer generation superseded it) — abandon the
+  // container rather than start an orphan.
+  const bind = await deps.runMc([
+    "homie", "launch-bind", session, "--launch", launch, "--container-id", containerId,
+  ]);
+  if (bind.exitCode !== 0) {
+    log(`homie-wake ${session}: launch-bind failed (exit ${bind.exitCode}): ${bind.stderr.trim()}`);
+    await cleanup();
+    return;
+  }
+  let bound: { fenced?: boolean } = {};
+  try {
+    bound = JSON.parse(bind.stdout) as { fenced?: boolean };
+  } catch {
+    log(`homie-wake ${session}: launch-bind returned unparseable receipt; abandoning`);
+    await cleanup();
+    return;
+  }
+  if (bound.fenced === false) {
+    log(`homie-wake ${session}: launch ${launch} fenced at bind; abandoning container ${container_name}`);
+    await cleanup();
+    return;
+  }
+
+  // 5. start — the runner reports runner-started from inside once it boots.
+  const started = await deps.docker(["start", container_name]);
+  if (started.exitCode !== 0) {
+    log(`homie-wake ${session}: docker start failed (exit ${started.exitCode}): ${started.stderr.trim()}`);
+  }
+}
+
+/** The Homie idle-end effector. The dispatch tick already flipped the session
+ * to ended and deactivated its bindings; the resident's only remaining job is
+ * to stop the container the launch was bound to, if any. A pre-bind idle end
+ * (the session idled before its container ever started) carries no id and
+ * stops nothing. A --rm container that already idled out from inside is gone;
+ * a failed stop is logged, not retried (the inventory sweep is the backstop). */
+async function homieStop(effect: HomieStopEffect, deps: TickDeps): Promise<void> {
+  const { log } = deps;
+  if (effect.container_id === undefined) {
+    log(`homie-stop ${effect.session}: no container bound; nothing to stop`);
+    return;
+  }
+  const stopped = await deps.docker(["stop", effect.container_id]);
+  if (stopped.exitCode !== 0) {
+    log(`homie-stop ${effect.session}: docker stop exited ${stopped.exitCode}: ${stopped.stderr.trim()}`);
+  }
+}
 
 /** D6's former-producer fence. A missing exact container is the only success;
  * a live, exited-but-not-removed, malformed, or inspect-unavailable object

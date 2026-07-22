@@ -30,6 +30,9 @@ export interface ResidentConfig {
   image: string;
   /** Command run inside the agent container (the skeleton agent runner). */
   agentCmd: string[];
+  /** Command run inside the Homie container (the homie runner). Falls back to
+   * agentCmd when unset so the fake e2e image can share one entrypoint. */
+  homieCmd?: string[];
   /** Command run inside the land container (the baked `mc-land` script). */
   landCmd: string[];
   /** Host dir of behavior fixtures, mounted RO at /mc/behaviors. */
@@ -234,4 +237,19 @@ export type Effect =
     }
   | { action: "reap"; run_id: string; stop_container?: boolean }
 	| { action: "interrupt"; task_id: number; run_id: string; stop_container: true }
-  | { action: "reenter"; task_id: number };
+  | { action: "reenter"; task_id: number }
+  // The lease-free Homie tier (Inv. 1/22, §15.3). A wake carries no mount plan
+  // and no heartbeat interval: the resident binds a fixed operator-read-scope
+  // set and the runner never heartbeats. run_id == session (the "h-" id).
+  | {
+      action: "homie-wake";
+      session: string;
+      /** 16-hex launch generation the dispatch tick persisted (ADR-016 D3). */
+      launch: string;
+      mode: "fresh" | "native" | "rows";
+      /** Harness the session speaks (e.g. "claude"); drives the runner. */
+      binding: string;
+      /** Container name the session is pinned to (mc-homie-<session>). */
+      container_name: string;
+    }
+  | { action: "homie-stop"; session: string; container_id?: string; reason?: string };

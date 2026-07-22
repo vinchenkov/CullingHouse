@@ -1537,3 +1537,82 @@ describe("container class hardening divergence", () => {
 		expect(run).toContain(NNP);
 	});
 });
+
+describe("homie tier (lease-free)", () => {
+  const cid = "c".repeat(64);
+  const wake: Effect = {
+    action: "homie-wake",
+    session: "h-abc",
+    launch: "aaaaaaaaaaaaaaaa",
+    mode: "fresh",
+    binding: "claude",
+    container_name: "mc-homie-h-abc",
+  };
+
+  test("wake: folder → run.json → create → launch-bind(id) → start", async () => {
+    const rig = makeRig();
+    rig.docker.enqueue(ok(cid + "\n")); // create prints the 64-hex id
+    rig.mc.enqueue(ok(JSON.stringify({ session: "h-abc", launch: wake.launch, container_id: cid, bound_at: "t" })));
+    rig.docker.enqueue(ok("")); // start
+    await applyEffect(wake, rig.deps);
+
+    // run.json is heartbeat-free and tier "homie".
+    const runJson = rig.fakeFs.writes.get(`${testConfig.mcHome}/runs/h-abc.json`);
+    expect(runJson).toBeDefined();
+    const parsed = JSON.parse(runJson!);
+    expect(parsed.tier).toBe("homie");
+    expect(parsed.run_id).toBe("h-abc");
+    expect(parsed.session_id).toBe("h-abc");
+    expect(parsed.launch).toBe(wake.launch);
+    expect(parsed.heartbeat_interval_s).toBeUndefined();
+
+    // docker: create then start; the launch-bind sits between (via mc).
+    const create = rig.docker.calls[0];
+    expect(create[0]).toBe("create");
+    expect(create).toContain("mc-tier=homie");
+    expect(create).toContain("--rm");
+    // Operator read-scope: the workspace is bound RO, never RW.
+    expect(create).toContain(`${testConfig.workspaceRoot}:/workspace/source:ro`);
+    expect(rig.docker.calls[1]).toEqual(["start", "mc-homie-h-abc"]);
+
+    // launch-bind CASes the exact docker id onto the launch, before start.
+    expect(rig.mc.calls).toEqual([
+      ["homie", "launch-bind", "h-abc", "--launch", wake.launch, "--container-id", cid],
+    ]);
+  });
+
+  test("wake: a fenced launch abandons the container and never starts", async () => {
+    const rig = makeRig();
+    rig.docker.enqueue(ok(cid + "\n")); // create
+    rig.mc.enqueue(ok(JSON.stringify({ session: "h-abc", fenced: false })));
+    rig.docker.enqueue(ok("")); // rm
+    await applyEffect(wake, rig.deps);
+
+    expect(rig.docker.calls[0][0]).toBe("create");
+    expect(rig.docker.calls[1]).toEqual(["rm", "mc-homie-h-abc"]);
+    expect(rig.docker.calls.some((c) => c[0] === "start")).toBe(false);
+  });
+
+  test("wake: a failed create removes only the envelope, no bind or start", async () => {
+    const rig = makeRig();
+    rig.docker.enqueue(fail(1, "boom")); // create
+    await applyEffect(wake, rig.deps);
+
+    expect(rig.docker.calls).toEqual([rig.docker.calls[0]]); // create only
+    expect(rig.mc.calls).toEqual([]);
+    expect(rig.fakeFs.events).toContain(`rm:${testConfig.mcHome}/runs/h-abc.json`);
+  });
+
+  test("stop: a bound container is stopped by its id", async () => {
+    const rig = makeRig();
+    rig.docker.enqueue(ok(""));
+    await applyEffect({ action: "homie-stop", session: "h-abc", container_id: cid, reason: "idle" }, rig.deps);
+    expect(rig.docker.calls).toEqual([["stop", cid]]);
+  });
+
+  test("stop: a pre-bind idle end stops nothing", async () => {
+    const rig = makeRig();
+    await applyEffect({ action: "homie-stop", session: "h-abc", reason: "idle" }, rig.deps);
+    expect(rig.docker.calls).toEqual([]);
+  });
+});
