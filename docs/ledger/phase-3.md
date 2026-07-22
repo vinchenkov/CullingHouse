@@ -5049,3 +5049,27 @@ container-runtime capability probe, credential-projection Docker acceptance
 (main.ts wiring gated on the refresh-grant store; live legs may need operator
 credentials), dispatch-side forbidden-env wiring, then the §8 sweep and
 evidence record.
+
+## 2026-07-22 — §8 item 1: the doctor container-runtime capability probe is real
+
+Commit `5d7f539`. The untagged build's doctor now runs spec §16.4's legs from
+inside the helper (`mc/verbs/containerruntime*.go`); the test_fake_routing
+build keeps a deferred stand-in (the fast lane is container-runtime-free).
+Design facts worth keeping: production `mc` is NOT setuid — the suid machinery
+is `/usr/local/libexec/mc-complete` (6755, owner 10001) and the helper runs as
+the image default root, so the probe's refusal leg has root assume uid 10002
+(a setuid-shaped credential drops to its ruid instead; any other credential
+fails closed). The first draft assumed the S1 spike's setuid-mc shape and the
+real image falsified it — the probe test caught this immediately, which is
+the §8 row doing its job. `mc-prod` rebuilt:
+`sha256:47b27eda69019d1e97c9618466ed391470447ebae6025270abb1931914c487a6`.
+Full docker_boundary suite green at `5d7f539` (includes the new two-arm probe
+test); fast lane green; linux/arm64 cross-build clean.
+
+NEXT: §8 item 3 — dispatch-side forbidden-env wiring through the production
+owner: LoadDispatchWorksourceProjection grows harness_env_policy /
+tool_env_policy, dispatch prepare calls boundary.BuildEnvPlan per plane and
+refuses env.invalid/env.forbidden BEFORE the pipeline lease claim, the effect
+carries validated entries, and the SENTINEL walk + docker-inspect absence
+proof lands in the Docker lane. Then §8 item 2 (credential-projection Docker
+acceptance; live legs may need operator credentials) and the final §8 sweep.
