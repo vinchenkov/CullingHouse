@@ -4869,3 +4869,84 @@ wants. Until that is settled, five of the fifteen units cannot be sized honestly
 NEXT (outgoing): operator decision — build both, defer both, or split (build the
 one-sitting forbidden-env core, defer the gateway, and settle the host-language
 question).
+
+## 2026-07-21 — S9 credential-projection spikes resolve both ADR-022 residuals; removal inventory captured
+
+The two ADR-022 residual unknowns that gate the credential-writer design were
+resolved from source (static inspection only — no live provider calls, no real
+credentials read). Full writeup: `spikes/09-credential-projection/RESULT.md`;
+delegated-choice record: `IMPLEMENTATION-NOTES.md` (2026-07-21 S9).
+
+**Q1 — `CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST` exists (Claude 2.1.217) and becomes
+the primary D3 mechanism.** Under the flag Claude bypasses its credential store
+(`if(RE())return null` precedes the `.credentials.json`/keychain read), resolves
+the access token from `CLAUDE_CODE_OAUTH_TOKEN` (or the well-known file /
+`CLAUDE_CODE_HOST_CREDS_FILE` for in-session 401 rotation) with
+`refreshToken:null, expiresAt:null`, and the `invalid_grant` compare-and-swap
+wipe is structurally unreachable. This is strictly more fail-closed than the
+POC's file-rewrite, which is retained as the documented fallback. Keep
+`ANTHROPIC_API_KEY` unset. Live confirmation of the exact in-container delivery
+channel is deferred to the Docker acceptance lane.
+
+**Q2 — a real fresh Codex token skips the startup refresh; the broker stays.**
+`should_refresh_proactively` (`codex-rs/login/src/auth/manager.rs:2506`, tag
+`rust-v0.144.6`) parses the JWT `exp` without verifying the signature and
+refreshes only within 5 min of expiry, else falls to an 8-day `last_refresh`
+check. A real ~10-day signed JWT skips it deterministically; the POC's synthetic
+token refreshed because it was malformed/exp-less and fell to a stale
+`last_refresh`. `CODEX_REFRESH_TOKEN_URL_OVERRIDE` stays MANDATORY for the
+reactive-401 / long-session / malformed-projection fallback (the path the live
+POC exercised). Projection must preserve `account_id` + `auth_mode:"chatgpt"`.
+
+**Removal / wiring inventory for steps 2–3** (read-only fan-out, 2026-07-21):
+- Spawn seam: `resident/src/effects.ts` `spawn()` — projection writers plug in
+  beside the run.json envelope write (~:436) and the `docker create` bind/env
+  block (~:497–520). Drop `--network none` (:499) for the **agent class only**;
+  setup (:334,:589), verifier-projection, accepted-seal-rebuild (:675), sealed
+  landing (:753), and legacy land (:844) are no-agent classes whose isolation is
+  hygiene, not `egress_policy` — keep them and LOG the deviation rather than
+  widening the contract banner over them.
+- Schema: `mc/substrate/schema.sql:44-52` — a new migration retires
+  `egress_policy`+`network_allow` and makes `runtime_auth_delivery` values
+  `projection|materialized`; `harness_env_policy`/`tool_env_policy` stay (the
+  forbidden-env builder's inputs). Never edit the frozen
+  `testdata/schema-v1..v3.sql` fixtures.
+- Forbidden-env builder DOES NOT EXIST yet: unbuilt Phase-3 work. Shipped floor
+  is `CODEX_API_KEY`+`ANTHROPIC_API_KEY` (spec §16.3), operator-extensible never
+  shrinkable, `SENTINEL_API_KEY` the wildcard-enumeration probe; refusal codes
+  `env.invalid`/`env.forbidden` (`mc/refusal/refusal.go:87-88`) already wired.
+  ADR-022 D7 extends the set to provider refresh tokens/API keys for OAuth
+  bindings; the D5 materialized static key is the single declared exception in
+  its own env plane.
+- `doctor gateway` finding: single site `mc/verbs/ops.go:314`; asserted
+  `mc/cmd/mc/cli_test.go:4260`. Retire (assert absence), do not defer. Its health
+  replacement (`CodeProjectionUnavailable`/`FieldProjection`) already exists.
+- CRITICAL security: `resolveGatewaySecretRoots` (`mc/verbs/mountattest.go:408`,
+  currently returns empty because ADR-018 kept the CA in resident memory) must be
+  REPURPOSED, not deleted, to deny-mount the on-disk token-service refresh-grant
+  store captured at onboarding. Deleting it lets a candidate-authored mount bind
+  the real refresh grants into a container — the inverse of the one property
+  ADR-022 keeps. Same for the `GatewaySecrets` jurisdiction deny class
+  (`mc/boundary/jurisdiction.go:130`) and its tests.
+- KEEP: `gateway_control_version` is the wire name of the RETAINED one-use
+  resident control channel (contract §3 warm-helper row), not egress apparatus.
+  Renaming it breaks every dispatch handshake without lockstep golden-byte edits
+  (`mc/verbs/dispatchseam_test.go:105`, `resident/src/resident-control.test.ts`).
+  Update ADR-018 comment references only.
+- Refusal closed-set posture: the gateway/network codes
+  (`CodeGatewayUnavailable`, `CodeNetwork*`, `CodeAuthCABindingMismatch`) can be
+  removed in one lockstep commit touching every closed-set test, OR kept inert
+  (cheaper, reversible). `env.*` and `delivery_invalid` codes stay.
+- `docker_boundary`/`docker_e2e` assertion swaps: the `--network none`/egress
+  rows in `mc/boundarydocker/landing_envelope_test.go` (:210,:286,:344) and the
+  ~10 hand-mirrored argv sites in `mc/e2e/e2e_test.go` follow the agent-class
+  decision; new agent-class rows assert the §3 Credential-projection acceptance
+  (projected-file fields, no real refresh token anywhere, live call on the access
+  token, Codex broker end-to-end, fail-closed stall, per-binding isolation, D5).
+
+Also preserved the POC evidence (`docs/priors/oauth-poc-result-v2.md`) — it
+existed only in a prior session's volatile `/private/tmp` scratchpad, which
+`docs/priors/README.md` directs surfaced POC material to be dropped into.
+
+NEXT (outgoing): build ADR-022 step 2 (token service + writers + broker +
+forbidden-env), TDD, each green and inert, before the step-3 spawn-seam wiring.

@@ -47,11 +47,25 @@ into each container; the **refresh** grant never enters the container. A leaked
 access token is short-lived and non-refreshable from inside. This is enforced
 per binding by one of two channels.
 
-**D3 — Claude channel is PUSH (keep the file always-valid).** The token service
-writes the binding's `<configDir>/.credentials.json` with a fresh `accessToken`,
-a **non-empty dummy** `refreshToken`, a **future `expiresAt`**, and `scopes`
-including `user:inference`, and a refresh-ahead loop rewrites it before expiry so
-Claude never enters its own refresh path. Live-verified constraints on 2.1.216:
+**D3 — Claude channel is host-managed via `CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST`
+(amended 2026-07-21, S9).** The S9 spike (`spikes/09-credential-projection/RESULT.md`)
+resolved the residual below in favor of the flag: the token service sets
+`CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST=1` and delivers the host-minted access
+token via `CLAUDE_CODE_OAUTH_TOKEN` (or the well-known file /
+`CLAUDE_CODE_HOST_CREDS_FILE` for in-session 401 rotation). Under the flag
+(verified static on 2.1.217) Claude bypasses the credential store entirely
+(`if(RE())return null` precedes the `.credentials.json`/keychain read), treats
+the token as `refreshToken:null, expiresAt:null` so it never self-refreshes, and
+the `invalid_grant` compare-and-swap wipe is structurally unreachable — strictly
+more fail-closed than the file-rewrite. `ANTHROPIC_API_KEY` must still be unset.
+A refresh-ahead loop rewrites the token source before expiry; it no longer risks
+a clobber or wipe. The `/v1/messages` call goes **direct** to the real provider.
+
+The **fallback**, if the flag proves unusable in-container, is the original PUSH
+design: write `<configDir>/.credentials.json` with a fresh `accessToken`, a
+**non-empty dummy** `refreshToken`, a **future `expiresAt`**, and `scopes`
+including `user:inference`, refreshing ahead so Claude never enters its own
+refresh path. Live-verified constraints on 2.1.216 (the fallback's contract):
 - Empty or absent `refreshToken` **hard-fails** ("OAuth session expired and
   could not be refreshed"), no request made — a non-empty dummy is required.
   This overturns the source-only reading that an empty refresh is safer.
@@ -129,12 +143,22 @@ Generous refresh lead time is the mitigation.
   territory and a fresh operator decision.
 - **Pinned by** `docs/phase3-contract.md` §3 — the *Credential projection* and
   *Forbidden env* rows. The *Gateway + three egress modes* row is removed.
-- **Residual risks / spikes (not yet proven):**
-  - `CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST` — a purpose-built host-managed mode
-    that may suppress disk writes and the 401→reread, cleaner than the
-    dummy-refresh dance. Spike before building D3.
-  - Real-token Codex — does a real fresh access token skip the startup refresh?
-    If yes, the D4 broker becomes optional. Unproven with synthetic tokens.
-  - VirtioFS/bind-mount `mtime` propagation — Claude's long-session adoption
-    relies on `mtimeMs` changing; validate on the container FS (AGENTS.md §9
-    flags VirtioFS watchers as poll-only).
+- **Residual risks / spikes:**
+  - `CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST` — **RESOLVED 2026-07-21 (S9).** The
+    mode exists in 2.1.217 and is now the primary D3 mechanism: it bypasses the
+    credential store, makes the token non-refreshable in-container, and renders
+    the `invalid_grant` wipe unreachable. Evidence:
+    `spikes/09-credential-projection/RESULT.md` Q1. Still to confirm live: the
+    exact in-container delivery channel (env vs file-descriptor vs well-known
+    file) and host-creds-file 401 rotation under a non-desktop entrypoint —
+    Docker acceptance lane, not a blocker.
+  - Real-token Codex — **RESOLVED 2026-07-21 (S9).** A real signed JWT with
+    ~10-day `exp` deterministically skips the startup refresh (exp parsed
+    without signature check; refresh only within 5 min of expiry). The D4 broker
+    becomes optional on the startup happy-path but stays **mandatory** for
+    reactive-401 / long-session / malformed-projection fallback. Evidence:
+    `spikes/09-credential-projection/RESULT.md` Q2.
+  - VirtioFS/bind-mount `mtime` propagation — still open. Claude's long-session
+    token-source rewrite relies on `mtimeMs` changing; validate on the container
+    FS (AGENTS.md §9 flags VirtioFS watchers as poll-only). Docker acceptance
+    lane.

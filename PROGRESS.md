@@ -187,13 +187,30 @@ Authoritative texts, already written: ADR-022; spec §11.4 amendment (2026-07-21
 `doctor gateway` finding) is STRUCK, not deferred.
 
 **Not yet built** — this is the next implementation surface, spike-first:
-1. Spike `CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST` and real-token Codex startup
-   refresh (both may simplify the writers; results → a spike `RESULT.md`).
-2. Token service skeleton + refresh-ahead loop; Claude + Codex projection
-   writers; Codex refresh-broker endpoint; forbidden-env builder.
+1. [x] Spike `CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST` and real-token Codex startup
+   refresh — DONE 2026-07-21, `spikes/09-credential-projection/RESULT.md`. Both
+   resolved from source. **D3 adopts the flag** (Claude bypasses its credential
+   store; the `invalid_grant` wipe is unreachable; the `.credentials.json`
+   dummy-refresh rewrite is now the documented fallback). **D4 keeps the broker**
+   as the mandatory reactive-401/long-session fallback (a real fresh JWT skips
+   only the startup refresh). ADR-022 D3/D4 + Residuals amended;
+   `IMPLEMENTATION-NOTES.md` (2026-07-21 S9) records the delegated choices.
+2. Token service skeleton + refresh-ahead loop; Claude (flag-based) + Codex
+   projection writers; Codex refresh-broker endpoint; forbidden-env builder.
 3. Wire into the resident spawn seam, removing the gateway wiring; relax the
    `docker_boundary` `--network none`/egress assertions to the §3 credential
    rows; retire the `doctor gateway` finding.
+
+Removal/wiring inventory for steps 2–3 is mapped in the phase-3 ledger
+(2026-07-21 S9 entry) — spawn seam, schema migration, forbidden-env floor,
+doctor finding, assertion swaps. Three load-bearing constraints carried up
+here: (a) drop `--network none` for the **agent class only** — setup/landing/
+verifier classes keep isolation, logged as a deviation; (b) CRITICAL —
+`resolveGatewaySecretRoots` (`mc/verbs/mountattest.go:408`) must be
+**repurposed, not deleted**, to deny-mount the on-disk refresh-grant store, or a
+candidate mount could bind the refresh grants in; (c) `gateway_control_version`
+is the RETAINED one-use control channel, not egress — do not rename without
+lockstep golden bytes.
 
 ## Known later obligations
 
@@ -209,4 +226,4 @@ Authoritative texts, already written: ADR-022; spec §11.4 amendment (2026-07-21
   canonical landing row derived; use the assignment's frozen `target_ref` and
   refuse divergence. Details are in the Phase 3 ledger.
 
-NEXT: Implement the ADR-022 credential design (see "Credential design" above) — the parked §3 gateway question is now RESOLVED, not blocking. Start spike-first: `CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST` and real-token Codex startup-refresh (each may simplify the projection writers), then build the resident token service + Claude/Codex projection writers + Codex refresh-broker endpoint + forbidden-env builder, wire into the spawn seam removing the gateway wiring, and swap the `docker_boundary` `--network none`/egress-mode assertions for the §3 *Credential projection* row while retiring the `doctor gateway` finding. Everything else in Phase 3 is green and proven end to end on the real platform: sealed landing lane complete, `docker_boundary` 9/9 (note: the `--network none` assertion there is now superseded and to be swapped), `docker_e2e` 8/8 including the merge walk, five-leg fast lane, all tag vet lanes. Non-blocking obligations remain in `IMPLEMENTATION-NOTES.md` (2026-07-21): unenforced 15-minute landing deadline, `SealedLandingResult` has no spine consumer, ADR-016 D7 label non-conformance in setup/legacy-land.
+NEXT: Build the ADR-022 credential surface, step 2 (spike step 1 is DONE — see "Credential design" above; `spikes/09-credential-projection/RESULT.md`). TDD, smallest first: (a) a schema migration turning `runtime_auth_delivery` values into `projection|materialized` and retiring `egress_policy`/`network_allow` (new migration only — never edit `mc/substrate/testdata/schema-v1..v3.sql`); (b) the forbidden-env builder reading `harness_env_policy`/`tool_env_policy` from the non-shrinkable `CODEX_API_KEY`+`ANTHROPIC_API_KEY` floor, `SENTINEL_API_KEY` proving wildcard enumeration, extended to reject provider refresh tokens/API keys for OAuth bindings (ADR-022 D7); (c) the resident token-service module + Claude flag-based writer (`CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST` + `CLAUDE_CODE_OAUTH_TOKEN`) and Codex `auth.json` writer preserving `account_id`+`auth_mode`; (d) the Codex refresh-broker endpoint. Keep each green and inert until the spawn-seam wiring (step 3). Do NOT touch `resolveGatewaySecretRoots` except to repurpose it as the token-store deny root. Full removal/assertion-swap inventory is in the phase-3 ledger (2026-07-21 S9 entry). Everything else in Phase 3 is green and proven end to end on the real platform: sealed landing lane complete, `docker_boundary` 9/9 (note: the `--network none` assertion there is now superseded and to be swapped), `docker_e2e` 8/8 including the merge walk, five-leg fast lane, all tag vet lanes. Non-blocking obligations remain in `IMPLEMENTATION-NOTES.md` (2026-07-21): unenforced 15-minute landing deadline, `SealedLandingResult` has no spine consumer, ADR-016 D7 label non-conformance in setup/legacy-land.
