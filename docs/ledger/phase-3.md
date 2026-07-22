@@ -5144,3 +5144,35 @@ subscription calls) for the operator — check OPERATOR-INPUTS.md for
 credentials first; if absent, park under PROGRESS. Then the final §8 sweep
 (no fake route in prod image [already proven], no spine/identity override) and
 the evidence record.
+
+## 2026-07-22 — §8 item 2 complete + the §8 sweep: Phase 3 mechanical checklist is green
+
+Commits `c8f37e9` (credential-projection Docker acceptance) and `1?`-doctor
+tightening. The contract §8 advancement checklist, item by item:
+- Every §3 row has a named green real-mechanism test: the three ADR-022 rows
+  are now covered — Credential projection (`TestCredentialProjection*`, real
+  container + real projector + synthetic authority), Forbidden env (pre-claim
+  `TestDispatchForbiddenEnv*` + `envpolicy_test.go`), container-runtime
+  (`TestDoctorContainerRuntimeCapabilityProbe*`). The remaining §3 rows were
+  green before ADR-022 and are unaffected.
+- Production image contains no fake route + own untagged build:
+  `TestProductionImageHasNoFakeRouteDockerBoundary` (green at `5d7f539`).
+- No production override redirects spine/identity: existing green coverage —
+  `TestSpineLockDomainGuardDockerBoundary` (a redirected/bound spine is
+  refused, Inv. 24), `TestDeploymentMirrorDockerBoundary` (a foreign identity
+  cannot claim), `TestLandingContainerHasHostScope…` (an injected run.json
+  revokes host scope).
+- doctor has no Phase-3-owned deferred finding: container-runtime is a real
+  probe; runtime-auth (live token turn) and supervision (real launchd) are
+  Phase-5-owned.
+- All lanes green at HEAD: five-leg fast, all three tag vets, full
+  docker_boundary (26 subtests), full docker_e2e (10 tests incl. the two
+  credential legs and the packaged→approve→merge→archived walk).
+
+The §2 sealed-landing completion lane was already carried (merge walk in
+docker_e2e, landing envelope in docker_boundary). What remains before Phase 4
+is OPERATOR-owned, not mechanical: the live-provider credential legs (real
+Claude/Codex subscription calls — no ADR-022 refresh-grant material is in
+OPERATOR-INPUTS.md, only gateway-era cred-dir pointers), the Phase-5
+runtime-auth health turn, and the parked S7 sleep drill. Advancing Phase 3 →
+Phase 4 is therefore an operator sign-off, parked in PROGRESS.

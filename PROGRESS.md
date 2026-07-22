@@ -6,18 +6,17 @@ REPO PATH: `~/dev/ai/homie`. Never relocate this repo into `~/Documents`,
 `~/Desktop`, or `~/Downloads`: macOS TCC can revoke an agent session's own
 filesystem access there during fan-out. Full Disk Access does not fix it.
 
-LAST GREEN SHA: `4d9e384` — five-leg fast lane green; `docker_e2e` green
-(`ok mc/e2e 33s`) at `4d9e384` including the widened dispatch frame (env
-planes + delivery in the projection); `docker_boundary` all-PASS (26
-subtests, incl. the two-arm doctor capability probe) at `5d7f539`. All three
-tag vet lanes clean at `4d9e384`. LESSON pinned by `ada715d`: the
-resident's `SPINE_SCHEMA_VERSION` (resident-control.ts:12) mirrors
-`substrate.CurrentSchemaVersion` in lockstep — every future schema bump must
-touch BOTH, and only the Docker lane catches the miss. Production image `mc-prod` REBUILT at `5d7f539`:
+LAST GREEN SHA: `c8f37e9`+doctor-tighten — ALL lanes green: five-leg fast,
+all three tag vets, full `docker_boundary` (26 subtests, incl. the two-arm
+doctor capability probe), full `docker_e2e` (10 tests: `ok mc/e2e 58s`, incl.
+both credential-projection legs and the packaged→approve→merge→archived
+walk). Production image `mc-prod` at `5d7f539`:
 `sha256:47b27eda69019d1e97c9618466ed391470447ebae6025270abb1931914c487a6`,
 arm64/linux, Docker Desktop 29.4.0 aarch64, native (no --platform, no
-emulation). Full docker_boundary suite green at `5d7f539` including the new
-two-arm doctor capability-probe test.
+emulation) — unchanged by TS-only commits since. LESSON pinned by `ada715d`:
+the resident's `SPINE_SCHEMA_VERSION` (resident-control.ts:12) mirrors
+`substrate.CurrentSchemaVersion` in lockstep — every schema bump must touch
+BOTH, and only the Docker handshake lane catches the miss.
 
 The operator pushes manually; agents do not push.
 
@@ -82,8 +81,19 @@ the approve landing fence to assignment-armed tasks; v12 retires
   - [x] Landing id and attest-side carrier producer; both inert.
   - [x] Resident sealed-landing arm and container envelope; inert.
   - [x] Landing routed through the dispatch seam and turned on atomically.
-  - [ ] Run and record the complete Phase 3 real-mechanism/Docker acceptance
-        lane before advancing.
+  - [x] ADR-022 free-internet credential projection: schema v12, forbidden-env
+        builder + pre-claim refusal, resident token service/writers/broker,
+        spawn-seam projector, gateway deny-root repurpose, doctor gateway
+        retirement, doctor container-runtime capability probe, and the
+        credential-projection Docker acceptance (synthetic mints). Commits
+        `9c45d2b`..`c8f37e9`.
+  - [x] Ran and recorded the complete Phase 3 real-mechanism/Docker acceptance
+        lane: full docker_boundary (26 subtests) + full docker_e2e (10 tests,
+        incl. the two credential legs and the packaged→approve→merge→archived
+        walk) + five-leg fast + all tag vets, all green at HEAD. §8 mechanical
+        checklist satisfied (see ledger 2026-07-22 "§8 sweep").
+  - [ ] OPERATOR SIGN-OFF to advance Phase 3 → Phase 4 (parked below): the
+        only remaining Phase 3 items are operator-owned, not mechanical.
 - [ ] Phase 4 — six E2E control-loop scenario families.
 - [ ] Phase 5 — operator-scheduled real-subscription acceptance.
 - [ ] Release prep — install/onboard front door and construction-document
@@ -91,12 +101,23 @@ the approve landing fence to assignment-armed tasks; v12 retires
 
 ## Parked
 
+- **Phase 3 → Phase 4 advancement (operator sign-off)**: the §8 mechanical
+  checklist is green (ledger 2026-07-22 "§8 sweep"), so what remains is
+  operator-owned, not code: (1) the LIVE-PROVIDER credential legs — a real
+  Claude/Codex subscription call through a projected token; `OPERATOR-INPUTS.md`
+  has only gateway-era `CLAUDE_CRED_DIR`/`CODEX_CRED_DIR` pointers, no ADR-022
+  refresh-grant material, so the resident's `MC_HOME/refresh-grants` store must
+  be populated from a real subscription before this can run; (2) the Phase-5
+  runtime-auth health turn (same dependency); (3) the S7 sleep drill below.
+  The synthetic-mint Docker acceptance proves the projection mechanism end to
+  end without live credentials. Operator: confirm advancing to Phase 4, or
+  provide refresh-grant material to close the live legs first.
 - **S7 sleep drill**: the 30-minute Mac sleep mid-lease test requires the
   operator. Instructions: `spikes/07-launchd-clock/RESULT.md`. All other S7
   sub-tests passed.
 
 _(The parked §3 gateway/forbidden-env scope decision is RESOLVED — see
-"Credential design" below. Nothing operator-only is parked here now.)_
+"Credential design" below.)_
 
 ## Sealed landing (COMPLETE host-side; Docker evidence pending)
 
@@ -132,69 +153,39 @@ assigned tasks, which is what makes the lanes partition. `/repo` is not
 plan-addressable. The nested `.mission-control` cover must prevent the RW source
 alias from exposing the sealed task root as writable.
 
-### 2. Phase 3 completion lane
+### 2. Phase 3 completion lane — DONE
 
-Prove the realized landing mount table, RO alias/cover behavior,
-network-none/uid/capability envelope, VirtioFS import durability, and the five
-ADR-017:758–760 crash cuts. Carry the production E2E through
-`packaged → approve → merge → archived`.
+The realized landing mount table, RO alias/cover, network/uid/capability
+envelope, and the `packaged → approve → merge → archived` walk are proved in
+`docker_e2e`/`docker_boundary`; the §8 mechanical checklist is green (ledger
+2026-07-22 "§8 sweep"). What remains before Phase 4 is operator-owned, parked
+above.
 
-Then satisfy `docs/phase3-contract.md` §8: every §3 row has a named green
-real-mechanism test; production image has no fake route; no production override
-redirects spine/identity; `doctor` has no Phase-3-owned deferral; fast, tagged,
-Phase 3 Docker, and Docker E2E lanes are green. Record image digest,
-architecture, capability probes, commands, and green evidence here before
-advancing to Phase 4.
+## Credential design (ADR-022) — BUILT and PROVEN (synthetic); live legs parked
 
-## Credential design (RESOLVED — ADR-022, operator-approved 2026-07-21)
+ADR-022 (operator-approved 2026-07-21) supersedes ADR-018 whole: free internet
+for agent containers, one property kept — **access token in, refresh token
+out** via a resident-hosted token service. The whole gateway apparatus (egress
+modes, `--network none` for agents, `network_allow`, egress audit, `doctor
+gateway`) is STRUCK. Static keys (MiniMax) can't be split → materialized with
+the D5 scoped-key advisory.
 
-The parked §3 gateway question is answered: the operator requires **free
-internet** for agent containers, which deletes the egress gateway/proxy as a
-network control. ADR-022 supersedes ADR-018 whole and replaces it with a
-resident-hosted **token service**: **access token in, refresh token out.** A
-live POC (`scratchpad/oauth-poc/POC-RESULT-v2.md`) proved both runtimes adopt a
-host-managed access token with only a dummy refresh in the container — Claude
-PUSH (keep `.credentials.json` always-valid so it never self-refreshes), Codex
-PULL (broker its refresh via `CODEX_REFRESH_TOKEN_URL_OVERRIDE`). Static keys
-(MiniMax) can't be split → v1 materializes with the scoped-key advisory (D5).
+Implementation COMPLETE, all green (`9c45d2b`..`c8f37e9`): schema v12;
+`mc/boundary/envpolicy.go` forbidden-env builder + pre-claim dispatch refusal;
+`resident/src/token-service.ts` + `refresh-broker.ts` + `credential-projector.ts`
+wired through `main.ts` and the spawn seam; `resolveGatewaySecretRoots`
+repurposed to deny-mount `MC_HOME/refresh-grants`; doctor gateway retired +
+container-runtime capability probe added; `TestCredentialProjection*` Docker
+acceptance (synthetic mints). Load-bearing invariants that must not regress:
+`--network none` dropped for the AGENT class only (setup/landing/verifier keep
+it, logged deviation); `resolveGatewaySecretRoots` deny-mounts the grant store
+(never delete); `gateway_control_version` retained (golden bytes). Full design
+narrative and the delegated choices: ledger 2026-07-21/22 + `IMPLEMENTATION-NOTES.md`.
 
-Authoritative texts, already written: ADR-022; spec §11.4 amendment (2026-07-21)
-+ Inv. 16/23 markers; `docs/phase3-contract.md` head amendment + the §3
-*Credential projection* and *Forbidden env* rows. The whole gateway apparatus
-(egress modes, `--network none`, `network_allow` enforcement, egress audit, the
-`doctor gateway` finding) is STRUCK, not deferred.
-
-**Not yet built** — this is the next implementation surface, spike-first:
-1. [x] Spike `CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST` and real-token Codex startup
-   refresh — DONE 2026-07-21, `spikes/09-credential-projection/RESULT.md`. Both
-   resolved from source. **D3 adopts the flag** (Claude bypasses its credential
-   store; the `invalid_grant` wipe is unreachable; the `.credentials.json`
-   dummy-refresh rewrite is now the documented fallback). **D4 keeps the broker**
-   as the mandatory reactive-401/long-session fallback (a real fresh JWT skips
-   only the startup refresh). ADR-022 D3/D4 + Residuals amended;
-   `IMPLEMENTATION-NOTES.md` (2026-07-21 S9) records the delegated choices.
-2. [x] Step 2 COMPLETE (commits `9c45d2b`, `dd380e0`, `d4e14f0`, `029acc4`):
-   schema v12; `mc/boundary/envpolicy.go` forbidden-env builder (§16.3 floor,
-   extend-only guard, D7 fence, typed env.invalid/env.forbidden);
-   `resident/src/token-service.ts` (refresh-ahead behind an injected mint
-   seam, Claude flag writer, Codex auth.json writer);
-   `resident/src/refresh-broker.ts` (loopback /oauth/token). All green, all
-   inert. Ledger: 2026-07-21 "ADR-022 step 2 built end to end".
-3. Wire into the resident spawn seam, removing the gateway wiring; relax the
-   `docker_boundary` `--network none`/egress assertions to the §3 credential
-   rows; retire the `doctor gateway` finding; source binding-catalog
-   `ProviderCredentialKeys`/`DeclaredStaticKey` for the env builder.
-
-Removal/wiring inventory for steps 2–3 is mapped in the phase-3 ledger
-(2026-07-21 S9 entry) — spawn seam, schema migration, forbidden-env floor,
-doctor finding, assertion swaps. Three load-bearing constraints carried up
-here: (a) drop `--network none` for the **agent class only** — setup/landing/
-verifier classes keep isolation, logged as a deviation; (b) CRITICAL —
-`resolveGatewaySecretRoots` (`mc/verbs/mountattest.go:408`) must be
-**repurposed, not deleted**, to deny-mount the on-disk refresh-grant store, or a
-candidate mount could bind the refresh grants in; (c) `gateway_control_version`
-is the RETAINED one-use control channel, not egress — do not rename without
-lockstep golden bytes.
+Still open (non-blocking, tracked below/parked): binding-catalog
+`ProviderCredentialKeys`/`DeclaredStaticKey` sourcing and the operator
+env-guard config surface for the forbidden-env builder; the live-provider
+credential legs (parked, need real refresh-grant material).
 
 ## Known later obligations
 
@@ -210,4 +201,18 @@ lockstep golden bytes.
   canonical landing row derived; use the assignment's frozen `target_ref` and
   refuse divergence. Details are in the Phase 3 ledger.
 
-NEXT: §8 item 2 part 2 — the credential-projection Docker acceptance legs (part 1, the projector composition + main.ts wiring, is DONE at `edb61f8`). Buildable with SYNTHETIC mints (a local token authority the grant `token_url` points at): (a) docker-inspect/in-container proof of fresh access token + dummy refresh + per-runtime fields + NO real refresh material; (b) codex broker end-to-end from a container; (c) D8 fail-closed stall with the authority down. PARK the live-provider legs (real subscription calls) for the operator — check OPERATOR-INPUTS.md first. Then the final §8 sweep and evidence record. Items DONE: (1) doctor container-runtime probe at `5d7f539`; (3) pre-claim forbidden-env refusal at `4d9e384` (carry-into-container clause rides item 2's projector wiring; guard-extension config surface and binding-catalog key sourcing still open). Prior context: item (1) doctor probe (real §16.4 legs in the untagged build; deferred stand-in only in the test-tagged build; two-arm docker_boundary proof; note: production mc is NOT setuid — the gate is the mc-complete 6755 wrapper and the helper runs as root). Both Docker lanes are green at v12 with the spawn seam live (no agent-class egress assertion drift surfaced — the e2e's own fixtures pin their own containers, and resident-spawned fake-family argv is unchanged). What §8 still needs, in buildable order: (1) the doctor `container-runtime` capability probe (its "runs in Phase 3" deferral is Phase-3-owned and §8 forbids it) — real-mechanism probes for the setuid gate and helper exec; (2) the §3 *Credential projection* acceptance row's Docker test — needs the `main.ts` projector wiring, which needs the `MC_HOME/refresh-grants` store capture (install/onboarding obligation) and REAL provider credentials for the live-call legs: park the live legs for the operator if credentials are not in `OPERATOR-INPUTS.md`; the fail-closed/no-refresh-material legs are buildable with synthetic mints; (3) the §3 *Forbidden env* row's mechanism test through the production owner (dispatch-side env-plane wiring: `LoadDispatchWorksourceProjection` grows the two env columns, `BuildEnvPlan` refuses `env.forbidden` before claim, effect carries validated entries; SENTINEL walk + docker-inspect absence proof); (4) §8 sweep: no fake route in the production image, no production override redirecting spine/identity, then record digest/arch/capability-probe evidence here. Steps 2 and 3(a)-(d)+(f) of ADR-022 are DONE (`9c45d2b`..`ada715d`); the SPINE_SCHEMA_VERSION lockstep lesson is pinned above. Non-blocking obligations remain in `IMPLEMENTATION-NOTES.md` (2026-07-21): unenforced 15-minute landing deadline, `SealedLandingResult` has no spine consumer, ADR-016 D7 label non-conformance in setup/legacy-land.
+NEXT: Phase 3's §8 mechanical checklist is GREEN and the credential surface is
+built and proven with synthetic mints (ledger 2026-07-22 "§8 sweep"). Advancing
+Phase 3 → Phase 4 is now an OPERATOR SIGN-OFF (see ## Parked) — the remaining
+Phase 3 items (live-provider credential legs, Phase-5 runtime-auth turn, S7
+sleep drill) are operator-owned, not code. While awaiting that sign-off, the
+buildable non-blocking follow-ups, smallest first: (a) source the binding
+catalog's `ProviderCredentialKeys`/`DeclaredStaticKey` into the forbidden-env
+builder (today `attestCandidateEnvPolicy` passes none, so only the floor +
+refresh-token fence are active — the per-binding provider-key rejection is
+inert until the catalog is threaded); (b) the operator env-guard config surface
+for `NewEnvGuard` additions (no loader exists — `BlockPolicy` has the same gap);
+(c) the non-blocking obligations in `IMPLEMENTATION-NOTES.md` (2026-07-21):
+unenforced 15-minute landing deadline, `SealedLandingResult` has no spine
+consumer, ADR-016 D7 label non-conformance in setup/legacy-land. Do NOT start
+Phase 4 without the operator sign-off above.
