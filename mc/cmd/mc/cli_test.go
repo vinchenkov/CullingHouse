@@ -2970,6 +2970,10 @@ func TestHomieClaimReply(t *testing.T) {
 			t.Fatalf("bind failed: %s", res.stderr)
 		}
 		m1 := send(t, spine, session, "cli:term", "please do X")
+		// The unserved inbound turn wakes Homie first (ADR-016 D3 branch 7,
+		// preempting any pipeline candidate); committing the wake binds the
+		// launch, after which the runner claims from inside it.
+		dispatchExpect(t, spine, "homie-wake")
 		if res := runMC(t, runner(t, spine, session), "", "homie", "claim", session); res.code != 0 {
 			t.Fatalf("claim failed: %s", res.stderr)
 		}
