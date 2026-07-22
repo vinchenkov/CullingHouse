@@ -276,3 +276,37 @@ PROGRESS.
 NEXT: operator decision on the homie runtime + dashboard. Buildable interim
 without that decision: the homie record-loop verb test. Phase 4 otherwise
 COMPLETE — families (1)-(5) green + (6) console; full docker_e2e 20 tests.
+
+## Homie runtime S1 — lease-free wake selector wired into the dispatch tick
+
+Operator chose BUILD for the family-(6) homie runtime + dashboard. S1 landed
+green (commit 82381d9):
+
+- schema v13 adds lock.homie_idle_timeout_s (default 1800); the resident
+  SPINE_SCHEMA_VERSION mirror bumped in lockstep.
+- three ADR-016 D3 fence receipts (mc/verbs/homie.go): HomieLaunchBind (CAS the
+  64-hex docker id onto the current launch, idempotent, fenced, non-idle
+  guard), HomieRunnerStarted (stamp launch_started_at), HomieExit (Case A end
+  once a locator exists / Case B pre-runner null-locator clear retaining launch
+  debt). CLI: mc homie launch-bind|runner-started|exit.
+- selectHomieWake (homieselect.go) — the spine-only core: branch 6 idle-end
+  wins over branch 7 (oldest (last_activity_at,id) non-idle no-launch session
+  with pending inbound or resume debt; fresh unless resume-only).
+- loadHomieSchedRows + homieWakeRound wired into dispatchseam.go's prepare,
+  gated on sel.action.Kind == KindIdle (the pipeline committed nothing this
+  tick — Homie is the lease-free tier, Inv. 1/22). Spawn wake mints/persists a
+  16-hex launch generation + mode, clears resume debt, carries a rows-mode
+  prime cutoff into the current prime pair, emits homie-wake{session,launch,
+  mode,binding,container_name}. Idle end calls homieEndTx (status->ended; the
+  homie_sessions_deactivate_bindings trigger clears bindings), emits
+  homie-stop. Both write a dispatch receipt for idempotent replay.
+- homie_idle_timeout_s plumbed through loadLock/tunables.
+
+DEFERRED (need the resident's live container inventory, so they are resident-
+outage recovery, not the happy path): branch-5 transitional/terminal container
+reconciliation and branch-7 unstarted-launch-debt / adopt-a-created-container.
+
+NEXT: S2 — the resident spawn effect consuming homie-wake/homie-stop (tier
+"homie" run.json, no lease/heartbeat, operator-scope RO mounts, launch-bind ->
+start -> runner-started). Then S3 runner, S4 E2E, S5 delivery+resume, S6
+dashboard (ADR) + Playwright.

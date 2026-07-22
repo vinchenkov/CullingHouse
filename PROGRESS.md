@@ -210,17 +210,17 @@ these are the constraints a Phase 4+ change must not break.
   canonical landing row derived; use the assignment's frozen `target_ref` and
   refuse divergence. Details are in the Phase 3 ledger.
 
-NEXT: BUILD the homie runtime + dashboard (family 6; operator chose build).
-Start S1 — the dispatch WAKE SELECTOR + the 3 post-commit fence verbs. Design is
-SPECIFIED (ADR-016 D3 branches 5-7: pick oldest (last_activity_at,id) active
-non-idle Homie with unstarted launch-debt OR (no launch AND pending inbound OR
-resume_owed); persist launch id+mode before returning a `wake` effect; adopt-
-and-start a `created` container). Homie is LEASE-FREE and CONCURRENT (Inv.
-1/22, §15.3) — the selector fires AFTER Decide() when no pipeline candidate
-committed, never touching the lease. Reuse the BUILT seams: homiepreflight.go
-(homieCandidateState/key/marker), dispatchseam.go:409 loadHomieProjection,
-dispatchverb.go:139 selectFromSpine (sel.homies), refusalroute.go:278
-homieLaunchFenceHolds. The 3 verbs (homie.launch-bind CAS the docker id,
-homie.runner_started, mc homie exit --launch --container-id) are specified in
-ADR-016:459-474 prose, unbuilt. TDD, each green. Then S2 resident spawn effect,
-S3 homie runner, S4 E2E, S5 delivery+resume, S6 dashboard (ADR)+Playwright.
+NEXT: Homie runtime S2 — the resident SPAWN EFFECT for the homie-wake/homie-stop
+effects that S1 now emits from the dispatch tick. S1 DONE + green (commit
+82381d9): schema v13 homie_idle_timeout_s; the 3 fence verbs (launch-bind /
+runner-started / exit, mc/verbs/homie.go); selectHomieWake + loadHomieSchedRows
++ homieWakeRound wired into dispatchseam.go prepare (fires when Decide() commits
+nothing; spawn wake mints/persists 16-hex launch, clears resume debt, carries a
+rows prime cutoff, emits homie-wake; idle end -> ended + binding deactivation,
+emits homie-stop; both carry a receipt). Deferred: branch-5 container
+reconciliation + branch-7 unstarted-launch recovery (need resident inventory).
+S2: teach the resident to consume homie-wake — types.ts wake/stop arms;
+effects.ts writes a tier:"homie" run.json (NO lease/heartbeat, operator-scope RO
+mounts, id/run_id "h-"-prefixed), then launch-bind -> start container ->
+runner-started; homie-stop stops the container. Then S3 homie runner, S4 E2E
+send->wake->reply, S5 delivery+resume, S6 dashboard (ADR)+Playwright.
