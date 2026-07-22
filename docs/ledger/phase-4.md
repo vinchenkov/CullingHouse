@@ -310,3 +310,31 @@ NEXT: S2 — the resident spawn effect consuming homie-wake/homie-stop (tier
 "homie" run.json, no lease/heartbeat, operator-scope RO mounts, launch-bind ->
 start -> runner-started). Then S3 runner, S4 E2E, S5 delivery+resume, S6
 dashboard (ADR) + Playwright.
+
+## Homie runtime S2 + S3 — resident effectors and the conversation runner
+
+S2 (commits 19aadf6, 23b078b): the resident learned two effect arms the
+dispatch tick emits. homie-wake materializes a trace-only folder + a heartbeat-
+free tier:"homie" run.json (run_id == session), creates a --rm mc-tier=homie
+container over a FIXED operator-read-scope mount set (workspace bound RO, Inv.
+22), CASes the exact 64-hex docker id onto the launch via `mc homie launch-bind`
+BEFORE start (a fenced bind / failed create / non-canonical id abandons the
+container), republishes run.json carrying container_id so the in-container
+runner can report its own id, then starts. homie-stop stops the bound container
+by id; a pre-bind idle end stops nothing. No lease, no heartbeat, concurrent.
+Credential projection deferred (fake route is token-free). ResidentConfig gained
+homieCmd (falls back to agentCmd).
+
+S3 (commit 6bf3bd5): runner/homie-runner/main.ts — the lease-free loop. Boot:
+`mc homie runner-started` once with launch + container id; a fenced report
+exits 0 (superseded launch). Then claim (oldest pending inbound, durable) ->
+run one fake-harness turn feeding the operator's body on stdin, capture the
+turn-complete output -> `mc homie reply --to`. A harness with no turn-complete
+leaves the turn claimed and exits 1; a quiet conversation idles out after
+maxIdlePolls empty claims. Seams (mcJSON/runHarnessTurn/sleep) injected so the
+fast suite drives the loop without subprocesses. 9 unit tests green.
+
+NEXT: S4 Docker E2E send->wake->reply (add homie-runner to the e2e image, wire
+resident homieCmd + a homie behavior fixture, tick-driven reply assertion).
+S5 delivery + native/rows resume (needs a homie register-session verb). S6
+dashboard (ADR) + Playwright.
