@@ -707,11 +707,11 @@ func onboardWorksource(a OnboardArgs) (string, string, error) {
 		}
 		if existing > 0 {
 			if supplied {
-				var storedRoot, egress, networkAllow string
+				var storedRoot string
 				err := q.QueryRowContext(ctx, `
-					SELECT p.workspace_root, p.egress_policy, p.network_allow
+					SELECT p.workspace_root
 					FROM worksources w JOIN sandbox_profiles p ON p.id = w.sandbox_profile
-					WHERE w.id = ?`, a.Worksource).Scan(&storedRoot, &egress, &networkAllow)
+					WHERE w.id = ?`, a.Worksource).Scan(&storedRoot)
 				if err == sql.ErrNoRows {
 					return Domainf("%d Worksources are already registered; add %q through mc worksource add, not the first-Worksource onboarding section", existing, a.Worksource)
 				}
@@ -720,9 +720,6 @@ func onboardWorksource(a OnboardArgs) (string, string, error) {
 				}
 				if storedRoot != workspaceRoot {
 					return Domainf("Worksource %s already points at %q, not requested workspace %q; refuse implicit rebinding (§17)", a.Worksource, storedRoot, workspaceRoot)
-				}
-				if egress != "none" || networkAllow != "[]" {
-					return Domainf("Worksource %s profile is not deny-by-default (egress_policy=%s, network_allow=%s); review it before onboarding can call the section healthy (§17)", a.Worksource, egress, networkAllow)
 				}
 			} else {
 				rows, err := q.QueryContext(ctx, `
@@ -759,23 +756,20 @@ func onboardWorksource(a OnboardArgs) (string, string, error) {
 			return Domainf("the first Worksource needs operator input: re-run with --worksource <id> --workspace-root </abs/path> (§17 dual-input)")
 		}
 		if _, err := q.ExecContext(ctx, `
-			INSERT INTO sandbox_profiles (id, workspace_root, egress_policy)
-			VALUES ('default', ?, 'none')
+			INSERT INTO sandbox_profiles (id, workspace_root)
+			VALUES ('default', ?)
 			ON CONFLICT (id) DO NOTHING`, workspaceRoot); err != nil {
 			return err
 		}
-		var storedRoot, egress, networkAllow string
+		var storedRoot string
 		if err := q.QueryRowContext(ctx, `
-			SELECT workspace_root, egress_policy, network_allow
+			SELECT workspace_root
 			FROM sandbox_profiles WHERE id = 'default'`,
-		).Scan(&storedRoot, &egress, &networkAllow); err != nil {
+		).Scan(&storedRoot); err != nil {
 			return err
 		}
 		if storedRoot != workspaceRoot {
 			return Domainf("sandbox profile default already points at %q, not requested workspace %q; refuse implicit rebinding (§17)", storedRoot, workspaceRoot)
-		}
-		if egress != "none" || networkAllow != "[]" {
-			return Domainf("sandbox profile default is not deny-by-default (egress_policy=%s, network_allow=%s); refuse implicit reuse (§17)", egress, networkAllow)
 		}
 		if _, err := q.ExecContext(ctx, `
 			INSERT INTO worksources (id, title, kind, sandbox_profile)

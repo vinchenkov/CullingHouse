@@ -79,7 +79,9 @@ func Init(db *sql.DB) error {
 // activity/outbox replay-key columns, whose v2 hex CHECKs hold only for TEXT.
 // Version 5 adds the durable run/task-fenced first-task setup receipt.
 // Version 10 adds the durable verifier-run-fenced accepted-seal rebuild receipt.
-const CurrentSchemaVersion = 11
+// Version 12 retires egress_policy/network_allow and narrows
+// runtime_auth_delivery to projection|materialized (ADR-022).
+const CurrentSchemaVersion = 12
 
 // migrationV1ToV2 is ADR-016 Decision 2's storage step, frozen as history.
 //
@@ -470,6 +472,57 @@ BEGIN
 END;
 `
 
+// migrationV11ToV12 retires the gateway-era egress columns and narrows
+// runtime_auth_delivery to projection|materialized (ADR-022 supersedes
+// ADR-018: agent containers get free internet, so egress_policy and
+// network_allow leave the enforced boundary). Both retiring columns carry
+// in-table CHECKs, so this is the chain's first rebuild-and-copy: every row is
+// copied (§16.4) with 'gateway' rewritten to 'projection'. Foreign keys stay
+// enforced throughout: worksources.sandbox_profile is nullable, so its
+// references are stashed and parked at NULL while the parent is swapped, then
+// restored against the rebuilt table — deferring foreign keys instead would
+// leave the DROP's violation count standing at commit even though the renamed
+// replacement satisfies every reference. The recreated text must stay
+// identical to schema.sql (modulo the transient name) so a migrated spine and
+// a fresh one are indistinguishable.
+const migrationV11ToV12 = `
+CREATE TABLE migration_v12_worksource_profiles AS
+    SELECT id, sandbox_profile FROM worksources;
+UPDATE worksources SET sandbox_profile = NULL;
+CREATE TABLE sandbox_profiles_v12 (
+    id                    TEXT PRIMARY KEY,
+    workspace_root        TEXT NOT NULL,
+    artifact_roots        TEXT,                -- JSON array of paths
+    readonly_mounts       TEXT,                -- JSON array of paths
+    denied_paths          TEXT,                -- JSON array of paths
+    tool_home_dir         TEXT,
+    runtime_control_dir   TEXT,
+    harness_env_policy    TEXT,
+    tool_env_policy       TEXT,
+    tool_allowlist        TEXT,
+    -- ADR-022: agent-class egress is unrestricted; credentials reach a
+    -- container as a projected short-lived token (projection) or, for static
+    -- keys only, as declared env material (materialized).
+    runtime_auth_delivery TEXT NOT NULL DEFAULT 'projection'
+                          CHECK (runtime_auth_delivery IN ('projection', 'materialized'))
+);
+INSERT INTO sandbox_profiles_v12
+    (id, workspace_root, artifact_roots, readonly_mounts, denied_paths,
+     tool_home_dir, runtime_control_dir, harness_env_policy, tool_env_policy,
+     tool_allowlist, runtime_auth_delivery)
+SELECT id, workspace_root, artifact_roots, readonly_mounts, denied_paths,
+     tool_home_dir, runtime_control_dir, harness_env_policy, tool_env_policy,
+     tool_allowlist,
+     CASE runtime_auth_delivery WHEN 'gateway' THEN 'projection' ELSE runtime_auth_delivery END
+FROM sandbox_profiles;
+DROP TABLE sandbox_profiles;
+ALTER TABLE sandbox_profiles_v12 RENAME TO sandbox_profiles;
+UPDATE worksources SET sandbox_profile = (
+    SELECT s.sandbox_profile FROM migration_v12_worksource_profiles s
+    WHERE s.id = worksources.id);
+DROP TABLE migration_v12_worksource_profiles;
+`
+
 // Migrate brings an existing spine up to CurrentSchemaVersion, reporting
 // whether it changed anything. It is the "present with an older schema →
 // migrate" arm of §16.4; the caller owns the "absent on a non-empty volume →
@@ -495,7 +548,7 @@ func Migrate(db *sql.DB) (bool, error) {
 		return false, err
 	}
 
-	steps := map[int]string{1: migrationV1ToV2, 2: migrationV2ToV3, 3: migrationV3ToV4, 4: migrationV4ToV5, 5: migrationV5ToV6, 6: migrationV6ToV7, 7: migrationV7ToV8, 8: migrationV8ToV9, 9: migrationV9ToV10, 10: migrationV10ToV11}
+	steps := map[int]string{1: migrationV1ToV2, 2: migrationV2ToV3, 3: migrationV3ToV4, 4: migrationV4ToV5, 5: migrationV5ToV6, 6: migrationV6ToV7, 7: migrationV7ToV8, 8: migrationV8ToV9, 9: migrationV9ToV10, 10: migrationV10ToV11, 11: migrationV11ToV12}
 	changed := false
 	for version < CurrentSchemaVersion {
 		step, ok := steps[version]

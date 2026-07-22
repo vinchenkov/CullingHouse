@@ -342,8 +342,8 @@ func TestInit(t *testing.T) {
 		if ws := queryStr(t, db, `SELECT id FROM worksources`); ws != "ws-test" {
 			t.Fatalf("worksource = %q", ws)
 		}
-		if p := queryStr(t, db, `SELECT egress_policy FROM sandbox_profiles`); p != "none" {
-			t.Fatalf("egress_policy = %q, want none (fake family, contract §1)", p)
+		if p := queryStr(t, db, `SELECT runtime_auth_delivery FROM sandbox_profiles`); p != "projection" {
+			t.Fatalf("runtime_auth_delivery = %q, want projection (ADR-022 default)", p)
 		}
 		for col, want := range map[string]int{
 			"timeout_minutes": 5, "grace_minutes": 1,
@@ -4880,7 +4880,7 @@ func TestOnboard(t *testing.T) {
 		}
 	})
 
-	t.Run("worksource_refuses_a_permissive_default_profile", func(t *testing.T) {
+	t.Run("worksource_refuses_a_rebound_default_profile", func(t *testing.T) {
 		_, spine, env := freshHome(t)
 		if res := runMC(t, env, "", "onboard", "home"); res.code != 0 {
 			t.Fatalf("home failed: %s", res.stderr)
@@ -4889,23 +4889,21 @@ func TestOnboard(t *testing.T) {
 		if err := os.MkdirAll(workspace, 0o700); err != nil {
 			t.Fatal(err)
 		}
-		canonical, err := filepath.EvalSymlinks(workspace)
-		if err != nil {
-			t.Fatal(err)
-		}
 		db, err := substrate.Open(spine)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if _, err := db.Exec(`INSERT INTO sandbox_profiles (id, workspace_root, egress_policy) VALUES ('default', ?, 'open+audit')`, canonical); err != nil {
+		// A pre-registered default profile bound elsewhere must refuse the
+		// requested workspace rather than silently rebinding it (§17).
+		if _, err := db.Exec(`INSERT INTO sandbox_profiles (id, workspace_root) VALUES ('default', '/srv/elsewhere')`); err != nil {
 			db.Close()
 			t.Fatal(err)
 		}
 		db.Close()
 		res := runMC(t, env, "", "onboard", "worksource",
 			"--worksource", "ws-main", "--workspace-root", workspace)
-		if res.code != 1 || !strings.Contains(res.stderr, "deny-by-default") {
-			t.Fatalf("permissive profile = code %d stderr %q", res.code, res.stderr)
+		if res.code != 1 || !strings.Contains(res.stderr, "refuse implicit rebinding") {
+			t.Fatalf("rebound profile = code %d stderr %q", res.code, res.stderr)
 		}
 	})
 

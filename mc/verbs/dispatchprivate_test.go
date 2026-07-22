@@ -82,7 +82,7 @@ func TestPrivateDispatchCandidateFreezesSelectedWorksourceAndEveryProfile(t *tes
   "/tmp/reference"
 ]`, `["/tmp/denied"]`, `/tmp/tool-home`, `/tmp/runtime-control`)
 	dvExec(t, db, `INSERT INTO sandbox_profiles (id, workspace_root, artifact_roots, readonly_mounts,
-		denied_paths, egress_policy) VALUES ('other-profile','/tmp/other','[]','[]','[]','none')`)
+		denied_paths) VALUES ('other-profile','/tmp/other','[]','[]','[]')`)
 	dvExec(t, db, `INSERT INTO worksources (id,title,kind,sandbox_profile,status)
 		VALUES ('other','Other','repo','other-profile','paused')`)
 

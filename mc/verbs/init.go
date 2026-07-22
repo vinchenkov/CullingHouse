@@ -78,12 +78,12 @@ func Init(a InitArgs) (any, error) {
 			deployment, substrate.CurrentSchemaVersion); err != nil {
 			return err
 		}
-		// One sandbox profile: the fake family is deterministic and
-		// token-free, so the strictest legal egress policy applies
-		// (contract §1: --network none is the fake family's egress_policy).
+		// One sandbox profile. The fake family is deterministic and
+		// token-free; its --network none containment is spawn-side hygiene
+		// (contract §1), no longer a profile column (ADR-022).
 		if _, err := q.ExecContext(ctx, `
-			INSERT INTO sandbox_profiles (id, workspace_root, egress_policy)
-			VALUES ('default', ?, 'none')`, a.WorkspaceRoot); err != nil {
+			INSERT INTO sandbox_profiles (id, workspace_root)
+			VALUES ('default', ?)`, a.WorkspaceRoot); err != nil {
 			return err
 		}
 		if _, err := q.ExecContext(ctx, `

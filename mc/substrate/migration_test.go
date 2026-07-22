@@ -33,6 +33,12 @@ var schemaV2 string
 //go:embed testdata/schema-v3.sql
 var schemaV3 string
 
+// schemaV11 is the spine as frozen at the last commit before ADR-022 retired
+// the gateway-era egress columns, for the same reason.
+//
+//go:embed testdata/schema-v11.sql
+var schemaV11 string
+
 // A migrated spine and a freshly initialized one must be indistinguishable —
 // structurally and, more importantly, in what they refuse. SQLite cannot ALTER
 // a UNIQUE column onto an existing table, so the obvious ALTER-only migration
@@ -50,7 +56,7 @@ func TestMigrateV1ToCurrentMatchesAFreshSpine(t *testing.T) {
 	t.Run("migrated spine matches a fresh spine's columns and indexes", func(t *testing.T) {
 		migrated := migratedV1Spine(t)
 		fresh := openSpine(t)
-		for _, table := range []string{"activity", "outbox", "homie_sessions"} {
+		for _, table := range []string{"activity", "outbox", "homie_sessions", "sandbox_profiles"} {
 			if got, want := columnsOf(t, migrated, table), columnsOf(t, fresh, table); got != want {
 				t.Errorf("%s columns after migration:\n  got  %s\n  want %s", table, got, want)
 			}
@@ -288,7 +294,7 @@ func TestMigrateV3ToCurrentMatchesAFreshSpine(t *testing.T) {
 	t.Run("migrated spine matches a fresh spine's triggers", func(t *testing.T) {
 		migrated := migratedV3Spine(t)
 		fresh := openSpine(t)
-		for _, table := range []string{"activity", "outbox", "homie_sessions"} {
+		for _, table := range []string{"activity", "outbox", "homie_sessions", "sandbox_profiles"} {
 			if got, want := triggersOf(t, migrated, table), triggersOf(t, fresh, table); got != want {
 				t.Errorf("%s triggers after migration:\n  got  %s\n  want %s", table, got, want)
 			}
@@ -333,6 +339,141 @@ func TestMigrateV3ToCurrentMatchesAFreshSpine(t *testing.T) {
 			t.Fatal("failed migration retained the activity typeof fence")
 		}
 	})
+}
+
+// ADR-022 supersedes ADR-018: agent containers get free internet, so
+// egress_policy and network_allow leave the enforced boundary entirely, and
+// runtime_auth_delivery narrows to projection|materialized. Both retiring
+// columns carry in-table CHECKs, so the step must rebuild sandbox_profiles —
+// while worksources rows still reference it, which only deferred foreign keys
+// survive. Copying rows is §16.4: a profile is operator configuration, and a
+// rebuild that loses or re-defaults one silently rewires every task using it.
+func TestMigrateV11ToCurrentProjectsCredentialDelivery(t *testing.T) {
+	t.Run("profile rows survive with gateway rewritten to projection", func(t *testing.T) {
+		db := migratedV11Spine(t)
+		if got := oneInt(t, db, `
+			SELECT count(*) FROM sandbox_profiles
+			WHERE id = 'default' AND workspace_root = '/srv/work'
+			  AND runtime_auth_delivery = 'projection'`,
+		); got != 1 {
+			t.Fatal("migration must rewrite a gateway profile to projection in place")
+		}
+		if got := oneInt(t, db, `
+			SELECT count(*) FROM sandbox_profiles
+			WHERE id = 'static-keys' AND runtime_auth_delivery = 'materialized'
+			  AND harness_env_policy = '{"MINIMAX_API_KEY":"binding"}'`,
+		); got != 1 {
+			t.Fatal("migration must leave a materialized profile and its env policy untouched")
+		}
+	})
+
+	t.Run("egress columns are gone and the worksource link survives", func(t *testing.T) {
+		db := migratedV11Spine(t)
+		for _, column := range []string{"egress_policy", "network_allow"} {
+			if columnExists(t, db, "sandbox_profiles", column) {
+				t.Errorf("sandbox_profiles.%s survived the migration; ADR-022 retires it", column)
+			}
+		}
+		if got := oneInt(t, db, `
+			SELECT count(*) FROM worksources
+			WHERE id = 'main' AND sandbox_profile = 'default'`,
+		); got != 1 {
+			t.Fatal("migration must keep the worksource bound to its rebuilt profile")
+		}
+		if _, err := db.Exec(`
+			INSERT INTO worksources (id, title, kind, sandbox_profile)
+			VALUES ('orphan', 'orphan', 'repo', 'no-such-profile')`); err == nil {
+			t.Fatal("rebuilt sandbox_profiles must still be foreign-key enforced")
+		}
+	})
+
+	t.Run("the narrowed check refuses gateway and defaults to projection", func(t *testing.T) {
+		db := migratedV11Spine(t)
+		if _, err := db.Exec(`
+			INSERT INTO sandbox_profiles (id, workspace_root, runtime_auth_delivery)
+			VALUES ('legacy', '/srv/legacy', 'gateway')`); err == nil {
+			t.Fatal("a migrated spine must refuse the retired gateway delivery value")
+		}
+		mustExec(t, db, `INSERT INTO sandbox_profiles (id, workspace_root) VALUES ('fresh', '/srv/fresh')`)
+		if got := oneInt(t, db, `
+			SELECT count(*) FROM sandbox_profiles
+			WHERE id = 'fresh' AND runtime_auth_delivery = 'projection'`,
+		); got != 1 {
+			t.Fatal("a new profile must default to projection delivery")
+		}
+	})
+
+	t.Run("migrated spine matches a fresh spine's profile shape", func(t *testing.T) {
+		migrated := migratedV11Spine(t)
+		fresh := openSpine(t)
+		if got, want := columnsOf(t, migrated, "sandbox_profiles"), columnsOf(t, fresh, "sandbox_profiles"); got != want {
+			t.Errorf("sandbox_profiles columns after migration:\n  got  %s\n  want %s", got, want)
+		}
+		if got, want := indexesOf(t, migrated, "sandbox_profiles"), indexesOf(t, fresh, "sandbox_profiles"); got != want {
+			t.Errorf("sandbox_profiles indexes after migration:\n  got  %s\n  want %s", got, want)
+		}
+		if got, want := triggersOf(t, migrated, "sandbox_profiles"), triggersOf(t, fresh, "sandbox_profiles"); got != want {
+			t.Errorf("sandbox_profiles triggers after migration:\n  got  %s\n  want %s", got, want)
+		}
+	})
+
+	t.Run("migration stamps the version it actually wrote", func(t *testing.T) {
+		db := migratedV11Spine(t)
+		if got := oneInt(t, db, `SELECT schema_version FROM meta WHERE id=1`); got != substrate.CurrentSchemaVersion {
+			t.Fatalf("schema_version = %d, want %d", got, substrate.CurrentSchemaVersion)
+		}
+	})
+
+	t.Run("replaying migration on a current spine changes nothing", func(t *testing.T) {
+		db := migratedV11Spine(t)
+		changed, err := substrate.Migrate(db)
+		if err != nil {
+			t.Fatalf("Migrate replay: %v", err)
+		}
+		if changed {
+			t.Fatal("Migrate replay reported another change; it must be idempotent by version")
+		}
+	})
+}
+
+// legacyV11Spine is a real v11 spine carrying data, as a live deployment
+// would: a gateway-delivery profile bound to a worksource, and a materialized
+// static-key profile, both of which must survive the rebuild.
+func legacyV11Spine(t *testing.T) *sql.DB {
+	t.Helper()
+	db, err := substrate.Open(filepath.Join(t.TempDir(), "legacy-v11.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { db.Close() })
+	mustExec(t, db, schemaV11)
+	mustExec(t, db, `INSERT INTO meta (id, deployment_uuid, schema_version) VALUES (1, 'legacy-deployment', 11)`)
+	mustExec(t, db, `
+		INSERT INTO sandbox_profiles (id, workspace_root, egress_policy)
+		VALUES ('default', '/srv/work', 'none')`)
+	mustExec(t, db, `
+		INSERT INTO sandbox_profiles (id, workspace_root, egress_policy, runtime_auth_delivery, harness_env_policy)
+		VALUES ('static-keys', '/srv/static', 'open+audit', 'materialized', '{"MINIMAX_API_KEY":"binding"}')`)
+	mustExec(t, db, `INSERT INTO worksources (id, title, kind, sandbox_profile) VALUES ('main', 'Main', 'repo', 'default')`)
+	return db
+}
+
+func migratedV11Spine(t *testing.T) *sql.DB {
+	t.Helper()
+	db := legacyV11Spine(t)
+	profiles := oneInt(t, db, `SELECT count(*) FROM sandbox_profiles`)
+	changed, err := substrate.Migrate(db)
+	if err != nil {
+		t.Fatalf("Migrate v11: %v", err)
+	}
+	if !changed {
+		t.Fatal("Migrate v11 reported no change")
+	}
+	// §16.4: no path may drop or re-initialize a spine containing data.
+	if after := oneInt(t, db, `SELECT count(*) FROM sandbox_profiles`); after != profiles {
+		t.Fatalf("migration lost profiles: %d before, %d after", profiles, after)
+	}
+	return db
 }
 
 // legacyV3Spine is a real v3 spine carrying data, as a live deployment would:

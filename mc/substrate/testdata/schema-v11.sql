@@ -43,12 +43,12 @@ CREATE TABLE sandbox_profiles (
     runtime_control_dir   TEXT,
     harness_env_policy    TEXT,
     tool_env_policy       TEXT,
+    egress_policy         TEXT NOT NULL DEFAULT 'open+audit'
+                          CHECK (egress_policy IN ('none', 'allowlist', 'open+audit')),
+    network_allow         TEXT NOT NULL DEFAULT '[]',  -- JSON array of host:port rules; empty = deny all non-proxy TCP (§5)
     tool_allowlist        TEXT,
-    -- ADR-022: agent-class egress is unrestricted; credentials reach a
-    -- container as a projected short-lived token (projection) or, for static
-    -- keys only, as declared env material (materialized).
-    runtime_auth_delivery TEXT NOT NULL DEFAULT 'projection'
-                          CHECK (runtime_auth_delivery IN ('projection', 'materialized'))
+    runtime_auth_delivery TEXT NOT NULL DEFAULT 'gateway'
+                          CHECK (runtime_auth_delivery IN ('gateway', 'materialized'))
 );
 
 CREATE TABLE worksources (
