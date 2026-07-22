@@ -134,6 +134,9 @@ func TestWorksourceArchiveRejectsProjectionBeyondAggregateBudget(t *testing.T) {
 		WorksourceID: "ws-test", Kind: "personal", Status: "active", ProfilePresent: true,
 		ProfileID: "default", WorkspaceRoot: "/tmp/ws-test", ArtifactRoots: roots,
 		ReadonlyMounts: []string{}, DeniedPaths: []string{},
+		// The stored profile carries the v12 delivery default; the exact-budget
+		// calibration must marshal the same bytes the projection will.
+		RuntimeAuthDelivery: "projection",
 	}
 	body, err := json.Marshal([]substrate.DispatchWorksource{row})
 	if err != nil {

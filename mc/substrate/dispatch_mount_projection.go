@@ -107,6 +107,12 @@ type DispatchWorksource struct {
 	DeniedPaths       []string `json:"denied_paths"`
 	ToolHomeDir       string   `json:"tool_home_dir"`
 	RuntimeControlDir string   `json:"runtime_control_dir"`
+	// The declared env planes and the ADR-022 credential-delivery class. The
+	// planes are carried raw: boundary.BuildEnvPlan is their one validator,
+	// and it runs in the attest leg before any lease claim (contract §2.2).
+	HarnessEnvPolicy    string `json:"harness_env_policy"`
+	ToolEnvPolicy       string `json:"tool_env_policy"`
+	RuntimeAuthDelivery string `json:"runtime_auth_delivery"`
 }
 
 type dispatchProjectionQuerier interface {
@@ -117,7 +123,8 @@ func LoadDispatchWorksourceProjection(ctx context.Context, q dispatchProjectionQ
 	rows, err := q.QueryContext(ctx, `
 		SELECT w.id, w.kind, w.status, w.sandbox_profile,
 		       p.id, p.workspace_root, p.artifact_roots, p.readonly_mounts,
-		       p.denied_paths, p.tool_home_dir, p.runtime_control_dir
+		       p.denied_paths, p.tool_home_dir, p.runtime_control_dir,
+		       p.harness_env_policy, p.tool_env_policy, p.runtime_auth_delivery
 		FROM worksources w
 		LEFT JOIN sandbox_profiles p ON p.id = w.sandbox_profile
 		ORDER BY w.id`)
@@ -131,9 +138,10 @@ func LoadDispatchWorksourceProjection(ctx context.Context, q dispatchProjectionQ
 		var associatedProfile, profileID, workspace sql.NullString
 		var artifactRaw, readonlyRaw, deniedRaw sql.NullString
 		var toolHome, runtimeControl sql.NullString
+		var harnessEnv, toolEnv, authDelivery sql.NullString
 		if err := rows.Scan(&ws.WorksourceID, &ws.Kind, &ws.Status, &associatedProfile,
 			&profileID, &workspace, &artifactRaw, &readonlyRaw, &deniedRaw,
-			&toolHome, &runtimeControl); err != nil {
+			&toolHome, &runtimeControl, &harnessEnv, &toolEnv, &authDelivery); err != nil {
 			return nil, err
 		}
 		ws.ProfilePresent = associatedProfile.Valid && profileID.Valid
@@ -144,6 +152,9 @@ func LoadDispatchWorksourceProjection(ctx context.Context, q dispatchProjectionQ
 			ws.WorkspaceRoot = workspace.String
 			ws.ToolHomeDir = toolHome.String
 			ws.RuntimeControlDir = runtimeControl.String
+			ws.HarnessEnvPolicy = harnessEnv.String
+			ws.ToolEnvPolicy = toolEnv.String
+			ws.RuntimeAuthDelivery = authDelivery.String
 			if ws.ArtifactRoots, err = normalizedDispatchPaths(artifactRaw, 64); err != nil {
 				return nil, fmt.Errorf("Worksource %q artifact_roots: %w", ws.WorksourceID, err)
 			}

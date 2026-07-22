@@ -830,6 +830,12 @@ func attestCandidateMounts(home string, cand *preparedCandidate, allowLegacyFake
 	if selected.WorksourceID == "" {
 		return empty, nil, nil
 	}
+	// The env planes refuse before the empty-plan early return below: a
+	// profile whose only content is a forbidden or malformed env policy must
+	// still block before claim (contract §2.2, ADR-022 D7).
+	if r := attestCandidateEnvPolicy(selected); r != nil {
+		return nil, r, nil
+	}
 	// A truly empty ordinary policy has nothing to authorize. A nonempty
 	// denied_paths set still constructs below even with zero requests: malformed
 	// candidate policy must refuse before claim, not hide behind an empty plan.

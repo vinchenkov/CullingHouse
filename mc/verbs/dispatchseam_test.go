@@ -137,7 +137,7 @@ func dsGoldenPrepareJSON() string {
 			`"profile_present":true,"profile_id":"default","workspace_root":"/srv/ws-test",` +
 			`"artifact_roots":["/srv/artifacts"],"readonly_mounts":["/srv/reference"],` +
 			`"denied_paths":["/srv/ws-test/private"],"tool_home_dir":"/srv/tool-home",` +
-			`"runtime_control_dir":"/srv/runtime-control"}],` +
+			`"runtime_control_dir":"/srv/runtime-control","harness_env_policy":"","tool_env_policy":"","runtime_auth_delivery":""}],` +
 			`"subject_task_setup_roots":[{"device":"16777220","inode":"424242","owner_uid":501}]}`,
 		`"candidate":{"kind":"spawn","run_id":"0123456789abcdef","role":"worker",` +
 			`"subject_id":7,"proposed_pool":[],"wave":[],"dedupe_titles":[]}}`,
