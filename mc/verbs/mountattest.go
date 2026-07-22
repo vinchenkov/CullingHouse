@@ -405,11 +405,30 @@ func realOperatorHome(uid int) (string, error) {
 	return filepath.Clean(account.HomeDir), nil
 }
 
-// resolveGatewaySecretRoots is authoritative even though the answer is empty:
-// ADR-018 D5 keeps the CA private key and injection table in resident memory,
-// and D6 streams one-use launch credentials without a credential file. No
-// disk root exists to register; inventing one would be false evidence.
-func resolveGatewaySecretRoots() []boundary.ProtectedID { return []boundary.ProtectedID{} }
+// refreshGrantStoreDir is the token service's on-disk refresh-grant store
+// under MC_HOME, captured at onboarding (ADR-022 D2). The resident reads it;
+// nothing else may.
+const refreshGrantStoreDir = "refresh-grants"
+
+// resolveGatewaySecretRoots deny-mounts the refresh-grant store. ADR-018's
+// in-memory rationale (no disk root exists) is superseded by ADR-022: the
+// real refresh grants live on disk, and this root is what keeps a
+// candidate-authored mount from binding them into a container. An absent
+// store registers nothing — there is nothing to leak, and inventing a root
+// would be false evidence.
+func resolveGatewaySecretRoots(home string) ([]boundary.ProtectedID, error) {
+	store := filepath.Join(home, refreshGrantStoreDir)
+	if _, err := os.Lstat(store); os.IsNotExist(err) {
+		return []boundary.ProtectedID{}, nil
+	} else if err != nil {
+		return nil, err
+	}
+	id, err := resolveDispatchProtected(store, false)
+	if err != nil {
+		return nil, err
+	}
+	return []boundary.ProtectedID{id}, nil
+}
 
 func captureDispatchMountHostSnapshot(home string, state PrivateDispatchMountState, subjectTaskID *int64, allowLegacyFakeWorkspace bool) (dispatchMountHostSnapshot, error) {
 	uid := os.Getuid()
@@ -424,9 +443,13 @@ func captureDispatchMountHostSnapshot(home string, state PrivateDispatchMountSta
 	if err != nil {
 		return dispatchMountHostSnapshot{}, err
 	}
+	gatewaySecrets, err := resolveGatewaySecretRoots(home)
+	if err != nil {
+		return dispatchMountHostSnapshot{}, err
+	}
 	snapshot := dispatchMountHostSnapshot{
 		OperatorHome: operatorHome, OwnerUID: uid, MCHome: mcHome,
-		HomeClassRoots: []boundary.ProtectedID{}, GatewaySecrets: resolveGatewaySecretRoots(),
+		HomeClassRoots: []boundary.ProtectedID{}, GatewaySecrets: gatewaySecrets,
 		WorksourceRoots: map[string]boundary.WorksourceRoots{},
 		GitControls:     map[string][]boundary.ProtectedID{}, MissionControlRoots: map[string][]boundary.ProtectedID{},
 		TypedRoots: map[boundary.TypedKind][]boundary.ProtectedID{},

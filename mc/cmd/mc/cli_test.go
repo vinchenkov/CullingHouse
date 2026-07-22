@@ -4257,13 +4257,18 @@ func TestDoctor(t *testing.T) {
 		for check, wantStatus := range map[string]string{
 			"mc-home": "ok", "spine": "ok", "deployment-identity": "ok",
 			"routing": "ok", "worksources": "ok", "surfaces": "ok",
-			"container-runtime": "deferred", "gateway": "deferred",
-			"runtime-auth": "deferred", "supervision": "deferred",
+			"container-runtime": "deferred",
+			"runtime-auth":      "deferred", "supervision": "deferred",
 		} {
 			f, present := findings[check]
 			if !present || f["status"] != wantStatus {
 				t.Fatalf("finding %q = %v, want status %q", check, f, wantStatus)
 			}
+		}
+		// ADR-022 retired the gateway finding outright; a deferred row here
+		// would resurrect a control that no longer exists.
+		if f, present := findings["gateway"]; present {
+			t.Fatalf("gateway finding = %v; ADR-022 retires it, not defers it", f)
 		}
 		if findings["routing"]["onboard_section"] != "routing" ||
 			findings["spine"]["onboard_section"] != "home" ||
