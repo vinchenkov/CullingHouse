@@ -6,9 +6,9 @@ REPO PATH: `~/dev/ai/homie`. Never relocate this repo into `~/Documents`,
 `~/Desktop`, or `~/Downloads`: macOS TCC can revoke an agent session's own
 filesystem access there during fan-out. Full Disk Access does not fix it.
 
-LAST GREEN SHA: S6c (review fixes, child of `ffc96ee`) — six-leg fast suite
-green (incl. the new dashboard leg) + the extended Playwright dashboard
-smoke (send/reply + end→resume→send-again). Docker lanes last ran green
+LAST GREEN SHA: `0f8fad2` — six-leg fast suite green (incl. the new
+dashboard leg) + the extended Playwright dashboard smoke (send/reply +
+end→resume→send-again). Docker lanes last ran green
 at `c8f37e9`-era HEAD (full `docker_boundary` 26 subtests, full `docker_e2e`
 10 tests incl. both credential legs) and are untouched since: commits after
 are test-only or the new `dashboard/` package. Production image `mc-prod` at
