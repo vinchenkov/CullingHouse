@@ -210,23 +210,25 @@ these are the constraints a Phase 4+ change must not break.
   canonical landing row derived; use the assignment's frozen `target_ref` and
   refuse divergence. Details are in the Phase 3 ledger.
 
-NEXT: Homie runtime S4 — the Docker E2E send->wake->reply. S1-S3 DONE + green:
-- S1 (82381d9): schema v13 homie_idle_timeout_s; 3 fence verbs (launch-bind/
-  runner-started/exit); selectHomieWake + loadHomieSchedRows + homieWakeRound
-  wired into dispatchseam.go prepare (fires when Decide() commits nothing).
-- S2 (19aadf6, 23b078b): resident homie-wake/homie-stop effectors — tier:"homie"
-  run.json (no lease/heartbeat), --rm mc-tier=homie container, operator-read-
-  scope RO workspace mount, launch-bind CAS the 64-hex id BEFORE start,
-  republish run.json with container_id so the runner can report runner-started.
-- S3 (6bf3bd5): runner/homie-runner — runner-started (fenced->exit) then
-  claim->harness turn->reply loop, idle-out after maxIdlePolls; fake adapter,
-  seams injected for the fast suite.
-S4 work: add homie-runner to the e2e image (Dockerfile/build.sh), give the
-resident e2e config homieCmd + a homie behavior fixture, then a docker_e2e test:
-seed/start a homie session, `mc homie send`, run a dispatch tick (wakes the
-container), assert the reply lands via `mc homie history`/outbox. Reuse the
-existing docker_e2e harness. Then S5 delivery loop + native/rows resume (needs a
-new homie register-session verb + trace filename), S6 dashboard (ADR)+Playwright.
+NEXT: Homie runtime S5 — outbox delivery loop + native/rows resume. S1-S4 DONE +
+green, and the FULL loop is proven by a real Docker E2E:
+- S1 (82381d9): schema v13 homie_idle_timeout_s; 3 fence verbs; selectHomieWake
+  + loadHomieSchedRows + homieWakeRound.
+- S2 (19aadf6, 23b078b): resident homie-wake/homie-stop effectors (tier:"homie"
+  run.json, --rm container, operator-read-scope RO workspace, launch-bind CAS
+  before start, republish run.json with container_id).
+- S3 (6bf3bd5, 978c2bb): runner/homie-runner claim->turn->reply loop, idle-out.
+- S4 (dispatchseam preemption fix + e2e): the Homie wake PREEMPTS a retained
+  pipeline spawn candidate (ADR-016 D3 branch 7) — the KindIdle-only gate
+  starved it. TestHomieConversationDockerBoundary PASS (~6s); walking-skeleton
+  pipeline e2e still green.
+S5 work: (a) the outbox delivery loop — `mc homie reply` fans homie_reply rows
+into `outbox`; build a resident/host delivery sweep that drains outbox to the
+bound surface (dashboard first) + acks. (b) native/rows RESUME — needs a NEW
+homie register-session verb (set native_session_ref + trace_filename, like
+`mc run register-session`) so the runner registers its native locator; then the
+wake selector's resume-owed path (already emits mode=native/rows) relaunches.
+Then S6 dashboard (ADR) + Playwright.
 DEFERRED: dispatch branch-5 container reconciliation + branch-7 unstarted-launch
 recovery (need resident container inventory); homie credential projection (fake
 route is token-free).

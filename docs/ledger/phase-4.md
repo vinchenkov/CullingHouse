@@ -338,3 +338,32 @@ NEXT: S4 Docker E2E send->wake->reply (add homie-runner to the e2e image, wire
 resident homieCmd + a homie behavior fixture, tick-driven reply assertion).
 S5 delivery + native/rows resume (needs a homie register-session verb). S6
 dashboard (ADR) + Playwright.
+
+## Homie runtime S4 — Docker E2E green + the branch-7 preemption fix
+
+The send->wake->reply loop is proven end to end
+(TestHomieConversationDockerBoundary, ~6s): `mc homie start` + `mc homie send`,
+a tick wakes and binds a tier:"homie" container, the in-container homie-runner
+reports runner-started, claims the pending turn, runs the fake homie behavior,
+and posts "homie ack" — asserted via `mc homie history` with the pipeline lease
+free throughout.
+
+The fix that made it work: the S1 wiring gated the wake selector on KindIdle
+only, but a fresh/liveness spine retains a strategist-propose spawn candidate
+(KindSpawn) almost every tick, so the Homie never got a turn (the first e2e run
+timed out with only idle/connect ticks). ADR-016 D3 branch 7 is explicit — an
+eligible Homie wake wins over a merely-RETAINED pipeline spawn candidate
+(re-decided next tick, "at most one unnecessary pipeline turn") and over the
+idle result, but never a lock-domain reap/reenter/landing (branches 1-3). The
+gate now runs homieWakeRound when the pipeline action is KindIdle OR KindSpawn
+and returns the Homie final when eligible; the discarded candidate was only
+prepared (no lease, no runid persisted), so preemption is clean. A dispatch-
+level integration test (TestDispatchWakesHomieOverPipelineCandidate) locks it
+in. Walking-skeleton pipeline e2e regression-checked green.
+
+E2E wiring: e2e resident config gained homieCmd + a homie.json behavior; the
+homie-runner source mounts RO like the agent-runner (no image rebuild).
+
+NEXT: S5 outbox delivery loop + native/rows resume (needs a new homie
+register-session verb for native_session_ref/trace_filename). S6 dashboard
+(ADR) + Playwright.
