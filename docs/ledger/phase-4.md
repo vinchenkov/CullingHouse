@@ -458,3 +458,24 @@ record the shipped behavior.
 
 NEXT: remaining authored deliverables — frozen role directives + brief
 templates (spec §9.2, Inv. 20), then install.sh + /onboard (spec §17).
+
+## 2026-07-22 — authored deliverable: frozen role directives finalized (§9.2, Inv. 20)
+
+Recon showed the plumbing (brief.go carrier, directives.go go:embed, delivery
+resident→run.json→runner stdin) fully built; the gap was CONTENT. An inline
+audit of the nine directive files against spec §9.2 found none named the
+four-pattern menu, none carried the escape valve, no claude-sdk directive
+used the exact trigger term "dynamic workflow", no codex directive
+instructed named-pattern/bounded-rounds, and the Verifier lacked the
+criterion-driven N/A gate rule (spec §7). All fixed, additively — the four
+test-guarded phrases ("Orchestrate by default.", "read-only", "depth-1",
+"exactly one") are untouched. New TestDirectivesEncodeTheSelfOrchestrationContract
+pins the contract with whitespace-collapsed matching (directives are wrapped
+prose); the coverage test gained the missing editor(plan-review) row.
+Homie deliberately has no frozen directive (outside the leased pipeline;
+its per-session freeze is the verb allowlist, spec:664). The brief-template
+half of the deliverable was already complete (mc.spawn-brief.v1 in brief.go,
+per-role payloads asserted in dispatchverb_test.go).
+
+NEXT: verify ADR-001 satisfies the §18 role-side verbs ADR deliverable
+(likely yes — record the conclusion), then install.sh + /onboard (§17).

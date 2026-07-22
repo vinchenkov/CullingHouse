@@ -6,9 +6,9 @@ REPO PATH: `~/dev/ai/homie`. Never relocate this repo into `~/Documents`,
 `~/Desktop`, or `~/Downloads`: macOS TCC can revoke an agent session's own
 filesystem access there during fan-out. Full Disk Access does not fix it.
 
-LAST GREEN SHA: `0f8fad2` — six-leg fast suite green (incl. the new
-dashboard leg) + the extended Playwright dashboard smoke (send/reply +
-end→resume→send-again). Docker lanes last ran green
+LAST GREEN SHA: the directives commit (child of `4bc6977`) — six-leg fast
+suite green; the extended Playwright dashboard smoke (send/reply +
+end→resume→send-again) green at `0f8fad2` and untouched since. Docker lanes last ran green
 at `c8f37e9`-era HEAD (full `docker_boundary` 26 subtests, full `docker_e2e`
 10 tests incl. both credential legs) and are untouched since: commits after
 are test-only or the new `dashboard/` package. Production image `mc-prod` at
@@ -225,6 +225,8 @@ launch recovery (need resident container inventory); homie credential projection
 (fake route is token-free); dashboard LaunchAgent generation (install/onboard);
 the four non-Console tabs (each with its subsystem).
 
-NEXT: remaining authored deliverables — frozen role directives + brief
-templates (spec §9.2, Inv. 20), then install.sh + /onboard (spec §17). The
-S6 adversarial review is DONE (6 findings fixed, ledger 2026-07-22 S6c).
+NEXT: authored deliverables continued — the frozen role directives + brief
+templates are DONE (§9.2 contract pinned by
+TestDirectivesEncodeTheSelfOrchestrationContract; ledger 2026-07-22).
+Verify ADR-001 satisfies the §18 role-side verbs ADR deliverable (record
+the conclusion in the ledger), then build install.sh + /onboard (§17).
