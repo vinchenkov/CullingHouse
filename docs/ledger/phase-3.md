@@ -5073,3 +5073,30 @@ refuses env.invalid/env.forbidden BEFORE the pipeline lease claim, the effect
 carries validated entries, and the SENTINEL walk + docker-inspect absence
 proof lands in the Docker lane. Then §8 item 2 (credential-projection Docker
 acceptance; live legs may need operator credentials) and the final §8 sweep.
+
+## 2026-07-22 — §8 item 3: forbidden-env planes refuse before claim
+
+Commit `4d9e384`. `LoadDispatchWorksourceProjection` carries
+`harness_env_policy`/`tool_env_policy`/`runtime_auth_delivery`; the attest leg
+validates both planes via `boundary.BuildEnvPlan` ahead of the empty-plan
+early return (`mc/verbs/envattest.go`, hooked in `attestCandidateMounts`).
+env.forbidden/env.invalid ride the existing ClassCandidate refusal route to
+`task_blocked` with `confinement:env.forbidden` and no value leak. Learned in
+review-by-test: the env codes fix their own class, so the Refusal must carry
+NO authority dimension (the router refuses a populated one); and both
+exact-budget calibrations marshal the fixture struct, so they must set the
+v12 `projection` default or undercount by 10 bytes. Frame golden updated in
+lockstep (one site). Evidence: mc leg green, all tag vets, docker_e2e
+regression green (`ok mc/e2e 33s`) on the widened frame at `4d9e384`.
+SENTINEL walk, tool-secret survival, refresh-token fence, and malformed→
+env.invalid are pinned in `envattest_test.go`. Still deliberately deferred:
+carrying the VALIDATED entries into the container env (belongs to the
+projector/main.ts wiring with the §3 Credential-projection Docker legs), the
+operator guard-extension config surface, and binding-catalog
+ProviderCredentialKeys/DeclaredStaticKey sourcing.
+
+NEXT: §8 item 2 — the credential-projection Docker acceptance's BUILDABLE
+legs with synthetic mints (projector wiring in resident main.ts over a
+synthetic grant store; container proof of no-refresh-material + fail-closed
+stall), parking the live provider-call legs for the operator. Then the §8
+sweep and evidence record.
