@@ -317,7 +317,10 @@ func Doctor(id *RunIdentity, spine string) (any, error) {
 		status, detail := containerRuntimeFinding(spine)
 		add("container-runtime", status, detail, "container")
 	}
-	add("runtime-auth", "deferred", "per-binding runtime-auth health runs in Phase 3/5 (§11.4, §17)", "runtime-auth")
+	// Per-binding runtime-auth health is a live token-validity turn against a
+	// real subscription — Phase 5's operator-scheduled acceptance, not a
+	// Phase-3-owned deferral (§8).
+	add("runtime-auth", "deferred", "per-binding runtime-auth health runs in Phase 5 (§11.4, §17)", "runtime-auth")
 	add("supervision", "deferred", "launchd/resident supervision check runs in Phase 5 (§17)", "supervision")
 
 	ok := true
