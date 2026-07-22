@@ -1635,6 +1635,11 @@ func (f *fixture) writeBehaviors() {
 		"strategist.json": `{"steps":[
 			{"do":"exec","command":"printf '{\"proposals\":[]}' | mc strategist propose --run \"$MC_RUN_ID\" --batch -"},
 			{"do":"succeed","output":"no proposals"}]}`,
+		// Homie: a lease-free conversational turn. The fake harness reads the
+		// operator's turn on stdin and answers with this fixed reply — enough to
+		// prove the send → wake → claim → reply → outbox loop end to end.
+		"homie.json": `{"steps":[
+			{"do":"succeed","output":"homie ack"}]}`,
 	}
 	for name, body := range behaviors {
 		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o644); err != nil {
@@ -1653,6 +1658,7 @@ func (f *fixture) writeResidentConfig(repoRoot string) {
 		"configSchemaVersion": 1,
 		"image":               image,
 		"agentCmd":            []string{"bun", "/app/src/agent-runner/main.ts"},
+		"homieCmd":            []string{"bun", "/app/src/homie-runner/main.ts"},
 		"landCmd":             []string{"mc-land"},
 		"behaviorsDir":        filepath.Join(f.base, "behaviors"),
 		"runnerSrcDir":        filepath.Join(repoRoot, "runner"),
@@ -1665,6 +1671,7 @@ func (f *fixture) writeResidentConfig(repoRoot string) {
 			"verifier":            "/mc/behaviors/verifier.json",
 			"packager":            "/mc/behaviors/packager.json",
 			"strategist(propose)": "/mc/behaviors/strategist.json",
+			"homie":               "/mc/behaviors/homie.json",
 		},
 	}
 	b, err := json.MarshalIndent(cfg, "", "  ")
