@@ -95,57 +95,28 @@ the approve landing fence to assignment-armed tasks; v12 retires
 _(The parked §3 gateway/forbidden-env scope decision is RESOLVED — see
 "Credential design" below. Nothing operator-only is parked here now.)_
 
-## Current work: sealed landing
+## Sealed landing (COMPLETE host-side; Docker evidence pending)
 
-The lane is LIVE as of `d91e388`: an approved, assignment-backed row is
-selected by `nextLanding`, routed through prepare/attest/commit, and returns a
-land effect carrying the landing carrier. All five fast-lane legs are green.
+LIVE since `d91e388`: `nextLanding` selects an approved assignment-backed row,
+routes it through prepare/attest/commit on BOTH paths, and the sealed E2E
+merges `packaged -> approve -> merge -> archived` with a real `--no-ff` merge.
+Design/activation narrative: phase-3 ledger (2026-07-20/21 entries); six
+delegated decisions in `IMPLEMENTATION-NOTES.md` (2026-07-21). The §2 Docker
+acceptance lane below is what turns the host-side proof into evidence.
 
-It has never run a real container. Everything proved so far is host-side and
-fake-free only in the Go/TS sense; the Docker acceptance lane in §2 below is
-what turns that into evidence.
+Constraints for anyone touching the seam:
 
-The self-abort gate is ACTION identity and it has three parts: `MERGE_HEAD` is
-the reviewed SHA, `MERGE_MSG` is a message this landing WROTE (our subject, and
-the trailer as a line at column 0), and the target is still at the frozen
-preimage. Do not loosen any of the three. Stage (7) publishes the reviewed
-commit as `refs/heads/mc/task-<id>`, so an operator can produce that same
-`MERGE_HEAD`; and `git merge --log` can splice an agent-authored subject into
-their MERGE_MSG, so a substring match on the trailer is forgeable. Details:
-`IMPLEMENTATION-NOTES.md` (2026-07-20 finding, and the review disposition).
-
-### 1. Activate the sealed lane
-
-Build the producers FIRST — they stay inert on their own, because nothing
-reaches them until the selector flips. Only the last step must be atomic.
-
-1. [x] The landing id (`landingid.go`) and the attest-side carrier producer
-   `captureLandingPlan` (`landingcapture.go`). Both green and inert.
-2. [x] Resident `runSealedLanding` and the `MountPlan.landing` mirror, with the
-   ADR-019 landing-class envelope pinned by test. Green and inert; it has no
-   effect arm, so step 3 changes routing alone. The carrier grew
-   `ApprovedRunID` for ADR-016:846's label.
-3. [x] The landing routes THROUGH prepare/attest/commit, on BOTH paths, and
-   the lane MERGES. The Darwin private frame carries a landing candidate
-   (`PrivateDispatchLandingCandidate`), and the sealed E2E walks
-   `packaged -> approve -> merge -> archived` with a real `--no-ff` merge into
-   the operator's repository. Ledger: 2026-07-21 "the sealed landing lane
-   MERGES, on the real platform".
-   Sixteen micro-steps; the design, the divergences, and the activation are in
-   `docs/ledger/phase-3.md` (2026-07-20 "step 3 planned", 2026-07-20 cont.,
-   2026-07-21 x3). Six delegated design decisions are in
-   `IMPLEMENTATION-NOTES.md` (2026-07-21).
-
-   Shape, for anyone touching the seam: a landing is a SEPARATE lane — a third
-   variant of `preparedDispatch` (`landing *preparedLanding`), never a variant
-   of `preparedCandidate`. DO NOT merge the two. The spawn seam dereferences
-   `cand.spawn` unguarded in dozens of places, and that separation is the only
-   thing keeping them unreachable with a nil Spawn.
-
-   A landing takes no lease, opens no Run, and writes nothing to the spine at
-   dispatch time; `mc land report` still does the writes. Reversal is reverting
-   the two reachability edits (`nextLanding`'s filter and `Approve`'s sealed
-   arm), with nothing to unwind.
+- The self-abort gate is ACTION identity with three parts — `MERGE_HEAD` is
+  the reviewed SHA, `MERGE_MSG` is a message this landing WROTE (our subject +
+  trailer at column 0), and the target still at the frozen preimage. Do not
+  loosen any of the three; the operator can reproduce `MERGE_HEAD` and
+  `git merge --log` can splice an agent subject into MERGE_MSG. Details:
+  `IMPLEMENTATION-NOTES.md` (2026-07-20).
+- A landing is a SEPARATE lane — the third `preparedDispatch` variant
+  (`landing *preparedLanding`), never a `preparedCandidate`. The spawn seam
+  dereferences `cand.spawn` unguarded in dozens of places; the separation is
+  what keeps those unreachable with a nil Spawn. A landing takes no lease,
+  opens no Run, writes nothing at dispatch time; `mc land report` writes.
 
 MUST NOT RELAX: `TestNoLandingCellIsPlanAddressable` and
 `TestPlanMountsRefusesEveryLandingCell` (`landingplan_test.go:77,103`) — an
