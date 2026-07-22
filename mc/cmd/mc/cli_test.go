@@ -3615,8 +3615,12 @@ func TestCompletePhase2Terminals(t *testing.T) {
 		if correct.code != 0 {
 			t.Fatalf("assigned shared branch failed: %s", correct.stderr)
 		}
-		if got := queryStr(t, db, `SELECT status || '/' || branch FROM tasks WHERE id=?`, childID); got != "worked/mc/shared-parent" {
-			t.Fatalf("completed child = %q", got)
+		// ADR-023 D3: the child's --branch is validated against the shared
+		// branch above but NOT stored — the child stays branchless so its
+		// packet archives synchronously with no merge; only the arc row
+		// carries the shared branch and lands.
+		if got := queryStr(t, db, `SELECT status || '/' || COALESCE(branch, 'null') FROM tasks WHERE id=?`, childID); got != "worked/null" {
+			t.Fatalf("completed child = %q, want worked/null (ADR-023 D3: children stay branchless)", got)
 		}
 	})
 

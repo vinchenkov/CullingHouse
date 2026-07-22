@@ -158,7 +158,12 @@ func Complete(db *sql.DB, id *RunIdentity, a CompleteArgs) (any, error) {
 			if err := domain.AdvanceStage(ctx, q, a.Task, "worked"); err != nil {
 				return err
 			}
-			if a.Branch != "" {
+			// ADR-023 D3: only a STANDALONE task stores its branch. An
+			// initiative child validated its shared branch above but stays
+			// branchless in `tasks`, so approving its packet archives it
+			// synchronously with no merge — only the arc row carries the
+			// shared branch and lands (Inv. 25: main moves only on the arc).
+			if a.Branch != "" && !initiativeID.Valid {
 				if _, err := q.ExecContext(ctx,
 					`UPDATE tasks SET branch = ? WHERE id = ?`, a.Branch, a.Task); err != nil {
 					return err

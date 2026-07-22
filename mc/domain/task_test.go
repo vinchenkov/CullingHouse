@@ -8,6 +8,7 @@ package domain_test
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -63,6 +64,35 @@ func TestPromote(t *testing.T) {
 			return domain.Promote(ctx, q, id)
 		})
 		wantAbort(t, db, `UPDATE tasks SET status = 'seeded' WHERE id = ?`, id)
+	})
+
+	// ADR-023 D1/D2: promoting an initiative cuts its one shared branch
+	// (Inv. 25 "one branch ... cut at promotion"). Children commit into it;
+	// only this arc row carries the branch and lands (D3).
+	t.Run("initiative_promote_cuts_the_shared_branch", func(t *testing.T) {
+		db := openSpine(t)
+		id := mkTask(t, db, "initiative", "proposed")
+		mustTx(t, db, func(ctx context.Context, q domain.Q) error {
+			return domain.Promote(ctx, q, id)
+		})
+		if got := taskStr(t, db, id, "status"); got != "seeded" {
+			t.Fatalf("status = %q, want seeded", got)
+		}
+		want := fmt.Sprintf("mc/initiative-%d", id)
+		if got := taskStr(t, db, id, "branch"); got != want {
+			t.Fatalf("initiative branch = %q, want %q (ADR-023 D1/D2)", got, want)
+		}
+	})
+
+	t.Run("task_promote_sets_no_branch", func(t *testing.T) {
+		db := openSpine(t)
+		id := mkTask(t, db, "task", "proposed")
+		mustTx(t, db, func(ctx context.Context, q domain.Q) error {
+			return domain.Promote(ctx, q, id)
+		})
+		if got := taskStr(t, db, id, "branch"); got != "" && got != "<NULL>" {
+			t.Fatalf("task branch after promote = %q, want unset (only the Worker terminal branches a task)", got)
+		}
 	})
 }
 

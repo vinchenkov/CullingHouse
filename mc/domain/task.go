@@ -3,6 +3,7 @@ package domain
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"unicode/utf8"
 )
 
@@ -42,6 +43,17 @@ func Promote(ctx context.Context, q Q, taskID int64) error {
 	if r.Status != "proposed" {
 		return Errf(CodeIllegalTransition,
 			"only proposed rows promote (§6); task %d is %q", taskID, r.Status)
+	}
+	if r.Scope == "initiative" {
+		// ADR-023 D1/D2 (Inv. 25): cut the one shared branch at promotion.
+		// Every wave child commits into it; only this arc row carries the
+		// branch in `tasks` and lands (D3 keeps children branchless). The §7
+		// landing fence fires on approve, not here, so a seeded initiative
+		// carrying a branch but no verified_sha is inert until arc approval.
+		branch := fmt.Sprintf("mc/initiative-%d", taskID)
+		_, err = q.ExecContext(ctx,
+			`UPDATE tasks SET status = 'seeded', branch = ? WHERE id = ?`, branch, taskID)
+		return err
 	}
 	_, err = q.ExecContext(ctx, `UPDATE tasks SET status = 'seeded' WHERE id = ?`, taskID)
 	return err
