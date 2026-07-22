@@ -22,6 +22,9 @@ export function makeMcRunner(mcBin: string): McRunner {
   return {
     async run(argv: string[]): Promise<McResult> {
       const proc = Bun.spawn([mcBin, ...argv], {
+        // The live env, snapshotted per spawn: passthrough untouched, but
+        // visible even when set after module load (the smoke relies on it).
+        env: { ...process.env },
         stdin: "ignore",
         stdout: "pipe",
         stderr: "pipe",
