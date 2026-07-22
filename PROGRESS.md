@@ -20,10 +20,10 @@ BOTH, and only the Docker handshake lane catches the miss.
 
 The operator pushes manually; agents do not push.
 
-PHASES PASSING: Phase 0 COMPLETE; Phase 1 COMPLETE; Phase 2 COMPLETE. Phase 3
-is in progress. Completed implementation history is in
-`docs/ledger/chronology-phase-0-2.md` and `docs/ledger/phase-3.md`; do not read
-either at startup.
+PHASES PASSING: Phase 0–3 COMPLETE. Phase 4 (six E2E control-loop scenario
+families) is in progress. Completed implementation history is in
+`docs/ledger/chronology-phase-0-2.md` and `docs/ledger/phase-3.md`; the live
+phase ledger is `docs/ledger/phase-4.md`. Do not read any of them at startup.
 
 FAST SUITE:
 `./mc/check.sh && ./runner/fake-harness/check.sh && ./runner/agent-runner/check.sh && ./runner/image/check.sh && ./resident/check.sh`
@@ -64,7 +64,10 @@ the approve landing fence to assignment-armed tasks; v12 retires
 - [x] Phase 1 — substrate and walking skeleton.
 - [x] Phase 2 — dispatch, domain correctness, §18 verbs, split-brain
       convergence, initiative-wave review, and randomized properties.
-- [ ] Phase 3 — boundary conformance.
+- [x] Phase 3 — boundary conformance. COMPLETE 2026-07-22: all seven
+      phase3-contract §8 "advances only when" bullets verified green (ledger
+      2026-07-22 "§8 sweep" + this readiness check). Operator signed off on
+      advancing 2026-07-22.
   - [x] ADR-016 through ADR-021 boundary design and adversarial review.
   - [x] Mount policy, jurisdiction, identity/ACL containment, refusal
         taxonomy, prepare/attest/commit crossing, authorization carrier, and
@@ -92,26 +95,34 @@ the approve landing fence to assignment-armed tasks; v12 retires
         incl. the two credential legs and the packaged→approve→merge→archived
         walk) + five-leg fast + all tag vets, all green at HEAD. §8 mechanical
         checklist satisfied (see ledger 2026-07-22 "§8 sweep").
-  - [ ] OPERATOR SIGN-OFF to advance Phase 3 → Phase 4 (parked below): the
-        only remaining Phase 3 items are operator-owned, not mechanical.
-- [ ] Phase 4 — six E2E control-loop scenario families.
+- [ ] Phase 4 — six fake-harness E2E control-loop scenario families (real
+      containers/spine/resident, timer-driven). Scope: handoff Part 3
+      "Phase 4". Ledger: `docs/ledger/phase-4.md`.
+  - [ ] (1) Full pipeline + landing — approve/land split, landing-failure
+        variant, multi-approve-drain variant.
+  - [ ] (2) Correction rally — 3 CORRECTs → 4th ships BUDGET-SPENT.
+  - [ ] (3) Backpressure — queue cap, Refiner, saturation → idle.
+  - [ ] (4) Initiative lifecycle — charter → wave children → drain → arc
+        packet → land; block-propagation + cancel-cascade variants.
+  - [ ] (5) Fault matrix — one kill per kill-class → reap → re-select →
+        retry; interrupt, tick discipline, reboot drill, session permanence.
+  - [ ] (6) Homie loop — send → tick wake → reply → outbox/ack; resume;
+        console schedule. Plus one Playwright dashboard smoke.
 - [ ] Phase 5 — operator-scheduled real-subscription acceptance.
 - [ ] Release prep — install/onboard front door and construction-document
       disposition.
 
 ## Parked
 
-- **Phase 3 → Phase 4 advancement (operator sign-off)**: the §8 mechanical
-  checklist is green (ledger 2026-07-22 "§8 sweep"), so what remains is
-  operator-owned, not code: (1) the LIVE-PROVIDER credential legs — a real
-  Claude/Codex subscription call through a projected token; `OPERATOR-INPUTS.md`
-  has only gateway-era `CLAUDE_CRED_DIR`/`CODEX_CRED_DIR` pointers, no ADR-022
-  refresh-grant material, so the resident's `MC_HOME/refresh-grants` store must
-  be populated from a real subscription before this can run; (2) the Phase-5
-  runtime-auth health turn (same dependency); (3) the S7 sleep drill below.
-  The synthetic-mint Docker acceptance proves the projection mechanism end to
-  end without live credentials. Operator: confirm advancing to Phase 4, or
-  provide refresh-grant material to close the live legs first.
+- **Phase 5 live-provider credentials (operator-dependent, NOT a Phase 4
+  blocker)**: the ADR-022 credential mechanism is proven with synthetic mints;
+  the live legs need a real Claude/Codex subscription refresh grant in
+  `MC_HOME/refresh-grants`. `OPERATOR-INPUTS.md` has only gateway-era
+  `CLAUDE_CRED_DIR`/`CODEX_CRED_DIR` pointers. Two fields (`token_url`,
+  `client_id`) are not captured in the repo (the POC mocked the provider
+  endpoint) — closing the live legs needs those two provider constants
+  extracted + an `mc onboard runtime-auth` extractor built. This is Phase 5
+  work; Phase 4 is fake-harness and needs none of it.
 - **S7 sleep drill**: the 30-minute Mac sleep mid-lease test requires the
   operator. Instructions: `spikes/07-launchd-clock/RESULT.md`. All other S7
   sub-tests passed.
