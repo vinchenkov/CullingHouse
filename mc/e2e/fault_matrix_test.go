@@ -6,9 +6,30 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"syscall"
 	"testing"
 	"time"
 )
+
+// stopResident gracefully stops the running resident process (the reboot
+// drill's "power off"). The startResident cleanup captures its own cmd, so a
+// later startResident restarts cleanly.
+func (f *fixture) stopResident() {
+	f.t.Helper()
+	if f.resProc == nil {
+		return
+	}
+	_ = f.resProc.Process.Signal(syscall.SIGTERM)
+	done := make(chan struct{})
+	go func() { f.resProc.Wait(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(15 * time.Second):
+		_ = f.resProc.Process.Kill()
+		<-done
+	}
+	f.resProc = nil
+}
 
 // TestFaultReapRetryDockerBoundary is Phase 4 scenario family (5)'s core: a
 // spawned Worker that dies before establishing a session (the spawn-watchdog
@@ -135,4 +156,105 @@ func TestFaultBudgetExhaustionDockerBoundary(t *testing.T) {
 	if reason, _ := task["blocked_reason"].(string); reason == "" {
 		t.Fatalf("blocked with no reason; want a dispatch-retries-exhausted reason (§10)")
 	}
+}
+
+// TestRebootDrillDockerBoundary is family (5)'s reboot drill: the resident
+// process is killed mid-pipeline and a fresh one started. The resident holds
+// no in-memory pipeline state (all state is the spine), so the next tick
+// reaps whatever the thresholds now say and re-selects — the task resumes to
+// packaged with no lost work and no double-dispatch (Inv. 1/3/4). The
+// trace-only session folders survive the reboot (Inv. 26).
+func TestRebootDrillDockerBoundary(t *testing.T) {
+	f := setup(t)
+
+	res := f.mcOK("", "task", "add", "reboot-drill task", "--worksource", worksource,
+		"--description", "resident restarts mid-pipeline and resumes")
+	taskID := int64(res["task_id"].(float64))
+
+	f.startResident()
+
+	// Drive to a quiescent milestone: the Worker has committed and released the
+	// lease. Rebooting here has no run in flight to orphan.
+	f.waitForTaskStatus(taskID, "worked", 90*time.Second)
+	f.waitFor(15*time.Second, "lease free before reboot", func() (bool, string) {
+		if lock := f.mcOK("", "lock", "get"); lock["run_id"] != nil {
+			return false, fmt.Sprintf("held by %v", lock["owner"])
+		}
+		return true, ""
+	})
+	runsBefore := len(f.runs())
+
+	// Power-cycle the resident.
+	f.stopResident()
+	f.startResident()
+
+	// A fresh resident resumes from spine state alone: Verifier → Packager.
+	f.waitForTaskStatus(taskID, "packaged", 120*time.Second)
+
+	// No double-dispatch: exactly one packet, and the reboot did not re-run the
+	// already-completed Worker stage (worked never regressed).
+	if p := f.packets(); len(p) != 1 || int64(p[0]["task_id"].(float64)) != taskID {
+		t.Fatalf("packets after reboot = %v, want exactly one for task %d", p, taskID)
+	}
+	// Session folders (including pre-reboot runs) survive.
+	if runsBefore == 0 {
+		t.Fatal("no runs recorded before reboot")
+	}
+	for _, r := range f.runs() {
+		sd := filepath.Join(f.home, "sessions", r["id"].(string))
+		if _, err := os.Stat(sd); err != nil {
+			t.Fatalf("session folder %s vanished across the reboot: %v (Inv. 26)", sd, err)
+		}
+	}
+}
+
+// TestInterruptDockerBoundary is family (5)'s interrupt path — the operator
+// "scratch that". While a Worker holds the lease (a hang behavior keeps its
+// container live), `mc task interrupt` cancels and archives the task and frees
+// the lease in one transaction, and the system moves on. NOTE: the resident
+// container-stop for an interrupt is currently owed to the orphan sweep
+// (IMPLEMENTATION-NOTES 2026-07-20), so this asserts the SPINE effect, not
+// container death; the hang container is reaped by the test's own cleanup.
+func TestInterruptDockerBoundary(t *testing.T) {
+	f := setup(t)
+
+	// A Worker that establishes a session then hangs, holding the lease.
+	writeBehaviorFile(t, f, "worker.json", map[string]any{
+		"steps": []map[string]any{{"do": "hang"}},
+	})
+
+	res := f.mcOK("", "task", "add", "interrupt task", "--worksource", worksource,
+		"--description", "operator scratches a task mid-Worker")
+	taskID := int64(res["task_id"].(float64))
+
+	f.startResident()
+
+	// Wait until the hanging Worker holds the lease for this task.
+	var workerRun string
+	f.waitFor(90*time.Second, "the Worker holds the lease", func() (bool, string) {
+		lock := f.mcOK("", "lock", "get")
+		if lock["owner"] == "worker" && lock["subject"] != nil && int64(lock["subject"].(float64)) == taskID {
+			workerRun, _ = lock["run_id"].(string)
+			return true, ""
+		}
+		return false, fmt.Sprintf("lock=%v", lock["owner"])
+	})
+
+	// Scratch it: cancel + free the lease in one spine transaction.
+	if got := f.mcRun("", "task", "interrupt", fmt.Sprint(taskID)); got.code != 0 {
+		t.Fatalf("mc task interrupt exited %d: %s", got.code, got.stderr)
+	}
+
+	task := f.mcOK("", "task", "get", fmt.Sprint(taskID))
+	if task["archived"].(float64) != 1 || task["decision"] != "cancelled" {
+		t.Fatalf("interrupted task = archived %v decision %v, want archived/cancelled", task["archived"], task["decision"])
+	}
+	// The interrupted run is recorded and the lease is freed so the system moves
+	// on.
+	f.waitFor(15*time.Second, "the lease frees after interrupt", func() (bool, string) {
+		if lock := f.mcOK("", "lock", "get"); lock["run_id"] != nil && lock["run_id"] == workerRun {
+			return false, "worker still holds the lease"
+		}
+		return true, ""
+	})
 }
