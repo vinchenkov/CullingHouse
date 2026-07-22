@@ -5100,3 +5100,47 @@ legs with synthetic mints (projector wiring in resident main.ts over a
 synthetic grant store; container proof of no-refresh-material + fail-closed
 stall), parking the live provider-call legs for the operator. Then the §8
 sweep and evidence record.
+
+## 2026-07-22 — §8 item 2 (host side): the credential projector is live in main.ts
+
+Commit `edb61f8`. `resident/src/credential-projector.ts` composes token
+service + writers + broker over `MC_HOME/refresh-grants/<binding>.json`
+grants ({binding, channel claude|codex, token_url, client_id, refresh_token,
+account_id?, scope?}). Load-bearing choices: the mint POSTs to the GRANT'S
+OWN token_url — so the synthetic Docker acceptance lane is pure
+configuration (point token_url at a local authority), no fake seam; rotated
+refresh tokens are adopted in memory first and atomically persisted
+(write+rename, 0600), with a loud log when persist fails because a lost
+rotation strands the binding at restart; malformed grants refuse resident
+startup fail-closed; an absent store leaves every route token-free. The
+codex override URL rides host.docker.internal over the loopback broker.
+Resident leg 134/134 green.
+
+NEXT: §8 item 2 (container side) — the synthetic-mint docker_e2e leg: seed a
+synthetic grant store whose token_url points at a test-local authority, route
+a role to a codex/claude binding, wal
+## 2026-07-22 — §8 item 2 part 1: the credential projector is composed and wired
+
+Commit `edb61f8`. `resident/src/credential-projector.ts` composes the token
+service + both writers + the codex broker into a `CredentialProjector`;
+`main.ts` loads `MC_HOME/refresh-grants`, starts it (absent store ⇒ token-free
+routes), and passes `credentials` into TickDeps. Design facts: the mint POSTs
+to each grant's own `token_url` (configuration — a synthetic acceptance lane
+points it at a local authority, NOT a test seam); rotated refresh tokens are
+adopted in memory before the loud atomic persist (single-use rotation strands
+the binding if lost); the codex broker's container override rides
+`host.docker.internal`. 134 resident tests green (13 new: projector
+composition + grant parsing).
+
+NEXT: §8 item 2 part 2 — the Docker acceptance legs the contract §3
+Credential-projection row names, buildable with SYNTHETIC mints (a local token
+authority the grant token_url points at): (a) docker-inspect + in-container
+proof that a projected agent container carries a fresh access token, the dummy
+refresh, the required per-runtime fields, and NO real refresh material in env
+or fs; (b) the codex broker end-to-end from inside a container
+(stale→override→fresh); (c) D8 fail-closed: token authority down ⇒ the run
+stalls, nothing leaks. PARK the live-provider legs (real Claude/Codex
+subscription calls) for the operator — check OPERATOR-INPUTS.md for
+credentials first; if absent, park under PROGRESS. Then the final §8 sweep
+(no fake route in prod image [already proven], no spine/identity override) and
+the evidence record.
