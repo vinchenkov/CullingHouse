@@ -1037,3 +1037,37 @@ rules in code the sealed lane does not own.
 - Needs your decision: no. The operator authorized Phase 5; live subscription
   spend and the one-time launchd load remain separately gated by their parked
   inputs.
+
+## 2026-07-22 — Phase 5 production bootstrap uses a path-free private spine crossing
+- Where: spec §16.4 and §17; ADR-016 private same-binary composition and D7;
+  `runtime_scope_prod.go`, `onboard.go`, production image/helper lifecycle.
+- Gap: the final helper must exist before ordinary Darwin `mc` can delegate,
+  but Home initialization needs both the runtime-local spine and host-side
+  `MC_HOME`. Mounting `MC_HOME` into the long-lived helper would expose config,
+  credentials, and host paths; running existing `onboardHome` on Darwin would
+  open the spine in the wrong kernel. A second bootstrap image would create a
+  same-release drift surface.
+- Choice: the final, deployment-derived helper is also the provisional Home
+  crossing. Darwin `mc` canonicalizes and fences the real home, derives one
+  domain-separated 12-hex deployment suffix, ensures the exact production
+  image, volume `mc-spine-<suffix>`, and helper `mc-helper-<suffix>`, then sends
+  a bounded path-free `__onboard-spine` frame. The helper mounts only the named
+  spine volume at `/mc/spine`; it receives mirror/build/schema state but never
+  a host path or config byte. Linux `mc` performs meta-first initialize/migrate/
+  compare and returns the UUID; Darwin `mc` creates the home scaffold and
+  atomically publishes/repairs `deployment.uuid`, then capability-probes the
+  exact helper envelope. Home may provision this crossing as its prerequisite;
+  Container remains the section that declares image/helper health and pinning.
+- Idempotency: empty volume+absent mirror initializes; current meta+matching
+  mirror skips; current meta+absent mirror repairs the mirror; empty volume+
+  present mirror is spine loss; non-meta/non-empty, newer schema, mismatch,
+  unmanaged name collision, or failed capability probe all refuse without
+  deleting the volume or unrelated container. A stale exact managed helper is
+  replaceable because it is stateless; the volume is never auto-recreated.
+- Rejected: host SQLite/docker-copy, host bind-mounted spine, any `MC_HOME`/
+  Worksource/socket mount into the helper, fixed `mc-helper`, a second bootstrap
+  image/binary, root helper as a shortcut, or raw schema SQL in `install.sh`.
+- Spec impact: none. This is the conservative internal composition of existing
+  ADR-016 decisions and §17; no invariant or section order changes, so no new
+  ADR is warranted.
+- Needs your decision: no.

@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"mc/deployment"
 	"mc/routing"
 	"mc/substrate"
 )
@@ -338,9 +339,9 @@ func onboardPreflight() (string, string, error) {
 	if _, err := exec.LookPath("git"); err != nil {
 		return "", "", Domainf("git is required and not on PATH (§17 preflight)")
 	}
-	resolved, err := resolveThroughExistingAncestor(home)
+	resolved, err := deployment.CanonicalHome(home)
 	if err != nil {
-		return "", "", err
+		return "", "", Domainf("%v", err)
 	}
 	for dir := resolved; ; {
 		_, gitErr := os.Stat(filepath.Join(dir, ".git"))
@@ -369,35 +370,6 @@ func onboardPreflight() (string, string, error) {
 		dir = parent
 	}
 	return "ok", fmt.Sprintf("%s/%s; MC_HOME %s (resolved %s); container-runtime probe deferred to Phase 3", runtime.GOOS, runtime.GOARCH, home, resolved), nil
-}
-
-// resolveThroughExistingAncestor resolves symlinks even when the MC_HOME
-// leaf does not exist yet: resolve the nearest existing ancestor, then add
-// the missing suffix back. This closes the lexical-outside/physical-inside
-// repository-fence bypass.
-func resolveThroughExistingAncestor(path string) (string, error) {
-	cur := path
-	suffix := []string{}
-	for {
-		if _, err := os.Lstat(cur); err == nil {
-			resolved, err := filepath.EvalSymlinks(cur)
-			if err != nil {
-				return "", Domainf("resolve MC_HOME %q: %v", path, err)
-			}
-			for i := len(suffix) - 1; i >= 0; i-- {
-				resolved = filepath.Join(resolved, suffix[i])
-			}
-			return filepath.Clean(resolved), nil
-		} else if !os.IsNotExist(err) {
-			return "", Domainf("inspect MC_HOME %q: %v", path, err)
-		}
-		parent := filepath.Dir(cur)
-		if parent == cur {
-			return "", Domainf("resolve MC_HOME %q: no existing ancestor", path)
-		}
-		suffix = append(suffix, filepath.Base(cur))
-		cur = parent
-	}
 }
 
 // onboardHome scaffolds the MC_HOME tree and provisions the spine under the
