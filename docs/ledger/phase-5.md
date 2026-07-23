@@ -476,3 +476,46 @@ and embeds `28d61022690cba057046ce666e66494b26e81024`.
 
 NEXT: implement ADR-023's production real-harness initiative-child shared-
 worktree mount rows, then continue the remaining Phase-5 runtime obligations.
+
+## 2026-07-23 — ADR-025 accepted; initiative mount groundwork (`fc72175`)
+
+Took over from codex's last green (`28d6102`, docs at `ff4371e`). A scoped
+cross-harness takeover review of `d0ef4bb..b95df99` on the mount surfaces
+(mountattest/dispatchseam/envattest/effects) returned no blockers: the
+ADR-017 D6 initiative-child refusal is untouched and still fires under real
+routing, env attestation was tightened, and the legacy land lane is intact.
+Two concerns (seccomp=unconfined vs stale ADR-019 text; duplicated production
+route table) were already logged deviations. Recorded at `75ded23`.
+
+Designed the owed production real-harness initiative mount representation as
+ADR-025, adversarially verified through three lenses (git-mechanics,
+security/jurisdiction, state-machine) before acceptance. Every needs-changes
+finding is folded in: containerized verified import instead of host git,
+promotion-observable cut, seal-free child completion with suppressed seal
+emission, host-unresolvable-but-container-correct pointer bytes, a
+producer-absence/cleanliness fence, resident-owned teardown, and a six-slice
+sequence (S1–S6) that keeps every existing refusal fail-closed until S6 lands.
+Three deviations recorded in IMPLEMENTATION-NOTES (2026-07-23). Accepted at
+`c516da2`.
+
+Implementation began bottom-up, each micro-step green and inert:
+- `a3c3f70` — `.mc-worktrees` joins `.mission-control`/`.git` as a reserved
+  base-tree root component (ADR-025 D10), so no child can commit a path that
+  collides with the live shared worktree at merge time.
+- `e33fdfc` — the D6 worktree-name grammar generalized in place to the closed
+  two-alternative `mc-task-<id> | mc-initiative-<id>` (distinct prefixes,
+  collision-free); ADR-017 amended in place with the guard's `adr017Rows` keys
+  and every duplicated grammar pin in lockstep. The `<mc-worktree-name>`
+  amendment paragraph is placed AFTER both destination tables so the guard's
+  table parser is not blinded.
+- `fc72175` — `initiativePlanRows` derives the child table from `taskPlanRows`
+  (so they cannot drift) with the shared worktree as the one row family whose
+  host base is not the bound `/workspace` root; `resolveInitiativeSkeleton`
+  resolves the two-base skeleton under exactly the standalone row discipline.
+  Nothing yet calls it — the `mountattest.go:238-249` refusal still stands.
+
+NEXT: wire `resolveInitiativeSkeleton` into `deriveDispatchMountRequests`
+behind an initiative-child arm (ADR-025 D2/D5) with the snapshot-capture
+`SubjectInitiativeID` gate and seal-emission suppression, replacing the S2
+refusal for a receipt-vouched child Worker while keeping every other
+combination refused.

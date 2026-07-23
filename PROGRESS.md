@@ -6,10 +6,14 @@ REPO PATH: `~/dev/ai/homie`. Never relocate this repo into `~/Documents`,
 `~/Desktop`, or `~/Downloads`: macOS TCC can revoke an agent session's own
 filesystem access there during fan-out. Full Disk Access does not fix it.
 
-LAST GREEN SHA: `28d6102` — production reset snapshots first, requires unloaded
-supervision, removes only the exact helper by immutable ID and derived local
-volume, and replays from a matching durable backup. Full mc checks are green;
-launchd was not loaded.
+LAST GREEN SHA: `fc72175` — ADR-025 accepted (production initiative mounts,
+adversarially verified through three lenses); groundwork landed inert: the
+`.mc-worktrees` reserved component, the closed two-family worktree-name grammar
+(D6 amended in place), and `initiativePlanRows`/`resolveInitiativeSkeleton` (the
+two-base child table, derived from `taskPlanRows`). Nothing calls the resolver
+yet — the `mountattest.go:238-249` initiative-child refusal still stands, so the
+change is fail-closed. Full `mc/check.sh` green; launchd not loaded. Prior
+codex green was `28d6102` (production reset lifecycle).
 Full Docker lanes (26 `docker_boundary`; 10 `docker_e2e`) were green at
 `c8f37e9`-era HEAD. Extended Playwright smoke and install.sh dev walk were last
 green at `d0ef4bb`; real onboarding crossing at `bf5981d`. Production image
@@ -141,6 +145,12 @@ the approve landing fence to assignment-armed tasks; v12 retires
   - [x] Production reset is confirmation-gated, requires supervision unloaded,
         commits a host backup before exact helper/volume teardown, and has an
         identity-bound already-reset replay (`28d6102`).
+  - [~] ADR-025 accepted (production initiative mounts/cut/arc landing, the
+        owed ADR-017 D6 / ADR-023 D6 follow-on). Groundwork inert at `fc72175`:
+        `.mc-worktrees` reserved (D10), two-family worktree grammar (D2), and
+        the two-base child skeleton row set + resolver. Slices S1 (cut) and
+        S2–S6 (mount arms, roles, arc verify, landing import) still owed; every
+        existing refusal stays fail-closed until S6.
 - [ ] Release prep — install/onboard front door and construction-document
       disposition.
 
@@ -206,6 +216,10 @@ native resume, container reconciliation, Homie credential projection,
 dashboard LaunchAgent generation, and the four non-Console tabs. Details and
 commit map are in the closed Phase 4 ledger.
 
-NEXT: implement ADR-023's production real-harness initiative-child shared-
-worktree mount rows and acceptance tests; then continue the remaining Phase-5
-Homie/dashboard/smoke obligations.
+NEXT: continue ADR-025 slice S2 — wire `resolveInitiativeSkeleton` into
+`deriveDispatchMountRequests` behind a receipt-vouched initiative-child Worker
+arm (gate `captureDispatchMountHostSnapshot` on `SubjectInitiativeID` before
+the task arm; suppress CompletionSeal/AcceptedSealRebuild emission for
+initiative subjects), replacing the `mountattest.go:238-249` refusal for that
+one case only. S1 (`__setup-initiative` cut + receipts) and S3–S6 still owed;
+see `docs/adr/025-initiative-production-mounts.md` §Slices.
