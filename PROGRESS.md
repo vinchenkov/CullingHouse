@@ -6,16 +6,17 @@ REPO PATH: `~/dev/ai/homie`. Never relocate this repo into `~/Documents`,
 `~/Desktop`, or `~/Downloads`: macOS TCC can revoke an agent session's own
 filesystem access there during fan-out. Full Disk Access does not fix it.
 
-LAST GREEN SHA: `291aca8` — the production whole wizard composes every completed
-section, reuses structurally healthy grants without token spend, and stops at
-the explicit activation gate. Full mc checks are green; launchd was not loaded.
+LAST GREEN SHA: `072061f` — production backup streams a consistent helper
+snapshot into closed host publication, Home restores the newest matching copy
+only into a lost slot, and the resident snapshots before dispatch. The fixed
+six-leg suite is green; launchd was not loaded.
 Full `docker_boundary` + full `docker_e2e` (-count=1, `ok mc/e2e 169s`), the
 extended Playwright dashboard smoke, and the install.sh dev walk were last
 green at `d0ef4bb`. The full Docker lanes last ran green at `c8f37e9`-era HEAD
 (26 `docker_boundary` subtests; 10 `docker_e2e` tests including both credential
 legs). The real onboarding crossing was green at `bf5981d`. Production image
-`mc-prod` rebuilt for `291aca8`:
-`sha256:bffdaa99d6d29690049fede4fb6dec27eaed7ff37033055a9283bec9ab827260`,
+`mc-prod` rebuilt for `072061f`:
+`sha256:9f93779d7285cc99796b51dfe635c1f409dd7afc94736a837b56cdfad7079d5c`,
 arm64/linux, native. LESSON pinned by `ada715d`: the resident's
 `SPINE_SCHEMA_VERSION` (resident-control.ts:12) mirrors
 `substrate.CurrentSchemaVersion` in lockstep — every schema bump must touch
@@ -155,6 +156,10 @@ the approve landing fence to assignment-armed tasks; v12 retires
   - [x] The production whole wizard composes all deterministic sections,
         preserves every dual-input flag, spends no token on healthy replay,
         and never implicitly activates launchd (`291aca8`).
+  - [x] Production backup/restore crosses path-free framed snapshots with
+        digest/schema/deployment fences, atomic owner-only host publication,
+        retention, lost-slot-only restore, and resident startup/due chores
+        (`072061f`).
 - [ ] Release prep — install/onboard front door and construction-document
       disposition.
 
@@ -234,6 +239,6 @@ native resume, container reconciliation, Homie credential projection,
 dashboard LaunchAgent generation, and the four non-Console tabs. Details and
 commit map are in the closed Phase 4 ledger.
 
-NEXT: implement and verify the production backup/restore crossing, including
-closed snapshot contents, atomic restore, identity checks, and failure recovery;
-then continue the remaining Phase-5 real-runtime obligations.
+NEXT: complete production reset/runtime-volume lifecycle over the new backup
+crossing without loading launchd; then implement the remaining Phase-5
+real-runtime obligations, beginning with ADR-023 production initiative mounts.

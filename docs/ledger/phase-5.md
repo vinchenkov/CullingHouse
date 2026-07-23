@@ -422,3 +422,34 @@ its helper contains exact release identity
 
 NEXT: implement and verify production backup/restore before continuing the
 remaining Phase-5 real-runtime obligations.
+
+## 2026-07-22 — production backup/restore crossing (`072061f`)
+
+`mc backup` now keeps filesystem authority on Darwin and spine authority in
+the exact warm helper. The helper creates a `VACUUM INTO` copy on its local
+volume and emits a bounded identity header plus raw snapshot bytes; the host
+publishes only after exact length/digest, SQLite integrity, schema, deployment
+UUID, owner, mode, and directory checks pass. Publication is mode 0600,
+file/directory-synced, atomic, and prunes only recognized snapshot names to the
+48-copy default. No host path enters the helper.
+
+`mc onboard home --restore-latest` is the dual-input recovery arm. It requires
+both native jobs unloaded, chooses the newest owner-only single-link matching
+snapshot without corrupt-newest fallback, streams it into a same-volume stage,
+and atomically fills only a missing/empty spine slot. Foreign, corrupt, newer,
+truncated, trailing, widened, and symlinked state refuses without target or
+temp residue; healthy replay verifies the exact stream without overwriting the
+spine. The ordinary Home pass then performs any supported migration.
+
+The resident now requires a successful startup snapshot before its first
+dispatch and runs a serialized hourly due-backup chore. A backup failure skips
+dispatch and retries at the next tick. Tests pin ordering, replay, sentinel
+record preservation, retention, all failure classes above, private fixed-scope
+CLI round-trip, and front-door flag preservation. The complete fixed six-leg
+suite is green. No launchd job was loaded and no live deployment was changed.
+The arm64 production image rebuilt from `072061f` is
+`sha256:9f93779d7285cc99796b51dfe635c1f409dd7afc94736a837b56cdfad7079d5c`
+and embeds `072061f64a51e0b0f9f57a8535c261800625b0ff`.
+
+NEXT: finish production reset/runtime-volume lifecycle, then the remaining
+Phase-5 real-runtime obligations.

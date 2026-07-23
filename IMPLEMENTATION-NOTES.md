@@ -1521,3 +1521,26 @@ rules in code the sealed lane does not own.
 - Spec impact: conservative internal mechanism. It preserves the live gates on
   new or rotated grants while making idempotent whole-wizard replay token-free.
 - Needs your decision: no.
+
+## 2026-07-22 — Backup snapshots stream across the helper boundary
+- Where: Phase 5 spine lifecycle; spec §16.4.
+- Gap: the spec text describes `VACUUM INTO` directly onto a helper bind of
+  `MC_HOME/backups`, but the production helper's established security shape
+  has exactly one data mount: the runtime-local spine volume. Adding a mutable
+  host bind would give the persistent helper pathname authority over a host
+  directory and complicate its exact-mount proof.
+- Choice: create the consistent temporary snapshot on the helper's local
+  volume, then stream a bounded identity header and the raw bytes over the
+  existing `docker exec` pipe. Darwin alone validates and atomically publishes
+  the copy under its canonical owner-only backup root. Restore reverses the
+  same framed byte crossing into a same-volume temporary file; neither frame
+  carries a host path.
+- Evidence: tests cover exact length/digest and build/schema/deployment
+  identity, SQLite integrity, owner/mode/link/path constraints, atomic
+  publication, retention, lost-slot restore, healthy replay, and complete
+  cleanup for malformed streams. The fixed six-leg suite passes; the rebuilt
+  production image embeds the implementing commit.
+- Spec impact: implementation deviation from the described bind-mounted copy,
+  with identical snapshot semantics and a narrower helper authority surface.
+  Invariants 1–26 and the fail-closed posture are preserved.
+- Needs your decision: no.
