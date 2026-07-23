@@ -42,4 +42,9 @@ mise exec -- env GOOS=linux GOARCH=arm64 go vet ./...
 # one small package-local test; the rest of the suite keeps its cache.
 mise exec -- go test -count=1 ./boundary/ -run 'TestTypedKindCoversEveryADR017Row|TestNoOrphanTypedKind|TestNoPhantomTableRows'
 
+# install.sh is the production front door. Its Level-0 failure boundary is a
+# shell contract, so keep the Docker-free probe in this fast lane rather than
+# hiding it behind the phase-completion acceptance walk.
+sh ../install_test.sh
+
 exec mise exec -- go test ./...

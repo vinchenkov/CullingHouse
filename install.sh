@@ -11,8 +11,8 @@
 #
 # Modes:
 #   ./install.sh                 production: build mc, hand off through the
-#                                warm helper (deferred until the container
-#                                section provisions it — Phase 5)
+#                                already-provisioned warm helper; a missing
+#                                helper is a fail-closed incomplete install
 #   ./install.sh --dev ...       development tier: direct-spine build under a
 #                                scratch MC_HOME (never ~/.mission-control)
 #
@@ -85,16 +85,37 @@ ask() {
 
 say "== prerequisites"
 command -v git >/dev/null 2>&1 || fail "git is required and was not found on PATH"
+OS=$(uname -s)
+case "$OS" in
+  Darwin|Linux) ;;
+  *) fail "unsupported operating system $OS (expected macOS/launchd or Linux/systemd)" ;;
+esac
+command -v docker >/dev/null 2>&1 || \
+  fail "docker CLI is required — install Docker Desktop, then re-run the front door"
+if ! docker info >/dev/null 2>&1; then
+  if [ "$OS" = Darwin ] && command -v open >/dev/null 2>&1; then
+    say "   docker daemon is not responding — starting Docker Desktop"
+    open -a Docker >/dev/null 2>&1 || true
+    docker_ready=0
+    attempt=0
+    while [ "$attempt" -lt 60 ]; do
+      if docker info >/dev/null 2>&1; then
+        docker_ready=1
+        break
+      fi
+      sleep 1
+      attempt=$((attempt + 1))
+    done
+    [ "$docker_ready" -eq 1 ] || \
+      fail "docker daemon is not responding after 60s — check Docker Desktop health, then re-run the front door"
+  else
+    fail "docker daemon is not responding — start the container runtime, then re-run the front door"
+  fi
+fi
 command -v mise >/dev/null 2>&1 || fail "mise is required (https://mise.jdx.dev) — it pins the toolchain this repo builds with"
 ( cd "$REPO_DIR" && mise install >/dev/null 2>&1 ) || true
 ( cd "$REPO_DIR" && mise exec -- go version >/dev/null 2>&1 ) || fail "the pinned Go toolchain is unavailable (try: mise install)"
-if ! command -v docker >/dev/null 2>&1; then
-  say "   docker CLI not found — install Docker Desktop before the container section runs"
-elif ! docker info >/dev/null 2>&1; then
-  say "   docker daemon is not responding — start Docker Desktop before the container section runs"
-else
-  say "   git, toolchain, container runtime: ok"
-fi
+say "   git, toolchain, container runtime: ok"
 
 # --- 2. Build / install mc --------------------------------------------------
 
@@ -117,12 +138,7 @@ say "   installed $BIN_DIR/mc"
 
 if [ "$DEV" -eq 0 ]; then
   if ! docker inspect mc-helper >/dev/null 2>&1; then
-    say "== hand-off: DEFERRED"
-    say "   the production wizard runs through the warm helper container,"
-    say "   which the container onboarding section provisions (Phase 5)."
-    say "   Shepherding agent: provision it, then re-run this script, or run"
-    say "   the wizard sections directly once the helper answers."
-    exit 0
+    fail "warm helper is not provisioned — production onboarding is incomplete; run the container bootstrap repair, then re-run the front door"
   fi
   say "== hand-off: mc onboard (through the warm helper)"
   exec "$BIN_DIR/mc" onboard

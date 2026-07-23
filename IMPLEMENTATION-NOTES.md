@@ -1012,3 +1012,28 @@ rules in code the sealed lane does not own.
 - Spec impact: none yet; the §17 section order is unchanged. The deferral
   message is truthful per §17's fail-closed/verified-by-probe posture.
 - Needs your decision: no.
+
+## 2026-07-22 — Phase 5 cross-harness review: production onboarding tail is not a usable front door
+- Where: `install.sh`, `.claude/skills/onboard/SKILL.md`, `mc/verbs/onboard.go`;
+  implementation-handoff Phase 5; spec §17.
+- Gap: the required adversarial review of `4bc6977..HEAD` found three blockers
+  in the Phase 4-authored front door: production bootstrap is cyclic
+  (`install.sh` needs `mc-helper`, whose provisioning belongs to the wizard it
+  cannot enter); Docker preflight warns and continues instead of failing
+  closed; and production parses but drops the wizard's dual-input answers
+  while `/onboard` incorrectly labels operator-owned auth/routing/surface
+  decisions deterministic. A fresh-clone run can therefore exit 0 without a
+  deployment and cannot distinguish success from deferral.
+- Choice: treat all three as Phase 5 defects, not accepted deferrals. Repair
+  test-first in dependency order: fail closed on missing runtime/helper first;
+  add a bootstrap-safe helper provisioning and capability probe without ever
+  opening the spine on the host; then define and forward the complete
+  interactive/answer-file input contract. Missing operator answers remain an
+  explicit stop, never an implicit default. This preserves Inv. 24 and the
+  §17 section order; no ADR is needed unless implementation evidence shows
+  helper provisioning requires moving a section or changing an invariant.
+- Spec impact: none. The existing code failed the already-binding §17 front
+  door, fail-closed, verified-by-probe, and dual-input requirements.
+- Needs your decision: no. The operator authorized Phase 5; live subscription
+  spend and the one-time launchd load remain separately gated by their parked
+  inputs.
