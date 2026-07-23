@@ -1624,3 +1624,25 @@ rules in code the sealed lane does not own.
   ADR-017:425-429 is narrowed for initiative rows; ADR-023 D5's production
   sentence is amended. Invariants 1, 10, 11, 22, 25 are preserved.
 - Needs your decision: no.
+
+## 2026-07-23 — the real repo's info/exclude is not written by any onboarding code
+- Where: ADR-025 D10 (add `.mc-worktrees/` to the real repo's `info/exclude`),
+  discovered while implementing it; the parent requirement is ADR-017:718
+  ("onboarding adds the literal `.mission-control/` root to the real
+  repository's local `info/exclude`").
+- Gap: no production Go/TS/sh writes `<workspace>/.git/info/exclude` at all —
+  not for `.mission-control/`, not for `.mc-worktrees/`. Grep across mc/,
+  resident/src, and runner/ finds the string only in mc-land test fixtures and
+  mc-land's read path. `onboard.go:423` covers a different concern (MC_HOME's
+  OWN placement must be gitignored), not the workspace-repo exclusion.
+- Choice: recorded, not speculatively built. Writing the real repo's
+  info/exclude needs an onboarding step that resolves and registers the
+  workspace repository, which is its own slice and not yet present; adding a
+  standalone writer now would be scope invented ahead of that slice. The
+  reserved-tree-component half of D10 IS implemented (`a3c3f70`), so a child can
+  never COMMIT a `.mc-worktrees/...` path; the missing info/exclude only means
+  the live shared worktree shows as untracked noise in the operator's checkout,
+  which is cosmetic until the real-harness lifecycle runs.
+- Spec impact: none new — ADR-017:718 already specifies the `.mission-control/`
+  exclusion; it is simply owed. ADR-025 D10 extends it to `.mc-worktrees/`.
+- Needs your decision: no.
