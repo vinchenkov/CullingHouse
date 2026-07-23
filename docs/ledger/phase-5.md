@@ -375,3 +375,29 @@ are green. The production image was rebuilt arm64-native from this commit as
 NEXT: implement the operator-present activation transaction and real-tick
 receipt plus supervision doctor probe, testing the machinery without loading
 launchd. Then compose the whole wizard; live activation remains gated.
+
+## 2026-07-22 — transactional supervision activation (`825f258`, `f10ddfc`)
+
+The resident now atomically publishes an owner-only health receipt after a
+dispatch result parses and its effect completes. The receipt binds the exact
+release, config schema, and completion time; failed or unparseable dispatches
+do not produce it.
+
+The explicit operator-present `supervision --activate` arm installs the two
+prepared plists into the user's LaunchAgents directory, bootstraps dashboard
+then resident, verifies both exact definitions are loaded, and waits up to 90
+seconds for a new matching tick receipt. Any partial first activation boots
+out jobs in reverse order and removes only the exact plists that transaction
+created. Replays require both loaded jobs, exact installed bytes, and a
+matching receipt. Production doctor now reports Supervision healthy only when
+both jobs are loaded from the prepared definitions and the receipt is less
+than two minutes old.
+
+All activation tests use an injected launchd controller; no real launchd call
+was made. Full mc and resident checks are green. The production image was
+rebuilt arm64-native from `f10ddfc` as
+`sha256:a1f1529f9e433ba79f17d73f3acd3a1290172cc88cc437132e3b1468c098ddf5`.
+
+NEXT: compose the production whole wizard over the completed sections without
+implicitly activating launchd or spending tokens; then implement and verify
+backup/restore and remaining Phase-5 real-runtime obligations.

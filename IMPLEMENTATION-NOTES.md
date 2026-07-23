@@ -1470,3 +1470,34 @@ rules in code the sealed lane does not own.
   testable preparation from the spec-mandated operator-present load/tick
   observation without weakening either requirement.
 - Needs your decision: no.
+
+## 2026-07-22 — Supervision activation commits only after a real tick receipt
+- Where: Phase 5 Supervision and doctor; spec §12, §17.9, Inv. 23.
+- Gap: launchd accepting a plist proves neither that both native components
+  stayed loaded nor that the resident reached the dispatch boundary. A partial
+  two-job activation also needed a defined rollback rather than leaving one
+  live component and one installed file behind.
+- Choice: the explicit operator-present `supervision --activate` arm installs
+  the two prepared plists into the per-user LaunchAgents directory, bootstraps
+  dashboard then resident, verifies both exact definitions are loaded, and
+  waits up to 90 seconds for a new owner-only resident tick receipt carrying
+  the immutable release and config-schema identity. The resident publishes
+  that receipt atomically only after a dispatch response parses and its effect
+  completes. Any first-activation failure boots out started jobs in reverse
+  order and removes only files whose inode identity the transaction created.
+  Production doctor requires both exact loaded jobs and a matching receipt
+  less than two minutes old; partial, stale, future-dated, or mismatched state
+  is a Supervision repair failure.
+- Evidence: launchd is injected in tests. Success covers both installed modes,
+  both loaded labels, and the fresh receipt. Failure cases cover second-job
+  bootstrap, missing receipt, partial preexisting state, loaded-job absence,
+  and stale health; each partial first activation leaves no job or plist.
+  Resident tests prove no receipt on failed/unparseable dispatch and an atomic
+  mode-0600 release-bound receipt on a completed tick. Full mc and resident
+  checks are green. No real launchd call was made. Production image
+  `sha256:a1f1529f9e433ba79f17d73f3acd3a1290172cc88cc437132e3b1468c098ddf5`
+  embeds `f10ddfc673087d88ac319cfa6ad2617a912f8081`.
+- Spec impact: conservative internal mechanism. It makes §17.9's observable
+  tick the activation commit point and strengthens restart health without
+  adding authoritative state.
+- Needs your decision: no.
