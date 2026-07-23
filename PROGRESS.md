@@ -6,10 +6,12 @@ REPO PATH: `~/dev/ai/homie`. Never relocate this repo into `~/Documents`,
 `~/Desktop`, or `~/Downloads`: macOS TCC can revoke an agent session's own
 filesystem access there during fan-out. Full Disk Access does not fix it.
 
-LAST GREEN SHA: `d0ef4bb` — ALL lanes green at this HEAD: six-leg fast
-suite, full `docker_boundary` + full `docker_e2e` (-count=1, `ok mc/e2e
-169s`), the extended Playwright dashboard smoke, and the install.sh dev
-walk (green + idempotent). Docker lanes last ran green
+LAST GREEN SHA: `bc0dee4` — Phase 5's first slice makes production install
+preflight and the missing-helper boundary fail closed; the six-leg fast suite
+is green (resident/dashboard listener tests rerun with loopback permission).
+Full `docker_boundary` + full `docker_e2e` (-count=1, `ok mc/e2e 169s`), the
+extended Playwright dashboard smoke, and the install.sh dev walk were last
+green at `d0ef4bb`. Docker lanes last ran green
 at `c8f37e9`-era HEAD (full `docker_boundary` 26 subtests, full `docker_e2e`
 10 tests incl. both credential legs) and are untouched since: commits after
 are test-only or the new `dashboard/` package. Production image `mc-prod` at
@@ -100,47 +102,21 @@ the approve landing fence to assignment-armed tasks; v12 retires
         incl. the two credential legs and the packaged→approve→merge→archived
         walk) + five-leg fast + all tag vets, all green at HEAD. §8 mechanical
         checklist satisfied (see ledger 2026-07-22 "§8 sweep").
-- [x] Phase 4 — COMPLETE 2026-07-22: all six scenario families green, all
-      four §16.1 authored deliverables stand (dashboard ADR-024, frozen
-      role directives + brief templates, §18 ADR-001, install.sh +
-      /onboard dev tier), and the full Docker regression + fast suite +
-      dashboard smoke are green at `d0ef4bb`. Ledger:
-      `docs/ledger/phase-4.md` (closed).
-  - [x] (1) Full pipeline + landing — approve/land split (TestWalkingSkeleton),
-        landing-failure+recovery, multi-approve-drain. Green.
-  - [x] (2) Correction rally — 3 CORRECTs → 4th ships BUDGET-SPENT. Green.
-  - [x] (3) Backpressure — WIP cap blocks dispatch, refiner re-entry at cap,
-        drain-frees. Green (saturation arithmetic cited to unit tests).
-  - [x] (4) Initiative lifecycle — UN-PARKED and landed (operator chose to
-        build it). ADR-023: shared branch mc/initiative-<id> cut at promotion,
-        children branchless (only the arc lands), mc-land namespace extended.
-        `TestInitiativeLifecycleDockerBoundary` green — full charter→wave→
-        plan-review→children→drain→done→arc→REAL merge to main. Green. The
-        block-propagation + cancel-cascade E2E variants remain optional (state
-        machine unit/property-tested); the PRODUCTION real-harness child mount
-        rows stay parked for Phase 5 (ADR-023 D6). Ledger 2026-07-22 "(4) ...
-        DONE via ADR-023".
-  - [x] (5) Fault matrix — reap→retry→complete, budget-exhaustion→blocked,
-        reboot drill (resident restart resumes), interrupt (spine effect),
-        session-folder permanence. Green (4 tests). Three gaps flagged not
-        asserted (need new code, out of fake-harness scope): fast-fail LIVENESS
-        reap (time-based only), interrupt CONTAINER-STOP (owed to orphan sweep),
-        wake-from-sleep immediate tick (unimplemented [P2/P3]). Ledger
-        2026-07-22 "(5) ... DONE (scoped; three gaps flagged)".
-  - [x] (6) Homie loop — DONE 2026-07-22 (runtime S1–S5 + dashboard S6).
-        Full send→wake→reply→resume loop proven by real Docker E2E; the S6
-        Console (ADR-024) proven by the Playwright smoke. Details below and
-        in the ledger.
-- [ ] Phase 5 — operator-scheduled real-subscription acceptance.
+- [x] Phase 4 — COMPLETE 2026-07-22: all six scenario families and four
+      authored deliverables green at `d0ef4bb`; full details are closed in
+      `docs/ledger/phase-4.md`. ADR-023 leaves only its production
+      real-harness initiative-child mount rows for Phase 5.
+- [ ] Phase 5 — IN PROGRESS 2026-07-22: operator kickoff authorized in the
+      active goal. Build and mechanically verify the real-subscription,
+      onboarding, supervision, and restore paths before the operator-present
+      live acceptance.
+  - [x] Production install fails closed before writes when Docker is absent or
+        stopped, and exits nonzero when the warm helper is missing (`bc0dee4`).
 - [ ] Release prep — install/onboard front door and construction-document
       disposition.
 
 ## Parked
 
-- **Phase 5 kickoff (operator-scheduled)**: Phase 4 is complete and all
-  lanes are green at `d0ef4bb`. Phase 5 is the operator-present
-  real-subscription acceptance: schedule it, supply the live provider
-  inputs below, and the one-time launchd load. One-line go/no-go needed.
 - **Initiative PRODUCTION real-harness mount rows (Phase 5, ADR-023 D6)**: the
   fake-harness initiative lifecycle lands via ADR-023 (shared branch, branchless
   children, legacy land lane). The PRODUCTION per-child shared-worktree
@@ -149,15 +125,19 @@ the approve landing fence to assignment-armed tasks; v12 retires
   (Phase 5), now constrained by ADR-023 D1/D3/D5. `mountattest.go:238-249` still
   refuses initiative children under REAL routing (skipped under fake, which is
   all Phase 4 needs).
-- **Phase 5 live-provider credentials (operator-dependent, NOT a Phase 4
-  blocker)**: the ADR-022 credential mechanism is proven with synthetic mints;
-  the live legs need a real Claude/Codex subscription refresh grant in
-  `MC_HOME/refresh-grants`. `OPERATOR-INPUTS.md` has only gateway-era
-  `CLAUDE_CRED_DIR`/`CODEX_CRED_DIR` pointers. Two fields (`token_url`,
-  `client_id`) are not captured in the repo (the POC mocked the provider
-  endpoint) — closing the live legs needs those two provider constants
-  extracted + an `mc onboard runtime-auth` extractor built. This is Phase 5
-  work; Phase 4 is fake-harness and needs none of it.
+- **Phase 5 live-provider credentials**: synthetic projection is green, but
+  the live legs need dedicated Mission Control-owned OAuth logins. The host
+  Codex 0.145.0 personal ChatGPT login exists but MUST NOT be copied (single-
+  owner rotation); Claude 2.1.218 currently reports unauthenticated. Public
+  provider `token_url`/`client_id` constants and both required runtime switches
+  were verified in those installed binaries without reading token values. Build
+  isolated-login import into `MC_HOME/refresh-grants`; the operator must perform
+  the Claude/browser consent and securely supply the MiniMax subscription key.
+- **Phase 5 operator-input completion**: `OPERATOR-INPUTS.md` exists and is
+  ignored, but does not yet record the required subscription-spend budget,
+  Codex custom-CA version floor. Build the fail-closed import path independently;
+  do not spend live tokens or load launchd until the budget and operator-present
+  window exist.
 - **S7 sleep drill**: the 30-minute Mac sleep mid-lease test requires the
   operator. Instructions: `spikes/07-launchd-clock/RESULT.md`. All other S7
   sub-tests passed.
@@ -206,37 +186,14 @@ these are the constraints a Phase 4+ change must not break.
   canonical landing row derived; use the assignment's frozen `target_ref` and
   refuse divergence. Details are in the Phase 3 ledger.
 
-## Homie runtime (ADR-016 D3) — S1-S6 DONE + green (detail in docs/ledger/phase-4.md)
+## Homie runtime
 
-The full send->wake->reply->resume loop is proven by real Docker E2E
-(TestHomieConversationDockerBoundary, TestHomieResumeDockerBoundary); the
-walking-skeleton pipeline e2e is still green.
-- S1 (82381d9): schema v13 homie_idle_timeout_s; launch-bind/runner-started/exit
-  fence verbs; selectHomieWake + loadHomieSchedRows + homieWakeRound.
-- S2 (19aadf6, 23b078b): resident homie-wake/homie-stop effectors.
-- S3 (6bf3bd5, 978c2bb): runner/homie-runner claim->turn->reply loop, idle-out.
-- S4 (38d0c36, e1e3fc8): the Homie wake PREEMPTS a retained pipeline spawn
-  candidate (ADR-016 D3 branch 7), not KindIdle-only; Docker E2E green.
-- S5 (76d4529, 9a8304e): runner registers its native locator; functional resume
-  (HomieResume clears the dead launch; wake effector rm -f's the stale
-  same-named container before create). Delivery verbs (OutboxPoll/OutboxAck +
-  HomieReply's homie_reply fan) already exist.
-- S6 (30af818, 75bd35f): ADR-024 dashboard Console — zero-framework Bun.serve
-  `dashboard/` package, spine ONLY via spawned `mc` (Inv. 15/24), verb-mirror
-  API, fail-closed loopback/auth bind, derived per-session channel ref,
-  pull-based polling with trivial outbox ack. Unit lane = sixth fast-suite
-  leg; browser proof = `./dashboard/smoke.sh` (Playwright, Docker-free).
+ADR-016 D3 S1–S6 is complete and green: real Docker send→wake→reply→resume,
+Console delivery/ack, and Playwright smoke. Deferred Phase 5 work is true
+native resume, container reconciliation, Homie credential projection,
+dashboard LaunchAgent generation, and the four non-Console tabs. Details and
+commit map are in the closed Phase 4 ledger.
 
-DEFERRED: true native cross-turn continuity (real-harness --resume; fake adapter
-starts anew); dispatch branch-5 container reconciliation + branch-7 unstarted-
-launch recovery (need resident container inventory); homie credential projection
-(fake route is token-free); dashboard LaunchAgent generation (install/onboard);
-the four non-Console tabs (each with its subsystem).
-
-NEXT: Phase 4 is COMPLETE and Phase 5 is operator-scheduled (see ## Parked:
-kickoff go/no-go + live credentials + one-time launchd load). Until the
-operator schedules it, remaining agent-doable work: release-prep
-construction-document disposition, the production install bootstrap design
-(helper provisioning order, may need a small ADR), and the two known
-intermittent test failures if they resurface. Do not start Phase 5 legs
-without the operator.
+NEXT: implement a bootstrap-safe, idempotent warm-helper provision/capability
+probe so a fresh production `install.sh` reaches `mc onboard` without ever
+opening the spine on the host. Keep live-token and launchd-load legs parked.
