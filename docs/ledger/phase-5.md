@@ -177,3 +177,20 @@ is green.
 NEXT: add the closed OAuth/static grant union and fail-closed resident coverage,
 then build the atomic Runtime-auth importer. Production adapters/live no-op and
 launchd activation remain operator-present acceptance gates.
+
+## 2026-07-22 — closed resident runtime grants (`8886c09`)
+
+The resident now accepts exactly the three production binding grant shapes:
+pinned Codex and Claude OAuth grants, and MiniMax's declared materialized
+`ANTHROPIC_AUTH_TOKEN`. It rejects authority/client drift, cross-binding
+channels, unknown or extra fields, malformed scope/account evidence, filename
+confusion, duplicates, missing grants, and unknown production routes. Static
+grants never enter the refresh service or broker. An absent projector refuses
+before launch artifacts or Docker; only fake/fake remains token-free.
+
+Focused resident tests and the six-leg fast suite are green.
+
+NEXT: build the atomic Runtime-auth importer with isolated provider homes,
+forbidden-env gating, exact binding ownership, and no partial publication.
+Production adapters/live no-op and launchd activation remain operator-present
+acceptance gates.
