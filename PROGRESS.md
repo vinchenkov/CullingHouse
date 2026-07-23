@@ -6,18 +6,19 @@ REPO PATH: `~/dev/ai/homie`. Never relocate this repo into `~/Documents`,
 `~/Desktop`, or `~/Downloads`: macOS TCC can revoke an agent session's own
 filesystem access there during fan-out. Full Disk Access does not fix it.
 
-LAST GREEN SHA: `e0a0397` — Phase 5 bootstrap preflight is fail-closed,
-credential-store ambiguity refuses, and deployment-derived helper/volume
-identities plus the path-free private spine initializer are pinned; the six-leg
-fast suite is green (resident/dashboard listener tests rerun with loopback permission).
+LAST GREEN SHA: `ca4eae4` — Phase 5 production Home provisions and exactly
+attests the deployment-derived uid-10002 warm helper, initializes the runtime-
+local spine through general setuid `mc`, and publishes only the UUID mirror on
+Darwin; the six-leg fast suite is green after the documented resident fd-3
+intermittent passed on focused and full reruns.
 Full `docker_boundary` + full `docker_e2e` (-count=1, `ok mc/e2e 169s`), the
 extended Playwright dashboard smoke, and the install.sh dev walk were last
 green at `d0ef4bb`. Docker lanes last ran green
 at `c8f37e9`-era HEAD (full `docker_boundary` 26 subtests, full `docker_e2e`
 10 tests incl. both credential legs) and are untouched since: commits after
-are test-only or the new `dashboard/` package. Production image `mc-prod` at
-`5d7f539`:
-`sha256:47b27eda69019d1e97c9618466ed391470447ebae6025270abb1931914c487a6`,
+are test-only or the new `dashboard/` package. Production image `mc-prod`
+rebuilt from `ca4eae4`:
+`sha256:dd352c2a4faa5f883db6859750a761ae9d2dd9cb6fb03e104477c50949326b98`,
 arm64/linux, native. LESSON pinned by `ada715d`: the resident's
 `SPINE_SCHEMA_VERSION` (resident-control.ts:12) mirrors
 `substrate.CurrentSchemaVersion` in lockstep — every schema bump must touch
@@ -27,10 +28,10 @@ claim needs `-count=1` or a cold cache on the affected package.
 
 The operator pushes manually; agents do not push.
 
-PHASES PASSING: Phase 0–3 COMPLETE. Phase 4 (six E2E control-loop scenario
-families) is in progress. Completed implementation history is in
-`docs/ledger/chronology-phase-0-2.md` and `docs/ledger/phase-3.md`; the live
-phase ledger is `docs/ledger/phase-4.md`. Do not read any of them at startup.
+PHASES PASSING: Phase 0–4 COMPLETE. Phase 5 is in progress. Completed
+implementation history is in `docs/ledger/chronology-phase-0-2.md`,
+`docs/ledger/phase-3.md`, and `docs/ledger/phase-4.md`; the live phase ledger is
+`docs/ledger/phase-5.md`. Do not read any of them at startup.
 
 FAST SUITE:
 `./mc/check.sh && ./runner/fake-harness/check.sh && ./runner/agent-runner/check.sh && ./runner/image/check.sh && ./resident/check.sh && ./dashboard/check.sh`
@@ -119,6 +120,10 @@ the approve landing fence to assignment-armed tasks; v12 retires
         different homes cannot share helper or spine-volume names (`e7c4ca2`).
   - [x] Private `__onboard-spine` has a strict path-free frame and complete
         init/repair/match/mismatch/loss/migrate/newer state matrix (`e0a0397`).
+  - [x] Production Home builds the native image, reconciles only its derived
+        managed helper, runs it as uid 10002 with one named spine volume and
+        finite bounds, crosses through general setuid `mc`, publishes only the
+        host UUID mirror, and passes the live capability probe (`ca4eae4`).
 - [ ] Release prep — install/onboard front door and construction-document
       disposition.
 
@@ -181,8 +186,6 @@ these are the constraints a Phase 4+ change must not break.
 
 ## Known later obligations
 
-- Production spine-volume ownership is unspecified; the E2E fixture currently
-  uses permissive volume-root setup. This belongs to install/onboarding.
 - The setup clearing mechanism is delegated by the ADRs but lacks its own ADR.
 - Landing currently cannot validate `pinned_closure_digest` because the
   assignment digest describes the initial closure, not the accepted rebuilt
@@ -201,6 +204,7 @@ native resume, container reconciliation, Homie credential projection,
 dashboard LaunchAgent generation, and the four non-Console tabs. Details and
 commit map are in the closed Phase 4 ledger.
 
-NEXT: compose the Darwin exact-image/volume/helper manager, mirror publication,
-and capability probe around `__onboard-spine`; then route production Home
-through it. Keep live-token and launchd-load legs parked.
+NEXT: compose production doctor across host and helper facts, make Container
+own exact image/helper health, then split the remaining onboarding sections so
+no helper ever needs an MC_HOME bind. Keep live-token and launchd-load legs
+parked.

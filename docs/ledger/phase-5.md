@@ -88,3 +88,30 @@ ambiguous bytes. The six-leg fast suite is green.
 
 NEXT: build the Darwin exact helper manager and compose home mirror publication
 plus the existing kernel capability probe around this crossing.
+
+## 2026-07-22 — production helper + Home crossing (`ca4eae4`)
+
+The production image now carries the required general setuid `mc-real` (uid
+10001, mode 6755); privileged invocations fix identity at `/mc/run.json` and
+cannot be redirected by agent environment. The warm helper runs as uid 10002
+with network none, CapDrop=ALL, the ADR-019 500m/512MiB/128 bounds, and only
+its deployment-derived named spine volume. Its manager validates the native
+arm64 image ID and full container/volume envelope, refuses unmanaged name
+collisions, replaces only stale managed stateless helpers, and never deletes
+the volume.
+
+Production `onboard home` now stays split at the kernel boundary: Darwin runs
+the git/canonical-home fence and observes/publishes only `deployment.uuid`;
+Linux alone initializes/migrates/compares the named-volume spine through the
+strict private frame. `install.sh` builds the exact production image before
+the crossing. A disposable real-Docker walk initialized schema 13 and the
+capability probe proved uid-10002 direct-open EACCES, brokered read, honored
+setuid, NoNewPrivs=0, identity uid_map, and native arm64. Focused image Docker
+tests and the six-leg fast suite are green; the known resident fd-3 intermittent
+appeared twice and then passed focused and full reruns. The disposable helper,
+volume, and home were removed.
+
+NEXT: compose production doctor across host and helper facts, make Container
+own exact image/helper health, then split the remaining onboarding sections so
+no helper ever needs an MC_HOME bind. Keep live-token and launchd-load legs
+parked.
