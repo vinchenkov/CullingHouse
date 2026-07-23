@@ -6,17 +6,18 @@ REPO PATH: `~/dev/ai/homie`. Never relocate this repo into `~/Documents`,
 `~/Desktop`, or `~/Downloads`: macOS TCC can revoke an agent session's own
 filesystem access there during fan-out. Full Disk Access does not fix it.
 
-LAST GREEN SHA: `3007478` — the closed production runner selects real Codex,
-Claude, and MiniMax adapters, durably registers their native session locators,
-and the arm64 production image contains exact locked runtimes. The six-leg
-fast suite and focused production-image Docker boundary are green.
+LAST GREEN SHA: `4fa0dee` — Runtime-auth now spends its mandatory live no-op
+through the locked production adapter/image and requires exact native-session
+evidence before atomic grant publication. Real-agent containers fail closed on
+mandatory inner credential sandboxes. The six-leg fast suite and focused
+production-image Docker boundary are green.
 Full `docker_boundary` + full `docker_e2e` (-count=1, `ok mc/e2e 169s`), the
 extended Playwright dashboard smoke, and the install.sh dev walk were last
 green at `d0ef4bb`. The full Docker lanes last ran green at `c8f37e9`-era HEAD
 (26 `docker_boundary` subtests; 10 `docker_e2e` tests including both credential
 legs). The real onboarding crossing was green at `bf5981d`. Production image
-`mc-prod` rebuilt from `3007478`:
-`sha256:225733a0d05c1dbd72958bbd320650a5b78e7f05d7fb058366a3d0a6b5f03ddd`,
+`mc-prod` rebuilt for `4fa0dee`:
+`sha256:a4aa1df198b38028a73e92135466e65a57afb26c6392fe34d5ec8cddc016c4d7`,
 arm64/linux, native. LESSON pinned by `ada715d`: the resident's
 `SPINE_SCHEMA_VERSION` (resident-control.ts:12) mirrors
 `substrate.CurrentSchemaVersion` in lockstep — every schema bump must touch
@@ -132,6 +133,9 @@ the approve landing fence to assignment-armed tasks; v12 retires
         and blocked until every real adapter no-op passes (`556dc1e`).
   - [x] Real Codex/Claude-SDK/MiniMax adapters, native-session persistence,
         closed selection, and locked arm64 production runtime (`3007478`).
+  - [x] Runtime-auth live no-op crosses the installed production adapter,
+        adopts staged provider rotation durably, and requires exact native
+        evidence before closed-set revalidation/publication (`4fa0dee`).
 - [ ] Release prep — install/onboard front door and construction-document
       disposition.
 
@@ -210,7 +214,7 @@ native resume, container reconciliation, Homie credential projection,
 dashboard LaunchAgent generation, and the four non-Console tabs. Details and
 commit map are in the closed Phase 4 ledger.
 
-NEXT: make Runtime-auth's staged verifier launch each real adapter through the
-production image with a fixed no-op prompt and exact staged grant, then wrap
-the importer with isolated provider-owned login acquisition and source cleanup.
-Live token spend and launchd activation remain operator-present acceptance gates.
+NEXT: install the owner-only release runner assets under
+`MC_HOME/release/runner`, then wrap Runtime-auth with isolated provider-owned
+login acquisition and source cleanup. Live token spend and launchd activation
+remain operator-present acceptance gates.

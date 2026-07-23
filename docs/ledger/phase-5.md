@@ -242,3 +242,30 @@ NEXT: make Runtime-auth's staged verifier launch each real adapter through the
 production image with a fixed no-op prompt and exact staged grant, then wrap
 the importer with isolated provider-owned login acquisition and source cleanup.
 Live token spend and launchd activation remain operator-present acceptance gates.
+
+## 2026-07-22 — production-adapter Runtime-auth verifier (`4fa0dee`)
+
+Runtime-auth now constructs its production verifier from canonical MC_HOME,
+requires the owner-only installed runner tree, exchanges OAuth refresh material
+only for short-lived adapter credentials, and runs a fixed no-tool prompt
+through the selected real adapter in `mc-prod`. Publication requires both a
+successful adapter exit and the regular native trace named by its safe
+`session-start` locator. Provider refresh rotation is atomically adopted only
+inside the private stage; the exact grant set is revalidated and fsynced after
+all verifier calls so verifier mutation cannot be smuggled into publication.
+
+Codex and Claude now fail closed on their own inner Linux sandboxes. Only real
+agent/verifier containers lift Docker's outer seccomp filter so bwrap can create
+its namespace; fake, setup, and landing containers retain the default profile.
+Codex's locked custom permission profile denies its projected auth tree while
+admitting workspace and network, and Claude denies its session/config paths and
+projected token variables. A production-image boundary executes the actual
+locked Codex sandbox and proves the projected auth file is unavailable.
+
+The production image was rebuilt arm64-native, focused verifier/adapter/resident
+tests pass, and the fixed six-leg fast suite is green.
+
+NEXT: install the owner-only release runner assets under
+`MC_HOME/release/runner`, then wrap Runtime-auth with isolated provider-owned
+login acquisition and source cleanup. Live token spend and launchd activation
+remain operator-present acceptance gates.
