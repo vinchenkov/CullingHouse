@@ -24,6 +24,9 @@ func wholeSectionArgs(section string, a verbs.OnboardArgs) []string {
 	args := []string{"onboard", section}
 	switch section {
 	case "home":
+		if a.RestoreLatest {
+			args = append(args, "--restore-latest")
+		}
 		if a.ReleaseSource != "" {
 			args = append(args, "--release-source", a.ReleaseSource)
 		}

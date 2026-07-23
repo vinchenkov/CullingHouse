@@ -52,6 +52,23 @@ describe("one tick at a time", () => {
 });
 
 describe("fail-closed tick failures", () => {
+  test("a failed required chore skips dispatch and retries before the next tick", async () => {
+    const rig = makeRig();
+    let attempts = 0;
+    rig.deps.beforeTick = async () => {
+      attempts += 1;
+      if (attempts === 1) throw new Error("backup unavailable");
+    };
+    rig.mc.enqueue(idle());
+    startTickLoop(rig.deps);
+    await rig.timer.fire();
+    expect(rig.mc.calls).toEqual([]);
+    expect(rig.logs.some((line) => line.includes("backup unavailable"))).toBe(true);
+    await rig.timer.fire();
+    expect(rig.mc.calls).toEqual([["dispatch"]]);
+    expect(attempts).toBe(2);
+  });
+
   test("mc dispatch nonzero exit is logged and the loop continues", async () => {
     const rig = makeRig();
     rig.mc.enqueue(fail(2, "spine unreachable"), idle());

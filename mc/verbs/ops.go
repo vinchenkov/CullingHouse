@@ -39,9 +39,9 @@ func mcHomeDir() (string, error) {
 // a temp name, renamed on completion (§16.4). Retention is the resident tick
 // chore's job, not this verb's.
 func snapshotSpine(db *sql.DB, home string) (string, int64, error) {
-	dir := filepath.Join(home, "backups")
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return "", 0, Domainf("create backups dir: %v", err)
+	dir, err := requireSecureBackupDir(home)
+	if err != nil {
+		return "", 0, Domainf("secure backups dir: %v", err)
 	}
 	stamp := time.Now().UTC().Format("20060102T150405Z")
 	var final string
@@ -62,13 +62,38 @@ func snapshotSpine(db *sql.DB, home string) (string, int64, error) {
 		os.Remove(tmp)
 		return "", 0, Domainf("snapshot spine: %v", err)
 	}
+	staged, err := os.OpenFile(tmp, os.O_RDWR, 0)
+	if err != nil {
+		os.Remove(tmp)
+		return "", 0, Domainf("open staged snapshot: %v", err)
+	}
+	if err := staged.Chmod(0o600); err != nil {
+		staged.Close()
+		os.Remove(tmp)
+		return "", 0, Domainf("secure staged snapshot: %v", err)
+	}
+	if err := staged.Sync(); err != nil {
+		staged.Close()
+		os.Remove(tmp)
+		return "", 0, Domainf("sync staged snapshot: %v", err)
+	}
+	if err := staged.Close(); err != nil {
+		os.Remove(tmp)
+		return "", 0, Domainf("close staged snapshot: %v", err)
+	}
 	if err := os.Rename(tmp, final); err != nil {
 		os.Remove(tmp)
 		return "", 0, Domainf("finalize snapshot: %v", err)
 	}
+	if err := syncDir(dir); err != nil {
+		return "", 0, Domainf("sync backups dir: %v", err)
+	}
 	st, err := os.Stat(final)
 	if err != nil {
 		return "", 0, Domainf("stat snapshot: %v", err)
+	}
+	if err := pruneBackups(dir, defaultBackupRetain); err != nil {
+		return "", 0, Domainf("prune backups: %v", err)
 	}
 	return final, st.Size(), nil
 }

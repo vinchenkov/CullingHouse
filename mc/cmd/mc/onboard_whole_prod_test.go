@@ -67,12 +67,13 @@ func TestWholeWizardStopsAtRuntimeAuthWithoutSpending(t *testing.T) {
 func TestWholeWizardPreparesButNeverImplicitlyActivates(t *testing.T) {
 	calls := withWholeWizardFakes(t, true)
 	code, result, _ := wholeResult(t,
+		"--restore-latest",
 		"--worksource", "primary", "--workspace-root", "/workspace",
 		"--console-hour", "9", "--console-minute", "0", "--console-tz", "UTC")
 	if code != 1 || result["stopped_at"] != "supervision" {
 		t.Fatalf("code=%d result=%v", code, result)
 	}
-	want := "preflight|home|routing|container|worksource --worksource primary --workspace-root /workspace|tunables|surfaces --console-hour 9 --console-minute 0 --console-tz UTC|supervision"
+	want := "preflight|home --restore-latest|routing|container|worksource --worksource primary --workspace-root /workspace|tunables|surfaces --console-hour 9 --console-minute 0 --console-tz UTC|supervision"
 	if strings.Join(*calls, "|") != want {
 		t.Fatalf("calls=%v", *calls)
 	}

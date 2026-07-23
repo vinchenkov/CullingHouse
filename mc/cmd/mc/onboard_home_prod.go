@@ -20,7 +20,15 @@ func brokerOnboardHome(args []string, stdout, stderr io.Writer) int {
 		return writeVerbError(stdout, stderr, err)
 	}
 	if a.Section != "home" {
-		return writeVerbError(stdout, stderr, verbs.Usagef("usage: mc onboard home [--release-source <runner-dir>] [--host-release-source <repo-dir>]"))
+		return writeVerbError(stdout, stderr, verbs.Usagef("usage: mc onboard home [--restore-latest] [--release-source <runner-dir>] [--host-release-source <repo-dir>]"))
+	}
+	restoreDetail := ""
+	if a.RestoreLatest {
+		snapshot, size, err := restoreLatestSpine()
+		if err != nil {
+			return writeVerbError(stdout, stderr, err)
+		}
+		restoreDetail = fmt.Sprintf("; restore verified %d bytes from %s", size, snapshot)
 	}
 	req, err := verbs.PrepareOnboardHome()
 	if err != nil {
@@ -64,6 +72,7 @@ func brokerOnboardHome(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return writeVerbError(stdout, stderr, err)
 	}
+	detail += restoreDetail
 	if a.ReleaseSource != "" {
 		home, err := configuredCanonicalHome()
 		if err != nil {

@@ -29,8 +29,53 @@ interface MainConfig extends ResidentConfig {
   mcPath: string;
   dockerPath?: string;
   tickIntervalMs?: number;
+  backupIntervalMs?: number;
   releaseBuildId: string;
   configSchemaVersion: number;
+}
+
+export interface BackupChore {
+  startup(): Promise<void>;
+  beforeTick(): Promise<void>;
+}
+
+export function createBackupChore(
+  runMc: Exec,
+  intervalMs: number,
+  now: () => number = Date.now,
+): BackupChore {
+  if (!Number.isSafeInteger(intervalMs) || intervalMs <= 0) {
+    throw new Error(`resident: invalid backup interval ${intervalMs}`);
+  }
+  let lastCompletedAt: number | undefined;
+  const snapshot = async (): Promise<void> => {
+    const result = await runMc(["backup"]);
+    if (result.exitCode !== 0) {
+      throw new Error(`mc backup failed (exit ${result.exitCode}): ${result.stderr.trim()}`);
+    }
+    let receipt: unknown;
+    try {
+      receipt = JSON.parse(result.stdout);
+    } catch {
+      throw new Error("mc backup returned an invalid receipt");
+    }
+    if (receipt === null || typeof receipt !== "object" || Array.isArray(receipt) ||
+        typeof (receipt as Record<string, unknown>).snapshot !== "string" ||
+        !(receipt as Record<string, unknown>).snapshot!.toString().startsWith("/") ||
+        !Number.isSafeInteger((receipt as Record<string, unknown>).bytes) ||
+        ((receipt as Record<string, unknown>).bytes as number) <= 0) {
+      throw new Error("mc backup returned an invalid receipt");
+    }
+    lastCompletedAt = now();
+  };
+  return {
+    startup: snapshot,
+    async beforeTick() {
+      if (lastCompletedAt === undefined || now() - lastCompletedAt >= intervalMs) {
+        await snapshot();
+      }
+    },
+  };
 }
 
 export interface TickReceipt {
@@ -194,6 +239,16 @@ async function main(): Promise<void> {
 		configSchemaVersion: config.configSchemaVersion,
 	});
   const log = (msg: string) => console.error(`[resident ${new Date().toISOString()}] ${msg}`);
+  const backupIntervalMs = config.backupIntervalMs ?? 3_600_000;
+  let backupChore: BackupChore;
+  try {
+    backupChore = createBackupChore(runMc, backupIntervalMs);
+    await backupChore.startup();
+    log("startup spine snapshot committed");
+  } catch (err) {
+    console.error(`resident: startup backup failed: ${err instanceof Error ? err.message : String(err)}`);
+    process.exit(2);
+  }
 
   // ADR-022: every production binding is mediated by the runtime projector.
   // A malformed store refuses startup; an empty store produces explicit D8
@@ -216,6 +271,7 @@ async function main(): Promise<void> {
 		runMc,
     docker: execVia(config.dockerPath ?? "docker"),
     log,
+    beforeTick: backupChore.beforeTick,
     tickComplete: () => publishTickReceipt(
       config.mcHome, config.releaseBuildId, config.configSchemaVersion,
     ),

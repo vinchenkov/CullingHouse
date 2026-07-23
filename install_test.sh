@@ -136,9 +136,9 @@ env PATH="$case_root/bin:/usr/bin:/bin" HOME="$case_root/home" \
     --runtime-bindings chatgpt,claude,minimax --acquire-runtime-auth \
     --codex-auth-file "$case_root/codex auth.json" \
     --claude-credentials-file "$case_root/claude credentials.json" \
-    --minimax-token-file "$case_root/minimax token" --activate \
+    --minimax-token-file "$case_root/minimax token" --restore-latest --activate \
     >/dev/null 2>&1 || fail "production-forwarding did not reach the whole wizard"
-expected=$(printf 'CALL\tonboard\t--worksource\tprimary\t--workspace-root\t%s\t--console-hour\t9\t--console-minute\t5\t--console-tz\tAmerica/Los_Angeles\t--runtime-bindings\tchatgpt,claude,minimax\t--acquire\t--codex-auth-file\t%s\t--claude-credentials-file\t%s\t--minimax-token-file\t%s\t--activate' \
+expected=$(printf 'CALL\tonboard\t--worksource\tprimary\t--workspace-root\t%s\t--console-hour\t9\t--console-minute\t5\t--console-tz\tAmerica/Los_Angeles\t--runtime-bindings\tchatgpt,claude,minimax\t--acquire\t--codex-auth-file\t%s\t--claude-credentials-file\t%s\t--minimax-token-file\t%s\t--restore-latest\t--activate' \
   "$case_root/workspace root" "$case_root/codex auth.json" \
   "$case_root/claude credentials.json" "$case_root/minimax token")
 actual=$(tail -n 1 "$forward_log")

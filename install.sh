@@ -30,6 +30,7 @@
 #   --codex-auth-file <path>     isolated provider-owned Codex source
 #   --claude-credentials-file <path>
 #   --minimax-token-file <path>  owner-only MiniMax subscription-key source
+#   --restore-latest             restore newest matching snapshot if spine lost
 #   --activate                   operator-present launchd activation gate
 #   --yes                       never prompt; fail instead (agent mode)
 
@@ -54,6 +55,7 @@ ACQUIRE_RUNTIME_AUTH=0
 CODEX_AUTH_FILE=""
 CLAUDE_CREDENTIALS_FILE=""
 MINIMAX_TOKEN_FILE=""
+RESTORE_LATEST=0
 ACTIVATE=0
 
 while [ $# -gt 0 ]; do
@@ -72,6 +74,7 @@ while [ $# -gt 0 ]; do
     --codex-auth-file) CODEX_AUTH_FILE=${2:?}; shift ;;
     --claude-credentials-file) CLAUDE_CREDENTIALS_FILE=${2:?}; shift ;;
     --minimax-token-file) MINIMAX_TOKEN_FILE=${2:?}; shift ;;
+    --restore-latest) RESTORE_LATEST=1 ;;
     --activate) ACTIVATE=1 ;;
     -h|--help) sed -n '2,40p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) fail "unknown flag $1 (see --help)" ;;
@@ -172,8 +175,10 @@ if [ "$DEV" -eq 0 ]; then
   say "== hand-off: mc onboard preflight"
   "$BIN_DIR/mc" onboard preflight
   say "== hand-off: mc onboard home (through the managed helper)"
-  "$BIN_DIR/mc" onboard home --release-source "$REPO_DIR/runner" \
+  set -- "$BIN_DIR/mc" onboard home --release-source "$REPO_DIR/runner" \
     --host-release-source "$REPO_DIR"
+  [ "$RESTORE_LATEST" -eq 0 ] || set -- "$@" --restore-latest
+  "$@"
   say "== hand-off: remaining mc onboard sections"
   set -- "$BIN_DIR/mc" onboard
   [ -z "$WORKSOURCE" ] || set -- "$@" --worksource "$WORKSOURCE"
@@ -186,6 +191,7 @@ if [ "$DEV" -eq 0 ]; then
   [ -z "$CODEX_AUTH_FILE" ] || set -- "$@" --codex-auth-file "$CODEX_AUTH_FILE"
   [ -z "$CLAUDE_CREDENTIALS_FILE" ] || set -- "$@" --claude-credentials-file "$CLAUDE_CREDENTIALS_FILE"
   [ -z "$MINIMAX_TOKEN_FILE" ] || set -- "$@" --minimax-token-file "$MINIMAX_TOKEN_FILE"
+  [ "$RESTORE_LATEST" -eq 0 ] || set -- "$@" --restore-latest
   [ "$ACTIVATE" -eq 0 ] || set -- "$@" --activate
   exec "$@"
 fi

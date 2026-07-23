@@ -92,6 +92,9 @@ export interface TickDeps {
   /** Durable liveness receipt after one dispatch result was parsed and its
    * effect completed. Activation waits for this release-bound proof. */
   tickComplete?: () => Promise<void>;
+  /** Serialized resident chore run before dispatch. A failure skips dispatch
+   * for this tick so required durability work retries before any new write. */
+  beforeTick?: () => Promise<void>;
   fs: {
     /** mkdir -p semantics by default; exclusive is for a newly derived,
      * run-keyed disposable root that must not adopt existing bytes. */

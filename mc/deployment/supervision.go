@@ -305,6 +305,7 @@ func PrepareSupervision(home string, spec SupervisionSpec, loaded LaunchdLoadedP
 	resident := map[string]any{
 		"agentCmd":          []string{"bun", "/app/src/agent-runner/main.ts"},
 		"agentRunnerRoutes": []string{}, "behaviorsDir": filepath.Join(canonicalHome, "behaviors"),
+		"backupIntervalMs":    3600000,
 		"configSchemaVersion": 1, "dockerPath": dockerPath,
 		"homieCmd": []string{"bun", "/app/src/homie-runner/main.ts"},
 		"image":    spec.Image, "landCmd": []string{"mc-land"}, "mcHome": canonicalHome,

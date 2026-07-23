@@ -57,6 +57,12 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	if args[0] == "__onboard-state" {
 		return runPrivateOnboardState(args, stdin, stdout, stderr)
 	}
+	if args[0] == "__backup-spine" {
+		return runPrivateSpineBackup(args, stdin, stdout, stderr)
+	}
+	if args[0] == "__restore-spine" {
+		return runPrivateSpineRestore(args, stdin, stdout, stderr)
+	}
 	// Production Home is a composed crossing: host-side canonical-path and
 	// mirror operations stay on Darwin, while only the path-free spine frame
 	// enters the exact helper. Preflight is host-only and writes nothing.
@@ -86,6 +92,9 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	}
 	if shouldDelegateToHelper() && args[0] == "doctor" {
 		return brokerDoctor(args, stdout, stderr)
+	}
+	if shouldDelegateToHelper() && args[0] == "backup" {
+		return brokerBackup(args, stdout, stderr)
 	}
 	// The launch-time identity recheck reads HOST files by definition: it must
 	// run locally even when every ordinary verb self-delegates into the helper.
@@ -496,6 +505,7 @@ func parseOnboardArgs(args []string) (verbs.OnboardArgs, error) {
 	fs.StringVar(&a.MinimaxTokenFile, "minimax-token-file", "", "owner-only MiniMax token source")
 	fs.BoolVar(&a.AcquireRuntimeAuth, "acquire", false, "run isolated provider-owned OAuth subscription logins")
 	fs.BoolVar(&a.ActivateSupervision, "activate", false, "install and load prepared native supervision (operator-present)")
+	fs.BoolVar(&a.RestoreLatest, "restore-latest", false, "restore the newest matching snapshot into a lost spine")
 	fs.StringVar(&a.ReleaseSource, "release-source", "", "repository runner source (install.sh only)")
 	fs.StringVar(&a.HostReleaseSource, "host-release-source", "", "repository root for native host payloads (install.sh only)")
 	fs.IntVar(&a.TimeoutMinutes, "timeout-minutes", 0, "lease timeout")
@@ -511,6 +521,9 @@ func parseOnboardArgs(args []string) (verbs.OnboardArgs, error) {
 	}
 	if a.ActivateSupervision && a.Section != "" && a.Section != "supervision" {
 		return verbs.OnboardArgs{}, verbs.Usagef("mc onboard --activate is valid only for the supervision section")
+	}
+	if a.RestoreLatest && a.Section != "" && a.Section != "home" {
+		return verbs.OnboardArgs{}, verbs.Usagef("mc onboard --restore-latest is valid only for the home section")
 	}
 	for _, item := range []struct {
 		name  string

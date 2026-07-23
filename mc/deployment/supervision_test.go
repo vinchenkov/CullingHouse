@@ -124,7 +124,7 @@ func TestPrepareSupervisionPublishesClosedUnloadedLaunchAgentBundle(t *testing.T
 	if err := json.Unmarshal(body, &resident); err != nil {
 		t.Fatal(err)
 	}
-	if resident["releaseBuildId"] != spec.ReleaseBuildID || resident["mcPath"] != spec.MCPath || resident["dockerPath"] != spec.DockerPath || resident["runnerSrcDir"] != filepath.Join(home, "release", "runner") {
+	if resident["releaseBuildId"] != spec.ReleaseBuildID || resident["mcPath"] != spec.MCPath || resident["dockerPath"] != spec.DockerPath || resident["runnerSrcDir"] != filepath.Join(home, "release", "runner") || resident["backupIntervalMs"] != float64(3600000) {
 		t.Fatalf("resident config=%v", resident)
 	}
 	roots := resident["workspaceRoots"].([]any)

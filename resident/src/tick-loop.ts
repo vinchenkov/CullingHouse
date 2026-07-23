@@ -54,6 +54,7 @@ export function startTickLoop(deps: TickDeps): TickHandle {
 
 /** One tick: `mc dispatch`, then effect the result. Exported for tests. */
 export async function tick(deps: TickDeps): Promise<void> {
+  if (deps.beforeTick !== undefined) await deps.beforeTick();
   const res = await deps.runMc(["dispatch"]);
   if (res.exitCode !== 0) {
     deps.log(`mc dispatch failed (exit ${res.exitCode}): ${res.stderr.trim()}`);
