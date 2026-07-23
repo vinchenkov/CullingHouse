@@ -1413,3 +1413,28 @@ rules in code the sealed lane does not own.
   required by the two native supervised units without changing either unit's
   state authority or container visibility.
 - Needs your decision: no.
+
+## 2026-07-22 — Production host and helper share one immutable release identity
+- Where: Phase 5 install/supervision; spec §11.2, §12, and the resident control
+  handshake.
+- Gap: ordinary development builds intentionally identify as `development`,
+  but the production front door and production image build were also leaving
+  that default in place. A generated resident configuration therefore could
+  not pin an immutable host/helper release, and two unrelated deployments
+  could pass the control handshake under the same placeholder identity.
+- Choice: the production installer resolves and validates its repository HEAD
+  once, embeds that lowercase commit ID in native `mc` through Go linker
+  flags, and passes the same value into the production image build. A direct
+  image build derives the same immutable HEAD unless the front door supplies
+  its already-resolved value. Development and fake builds remain explicitly
+  `development`.
+- Evidence: the image fast contract rejects malformed identities before
+  compilation and observes the exact accepted value in the Linux helper link
+  flags. The installer and image suites pass. The arm64 production image and a
+  native host release binary were rebuilt from `73b710b` and both contain the
+  exact full commit `73b710b9e2aa575c4928bc0bf6816c83ec0418d4`; image ID is
+  `sha256:13321fc21132515cc6be84a4f3d09c2e0a3940f0ca581709470926142aaa6993`.
+- Spec impact: conservative internal mechanism. It narrows an existing
+  handshake field from a reusable development placeholder to the immutable
+  production release that the handshake was designed to compare.
+- Needs your decision: no.

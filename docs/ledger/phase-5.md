@@ -332,3 +332,22 @@ installed payloads. The fixed six-leg fast suite is green.
 NEXT: generate the resident/dashboard configs and per-user LaunchAgents from
 installed payloads, verify their exact unloaded state, and do not bootstrap
 them. Live token spend and launchd activation remain operator-present gates.
+
+## 2026-07-22 — immutable production release identity (`73b710b`)
+
+Production installation now resolves one exact repository commit and embeds
+it in both the native host `mc` and the Linux helper `mc-real`. Standalone
+production image builds derive the same identity from HEAD; malformed caller
+overrides refuse before compilation. Development and fake binaries retain the
+deliberate `development` identity.
+
+The installer contract and image fast suite are green. The production image
+was rebuilt arm64-native from the committed boundary, and both it and a native
+release build contain the exact full commit
+`73b710b9e2aa575c4928bc0bf6816c83ec0418d4`. The new image is
+`sha256:13321fc21132515cc6be84a4f3d09c2e0a3940f0ca581709470926142aaa6993`.
+
+NEXT: generate the resident/dashboard configs and per-user LaunchAgents from
+installed payloads, pin the immutable release identity, verify their exact
+unloaded state, and do not bootstrap them. Live token spend and launchd
+activation remain operator-present gates.

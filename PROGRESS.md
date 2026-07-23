@@ -6,18 +6,17 @@ REPO PATH: `~/dev/ai/homie`. Never relocate this repo into `~/Documents`,
 `~/Desktop`, or `~/Downloads`: macOS TCC can revoke an agent session's own
 filesystem access there during fan-out. Full Disk Access does not fix it.
 
-LAST GREEN SHA: `1513fe3` — Home onboarding now atomically installs both the
-closed runner tree and the exact native resident/dashboard source/UI graph.
-Neither supervised host process nor an agent container needs mutable repository
-bytes. Isolated subscription acquisition remains green. The six-leg fast suite
-is green.
+LAST GREEN SHA: `73b710b` — production installation now embeds one immutable
+Git commit in both the native host `mc` and Linux helper `mc-real`; malformed
+identities refuse before compilation. The installer and image fast suites are
+green.
 Full `docker_boundary` + full `docker_e2e` (-count=1, `ok mc/e2e 169s`), the
 extended Playwright dashboard smoke, and the install.sh dev walk were last
 green at `d0ef4bb`. The full Docker lanes last ran green at `c8f37e9`-era HEAD
 (26 `docker_boundary` subtests; 10 `docker_e2e` tests including both credential
 legs). The real onboarding crossing was green at `bf5981d`. Production image
-`mc-prod` rebuilt for `4fa0dee`:
-`sha256:a4aa1df198b38028a73e92135466e65a57afb26c6392fe34d5ec8cddc016c4d7`,
+`mc-prod` rebuilt for `73b710b`:
+`sha256:13321fc21132515cc6be84a4f3d09c2e0a3940f0ca581709470926142aaa6993`,
 arm64/linux, native. LESSON pinned by `ada715d`: the resident's
 `SPINE_SCHEMA_VERSION` (resident-control.ts:12) mirrors
 `substrate.CurrentSchemaVersion` in lockstep — every schema bump must touch
@@ -145,6 +144,9 @@ the approve landing fence to assignment-armed tasks; v12 retires
   - [x] Native resident/dashboard source and UI are atomically installed as a
         closed owner-only host payload, separate from the agent-visible runner
         tree (`1513fe3`).
+  - [x] Production native host and Linux helper builds share one immutable
+        release commit identity; malformed build identities fail closed before
+        compilation (`73b710b`).
 - [ ] Release prep — install/onboard front door and construction-document
       disposition.
 
@@ -225,5 +227,6 @@ dashboard LaunchAgent generation, and the four non-Console tabs. Details and
 commit map are in the closed Phase 4 ledger.
 
 NEXT: generate the resident/dashboard configs and per-user LaunchAgents from
-installed payloads, verify their exact unloaded state, and do not bootstrap
-them. Live token spend and launchd activation remain operator-present gates.
+installed payloads, pin the immutable release identity, verify their exact
+unloaded state, and do not bootstrap them. Live token spend and launchd
+activation remain operator-present gates.
