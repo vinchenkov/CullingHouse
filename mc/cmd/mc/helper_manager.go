@@ -38,6 +38,7 @@ type helperVolumeInspect struct {
 }
 
 type helperContainerInspect struct {
+	ID     string `json:"Id"`
 	Name   string `json:"Name"`
 	Image  string `json:"Image"`
 	Config struct {
@@ -74,6 +75,54 @@ type helperContainerInspect struct {
 	State struct {
 		Running bool `json:"Running"`
 	} `json:"State"`
+}
+
+func validContainerID(id string) bool {
+	if len(id) != 64 {
+		return false
+	}
+	for _, r := range id {
+		if (r < '0' || r > '9') && (r < 'a' || r > 'f') {
+			return false
+		}
+	}
+	return true
+}
+
+// destroySpineVolume runs only after a durable host backup. It rechecks the
+// exact ephemeral helper and local volume, removes the helper by immutable ID,
+// then removes the derived volume. A failed volume removal leaves all spine
+// bytes intact and a later ordinary command can recreate the helper.
+func (m *helperManager) destroySpineVolume() error {
+	image, exists, err := inspectJSON[helperImageInspect](m.docker, "image", m.imageRef)
+	if err != nil || !exists || image.OS != "linux" || image.Architecture != "arm64" || !strings.HasPrefix(image.ID, "sha256:") || len(image.ID) != 71 {
+		return fmt.Errorf("reinspect production image before reset: %v", err)
+	}
+	volume, exists, err := inspectJSON[helperVolumeInspect](m.docker, "volume", m.names.Volume)
+	if err != nil || !exists || volume.Name != m.names.Volume || volume.Driver != "local" || len(volume.Options) != 0 {
+		return fmt.Errorf("reinspect exact spine volume before reset: exists=%v err=%v", exists, err)
+	}
+	container, exists, err := inspectJSON[helperContainerInspect](m.docker, "container", m.names.Helper)
+	if err != nil || !exists || !m.helperExact(container, image.ID) || !validContainerID(container.ID) {
+		return fmt.Errorf("reinspect exact helper before reset: exists=%v err=%v", exists, err)
+	}
+	if out, err := m.docker.CombinedOutput("container", "rm", "-f", container.ID); err != nil {
+		return fmt.Errorf("remove exact helper before volume reset: %v: %s", err, strings.TrimSpace(string(out)))
+	}
+	if replacement, exists, err := inspectJSON[helperContainerInspect](m.docker, "container", m.names.Helper); err != nil || exists {
+		return fmt.Errorf("helper name changed during reset: exists=%v id=%q err=%v", exists, replacement.ID, err)
+	}
+	volume, exists, err = inspectJSON[helperVolumeInspect](m.docker, "volume", m.names.Volume)
+	if err != nil || !exists || volume.Name != m.names.Volume || volume.Driver != "local" || len(volume.Options) != 0 {
+		return fmt.Errorf("spine volume changed before reset commit: exists=%v err=%v", exists, err)
+	}
+	if out, err := m.docker.CombinedOutput("volume", "rm", m.names.Volume); err != nil {
+		return fmt.Errorf("remove spine volume after backup: %v: %s", err, strings.TrimSpace(string(out)))
+	}
+	if _, exists, err := inspectJSON[helperVolumeInspect](m.docker, "volume", m.names.Volume); err != nil || exists {
+		return fmt.Errorf("spine volume reset commit is ambiguous: exists=%v err=%v", exists, err)
+	}
+	return nil
 }
 
 type helperManager struct {

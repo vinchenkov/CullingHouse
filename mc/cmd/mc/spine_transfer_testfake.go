@@ -7,3 +7,7 @@ import "io"
 func brokerBackup(args []string, stdout, stderr io.Writer) int {
 	return delegate(args, nil, stdout, stderr)
 }
+
+func brokerReset(args []string, stdout, stderr io.Writer) int {
+	return delegate(args, nil, stdout, stderr)
+}

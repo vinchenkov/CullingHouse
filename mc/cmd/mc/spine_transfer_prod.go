@@ -89,18 +89,8 @@ func restoreLatestSpine() (string, int64, error) {
 	if err != nil {
 		return "", 0, err
 	}
-	names, err := deployment.RuntimeNames(home)
-	if err != nil {
-		return "", 0, verbs.Usagef("derive restore supervision labels: %v", err)
-	}
-	for _, label := range []string{"com.mission-control." + names.Suffix + ".resident", "com.mission-control." + names.Suffix + ".dashboard"} {
-		loaded, err := launchdLabelLoaded(label)
-		if err != nil {
-			return "", 0, verbs.Usagef("inspect supervision before restore: %v", err)
-		}
-		if loaded {
-			return "", 0, verbs.Domainf("restore requires %s to be unloaded", label)
-		}
+	if err := requireSupervisionUnloaded(home, "restore"); err != nil {
+		return "", 0, err
 	}
 	file, header, path, err := verbs.OpenLatestSpineBackup(home, req)
 	if err != nil {
@@ -139,4 +129,99 @@ func restoreLatestSpine() (string, int64, error) {
 		return "", 0, verbs.Domainf("private restore response carries trailing data")
 	}
 	return path, header.Bytes, nil
+}
+
+func requireSupervisionUnloaded(home, operation string) error {
+	names, err := deployment.RuntimeNames(home)
+	if err != nil {
+		return verbs.Usagef("derive %s supervision labels: %v", operation, err)
+	}
+	for _, label := range []string{"com.mission-control." + names.Suffix + ".resident", "com.mission-control." + names.Suffix + ".dashboard"} {
+		loaded, err := launchdLabelLoaded(label)
+		if err != nil {
+			return verbs.Usagef("inspect supervision before %s: %v", operation, err)
+		}
+		if loaded {
+			return verbs.Domainf("%s requires %s to be unloaded", operation, label)
+		}
+	}
+	return nil
+}
+
+func brokerReset(args []string, stdout, stderr io.Writer) int {
+	fs := newFlags("mc reset")
+	confirm := fs.Bool("confirm", false, "confirm the destructive volume reset")
+	if err := parse(fs, args[1:]); err != nil {
+		return writeVerbError(stdout, stderr, err)
+	}
+	if !*confirm {
+		return writeVerbError(stdout, stderr, verbs.Domainf("mc reset is destructive: it snapshots the spine and removes the derived runtime volume; re-run with --confirm (§16.4)"))
+	}
+	id, err := verbs.LoadIdentity()
+	if err != nil {
+		return writeVerbError(stdout, stderr, err)
+	}
+	if err := verbs.RequireHostScope(id, "mc reset"); err != nil {
+		return writeVerbError(stdout, stderr, err)
+	}
+	req, home, err := verbs.PrepareSpineTransfer(releaseBuildID, gatewayControlVersion, configSchemaVersion)
+	if err != nil {
+		return writeVerbError(stdout, stderr, err)
+	}
+	if err := requireSupervisionUnloaded(home, "reset"); err != nil {
+		return writeVerbError(stdout, stderr, err)
+	}
+	manager, err := productionHelperManager(execDockerRunner{})
+	if err != nil {
+		return writeVerbError(stdout, stderr, verbs.Usagef("derive reset runtime: %v", err))
+	}
+	volume, volumeExists, err := inspectJSON[helperVolumeInspect](manager.docker, "volume", manager.names.Volume)
+	if err != nil {
+		return writeVerbError(stdout, stderr, verbs.Usagef("inspect reset volume: %v", err))
+	}
+	if !volumeExists {
+		if _, helperExists, err := inspectJSON[helperContainerInspect](manager.docker, "container", manager.names.Helper); err != nil || helperExists {
+			return writeVerbError(stdout, stderr, verbs.Domainf("reset replay found an unexpected helper without its volume"))
+		}
+		file, header, snapshot, err := verbs.OpenLatestSpineBackup(home, req)
+		if err != nil {
+			return writeVerbError(stdout, stderr, err)
+		}
+		file.Close()
+		if err := writeJSON(stdout, map[string]any{"reset": true, "status": "already-reset", "volume": manager.names.Volume, "snapshot": snapshot, "bytes": header.Bytes}); err != nil {
+			fmt.Fprintln(stderr, "mc:", err)
+			return 2
+		}
+		return 0
+	}
+	if volume.Name != manager.names.Volume || volume.Driver != "local" || len(volume.Options) != 0 {
+		return writeVerbError(stdout, stderr, verbs.Domainf("reset refuses a non-exact derived spine volume"))
+	}
+	var backupOut, backupErr bytes.Buffer
+	if code := brokerBackup([]string{"backup"}, &backupOut, &backupErr); code != 0 {
+		_, _ = stdout.Write(backupOut.Bytes())
+		_, _ = stderr.Write(backupErr.Bytes())
+		return code
+	}
+	var receipt struct {
+		Snapshot string `json:"snapshot"`
+		Bytes    int64  `json:"bytes"`
+	}
+	dec := json.NewDecoder(bytes.NewReader(backupOut.Bytes()))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&receipt); err != nil || receipt.Snapshot == "" || receipt.Bytes < 1 {
+		return writeVerbError(stdout, stderr, verbs.Domainf("backup receipt was invalid; reset did not start"))
+	}
+	var trailing any
+	if err := dec.Decode(&trailing); err != io.EOF {
+		return writeVerbError(stdout, stderr, verbs.Domainf("backup receipt carried trailing data; reset did not start"))
+	}
+	if err := manager.destroySpineVolume(); err != nil {
+		return writeVerbError(stdout, stderr, verbs.Domainf("reset stopped after durable backup %q: %v", receipt.Snapshot, err))
+	}
+	if err := writeJSON(stdout, map[string]any{"reset": true, "status": "done", "volume": manager.names.Volume, "snapshot": receipt.Snapshot, "bytes": receipt.Bytes}); err != nil {
+		fmt.Fprintln(stderr, "mc:", err)
+		return 2
+	}
+	return 0
 }

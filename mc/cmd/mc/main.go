@@ -96,6 +96,9 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	if shouldDelegateToHelper() && args[0] == "backup" {
 		return brokerBackup(args, stdout, stderr)
 	}
+	if shouldDelegateToHelper() && args[0] == "reset" {
+		return brokerReset(args, stdout, stderr)
+	}
 	// The launch-time identity recheck reads HOST files by definition: it must
 	// run locally even when every ordinary verb self-delegates into the helper.
 	if args[0] == "__mount-recheck" || args[0] == "__task-parent-recheck" || args[0] == "__completion-seal-recheck" || args[0] == "__task-skeleton-recover" || args[0] == "__setup-first-task" || args[0] == "__setup-accepted-seal" || args[0] == "__setup-verifier-projection" || args[0] == "__land-sealed" {

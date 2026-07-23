@@ -75,6 +75,7 @@ func TestHelperCreateArgsPinLeastPrivilegeEnvelope(t *testing.T) {
 
 func exactHelperFixture(names deployment.Names, imageID string) helperContainerInspect {
 	var c helperContainerInspect
+	c.ID = strings.Repeat("c", 64)
 	c.Name = "/" + names.Helper
 	c.Image = imageID
 	c.Config.User = "10002:10002"
@@ -95,6 +96,53 @@ func exactHelperFixture(names deployment.Names, imageID string) helperContainerI
 		RW          bool   `json:"RW"`
 	}{Type: "volume", Name: names.Volume, Destination: "/mc/spine", RW: true})
 	return c
+}
+
+func TestHelperDestroySpineVolumeRechecksAndCommitsInOrder(t *testing.T) {
+	names, _ := deployment.RuntimeNames("/Users/alice/.mission-control")
+	imageID := "sha256:" + strings.Repeat("a", 64)
+	image := helperImageInspect{ID: imageID, OS: "linux", Architecture: "arm64"}
+	volume := helperVolumeInspect{Name: names.Volume, Driver: "local"}
+	helper := exactHelperFixture(names, imageID)
+	helper.State.Running = true
+	runner := &scriptedDocker{t: t, steps: []dockerStep{
+		{want: []string{"image", "inspect", "--format", "{{json .}}", productionImageRef}, out: inspectBytes(t, image)},
+		{want: []string{"volume", "inspect", "--format", "{{json .}}", names.Volume}, out: inspectBytes(t, volume)},
+		{want: []string{"container", "inspect", "--format", "{{json .}}", names.Helper}, out: inspectBytes(t, helper)},
+		{want: []string{"container", "rm", "-f", helper.ID}, out: helper.ID},
+		{want: []string{"container", "inspect", "--format", "{{json .}}", names.Helper}, out: "No such container", err: errors.New("exit 1")},
+		{want: []string{"volume", "inspect", "--format", "{{json .}}", names.Volume}, out: inspectBytes(t, volume)},
+		{want: []string{"volume", "rm", names.Volume}, out: names.Volume},
+		{want: []string{"volume", "inspect", "--format", "{{json .}}", names.Volume}, out: "No such volume", err: errors.New("exit 1")},
+	}}
+	m := helperManager{docker: runner, imageRef: productionImageRef, names: names}
+	if err := m.destroySpineVolume(); err != nil {
+		t.Fatal(err)
+	}
+	if runner.calls != len(runner.steps) {
+		t.Fatalf("docker calls=%d want=%d", runner.calls, len(runner.steps))
+	}
+}
+
+func TestHelperDestroySpineVolumeRefusesMutableContainerTarget(t *testing.T) {
+	names, _ := deployment.RuntimeNames("/Users/alice/.mission-control")
+	imageID := "sha256:" + strings.Repeat("a", 64)
+	image := helperImageInspect{ID: imageID, OS: "linux", Architecture: "arm64"}
+	volume := helperVolumeInspect{Name: names.Volume, Driver: "local"}
+	helper := exactHelperFixture(names, imageID)
+	helper.ID = ""
+	runner := &scriptedDocker{t: t, steps: []dockerStep{
+		{want: []string{"image", "inspect", "--format", "{{json .}}", productionImageRef}, out: inspectBytes(t, image)},
+		{want: []string{"volume", "inspect", "--format", "{{json .}}", names.Volume}, out: inspectBytes(t, volume)},
+		{want: []string{"container", "inspect", "--format", "{{json .}}", names.Helper}, out: inspectBytes(t, helper)},
+	}}
+	m := helperManager{docker: runner, imageRef: productionImageRef, names: names}
+	if err := m.destroySpineVolume(); err == nil || !strings.Contains(err.Error(), "exact helper") {
+		t.Fatalf("mutable target accepted: %v", err)
+	}
+	if runner.calls != len(runner.steps) {
+		t.Fatalf("refusal mutated Docker state: calls=%d", runner.calls)
+	}
 }
 
 func TestHelperExactRejectsAuthorityWidening(t *testing.T) {
