@@ -73,6 +73,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 				return runLocal(args, stdin, stdout, stderr)
 			case "home":
 				return brokerOnboardHome(stdout, stderr)
+			case "runtime-auth":
+				return brokerOnboardRuntimeAuth(args, stdout, stderr)
 			case "routing", "worksource", "tunables", "surfaces":
 				return brokerOnboardState(args, stdout, stderr)
 			case "container":
@@ -488,6 +490,10 @@ func parseOnboardArgs(args []string) (verbs.OnboardArgs, error) {
 	fs.BoolVar(&a.Smoke, "smoke", false, "run the full-pipeline smoke")
 	fs.StringVar(&a.Worksource, "worksource", "", "first Worksource id")
 	fs.StringVar(&a.WorkspaceRoot, "workspace-root", "", "first Worksource root")
+	fs.StringVar(&a.RuntimeBindings, "runtime-bindings", "", "comma-separated runtime bindings")
+	fs.StringVar(&a.CodexAuthFile, "codex-auth-file", "", "owner-only Codex auth source")
+	fs.StringVar(&a.ClaudeCredentialsFile, "claude-credentials-file", "", "owner-only Claude credential source")
+	fs.StringVar(&a.MinimaxTokenFile, "minimax-token-file", "", "owner-only MiniMax token source")
 	fs.IntVar(&a.TimeoutMinutes, "timeout-minutes", 0, "lease timeout")
 	fs.IntVar(&a.GraceMinutes, "grace-minutes", 0, "lease grace")
 	fs.IntVar(&a.HeartbeatIntervalS, "heartbeat-interval-s", 0, "heartbeat interval")

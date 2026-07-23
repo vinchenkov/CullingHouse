@@ -5,10 +5,58 @@ package main
 import (
 	"fmt"
 	"io"
+	"os"
 	"strings"
 
+	"mc/deployment"
 	"mc/verbs"
 )
+
+var productionRuntimeAuthVerifier = deployment.RuntimeAuthVerifyFunc(func(binding, _ string) error {
+	return fmt.Errorf("the real %s adapter live no-op is not installed; no grants published", binding)
+})
+
+func selectedRuntimeBindings(raw string) ([]string, error) {
+	if raw == "" {
+		return []string{"chatgpt", "claude", "minimax"}, nil
+	}
+	parts := strings.Split(raw, ",")
+	for i := range parts {
+		parts[i] = strings.TrimSpace(parts[i])
+		if parts[i] == "" {
+			return nil, verbs.Usagef("mc onboard runtime-auth --runtime-bindings contains an empty binding")
+		}
+	}
+	return parts, nil
+}
+
+func brokerOnboardRuntimeAuth(args []string, stdout, stderr io.Writer) int {
+	a, err := parseOnboardArgs(args[1:])
+	if err != nil {
+		return writeVerbError(stdout, stderr, err)
+	}
+	if a.Section != "runtime-auth" {
+		return writeVerbError(stdout, stderr, verbs.Usagef("usage: mc onboard runtime-auth [source flags]"))
+	}
+	bindings, err := selectedRuntimeBindings(a.RuntimeBindings)
+	if err != nil {
+		return writeVerbError(stdout, stderr, err)
+	}
+	home, err := configuredCanonicalHome()
+	if err != nil {
+		return writeVerbError(stdout, stderr, verbs.Usagef("resolve MC_HOME: %v", err))
+	}
+	status, err := deployment.ImportRuntimeAuth(home, deployment.RuntimeAuthSources{
+		Bindings: bindings, CodexAuthFile: a.CodexAuthFile,
+		ClaudeCredentialsFile: a.ClaudeCredentialsFile,
+		MinimaxTokenFile:      a.MinimaxTokenFile, Environment: os.Environ(),
+	}, productionRuntimeAuthVerifier)
+	if err != nil {
+		return writeVerbError(stdout, stderr, verbs.Domainf("runtime-auth import refused: %v", err))
+	}
+	return writeOnboardSection(stdout, stderr, "runtime-auth", status,
+		fmt.Sprintf("%d binding grants passed forbidden-env and live no-op gates and were atomically published", len(bindings)))
+}
 
 func brokerOnboardContainer(args []string, stdout, stderr io.Writer) int {
 	if len(args) != 2 || args[0] != "onboard" || args[1] != "container" {

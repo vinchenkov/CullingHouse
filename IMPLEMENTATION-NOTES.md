@@ -1218,3 +1218,34 @@ rules in code the sealed lane does not own.
   deliberately closed; the importer will source the same pinned identities and
   live adapter no-op gates remain required before a binding is configured.
 - Needs your decision: no.
+
+## 2026-07-22 — Runtime-auth publishes one verified grant-directory transaction
+- Where: Phase 5 `mc onboard runtime-auth`; spec §17.3 and §16.4's
+  idempotent/fail-closed wizard posture; ADR-022 D2–D8.
+- Gap: per-file rename would expose a mixed old/new binding set during key
+  rotation, and accepting arbitrary credential paths could copy the operator's
+  personal Codex/Claude login despite its independent refresh-token ownership.
+  Provider-native auth files also carry fields the resident must never retain.
+- Choice: provider flows may hand the importer only owner-owned mode-0600,
+  singly linked files below owner-only `MC_HOME/runtime-auth-sources`; personal
+  homes and symlink aliases refuse. The importer extracts only the closed
+  refresh/static union into a mode-0700 staging directory, fsyncs every grant
+  and the directory, runs forbidden-env plus every selected binding's live
+  verifier against the complete staged set, and then publishes the directory
+  in one filesystem operation. First publication is rename; rotation uses the
+  host kernel's atomic directory exchange (`renameatx_np(RENAME_SWAP)` on
+  Darwin, `renameat2(RENAME_EXCHANGE)` on Linux), followed by parent fsync and
+  deletion of the displaced old store. Byte-identical replay reruns live gates
+  but preserves the canonical directory identity.
+- Evidence: tests prove full three-binding extraction, exact provider evidence,
+  source ownership/mode/link/path fencing, ambient provider-key refusal,
+  verifier-before-publication ordering, byte-for-byte rollback on a failed
+  gate, atomic old-store replacement, no importer-stage residue, and healthy
+  idempotent replay. Production broker tests cover flags through canonical
+  publication. Darwin and Linux builds/vets plus the Go fast suite pass.
+- Spec impact: none. The real verifier deliberately refuses until the
+  production adapters can perform the mandated live no-op; therefore this
+  micro-step cannot mark a real binding configured or publish unverified
+  credentials. Provider-flow acquisition and source cleanup remain the next
+  wrapper around this transaction.
+- Needs your decision: no.

@@ -55,6 +55,12 @@ type OnboardArgs struct {
 	// Dual-input answers (§17): supplied as flags by the shepherding agent.
 	Worksource    string
 	WorkspaceRoot string
+	// Runtime-auth source paths are dual-input plumbing. Provider flows write
+	// these owner-only files; secret values never enter argv.
+	RuntimeBindings       string
+	CodexAuthFile         string
+	ClaudeCredentialsFile string
+	MinimaxTokenFile      string
 	// Tunables; zero = accept the §16.3 schema defaults.
 	TimeoutMinutes      int
 	GraceMinutes        int
