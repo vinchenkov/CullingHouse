@@ -67,4 +67,5 @@ export async function tick(deps: TickDeps): Promise<void> {
     return;
   }
   await applyEffect(effect, deps);
+  await deps.tickComplete?.();
 }

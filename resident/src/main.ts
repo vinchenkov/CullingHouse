@@ -33,6 +33,33 @@ interface MainConfig extends ResidentConfig {
   configSchemaVersion: number;
 }
 
+export interface TickReceipt {
+  version: 1;
+  release_build_id: string;
+  config_schema_version: number;
+  completed_at: string;
+}
+
+export async function publishTickReceipt(
+  mcHome: string,
+  releaseBuildId: string,
+  configVersion: number,
+  now = new Date(),
+): Promise<void> {
+  const health = join(mcHome, "health");
+  await mkdir(health, { recursive: true, mode: 0o700 });
+  const final = join(health, "resident-tick.json");
+  const stage = join(health, `.resident-tick.${process.pid}.next`);
+  const receipt: TickReceipt = {
+    version: 1,
+    release_build_id: releaseBuildId,
+    config_schema_version: configVersion,
+    completed_at: now.toISOString(),
+  };
+  await writeFile(stage, JSON.stringify(receipt) + "\n", { mode: 0o600 });
+  await rename(stage, final);
+}
+
 export interface RefreshGrantStoreDeps {
   readdir(path: string): Promise<string[]>;
   readJSON(path: string): Promise<unknown>;
@@ -189,6 +216,9 @@ async function main(): Promise<void> {
 		runMc,
     docker: execVia(config.dockerPath ?? "docker"),
     log,
+    tickComplete: () => publishTickReceipt(
+      config.mcHome, config.releaseBuildId, config.configSchemaVersion,
+    ),
     fs: {
       mkdir: async (path, opts) => {
         await mkdir(path, { recursive: opts?.exclusive !== true });

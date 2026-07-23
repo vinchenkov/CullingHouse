@@ -18,13 +18,15 @@ describe("timer wiring", () => {
   });
 
   test("each firing runs exactly one `mc dispatch` with argv ['dispatch']", async () => {
-    const rig = makeRig();
+    let receipts = 0;
+    const rig = makeRig({ tickComplete: async () => { receipts += 1; } });
     rig.mc.enqueue(idle(), idle(), idle());
     startTickLoop(rig.deps);
     await rig.timer.fire();
     await rig.timer.fire();
     await rig.timer.fire();
     expect(rig.mc.calls).toEqual([["dispatch"], ["dispatch"], ["dispatch"]]);
+    expect(receipts).toBe(3);
   });
 });
 
@@ -61,12 +63,15 @@ describe("fail-closed tick failures", () => {
   });
 
   test("unparseable effect JSON is logged and the loop continues", async () => {
-    const rig = makeRig();
+    let receipts = 0;
+    const rig = makeRig({ tickComplete: async () => { receipts += 1; } });
     rig.mc.enqueue(ok("not json at all\n"), idle());
     startTickLoop(rig.deps);
     await rig.timer.fire();
     expect(rig.logs.some((l) => l.includes("unparseable effect JSON"))).toBe(true);
+    expect(receipts).toBe(0);
     await rig.timer.fire();
+    expect(receipts).toBe(1);
     expect(rig.mc.calls.length).toBe(2);
   });
 
