@@ -291,3 +291,26 @@ and the fixed six-leg fast suite are green.
 NEXT: wrap Runtime-auth with isolated provider-owned login acquisition and
 source cleanup, using only `MC_HOME/runtime-auth-sources` as the flow home.
 Live token spend and launchd activation remain operator-present acceptance gates.
+
+## 2026-07-22 — isolated provider-owned subscription acquisition (`bd4385b`)
+
+`mc onboard runtime-auth --acquire` now runs plain `codex login` and
+`claude auth login --claudeai` in unique owner-only flow homes beneath
+`MC_HOME/runtime-auth-sources`. Each subprocess receives only a small
+transport/locale/custom-CA environment plus its disposable HOME/config path;
+personal harness homes, provider endpoint overrides, and ambient credentials
+cannot enter. Claude's explicit subscription flag excludes the metered Console
+login. A selected MiniMax binding must have its isolated owner-only key source
+before browser consent begins.
+
+Provider-native files feed the existing structural importer and real-adapter
+live gates. The exact created flow root is removed after success, login
+failure, or import failure; cleanup identity drift is refused and surfaced
+rather than followed. Unit tests pin argv/environment, early ambient-key
+refusal, cleanup, and cleanup-race behavior. A broker test crosses acquisition
+through verified grant publication and proves no flow source survives. The
+fixed six-leg fast suite is green; no live provider turn was spent.
+
+NEXT: package the production resident/dashboard payloads under the installed
+release, then generate and verify unloaded supervision units. Live token spend
+and launchd activation remain operator-present acceptance gates.

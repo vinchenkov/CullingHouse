@@ -6,11 +6,11 @@ REPO PATH: `~/dev/ai/homie`. Never relocate this repo into `~/Documents`,
 `~/Desktop`, or `~/Downloads`: macOS TCC can revoke an agent session's own
 filesystem access there during fan-out. Full Disk Access does not fix it.
 
-LAST GREEN SHA: `6202498` — Home onboarding now atomically installs the exact
-owner-only production runner tree consumed by real containers and Runtime-auth.
-The live verifier still requires exact native-session evidence before grant
-publication, and real-agent containers fail closed on mandatory inner
-credential sandboxes. The six-leg fast suite is green.
+LAST GREEN SHA: `bd4385b` — Runtime-auth now acquires Codex/Claude
+subscription credentials through provider-owned login commands in disposable
+MC_HOME-owned homes, imports only after every live gate, and removes the
+intermediate source on success or failure. No personal harness home is copied.
+The six-leg fast suite is green.
 Full `docker_boundary` + full `docker_e2e` (-count=1, `ok mc/e2e 169s`), the
 extended Playwright dashboard smoke, and the install.sh dev walk were last
 green at `d0ef4bb`. The full Docker lanes last ran green at `c8f37e9`-era HEAD
@@ -139,6 +139,9 @@ the approve landing fence to assignment-armed tasks; v12 retires
   - [x] Home onboarding atomically publishes the fixed production runner
         manifest under `MC_HOME/release/runner`; replay and upgrades preserve
         a closed owner-only runtime mount (`6202498`).
+  - [x] Provider-owned Codex/Claude subscription logins run in disposable,
+        minimal-environment homes and clean their sources around verified
+        atomic import; metered/ambient credentials refuse first (`bd4385b`).
 - [ ] Release prep — install/onboard front door and construction-document
       disposition.
 
@@ -157,9 +160,10 @@ the approve landing fence to assignment-armed tasks; v12 retires
   Codex 0.145.0 personal ChatGPT login exists but MUST NOT be copied (single-
   owner rotation); Claude 2.1.218 currently reports unauthenticated. Public
   provider `token_url`/`client_id` constants and both required runtime switches
-  were verified in those installed binaries without reading token values. Build
-  isolated-login import into `MC_HOME/refresh-grants`; the operator must perform
-  the Claude/browser consent and securely supply the MiniMax subscription key.
+  were verified in those installed binaries without reading token values.
+  Isolated provider-owned acquisition/import is complete at `bd4385b`; the
+  operator must perform both browser consents and securely supply the MiniMax
+  subscription key in the operator-present acceptance window.
 - **Phase 5 operator-input completion**: `OPERATOR-INPUTS.md` exists and is
   ignored, but does not yet record the required subscription-spend budget,
   Codex custom-CA version floor. Build the fail-closed import path independently;
@@ -217,6 +221,6 @@ native resume, container reconciliation, Homie credential projection,
 dashboard LaunchAgent generation, and the four non-Console tabs. Details and
 commit map are in the closed Phase 4 ledger.
 
-NEXT: wrap Runtime-auth with isolated provider-owned login acquisition and
-source cleanup, using only `MC_HOME/runtime-auth-sources` as the flow home.
-Live token spend and launchd activation remain operator-present acceptance gates.
+NEXT: package the production resident/dashboard payloads under the installed
+release, then generate and verify unloaded supervision units. Live token spend
+and launchd activation remain operator-present acceptance gates.
