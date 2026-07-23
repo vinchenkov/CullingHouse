@@ -487,7 +487,10 @@ func resolveBaseOID(sourceRepo, targetRef, objectFormat string) (string, error) 
 
 // rejectReservedTreeComponent refuses a base tree whose top level contains a
 // reserved MC/git cover name, which setup could otherwise never cover without
-// colliding with the real content (ADR-017:433-434).
+// colliding with the real content (ADR-017:433-434). .mc-worktrees joins the
+// set for ADR-025 D10: it is the shared initiative checkout area inside the
+// primary working tree, so a tracked path there would collide with a live
+// worktree exactly when the arc merge lands.
 func rejectReservedTreeComponent(sourceRepo, baseSHA string) error {
 	out, err := gitAtSource(sourceRepo, "ls-tree", "--name-only", baseSHA)
 	if err != nil {
@@ -495,7 +498,7 @@ func rejectReservedTreeComponent(sourceRepo, baseSHA string) error {
 	}
 	for _, name := range strings.Split(string(out), "\n") {
 		switch strings.TrimSpace(name) {
-		case ".mission-control", ".git":
+		case ".mission-control", ".git", ".mc-worktrees":
 			return Domainf("first-task setup refuses a base tree with a reserved %q root component", strings.TrimSpace(name))
 		}
 	}

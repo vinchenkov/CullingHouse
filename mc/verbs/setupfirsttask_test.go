@@ -325,6 +325,32 @@ func TestMaterializeFirstTaskStoreRefusesResidueInAChild(t *testing.T) {
 	}
 }
 
+// Every committable reserved root component is refused: .mission-control is the
+// task-era cover (ADR-017:433-434) and .mc-worktrees is the shared initiative
+// checkout area (ADR-025 D10) — a committed path there would collide with the
+// live worktree in the primary checkout at merge time. .git is also reserved in
+// the production check but git itself refuses to track such a path, so it has
+// no expressible case here.
+func TestMaterializeFirstTaskStoreRefusesEveryReservedRootComponent(t *testing.T) {
+	for _, name := range []string{".mission-control", ".mc-worktrees"} {
+		t.Run(name, func(t *testing.T) {
+			src, _, objfmt := buildSourceRepo(t)
+			if err := os.MkdirAll(filepath.Join(src, name), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			writeFile(t, filepath.Join(src, name, "planted"), "x\n")
+			srcGit(t, src, "add", "-Af")
+			srcGit(t, src, "commit", "-qm", "reserved")
+			root := mkTaskChildren(t)
+			spec := FirstTaskSetupSpec{TaskID: 7, Mode: "fresh", TargetRef: "HEAD", ObjectFormat: objfmt,
+				LocalRepoUUID: "0a1b2c3d-4e5f-6071-8293-a4b5c6d7e8f9"}
+			if _, err := MaterializeFirstTaskStore(src, root, spec); err == nil {
+				t.Fatalf("a store was materialized over a reserved %q root component", name)
+			}
+		})
+	}
+}
+
 func TestValidateTaskGitConfigClosedGrammar(t *testing.T) {
 	uuid := "0a1b2c3d-4e5f-6071-8293-a4b5c6d7e8f9"
 	if err := validateTaskGitConfig(generatedTaskGitConfig("sha1", uuid)); err != nil {
