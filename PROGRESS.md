@@ -6,19 +6,19 @@ REPO PATH: `~/dev/ai/homie`. Never relocate this repo into `~/Documents`,
 `~/Desktop`, or `~/Downloads`: macOS TCC can revoke an agent session's own
 filesystem access there during fan-out. Full Disk Access does not fix it.
 
-LAST GREEN SHA: `ca4eae4` — Phase 5 production Home provisions and exactly
-attests the deployment-derived uid-10002 warm helper, initializes the runtime-
-local spine through general setuid `mc`, and publishes only the UUID mirror on
-Darwin; the six-leg fast suite is green after the documented resident fd-3
-intermittent passed on focused and full reruns.
+LAST GREEN SHA: `d6c6384` — Phase 5 production doctor composes host-only facts
+with a version-fenced, path-free helper runtime report; Container and Verify
+reuse it, helper absence remains a complete exit-0 diagnosis, and the unnamed
+wizard refuses until every mixed-authority section is split. The six-leg fast
+suite is green.
 Full `docker_boundary` + full `docker_e2e` (-count=1, `ok mc/e2e 169s`), the
 extended Playwright dashboard smoke, and the install.sh dev walk were last
 green at `d0ef4bb`. Docker lanes last ran green
 at `c8f37e9`-era HEAD (full `docker_boundary` 26 subtests, full `docker_e2e`
 10 tests incl. both credential legs) and are untouched since: commits after
 are test-only or the new `dashboard/` package. Production image `mc-prod`
-rebuilt from `ca4eae4`:
-`sha256:dd352c2a4faa5f883db6859750a761ae9d2dd9cb6fb03e104477c50949326b98`,
+rebuilt from `d6c6384`:
+`sha256:ea411c714c35c2df2962aafb4646199d1f0bff6769653af9c50816ab5abb8ad9`,
 arm64/linux, native. LESSON pinned by `ada715d`: the resident's
 `SPINE_SCHEMA_VERSION` (resident-control.ts:12) mirrors
 `substrate.CurrentSchemaVersion` in lockstep — every schema bump must touch
@@ -124,6 +124,10 @@ the approve landing fence to assignment-armed tasks; v12 retires
         managed helper, runs it as uid 10002 with one named spine volume and
         finite bounds, crosses through general setuid `mc`, publishes only the
         host UUID mirror, and passes the live capability probe (`ca4eae4`).
+  - [x] Production doctor merges a closed four-finding helper report with host
+        Home/routing/service facts, preserves the total nine-row/exit-0
+        diagnostic contract, and drives real Container/Verify sections
+        (`d6c6384`).
 - [ ] Release prep — install/onboard front door and construction-document
       disposition.
 
@@ -204,7 +208,7 @@ native resume, container reconciliation, Homie credential projection,
 dashboard LaunchAgent generation, and the four non-Console tabs. Details and
 commit map are in the closed Phase 4 ledger.
 
-NEXT: compose production doctor across host and helper facts, make Container
-own exact image/helper health, then split the remaining onboarding sections so
-no helper ever needs an MC_HOME bind. Keep live-token and launchd-load legs
-parked.
+NEXT: split Routing, Worksource, Tunables, Surfaces, Runtime-auth, and
+Supervision into host/path-free-helper halves, then make the unnamed production
+wizard run the complete ordered composition. Keep live-token and launchd-load
+acceptance legs parked.

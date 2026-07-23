@@ -115,3 +115,26 @@ NEXT: compose production doctor across host and helper facts, make Container
 own exact image/helper health, then split the remaining onboarding sections so
 no helper ever needs an MC_HOME bind. Keep live-token and launchd-load legs
 parked.
+
+## 2026-07-22 — composed production doctor (`d6c6384`)
+
+Production doctor no longer delegates a host-shaped verb into the spine-only
+helper. A version/schema-fenced, bounded private command returns exactly the
+four runtime-authoritative findings and spine UUID; Darwin computes the four
+host-authoritative findings, compares only the UUID mirror, and merges the
+fixed nine-row order. Missing Docker/helper or invalid helper output stays an
+exit-0 `ok:false` report with every diagnosis present. `onboard container` and
+`onboard verify` reuse the same in-process composition, and the unnamed wizard
+now refuses until every remaining mixed-authority section is split.
+
+Unit tests pin the closed grammar/order, output bound, private scope, UUID
+comparison, and helper namespace envelope. A disposable real deployment
+proved the merged host/runtime report and returned Container `ok`; no home,
+routing, config, or credential bind entered the helper. The rebuilt native
+image passed focused Docker tests and the six-leg fast suite. Disposable
+container, volume, and home were removed.
+
+NEXT: split Routing, Worksource, Tunables, Surfaces, Runtime-auth, and
+Supervision into host/path-free-helper halves, then make the unnamed production
+wizard run the complete ordered composition. Keep live-token and launchd-load
+acceptance legs parked.
