@@ -1570,3 +1570,57 @@ rules in code the sealed lane does not own.
   rationale and tests). No code changed by this review.
 - Spec impact: ADR-019 seccomp text should be amended when next touched.
 - Needs your decision: no.
+
+## 2026-07-23 — ADR-025 records three deviations to make production initiatives buildable
+- Where: Phase 5, the ADR-017 D6 / ADR-023 D6 parked production initiative mount
+  representation. Design was adversarially reviewed through git-mechanics,
+  security/jurisdiction, and state-machine lenses before acceptance; all three
+  returned needs-changes and every finding is folded into ADR-025.
+- Gap 1 (cut timing): Inv. 25 and ADR-023 D5 say the shared worktree is cut "at
+  promotion", and D5 names a promotion-time resident effect; but promotion is a
+  spine transaction inside the Editor batch verb (`domain.Promote`,
+  mc/domain/task.go:47-57) with no effect channel, and ADR-023 D2 already split
+  the cut into a promotion-time spine half and a separately-materialized disk
+  half.
+- Choice 1: the disk cut is an `InitiativeSetup` dispatch effect emitted at the
+  first tick where promotion is observable, before any other initiative-family
+  spawn. This is the conservative option: it adds no new effect channel, cannot
+  run before promotion, and a retry reuses the recorded cut SHA exactly (never
+  re-resolving main), so siblings of a committed child are never rebased. A
+  later cut narrows rather than widens drift.
+- Gap 2 (child integrity): the sealed-completion spine cannot accept an
+  initiative child — the seal packer requires the store's sole managed branch
+  to be `mc/task-<id>` (completionsealpublish.go:225), and an accepted-seal
+  rebuild would destroy sibling children's commits in a SHARED store.
+- Choice 2: children complete through the plain unsealed terminal exactly as
+  ADR-023 D3 already defines, and `CompletionSeal`/`AcceptedSealRebuild` step
+  emission is suppressed whenever `SubjectInitiativeID` is set. The weaker
+  posture is bounded by the global execution lease (Inv. 1), receipt-vouched
+  initiative roots, container-confined writes into the initiative-local store,
+  a producer-absence/cleanliness fence, per-child packet review, and full arc
+  verification before anything reaches main. The alternative — generalizing the
+  seal grammar to a shared branch — would have rewritten the accepted sealed
+  lane for no reachability gain.
+- Gap 3 (pointer bytes): ADR-017:425-429 states the relative linked-worktree
+  topology is identical on the host and in the container, which held because a
+  task's worktree is a child of the bound task root. The initiative's shared
+  worktree is external to its store, so host-resolvable and
+  container-resolvable pointer bytes would differ — and the row machinery has
+  no cover class whose content differs from the host file it binds
+  (taskskeleton.go WantBytes are validated against the host bytes).
+- Choice 3: write the container-relative bytes verbatim on the host, exactly as
+  tasks do. The pointers do not resolve host-side; that is provably unused
+  because the host never runs Git (ADR-016 D5, gitregistry.go:8-10). This keeps
+  the initiative rows byte-identical to the proven task grammar instead of
+  inventing a divergent-cover row class.
+- Also folded in from the review, without deviation: ref propagation into the
+  real repo is a containerized verified import at land-prep (a host-side
+  `git fetch` would have violated the no-host-git posture), teardown of the
+  worktree and store moves to the resident because mc-land cannot discover a
+  store-linked worktree, and the dirty-worktree landing fence mc-land thereby
+  loses is re-provided at arc verification.
+- Spec impact: ADR-017 D6's destination table is amended in place (worktree-name
+  grammar `mc-task-<id> | mc-initiative-<id>`) along with its parked paragraphs;
+  ADR-017:425-429 is narrowed for initiative rows; ADR-023 D5's production
+  sentence is amended. Invariants 1, 10, 11, 22, 25 are preserved.
+- Needs your decision: no.

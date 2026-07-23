@@ -37,12 +37,16 @@ citation — if the heading is not there, grep the heading text.
 | 022 | Free-internet credential projection: what replaces the egress gateway, and how does each runtime get a host-managed token? | 7 KB |
 | 023 | How does an initiative get its one shared branch, how do children commit without landing individually, and how does the arc merge to main? (extends 017 D6's parked initiative path) | 6 KB |
 | 024 | What stack, spine read path, and API shape does the dashboard use, and how does the S6 Console slice get built and smoke-tested? | 7 KB |
+| 025 | How do production real-harness initiatives get their cut, per-child mount rows, arc verification, and landing import? (the follow-on ADR 017 D6 and 023 D6 required) | 13 KB |
 
-**Relations.** 023 extends 017 D6's Parked initiative/child mount path (the
-follow-on ADR 017 D6 required); it resolves the branch grammar, the branchless
-child terminal, and the arc landing lane for the fake-harness control loop,
-and keeps the production real-harness shared-worktree mount rows owed for
-Phase 5. 021 resolves gaps 017 left open — **017 remains the authority
+**Relations.** 023 extends 017 D6's Parked initiative/child mount path; it
+resolves the branch grammar, the branchless child terminal, and the arc
+landing lane for the fake-harness control loop, and keeps the production
+real-harness shared-worktree mount rows owed for Phase 5. **025 is that owed
+follow-on**: it extends 017 D6's closed table in place (worktree-name grammar
+`mc-task-<id> | mc-initiative-<id>`), discharges 023's deferred promotion-time
+cut, and amends 023 D5's production sentence and 017:425-429's
+identical-topology wording for initiative rows. 021 resolves gaps 017 left open — **017 remains the authority
 and is not superseded**; read both. 020 resolves 001's Open Question 1 and
 `docs/phase2-contract.md` A-P2-7. 013 resolves a slice 010 deferred. **022
 supersedes 018 whole** (operator's free-internet requirement): the egress

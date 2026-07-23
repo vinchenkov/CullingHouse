@@ -2,7 +2,14 @@
 
 ## Status
 
-Accepted (2026-07-22). Extends ADR-017 D6's closed mount table for the
+Accepted (2026-07-22). Amended 2026-07-23 by ADR-025, which is the follow-on
+ADR this Status paragraph and ADR-017 D6 required: it supplies the production
+real-harness mount representation and discharges the deferred promotion-time
+worktree-cut effect. ADR-025 D3 amends D5's production sentence — the disk
+cut runs as the promotion-observable `InitiativeSetup` dispatch effect
+(create-if-absent at the first tick where promotion is visible), and under
+that topology the legacy land no longer discovers or deletes the shared
+worktree itself; teardown moves to the resident (ADR-025 D9). Extends ADR-017 D6's closed mount table for the
 initiative/child path it explicitly Parked ("not eligible for the accepted
 Phase-3 spawn path until the operator resolves the parked design and a
 follow-on ADR extends this closed table"). Governs the initiative branch
