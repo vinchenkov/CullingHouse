@@ -6,11 +6,11 @@ REPO PATH: `~/dev/ai/homie`. Never relocate this repo into `~/Documents`,
 `~/Desktop`, or `~/Downloads`: macOS TCC can revoke an agent session's own
 filesystem access there during fan-out. Full Disk Access does not fix it.
 
-LAST GREEN SHA: `bd4385b` — Runtime-auth now acquires Codex/Claude
-subscription credentials through provider-owned login commands in disposable
-MC_HOME-owned homes, imports only after every live gate, and removes the
-intermediate source on success or failure. No personal harness home is copied.
-The six-leg fast suite is green.
+LAST GREEN SHA: `1513fe3` — Home onboarding now atomically installs both the
+closed runner tree and the exact native resident/dashboard source/UI graph.
+Neither supervised host process nor an agent container needs mutable repository
+bytes. Isolated subscription acquisition remains green. The six-leg fast suite
+is green.
 Full `docker_boundary` + full `docker_e2e` (-count=1, `ok mc/e2e 169s`), the
 extended Playwright dashboard smoke, and the install.sh dev walk were last
 green at `d0ef4bb`. The full Docker lanes last ran green at `c8f37e9`-era HEAD
@@ -142,6 +142,9 @@ the approve landing fence to assignment-armed tasks; v12 retires
   - [x] Provider-owned Codex/Claude subscription logins run in disposable,
         minimal-environment homes and clean their sources around verified
         atomic import; metered/ambient credentials refuse first (`bd4385b`).
+  - [x] Native resident/dashboard source and UI are atomically installed as a
+        closed owner-only host payload, separate from the agent-visible runner
+        tree (`1513fe3`).
 - [ ] Release prep — install/onboard front door and construction-document
       disposition.
 
@@ -221,6 +224,6 @@ native resume, container reconciliation, Homie credential projection,
 dashboard LaunchAgent generation, and the four non-Console tabs. Details and
 commit map are in the closed Phase 4 ledger.
 
-NEXT: package the production resident/dashboard payloads under the installed
-release, then generate and verify unloaded supervision units. Live token spend
-and launchd activation remain operator-present acceptance gates.
+NEXT: generate the resident/dashboard configs and per-user LaunchAgents from
+installed payloads, verify their exact unloaded state, and do not bootstrap
+them. Live token spend and launchd activation remain operator-present gates.

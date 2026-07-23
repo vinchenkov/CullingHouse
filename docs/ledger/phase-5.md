@@ -314,3 +314,21 @@ fixed six-leg fast suite is green; no live provider turn was spent.
 NEXT: package the production resident/dashboard payloads under the installed
 release, then generate and verify unloaded supervision units. Live token spend
 and launchd activation remain operator-present acceptance gates.
+
+## 2026-07-22 — installed native host payload (`1513fe3`)
+
+Home onboarding now admits the repository root only as source evidence for a
+separate `MC_HOME/release/host` publication. Its sixteen-file manifest is the
+exact transitive resident/dashboard TypeScript and dashboard UI graph. Tests,
+lockfiles, package metadata, runners, and provider state are excluded. Keeping
+this payload beside rather than inside the runner tree prevents agent
+containers from seeing native host code through `/app/src`.
+
+The payload is owner-only, fsynced, idempotent by directory identity, and
+atomically exchanged on change. Deployment tests cover closed publication,
+test exclusion, replay, and replacement; the Home CLI crossing validates both
+installed payloads. The fixed six-leg fast suite is green.
+
+NEXT: generate the resident/dashboard configs and per-user LaunchAgents from
+installed payloads, verify their exact unloaded state, and do not bootstrap
+them. Live token spend and launchd activation remain operator-present gates.
