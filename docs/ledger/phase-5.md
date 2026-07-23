@@ -453,3 +453,26 @@ and embeds `072061f64a51e0b0f9f57a8535c261800625b0ff`.
 
 NEXT: finish production reset/runtime-volume lifecycle, then the remaining
 Phase-5 real-runtime obligations.
+
+## 2026-07-22 — production reset volume lifecycle (`28d6102`)
+
+Production `mc reset --confirm` is now a host-brokered lifecycle operation
+rather than a delegated database unlink. Both native jobs must be unloaded.
+The broker commits and validates a durable host backup first, rechecks the
+exact arm64 production image, managed least-privilege helper, and derived
+option-free local volume, removes the helper by its immutable 64-hex container
+ID, rechecks name absence, then removes and rechecks the volume. No raw volume
+name supplied by the caller is accepted.
+
+If teardown stops after the backup, the error names the durable snapshot and
+leaves the volume bytes intact. A lost response after successful removal
+replays as `already-reset` only when both helper and volume are absent and the
+newest snapshot still passes owner/mode/link, integrity, schema, and deployment
+identity checks. Missing confirmation refuses before any runtime probe. Full
+`mc/check.sh` is green; no live deployment or launchd state was touched. The
+arm64 production image rebuilt from `28d6102` is
+`sha256:7b3dbd79f204038bc02dfd477ab2c3899dc535c4c0b1ba1f9a275982af0861ab`
+and embeds `28d61022690cba057046ce666e66494b26e81024`.
+
+NEXT: implement ADR-023's production real-harness initiative-child shared-
+worktree mount rows, then continue the remaining Phase-5 runtime obligations.
