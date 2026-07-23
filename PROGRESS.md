@@ -6,9 +6,10 @@ REPO PATH: `~/dev/ai/homie`. Never relocate this repo into `~/Documents`,
 `~/Desktop`, or `~/Downloads`: macOS TCC can revoke an agent session's own
 filesystem access there during fan-out. Full Disk Access does not fix it.
 
-LAST GREEN SHA: `bc0dee4` — Phase 5's first slice makes production install
-preflight and the missing-helper boundary fail closed; the six-leg fast suite
-is green (resident/dashboard listener tests rerun with loopback permission).
+LAST GREEN SHA: `e7c4ca2` — Phase 5 bootstrap preflight is fail-closed,
+credential-store ambiguity refuses, and deployment-derived helper/volume
+identities are pinned; the six-leg fast suite is green (resident/dashboard
+listener tests rerun with loopback permission).
 Full `docker_boundary` + full `docker_e2e` (-count=1, `ok mc/e2e 169s`), the
 extended Playwright dashboard smoke, and the install.sh dev walk were last
 green at `d0ef4bb`. Docker lanes last ran green
@@ -112,6 +113,10 @@ the approve landing fence to assignment-armed tasks; v12 retires
       live acceptance.
   - [x] Production install fails closed before writes when Docker is absent or
         stopped, and exits nonzero when the warm helper is missing (`bc0dee4`).
+  - [x] Credential-store read ambiguity and duplicate binding owners refuse
+        resident startup before any token-free route can launch (`9cec34f`).
+  - [x] Canonical MC_HOME aliases derive one domain-separated runtime identity;
+        different homes cannot share helper or spine-volume names (`e7c4ca2`).
 - [ ] Release prep — install/onboard front door and construction-document
       disposition.
 
@@ -194,6 +199,6 @@ native resume, container reconciliation, Homie credential projection,
 dashboard LaunchAgent generation, and the four non-Console tabs. Details and
 commit map are in the closed Phase 4 ledger.
 
-NEXT: implement a bootstrap-safe, idempotent warm-helper provision/capability
-probe so a fresh production `install.sh` reaches `mc onboard` without ever
-opening the spine on the host. Keep live-token and launchd-load legs parked.
+NEXT: implement the path-free private `__onboard-spine` state matrix inside
+Linux `mc`, then compose the Darwin helper provision/mirror/capability crossing.
+Keep live-token and launchd-load legs parked.

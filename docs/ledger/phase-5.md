@@ -47,3 +47,27 @@ refresh grant needs one rotation owner; Claude is currently unauthenticated.
 
 NEXT: build the bootstrap-safe idempotent helper provision/capability probe so
 fresh production install reaches the wizard without a host-side spine open.
+
+## 2026-07-22 — credential-store refusal + deployment identities (`9cec34f`, `e7c4ca2`)
+
+Two additional green slices landed while the bootstrap crossing was reviewed.
+The resident now treats only `ENOENT` as an absent refresh-grant store;
+permission/I/O ambiguity aborts startup, and duplicate binding owners refuse
+before the token service starts. The runtime-auth probe's remaining findings
+stay open (notably configured non-fake routes without a projector, provider-
+exact parsing, durable rotation, and MiniMax materialization).
+
+The shared deployment package now canonicalizes MC_HOME through an existing
+ancestor and derives domain-separated 12-hex identities. Symlink aliases
+converge; different homes get distinct `mc-spine-*` volumes and `mc-helper-*`
+containers. Onboarding preflight consumes that canonicalizer, so its git fence
+and future runtime names use one physical identity.
+
+The read-only design follow-up settled bootstrap as a path-free private
+same-binary crossing: Darwin owns home checks/scaffold/mirror and exact Docker
+envelope management; Linux owns `/mc/spine` meta initialize/migrate/compare.
+The final helper is the provisional crossing and never mounts MC_HOME. This is
+recorded in `IMPLEMENTATION-NOTES.md`; no new ADR is needed.
+
+NEXT: implement and test the private `__onboard-spine` state matrix, then the
+Darwin helper provision/mirror/capability composition.
