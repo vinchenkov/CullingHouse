@@ -106,7 +106,12 @@ export function startCredentialProjector(
   deps: CredentialProjectorDeps,
 ): CredentialProjectorHandle {
   const byBinding = new Map<string, RefreshGrant>();
-  for (const grant of grants) byBinding.set(grant.binding, grant);
+  for (const grant of grants) {
+    if (byBinding.has(grant.binding)) {
+      throw new Error(`duplicate refresh grant for binding ${grant.binding}`);
+    }
+    byBinding.set(grant.binding, grant);
+  }
 
   async function mint(bindingId: string): Promise<HostCredential> {
     const grant = byBinding.get(bindingId);

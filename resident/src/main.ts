@@ -32,21 +32,39 @@ interface MainConfig extends ResidentConfig {
   configSchemaVersion: number;
 }
 
+export interface RefreshGrantStoreDeps {
+  readdir(path: string): Promise<string[]>;
+  readJSON(path: string): Promise<unknown>;
+}
+
+const refreshGrantStoreDeps: RefreshGrantStoreDeps = {
+  readdir,
+  readJSON: (path) => Bun.file(path).json(),
+};
+
 // loadRefreshGrants reads MC_HOME/refresh-grants (ADR-022 D2): the deny-
 // mounted store of real refresh grants captured at onboarding. An absent
-// store means no credentialed bindings; a malformed grant file refuses
-// startup fail-closed rather than silently skipping the binding.
-async function loadRefreshGrants(mcHome: string): Promise<RefreshGrant[]> {
+// store means no credentialed bindings. Every other directory-read failure
+// and every malformed grant refuse startup fail-closed rather than silently
+// launching a configured route without its credential channel.
+export async function loadRefreshGrants(
+  mcHome: string,
+  deps: RefreshGrantStoreDeps = refreshGrantStoreDeps,
+): Promise<RefreshGrant[]> {
   const dir = join(mcHome, "refresh-grants");
   let names: string[];
   try {
-    names = await readdir(dir);
-  } catch {
-    return [];
+    names = await deps.readdir(dir);
+  } catch (err) {
+    if (err !== null && typeof err === "object" && "code" in err && err.code === "ENOENT") {
+      return [];
+    }
+    const reason = err instanceof Error ? err.message : String(err);
+    throw new Error(`read refresh grant store ${dir}: ${reason}`);
   }
   const grants: RefreshGrant[] = [];
   for (const name of names.filter((n) => n.endsWith(".json")).sort()) {
-    grants.push(parseRefreshGrant(await Bun.file(join(dir, name)).json()));
+    grants.push(parseRefreshGrant(await deps.readJSON(join(dir, name))));
   }
   return grants;
 }

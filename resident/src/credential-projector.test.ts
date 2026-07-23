@@ -82,6 +82,14 @@ async function start(grants: RefreshGrant[], provider: ReturnType<typeof fakePro
 }
 
 describe("credential projector composition (ADR-022 step 3)", () => {
+  test("duplicate binding grants refuse instead of silently choosing one", () => {
+    const provider = fakeProvider([]);
+    expect(() => startCredentialProjector([
+      claudeGrant(),
+      claudeGrant({ refresh_token: "different-owner" }),
+    ], provider.deps)).toThrow("duplicate refresh grant for binding claude");
+  });
+
   test("a claude binding projects the flag env from a minted credential", async () => {
     const provider = fakeProvider([freshClaude]);
     const handle = await start([claudeGrant()], provider);
