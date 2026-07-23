@@ -117,6 +117,14 @@ command -v mise >/dev/null 2>&1 || fail "mise is required (https://mise.jdx.dev)
 ( cd "$REPO_DIR" && mise exec -- go version >/dev/null 2>&1 ) || fail "the pinned Go toolchain is unavailable (try: mise install)"
 say "   git, toolchain, container runtime: ok"
 
+RELEASE_BUILD_ID=$(git -C "$REPO_DIR" rev-parse --verify 'HEAD^{commit}') || \
+  fail "cannot resolve the immutable release commit"
+case "$RELEASE_BUILD_ID" in
+  *[!0-9a-f]*|'') fail "release commit is not lowercase hexadecimal" ;;
+esac
+[ "${#RELEASE_BUILD_ID}" -ge 40 ] && [ "${#RELEASE_BUILD_ID}" -le 64 ] || \
+  fail "release commit has an unsupported length"
+
 # --- 2. Build / install mc --------------------------------------------------
 
 if [ "$DEV" -eq 1 ]; then
@@ -130,9 +138,11 @@ else
   [ -n "$BIN_DIR" ] || BIN_DIR="${MC_BIN_DIR:-$HOME/.local/bin}"
   mkdir -p "$BIN_DIR"
   say "== build (production)"
-  ( cd "$REPO_DIR/mc" && mise exec -- go build -o "$BIN_DIR/mc" ./cmd/mc )
+  ( cd "$REPO_DIR/mc" && mise exec -- go build \
+      -ldflags "-X main.releaseBuildID=$RELEASE_BUILD_ID" \
+      -o "$BIN_DIR/mc" ./cmd/mc )
   say "== build (production image, native arm64)"
-  ( cd "$REPO_DIR" && ./runner/image/build-prod.sh ) || \
+  ( cd "$REPO_DIR" && MC_RELEASE_BUILD_ID="$RELEASE_BUILD_ID" ./runner/image/build-prod.sh ) || \
     fail "production image build failed — fix the reported build/runtime error, then re-run the front door"
 fi
 say "   installed $BIN_DIR/mc"

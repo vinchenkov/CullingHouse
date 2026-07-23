@@ -11,8 +11,16 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
+MC_RELEASE_BUILD_ID="${MC_RELEASE_BUILD_ID:-$(git -C ../.. rev-parse --verify 'HEAD^{commit}')}"
+if [[ ! "$MC_RELEASE_BUILD_ID" =~ ^[0-9a-f]{40,64}$ ]]; then
+  echo "build-prod.sh: MC_RELEASE_BUILD_ID must be a 40..64 lowercase-hex commit" >&2
+  exit 2
+fi
+
 echo "build-prod.sh: compiling linux/arm64 mc WITHOUT test_fake_routing..." >&2
-(cd ../../mc && CGO_ENABLED=0 GOOS=linux GOARCH=arm64 mise exec -- go build -o ../runner/image/mc-prod-bin ./cmd/mc)
+(cd ../../mc && CGO_ENABLED=0 GOOS=linux GOARCH=arm64 mise exec -- go build \
+  -ldflags "-X main.releaseBuildID=$MC_RELEASE_BUILD_ID" \
+  -o ../runner/image/mc-prod-bin ./cmd/mc)
 (cd ../.. && CGO_ENABLED=0 GOOS=linux GOARCH=arm64 mise exec -- go build -o runner/image/mc-dispatch ./runner/image/mc_dispatch.go)
 (cd ../.. && CGO_ENABLED=0 GOOS=linux GOARCH=arm64 mise exec -- go build -o runner/image/mc-complete ./runner/image/mc_completion_wrapper.go)
 
