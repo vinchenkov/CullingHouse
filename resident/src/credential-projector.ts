@@ -19,12 +19,30 @@ import {
 } from "./token-service";
 import type { CredentialProjection, CredentialProjector } from "./types";
 
-/** One binding's on-disk refresh grant (MC_HOME/refresh-grants/<binding>.json). */
+export const PRODUCTION_RUNTIME_BINDINGS = {
+  chatgpt: {
+    harness: "codex",
+    channel: "codex",
+    token_url: "https://auth.openai.com/oauth/token",
+    client_id: "app_EMoamEEZ73f0CkXaXp7hrann",
+  },
+  claude: {
+    harness: "claude-sdk",
+    channel: "claude",
+    token_url: "https://platform.claude.com/v1/oauth/token",
+    client_id: "9d1c250a-e61b-44d9-88ed-5944d1962f5e",
+  },
+  minimax: {
+    harness: "claude-sdk",
+    channel: "static",
+    env_name: "ANTHROPIC_AUTH_TOKEN",
+  },
+} as const;
+
+/** One OAuth binding's on-disk refresh grant. */
 export interface RefreshGrant {
   binding: string;
   channel: "claude" | "codex";
-  /** The provider token endpoint the mint POSTs to. Configuration, not a
-   * fake seam: a synthetic acceptance lane points it at a local authority. */
   token_url: string;
   client_id: string;
   refresh_token: string;
@@ -32,43 +50,94 @@ export interface RefreshGrant {
   scope?: string;
 }
 
+/** MiniMax's operator-imported, provider-specific static grant. */
+export interface StaticGrant {
+  binding: string;
+  channel: "static";
+  env_name: "ANTHROPIC_AUTH_TOKEN";
+  secret: string;
+}
+
+export type RuntimeGrant = RefreshGrant | StaticGrant;
+
+function assertExactKeys(raw: Record<string, unknown>, expected: string[], binding: string): void {
+  const actual = Object.keys(raw).sort();
+  const wanted = [...expected].sort();
+  if (actual.length !== wanted.length || actual.some((key, i) => key !== wanted[i])) {
+    throw new Error(`runtime grant ${binding}: fields must be exactly ${wanted.join(", ")}`);
+  }
+}
+
 /** Validates one grant file's parsed JSON, fail-closed: a malformed grant is
  * a configuration error the resident refuses to start over, never a silently
  * skipped binding. */
-export function parseRefreshGrant(value: unknown): RefreshGrant {
-  const raw = value as Partial<RefreshGrant> | null;
-  if (raw === null || typeof raw !== "object") {
-    throw new Error("refresh grant must be a JSON object");
+export function parseRefreshGrant(value: unknown): RuntimeGrant {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("runtime grant must be a JSON object");
   }
+  const raw = value as Record<string, unknown>;
   if (typeof raw.binding !== "string" || raw.binding === "") {
-    throw new Error("refresh grant needs a non-empty binding id");
+    throw new Error("runtime grant needs a non-empty binding id");
   }
-  if (raw.channel !== "claude" && raw.channel !== "codex") {
-    throw new Error(`refresh grant ${raw.binding}: channel must be claude or codex`);
+  const spec = PRODUCTION_RUNTIME_BINDINGS[raw.binding as keyof typeof PRODUCTION_RUNTIME_BINDINGS];
+  if (spec === undefined) {
+    throw new Error(`runtime grant ${raw.binding}: unknown production binding`);
   }
-  if (typeof raw.token_url !== "string" || !/^https?:\/\//.test(raw.token_url)) {
-    throw new Error(`refresh grant ${raw.binding}: token_url must be an http(s) URL`);
+  if (raw.channel !== spec.channel) {
+    throw new Error(`runtime grant ${raw.binding}: channel must be ${spec.channel}`);
   }
-  if (typeof raw.client_id !== "string" || raw.client_id === "") {
-    throw new Error(`refresh grant ${raw.binding}: client_id is required`);
+
+  if (spec.channel === "static") {
+    assertExactKeys(raw, ["binding", "channel", "env_name", "secret"], raw.binding);
+    if (raw.env_name !== spec.env_name) {
+      throw new Error(`runtime grant ${raw.binding}: env_name must be ${spec.env_name}`);
+    }
+    if (typeof raw.secret !== "string" || raw.secret === "") {
+      throw new Error(`runtime grant ${raw.binding}: secret is required`);
+    }
+    return {
+      binding: raw.binding,
+      channel: "static",
+      env_name: spec.env_name,
+      secret: raw.secret,
+    };
+  }
+
+  const optional = spec.channel === "codex" ? ["scope"] : [];
+  const required = spec.channel === "codex"
+    ? ["binding", "channel", "token_url", "client_id", "refresh_token", "account_id"]
+    : ["binding", "channel", "token_url", "client_id", "refresh_token", "scope"];
+  assertExactKeys(raw, [...required, ...optional.filter((key) => key in raw)], raw.binding);
+  if (raw.token_url !== spec.token_url) {
+    throw new Error(`runtime grant ${raw.binding}: token_url does not match the production catalog`);
+  }
+  if (raw.client_id !== spec.client_id) {
+    throw new Error(`runtime grant ${raw.binding}: client_id does not match the production catalog`);
   }
   if (typeof raw.refresh_token !== "string" || raw.refresh_token === "") {
-    throw new Error(`refresh grant ${raw.binding}: refresh_token is required`);
+    throw new Error(`runtime grant ${raw.binding}: refresh_token is required`);
   }
   const grant: RefreshGrant = {
     binding: raw.binding,
-    channel: raw.channel,
-    token_url: raw.token_url,
-    client_id: raw.client_id,
+    channel: spec.channel,
+    token_url: spec.token_url,
+    client_id: spec.client_id,
     refresh_token: raw.refresh_token,
   };
-  if (raw.account_id !== undefined) {
-    if (typeof raw.account_id !== "string") throw new Error(`refresh grant ${raw.binding}: account_id must be a string`);
+  if (spec.channel === "codex") {
+    if (typeof raw.account_id !== "string" || raw.account_id === "") {
+      throw new Error(`runtime grant ${raw.binding}: account_id is required`);
+    }
     grant.account_id = raw.account_id;
   }
   if (raw.scope !== undefined) {
-    if (typeof raw.scope !== "string") throw new Error(`refresh grant ${raw.binding}: scope must be a string`);
+    if (typeof raw.scope !== "string" || raw.scope === "") {
+      throw new Error(`runtime grant ${raw.binding}: scope must be a non-empty string`);
+    }
     grant.scope = raw.scope;
+  }
+  if (spec.channel === "claude" && !grant.scope?.split(/\s+/).includes("user:inference")) {
+    throw new Error(`runtime grant ${raw.binding}: scope must include user:inference`);
   }
   return grant;
 }
@@ -102,11 +171,12 @@ export interface CredentialProjectorHandle {
 const DEFAULT_EXPIRES_IN_S = 3600;
 
 export function startCredentialProjector(
-  grants: RefreshGrant[],
+  grants: RuntimeGrant[],
   deps: CredentialProjectorDeps,
 ): CredentialProjectorHandle {
-  const byBinding = new Map<string, RefreshGrant>();
-  for (const grant of grants) {
+  const byBinding = new Map<string, RuntimeGrant>();
+  for (const candidate of grants) {
+    const grant = parseRefreshGrant(candidate);
     if (byBinding.has(grant.binding)) {
       throw new Error(`duplicate refresh grant for binding ${grant.binding}`);
     }
@@ -116,6 +186,7 @@ export function startCredentialProjector(
   async function mint(bindingId: string): Promise<HostCredential> {
     const grant = byBinding.get(bindingId);
     if (!grant) throw new Error(`no refresh grant for binding ${bindingId}`);
+    if (grant.channel === "static") throw new Error(`binding ${bindingId} has no refresh channel`);
     const request: Record<string, unknown> = {
       grant_type: "refresh_token",
       client_id: grant.client_id,
@@ -156,7 +227,7 @@ export function startCredentialProjector(
   }
 
   const service: TokenServiceHandle = startTokenService(
-    { bindings: [...byBinding.keys()] },
+    { bindings: [...byBinding.values()].filter((grant) => grant.channel !== "static").map((grant) => grant.binding) },
     {
       now: deps.now,
       setTimer: deps.setTimer,
@@ -183,9 +254,18 @@ export function startCredentialProjector(
   }
 
   const projector: CredentialProjector = {
-    project(_harness, modelBinding): CredentialProjection | { refused: string } | null {
+    project(harness, modelBinding): CredentialProjection | { refused: string } | null {
+      if (harness === "fake" && modelBinding === "fake") return null;
+      const spec = PRODUCTION_RUNTIME_BINDINGS[modelBinding as keyof typeof PRODUCTION_RUNTIME_BINDINGS];
+      if (spec === undefined) return { refused: `unknown production binding ${modelBinding}` };
+      if (harness !== spec.harness) {
+        return { refused: `binding ${modelBinding} requires harness ${spec.harness}` };
+      }
       const grant = byBinding.get(modelBinding);
-      if (!grant) return null;
+      if (!grant) return { refused: `runtime grant missing for production binding ${modelBinding}` };
+      if (grant.channel === "static") {
+        return { env: { [grant.env_name]: grant.secret } };
+      }
       const credential = service.credential(modelBinding);
       if (credential === null) {
         return { refused: `credential unavailable or lapsed for binding ${modelBinding}` };

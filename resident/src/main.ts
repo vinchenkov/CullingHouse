@@ -22,7 +22,7 @@ import {
   parseRefreshGrant,
   startCredentialProjector,
   type CredentialProjectorHandle,
-  type RefreshGrant,
+  type RuntimeGrant,
 } from "./credential-projector";
 
 interface MainConfig extends ResidentConfig {
@@ -50,7 +50,7 @@ const refreshGrantStoreDeps: RefreshGrantStoreDeps = {
 export async function loadRefreshGrants(
   mcHome: string,
   deps: RefreshGrantStoreDeps = refreshGrantStoreDeps,
-): Promise<RefreshGrant[]> {
+): Promise<RuntimeGrant[]> {
   const dir = join(mcHome, "refresh-grants");
   let names: string[];
   try {
@@ -62,14 +62,18 @@ export async function loadRefreshGrants(
     const reason = err instanceof Error ? err.message : String(err);
     throw new Error(`read refresh grant store ${dir}: ${reason}`);
   }
-  const grants: RefreshGrant[] = [];
+  const grants: RuntimeGrant[] = [];
   for (const name of names.filter((n) => n.endsWith(".json")).sort()) {
-    grants.push(parseRefreshGrant(await deps.readJSON(join(dir, name))));
+    const grant = parseRefreshGrant(await deps.readJSON(join(dir, name)));
+    if (name !== `${grant.binding}.json`) {
+      throw new Error(`runtime grant filename ${name} does not match binding ${grant.binding}`);
+    }
+    grants.push(grant);
   }
   return grants;
 }
 
-function startProjector(mcHome: string, grants: RefreshGrant[], log: (line: string) => void): CredentialProjectorHandle {
+function startProjector(mcHome: string, grants: RuntimeGrant[], log: (line: string) => void): CredentialProjectorHandle {
   return startCredentialProjector(grants, {
     now: () => Date.now(),
     setTimer: (fn, ms) => setTimeout(fn, ms),
@@ -150,21 +154,19 @@ async function main(): Promise<void> {
 	});
   const log = (msg: string) => console.error(`[resident ${new Date().toISOString()}] ${msg}`);
 
-  // ADR-022: credentialed bindings exist exactly when the deny-mounted grant
-  // store has entries. A malformed grant refuses startup above (fail-closed);
-  // an empty store leaves every route token-free.
-  let grants: RefreshGrant[];
+  // ADR-022: every production binding is mediated by the runtime projector.
+  // A malformed store refuses startup; an empty store produces explicit D8
+  // refusals rather than turning production routes into token-free launches.
+  let grants: RuntimeGrant[];
   try {
     grants = await loadRefreshGrants(config.mcHome);
   } catch (err) {
     console.error(`resident: refresh grant store is malformed: ${err instanceof Error ? err.message : String(err)}`);
     process.exit(2);
   }
-  const credentialHandle = grants.length > 0 ? startProjector(config.mcHome, grants, log) : undefined;
-  if (credentialHandle) {
-    await credentialHandle.ready;
-    log(`credential projector live for ${grants.length} binding(s)`);
-  }
+  const credentialHandle = startProjector(config.mcHome, grants, log);
+  await credentialHandle.ready;
+  log(`runtime credential projector live for ${grants.length} binding(s)`);
 
   const deps: TickDeps = {
     intervalMs,
@@ -255,7 +257,7 @@ async function main(): Promise<void> {
 				throw new Error(`task setup registration refused (exit ${result.exitCode}): ${result.stderr.trim()}`);
 			}
 		},
-    credentials: credentialHandle?.projector,
+    credentials: credentialHandle.projector,
     config,
   };
 
@@ -264,7 +266,7 @@ async function main(): Promise<void> {
 
   const shutdown = (signal: string) => {
     deps.log(`${signal} received; stopping after any in-flight tick`);
-    credentialHandle?.stop();
+    credentialHandle.stop();
     void handle.stop().then(() => process.exit(0));
   };
   process.on("SIGINT", () => shutdown("SIGINT"));

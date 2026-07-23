@@ -565,7 +565,9 @@ async function spawn(effect: SpawnEffect, deps: TickDeps): Promise<void> {
 	const isFakeFamily = effect.harness === "fake" && effect.model_binding === "fake";
 	const projection = isFakeFamily
 		? null
-		: deps.credentials?.project(effect.harness, effect.model_binding) ?? null;
+		: deps.credentials?.project(effect.harness, effect.model_binding) ?? {
+			refused: "runtime credential projector unavailable",
+		};
 	if (projection !== null && "refused" in projection) {
 		log(`spawn refused: credential projection unavailable for ${routeKey}: ${projection.refused} (ADR-022 D8)`);
 		return;

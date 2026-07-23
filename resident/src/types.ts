@@ -62,8 +62,8 @@ export interface ResidentConfig {
 
 /** The ADR-022 credential projection seam. The projector owns the binding
  * catalog's channel knowledge and the token-service state; the effector stays
- * format-blind. `null` means no credential channel applies (fake or static
- * routes) and the spawn proceeds token-free; `refused` means a required
+ * format-blind. `null` applies only to fake/fake and proceeds token-free;
+ * `refused` means a required
  * credential is unavailable and the spawn must not happen (D8: stall, never
  * launch uncredentialed). */
 export interface CredentialProjection {
@@ -116,8 +116,8 @@ export interface TickDeps {
 	recheckAcceptedSeal(seal: AcceptedSealIdentity): Promise<string>;
 	/** Durably registers the exact returned identity before any setup consumer runs. */
 	registerTaskRoot(runId: string, taskId: number, identity: PathIdentity): Promise<void>;
-  /** ADR-022 credential projection for real agent routes; absent ⇒ every
-   * route launches token-free (the projector is production wiring). */
+  /** ADR-022 credential projection for real agent routes. An absent
+   * projector refuses every non-fake launch. */
   credentials?: CredentialProjector;
   config: ResidentConfig;
 }

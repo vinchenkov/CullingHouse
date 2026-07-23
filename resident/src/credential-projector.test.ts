@@ -2,6 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import {
   startCredentialProjector,
   type CredentialProjectorHandle,
+  type RuntimeGrant,
   type RefreshGrant,
 } from "./credential-projector";
 import { CODEX_DUMMY_REFRESH_TOKEN } from "./token-service";
@@ -20,9 +21,10 @@ function claudeGrant(overrides: Partial<RefreshGrant> = {}): RefreshGrant {
   return {
     binding: "claude",
     channel: "claude",
-    token_url: "https://provider.example/oauth/token",
-    client_id: "client-1",
+    token_url: "https://platform.claude.com/v1/oauth/token",
+    client_id: "9d1c250a-e61b-44d9-88ed-5944d1962f5e",
     refresh_token: "real-refresh-grant-claude",
+    scope: "user:inference",
     ...overrides,
   };
 }
@@ -31,12 +33,22 @@ function codexGrant(overrides: Partial<RefreshGrant> = {}): RefreshGrant {
   return {
     binding: "chatgpt",
     channel: "codex",
-    token_url: "https://provider.example/oauth/token",
-    client_id: "client-2",
+    token_url: "https://auth.openai.com/oauth/token",
+    client_id: "app_EMoamEEZ73f0CkXaXp7hrann",
     refresh_token: "real-refresh-grant-codex",
     account_id: "account-9",
     ...overrides,
   };
+}
+
+function minimaxGrant(overrides: Partial<RuntimeGrant> = {}): RuntimeGrant {
+  return {
+    binding: "minimax",
+    channel: "static",
+    env_name: "ANTHROPIC_AUTH_TOKEN",
+    secret: "minimax-static-secret",
+    ...overrides,
+  } as RuntimeGrant;
 }
 
 interface ProviderCall {
@@ -74,7 +86,7 @@ function fakeProvider(responses: Array<Record<string, unknown> | number>) {
 const freshClaude = { access_token: "claude-access-1", expires_in: 3600 };
 const freshCodex = { access_token: "codex-access-1", id_token: "codex-id-1", expires_in: 3600 };
 
-async function start(grants: RefreshGrant[], provider: ReturnType<typeof fakeProvider>) {
+async function start(grants: RuntimeGrant[], provider: ReturnType<typeof fakeProvider>) {
   const handle = startCredentialProjector(grants, provider.deps);
   handles.push(handle);
   await handle.ready;
@@ -158,28 +170,53 @@ describe("credential projector composition (ADR-022 step 3)", () => {
     expect(JSON.stringify(projection)).not.toContain("real-refresh-grant-claude");
   });
 
-  test("an unknown binding projects null: token-free routes stay launchable", async () => {
+  test("the MiniMax static binding projects only its declared key", async () => {
+    const provider = fakeProvider([]);
+    const handle = await start([minimaxGrant()], provider);
+    expect(handle.projector.project("claude-sdk", "minimax")).toEqual({
+      env: { ANTHROPIC_AUTH_TOKEN: "minimax-static-secret" },
+    });
+    expect(provider.calls).toEqual([]);
+  });
+
+  test("missing and unknown non-fake bindings refuse; fake remains token-free", async () => {
     const provider = fakeProvider([freshClaude]);
     const handle = await start([claudeGrant()], provider);
     expect(handle.projector.project("fake", "fake")).toBeNull();
+    expect(handle.projector.project("codex", "chatgpt")).toEqual({
+      refused: "runtime grant missing for production binding chatgpt",
+    });
+    expect(handle.projector.project("claude-sdk", "unknown")).toEqual({
+      refused: "unknown production binding unknown",
+    });
   });
 });
 
-describe("refresh grant parsing", () => {
-  test("a complete grant round-trips", async () => {
+describe("runtime grant parsing", () => {
+  test("the closed OAuth/static union round-trips", async () => {
     const { parseRefreshGrant } = await import("./credential-projector");
     expect(parseRefreshGrant(codexGrant())).toEqual(codexGrant());
+    expect(parseRefreshGrant(claudeGrant())).toEqual(claudeGrant());
+    expect(parseRefreshGrant(minimaxGrant())).toEqual(minimaxGrant());
   });
 
-  test("malformed grants refuse rather than silently skip", async () => {
+  test("catalog drift, cross-binding channels, extra fields, and malformed grants refuse", async () => {
     const { parseRefreshGrant } = await import("./credential-projector");
     for (const bad of [
       null,
       {},
       { ...claudeGrant(), channel: "gateway" },
       { ...claudeGrant(), token_url: "ftp://x" },
+      { ...claudeGrant(), token_url: "https://attacker.example/token" },
+      { ...claudeGrant(), client_id: "attacker-client" },
+      { ...claudeGrant(), scope: "openid" },
       { ...claudeGrant(), refresh_token: "" },
       { ...codexGrant(), account_id: 7 },
+      { ...codexGrant(), binding: "minimax" },
+      { ...minimaxGrant(), env_name: "ANTHROPIC_API_KEY" },
+      { ...minimaxGrant(), secret: "" },
+      { ...minimaxGrant(), token_url: "https://attacker.example/token" },
+      { ...codexGrant(), surprise: true },
     ]) {
       expect(() => parseRefreshGrant(bad)).toThrow();
     }

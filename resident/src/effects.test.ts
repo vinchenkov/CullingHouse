@@ -764,7 +764,10 @@ describe("spawn effect", () => {
   // so the real resident can launch a production Worker through it. The default
   // (unset) keeps the fake/fake-only refusal — fail-closed.
   test("a configured non-fake adapter route launches through the shipped agent-runner", async () => {
-    const rig = makeRig({ config: { ...testConfig, agentRunnerRoutes: ["codex/chatgpt"] } });
+    const rig = makeRig({
+      config: { ...testConfig, agentRunnerRoutes: ["codex/chatgpt"] },
+      credentials: { project: () => ({ env: { TEST_PROJECTED_CREDENTIAL: "present" } }) },
+    });
     rig.docker.enqueue(ok("container-id\n"), ok(""));
     await applyEffect({ ...spawnEffect, harness: "codex", model_binding: "chatgpt" }, rig.deps);
     const create = rig.docker.calls[0]!;
@@ -791,6 +794,7 @@ describe("spawn effect", () => {
     const states: string[] = [];
     const rig = makeRig({
       config: { ...testConfig, agentRunnerRoutes: ["codex/chatgpt"] },
+      credentials: { project: () => ({ env: { TEST_PROJECTED_CREDENTIAL: "present" } }) },
       recheckCompletionSeal: async (_step, state) => { states.push(state); },
     });
     await applyEffect({
@@ -960,13 +964,12 @@ describe("spawn effect", () => {
       expect(rig.logs.some((line) => line.includes("claude credential lapsed"))).toBe(true);
     });
 
-    test("without a projector a routed non-fake spawn launches token-free on the open network", async () => {
+    test("without a projector a routed non-fake spawn refuses before writing or launching", async () => {
       const rig = makeRig({ config: routedConfig });
-      rig.docker.enqueue(ok("container-id\n"), ok(""));
       await applyEffect(claudeEffect, rig.deps);
-      const create = rig.docker.calls[0]!;
-      expect(create).not.toContain("--network");
-      expect(create.join(" ")).not.toContain("CLAUDE_CODE");
+      expect(rig.docker.calls).toEqual([]);
+      expect(rig.fakeFs.writes.size).toBe(0);
+      expect(rig.logs.some((line) => line.includes("runtime credential projector unavailable"))).toBe(true);
     });
 
     test("the fake family keeps --network none as hygiene", async () => {

@@ -1193,3 +1193,28 @@ rules in code the sealed lane does not own.
   a contradictory implementation shortcut and activates the existing D7
   fence. A later schema cleanup may remove the now-derivative profile column.
 - Needs your decision: no.
+
+## 2026-07-22 — resident runtime grants are a closed production union
+- Where: Phase 5 runtime-auth resident boundary; spec §11.4 amendment and
+  §17.3; ADR-022 D2–D8.
+- Gap: the resident accepted arbitrary binding ids, OAuth authorities, clients,
+  and extra grant fields. A missing projector or missing binding then degraded
+  a configured non-fake route into a token-free launch. The refresh-only shape
+  also could not represent MiniMax's declared materialized static exception.
+- Choice: mirror the host's three-entry production catalog at the resident
+  trust boundary and parse an exact tagged union: pinned Codex/Claude OAuth
+  metadata with the required account/scope evidence, or MiniMax's sole
+  `ANTHROPIC_AUTH_TOKEN` static grant. Grant filenames must equal binding ids;
+  duplicates, unknown fields, catalog drift, channel/harness mismatch, missing
+  grants, and an absent projector refuse. Only `fake/fake` returns the
+  token-free projection. Static grants bypass the token service and refresh
+  broker and materialize only their declared env key.
+- Evidence: resident tests cover the complete union, strict field and authority
+  rejection, static projection without minting, missing/unknown binding
+  refusal, absent-projector refusal before files or Docker, and fake-only
+  token-free behavior. The resident fast suite passes.
+- Spec impact: none. This implements the binding-specific channels and D8
+  posture already decided. The TypeScript catalog mirror is derivative and
+  deliberately closed; the importer will source the same pinned identities and
+  live adapter no-op gates remain required before a binding is configured.
+- Needs your decision: no.
