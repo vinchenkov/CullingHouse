@@ -94,6 +94,27 @@ func TestProductionImageCarriesPinnedRealAdapterRuntime(t *testing.T) {
 	}
 }
 
+func TestProductionCodexInnerSandboxDeniesProjectedAuth(t *testing.T) {
+	requireProdImage(t)
+	out, err := dockerRun(t, "--security-opt", "seccomp=unconfined", prodImage, "sh", "-c",
+		"mkdir -p /workspace/source /mc/codex; printf control-secret > /mc/codex/auth.json; "+
+			"/app/node_modules/@openai/codex-linux-arm64/vendor/aarch64-unknown-linux-musl/bin/codex sandbox "+
+			"-C /workspace/source "+
+			"-c 'permissions.mc.extends=\":workspace\"' "+
+			"-c 'permissions.mc.filesystem={\"/mc/codex\"=\"deny\"}' "+
+			"-c 'permissions.mc.network.enabled=true' "+
+			"-c 'permissions.mc.network.mode=\"full\"' "+
+			"-c 'permissions.mc.network.domains={\"*\"=\"allow\"}' "+
+			"-P mc sh -c 'cat /mc/codex/auth.json'")
+	if err == nil {
+		t.Fatalf("Codex inner sandbox exposed projected auth:\n%s", out)
+	}
+	if strings.Contains(out, "control-secret") || strings.Contains(out, "No permissions to create new namespace") ||
+		!strings.Contains(out, "No such file or directory") {
+		t.Fatalf("Codex auth denial was not the inner filesystem profile:\n%s", out)
+	}
+}
+
 func TestProductionImageGeneralMCIsSetuidDockerBoundary(t *testing.T) {
 	requireProdImage(t)
 	out, err := dockerRun(t, "--user", "10002:10002", prodImage,

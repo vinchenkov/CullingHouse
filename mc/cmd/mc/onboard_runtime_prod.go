@@ -12,9 +12,9 @@ import (
 	"mc/verbs"
 )
 
-var productionRuntimeAuthVerifier = deployment.RuntimeAuthVerifyFunc(func(binding, _ string) error {
-	return fmt.Errorf("the real %s adapter live no-op is not installed; no grants published", binding)
-})
+// Tests replace this seam. Production constructs the real verifier only after
+// canonical MC_HOME is known, because installed runner assets are home-owned.
+var productionRuntimeAuthVerifier deployment.RuntimeAuthVerifier
 
 func selectedRuntimeBindings(raw string) ([]string, error) {
 	if raw == "" {
@@ -46,11 +46,15 @@ func brokerOnboardRuntimeAuth(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return writeVerbError(stdout, stderr, verbs.Usagef("resolve MC_HOME: %v", err))
 	}
+	verifier := productionRuntimeAuthVerifier
+	if verifier == nil {
+		verifier = deployment.NewAdapterNoopVerifier(home)
+	}
 	status, err := deployment.ImportRuntimeAuth(home, deployment.RuntimeAuthSources{
 		Bindings: bindings, CodexAuthFile: a.CodexAuthFile,
 		ClaudeCredentialsFile: a.ClaudeCredentialsFile,
 		MinimaxTokenFile:      a.MinimaxTokenFile, Environment: os.Environ(),
-	}, productionRuntimeAuthVerifier)
+	}, verifier)
 	if err != nil {
 		return writeVerbError(stdout, stderr, verbs.Domainf("runtime-auth import refused: %v", err))
 	}

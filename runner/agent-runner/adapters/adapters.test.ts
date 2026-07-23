@@ -12,13 +12,25 @@ afterEach(() => {
 });
 
 describe("Codex production adapter", () => {
-  test("fresh/resume argv are closed, noninteractive, and externally sandboxed", () => {
+  test("fresh/resume argv are closed, noninteractive, and inner-sandboxed", () => {
     expect(codexArgv("fresh")).toEqual([
-      CODEX_BIN, "exec", "--json", "--dangerously-bypass-approvals-and-sandbox",
+      CODEX_BIN, "exec", "--json", "--ask-for-approval", "never", "--strict-config",
+      "--config", 'default_permissions="mc"',
+      "--config", 'permissions.mc.extends=":workspace"',
+      "--config", 'permissions.mc.filesystem={"/mc/codex"="deny"}',
+      "--config", "permissions.mc.network.enabled=true",
+      "--config", 'permissions.mc.network.mode="full"',
+      "--config", 'permissions.mc.network.domains={"*"="allow"}',
       "--skip-git-repo-check", "--ignore-user-config", "--ignore-rules", "-",
     ]);
     expect(codexArgv("native", "thread-1")).toEqual([
-      CODEX_BIN, "exec", "resume", "--json", "--dangerously-bypass-approvals-and-sandbox",
+      CODEX_BIN, "exec", "resume", "--json", "--ask-for-approval", "never", "--strict-config",
+      "--config", 'default_permissions="mc"',
+      "--config", 'permissions.mc.extends=":workspace"',
+      "--config", 'permissions.mc.filesystem={"/mc/codex"="deny"}',
+      "--config", "permissions.mc.network.enabled=true",
+      "--config", 'permissions.mc.network.mode="full"',
+      "--config", 'permissions.mc.network.domains={"*"="allow"}',
       "--skip-git-repo-check", "--ignore-user-config", "--ignore-rules", "thread-1", "-",
     ]);
     expect(() => codexArgv("native")).toThrow("thread id");
@@ -69,7 +81,9 @@ describe("Claude-SDK production adapter", () => {
 
   test("SDK options pin isolation, tools, native persistence, and resume", () => {
     const store = new NativeSessionStore("/mc/session");
-    const options = claudeOptions("minimax", "/workspace/source", { PATH: "/bin" }, store, "native-1");
+    const options = claudeOptions("minimax", "/workspace/source", {
+      PATH: "/bin", CLAUDE_CONFIG_DIR: "/tmp/config",
+    }, store, "native-1");
     expect(options).toMatchObject({
       cwd: "/workspace/source", model: "MiniMax-M3", resume: "native-1",
       permissionMode: "bypassPermissions", allowDangerouslySkipPermissions: true,
@@ -77,6 +91,19 @@ describe("Claude-SDK production adapter", () => {
       sessionStore: store, sessionStoreFlush: "eager", forwardSubagentText: true,
       systemPrompt: { type: "preset", preset: "claude_code" },
       tools: { type: "preset", preset: "claude_code" },
+      sandbox: {
+        enabled: true, failIfUnavailable: true, autoAllowBashIfSandboxed: true,
+        allowUnsandboxedCommands: false, network: { allowedDomains: ["*"] },
+        filesystem: { denyRead: ["/mc/session", "/tmp/config"] },
+        credentials: {
+          files: [{ path: "/tmp/config", mode: "deny" }],
+          envVars: [
+            { name: "CLAUDE_CODE_OAUTH_TOKEN", mode: "deny" },
+            { name: "ANTHROPIC_AUTH_TOKEN", mode: "deny" },
+          ],
+        },
+        enableWeakerNestedSandbox: true,
+      },
     });
   });
 });

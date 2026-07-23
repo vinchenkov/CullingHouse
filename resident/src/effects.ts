@@ -675,6 +675,11 @@ async function spawn(effect: SpawnEffect, deps: TickDeps): Promise<void> {
   const created = await deps.docker([
     "create", "--rm",
     ...(isFakeFamily ? ["--network", "none"] : []),
+    // The real CLIs fail closed unless their own bwrap sandbox starts. Docker's
+    // default seccomp blocks the namespace syscalls bwrap needs; lift only that
+    // outer syscall filter for real agents, whose inner profile then denies
+    // runtime credentials while retaining the selected workspace/network scope.
+    ...(!isFakeFamily ? ["--security-opt", "seccomp=unconfined"] : []),
     "--name", name,
     "--label", "mc-managed=true",
     "--label", "mc-tier=pipeline",

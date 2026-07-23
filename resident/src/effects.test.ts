@@ -924,6 +924,7 @@ describe("spawn effect", () => {
       await applyEffect(claudeEffect, rig.deps);
       const create = rig.docker.calls[0]!;
       expect(create).not.toContain("--network");
+      expect(create).toEqual(expect.arrayContaining(["--security-opt", "seccomp=unconfined"]));
       expect(create).toContain("CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST=1");
       expect(create).toContain("CLAUDE_CODE_OAUTH_TOKEN=host-minted-access");
       expect(create.join(" ")).not.toContain("ANTHROPIC_API_KEY");
@@ -952,6 +953,7 @@ describe("spawn effect", () => {
       expect(create).toContain("CODEX_HOME=/mc/codex");
       expect(create).toContain("CODEX_REFRESH_TOKEN_URL_OVERRIDE=http://host.docker.internal:7799/oauth/token");
       expect(create).not.toContain("--network");
+      expect(create).toEqual(expect.arrayContaining(["--security-opt", "seccomp=unconfined"]));
     });
 
     test("a refused projection spawns nothing and writes nothing (D8)", async () => {
@@ -981,6 +983,7 @@ describe("spawn effect", () => {
       await applyEffect(spawnEffect, rig.deps);
       const create = rig.docker.calls[0]!;
       expect(create).toContain("--network");
+      expect(create).not.toContain("--security-opt");
       expect(create.join(" ")).not.toContain("CLAUDE_CODE");
     });
   });

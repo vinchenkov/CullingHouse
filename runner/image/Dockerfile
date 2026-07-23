@@ -43,7 +43,10 @@ RUN curl -fsSL https://bun.sh/install | BUN_INSTALL=/opt/bun bash -s "bun-v${BUN
 # the fake image does not install or carry a harness CLI.
 COPY runner/agent-runner/package.json runner/agent-runner/bun.lock /opt/mc-agent-runner/
 RUN if [ "$RUNTIME_DEPS" = "1" ]; then \
-      cd /opt/mc-agent-runner \
+      apt-get update \
+      && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends bubblewrap socat \
+      && rm -rf /var/lib/apt/lists/* \
+      && cd /opt/mc-agent-runner \
       && bun install --production --frozen-lockfile \
       && install -d /app \
       && mv node_modules /app/node_modules \

@@ -1283,3 +1283,57 @@ rules in code the sealed lane does not own.
   the adapter runtime required by the image. Live no-op verification remains
   the import gate and is the next micro-step.
 - Needs your decision: no.
+
+## 2026-07-22 — Real-agent containers trade Docker seccomp for mandatory inner credential sandboxes
+- Where: Phase 5 production adapters and Runtime-auth live no-op; spec
+  §11.2/§11.4, Inv. 16/20; ADR-022 D3–D8.
+- Gap: Docker's default seccomp blocks the namespace syscalls used by both
+  Codex's and Claude's Linux command sandboxes. Leaving the just-added Codex
+  `dangerously-bypass-approvals-and-sandbox` flag would let model-issued shell
+  commands read `/mc/codex/auth.json`; likewise, merely passing Claude OAuth in
+  the SDK subprocess env does not by itself strip it from Bash tools.
+- Choice: real-agent and real-adapter-verifier containers alone use
+  `--security-opt seccomp=unconfined`; fake, setup, landing, and other container
+  classes retain Docker's default profile. In exchange, adapter startup is
+  fail-closed on the inner sandbox. Codex uses a command-line custom permission
+  profile extending `:workspace`, explicitly denies `/mc/codex`, admits full
+  sandboxed network, and never loads project/user config or rules. Claude
+  requires sandbox availability, forbids unsandboxed commands, denies its
+  config/session paths, and removes both possible projected token variables
+  from sandboxed commands. The production image installs only the two small
+  Linux sandbox helpers required by the locked SDK/CLI.
+- Evidence: unit tests pin both complete policy objects/argv and the resident's
+  real-only Docker option. A production-image Docker boundary runs Codex's
+  actual locked inner sandbox and proves `/mc/codex/auth.json` is absent to a
+  model command; the same probe fails under default Docker seccomp, proving the
+  option is causal rather than decorative. Runtime-auth verifier tests require
+  the same real-only option.
+- Spec impact: conservative internal mechanism. The outer container still owns
+  mounts, capabilities, identity, and lifecycle; only its syscall filter is
+  delegated to the mandatory inner runtime sandbox, which enforces the
+  credential/tool split the outer container cannot express for a same-process
+  harness. Reverting is straightforward if Docker gains a narrow shipped
+  seccomp profile for the required namespace calls.
+- Needs your decision: no.
+
+## 2026-07-22 — Runtime-auth publication is gated by the installed production adapter
+- Where: Phase 5 Runtime auth; spec §11.2/§11.4, Inv. 16/20; ADR-022
+  D3–D8.
+- Gap: structural import validation proves only grant shape and ownership. It
+  cannot prove that the locked image, installed adapter source, credential
+  projection, provider exchange, and native-session persistence work together.
+- Choice: after writing the complete owner-only stage, mint only a short-lived
+  access credential, run a fixed no-tool prompt through the selected production
+  adapter in `mc-prod`, and require both a zero exit and the regular native
+  trace named by its `session-start` event. Adopt a provider-rotated refresh
+  token atomically inside the stage, then revalidate and fsync the exact closed
+  grant set before rename publication. The verifier refuses missing or
+  non-owner-only installed runner assets at `$MC_HOME/release/runner`.
+- Evidence: focused tests cover all three binding argv/credential channels, the
+  fixed prompt, missing native evidence, refresh-token rotation, and verifier
+  mutation of the staged grant set. The fixed six-leg fast suite and production
+  image sandbox boundary pass.
+- Spec impact: conservative internal mechanism. It adds no credential source or
+  route and makes the existing fail-closed publication rule observable at the
+  actual adapter boundary.
+- Needs your decision: no.

@@ -25,7 +25,13 @@ export function codexAdapterEnv(base: Record<string, string | undefined>): Recor
 
 export function codexArgv(mode: "fresh" | "native", nativeRef?: string): string[] {
   const fixed = [
-    "--json", "--dangerously-bypass-approvals-and-sandbox",
+    "--json", "--ask-for-approval", "never", "--strict-config",
+    "--config", 'default_permissions="mc"',
+    "--config", 'permissions.mc.extends=":workspace"',
+    "--config", 'permissions.mc.filesystem={"/mc/codex"="deny"}',
+    "--config", "permissions.mc.network.enabled=true",
+    "--config", 'permissions.mc.network.mode="full"',
+    "--config", 'permissions.mc.network.domains={"*"="allow"}',
     "--skip-git-repo-check", "--ignore-user-config", "--ignore-rules",
   ];
   if (mode === "native") {

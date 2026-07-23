@@ -294,6 +294,51 @@ func writeRuntimeGrant(dir, binding string, grant any) error {
 	return err
 }
 
+func validateStagedRuntimeGrants(dir string, bindings []string) error {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return err
+	}
+	if len(entries) != len(bindings) {
+		return fmt.Errorf("staged grant set changed shape during live verification")
+	}
+	for i, binding := range bindings {
+		entry := entries[i]
+		if entry.Name() != binding+".json" || entry.IsDir() {
+			return fmt.Errorf("staged grant set contains unexpected entry %q", entry.Name())
+		}
+		info, err := entry.Info()
+		if err != nil || info.Mode().Perm() != 0o600 || !info.Mode().IsRegular() {
+			return fmt.Errorf("staged grant %s lost its mode-0600 regular-file boundary", binding)
+		}
+		body, err := os.ReadFile(filepath.Join(dir, entry.Name()))
+		if err != nil {
+			return err
+		}
+		spec, _ := routing.ProductionBinding(binding)
+		if spec.Delivery == routing.CredentialMaterialized {
+			var grant staticRuntimeGrant
+			if err := decodeRuntimeAuthJSON(body, &grant); err != nil || grant.Binding != binding ||
+				grant.Channel != spec.Channel || grant.EnvName != spec.DeclaredStaticKey || grant.Secret == "" {
+				return fmt.Errorf("staged grant %s is no longer the closed static shape", binding)
+			}
+			continue
+		}
+		var grant oauthRuntimeGrant
+		if err := decodeRuntimeAuthJSON(body, &grant); err != nil || grant.Binding != binding ||
+			grant.Channel != spec.Channel || grant.TokenURL != spec.TokenURL || grant.ClientID != spec.ClientID || grant.RefreshToken == "" {
+			return fmt.Errorf("staged grant %s is no longer the closed OAuth shape", binding)
+		}
+		if binding == "chatgpt" && grant.AccountID == "" {
+			return fmt.Errorf("staged Codex grant lost its account identity")
+		}
+		if binding == "claude" && !strings.Contains(" "+grant.Scope+" ", " user:inference ") {
+			return fmt.Errorf("staged Claude grant lost user:inference scope")
+		}
+	}
+	return nil
+}
+
 func syncDirectory(path string) error {
 	f, err := os.Open(path)
 	if err != nil {
@@ -399,6 +444,12 @@ func ImportRuntimeAuth(home string, sources RuntimeAuthSources, verifier Runtime
 		if err := verifier.Verify(binding, stage); err != nil {
 			return "", fmt.Errorf("runtime binding %s live no-op: %w", binding, err)
 		}
+	}
+	if err := validateStagedRuntimeGrants(stage, bindings); err != nil {
+		return "", fmt.Errorf("revalidate live-verified runtime grants: %w", err)
+	}
+	if err := syncDirectory(stage); err != nil {
+		return "", fmt.Errorf("sync live-verified runtime grants: %w", err)
 	}
 	canonical := filepath.Join(home, "refresh-grants")
 	if err := requireOwnerOnlyDirectory(canonical, "runtime grant store"); err == nil {

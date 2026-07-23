@@ -59,6 +59,22 @@ export function claudeOptions(
     strictMcpConfig: true,
     systemPrompt: { type: "preset", preset: "claude_code" },
     tools: { type: "preset", preset: "claude_code" },
+    sandbox: {
+      enabled: true,
+      failIfUnavailable: true,
+      autoAllowBashIfSandboxed: true,
+      allowUnsandboxedCommands: false,
+      network: { allowedDomains: ["*"] },
+      filesystem: { denyRead: ["/mc/session", env.CLAUDE_CONFIG_DIR!] },
+      credentials: {
+        files: [{ path: env.CLAUDE_CONFIG_DIR!, mode: "deny" }],
+        envVars: [
+          { name: "CLAUDE_CODE_OAUTH_TOKEN", mode: "deny" },
+          { name: "ANTHROPIC_AUTH_TOKEN", mode: "deny" },
+        ],
+      },
+      enableWeakerNestedSandbox: true,
+    },
     persistSession: true,
     sessionStore: store,
     sessionStoreFlush: "eager",
