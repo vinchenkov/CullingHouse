@@ -6,10 +6,10 @@ REPO PATH: `~/dev/ai/homie`. Never relocate this repo into `~/Documents`,
 `~/Desktop`, or `~/Downloads`: macOS TCC can revoke an agent session's own
 filesystem access there during fan-out. Full Disk Access does not fix it.
 
-LAST GREEN SHA: `8886c09` — resident runtime grants are a strict three-binding
-OAuth/static union. Catalog drift, malformed/renamed grants, missing bindings,
-unknown production routes, and an absent projector refuse; fake/fake is the
-only token-free route. The six-leg fast suite is green.
+LAST GREEN SHA: `556dc1e` — Runtime-auth extracts isolated provider-native
+sources into the closed grant union, runs every gate before publication, and
+atomically exchanges the complete grant directory. Failed gates preserve the
+old store byte-for-byte. The six-leg fast suite is green.
 Full `docker_boundary` + full `docker_e2e` (-count=1, `ok mc/e2e 169s`), the
 extended Playwright dashboard smoke, and the install.sh dev walk were last
 green at `d0ef4bb`. The full Docker lanes last ran green at `c8f37e9`-era HEAD
@@ -133,6 +133,8 @@ the approve landing fence to assignment-armed tasks; v12 retires
         activates the provider-key/foreign-static pre-claim fence (`675cbe0`).
   - [x] Resident runtime-grant parsing/projection is a closed OAuth/static
         union and every non-fake route fails closed without it (`8886c09`).
+  - [x] Runtime-auth import is isolated, owner-only, transactionally published,
+        and deliberately blocked on the still-missing real no-op (`556dc1e`).
 - [ ] Release prep — install/onboard front door and construction-document
       disposition.
 
@@ -211,7 +213,7 @@ native resume, container reconciliation, Homie credential projection,
 dashboard LaunchAgent generation, and the four non-Console tabs. Details and
 commit map are in the closed Phase 4 ledger.
 
-NEXT: build the atomic Runtime-auth importer with isolated provider homes,
-forbidden-env gating, exact binding ownership, and no partial publication.
-Production adapters/live no-op and launchd activation remain operator-present
-acceptance gates.
+NEXT: implement the real Codex and Claude-SDK adapter launch paths, use them for
+staged per-binding no-op verification, then wrap the importer with isolated
+provider-owned login acquisition and source cleanup. Live token spend and
+launchd activation remain operator-present acceptance gates.

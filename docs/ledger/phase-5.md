@@ -194,3 +194,24 @@ NEXT: build the atomic Runtime-auth importer with isolated provider homes,
 forbidden-env gating, exact binding ownership, and no partial publication.
 Production adapters/live no-op and launchd activation remain operator-present
 acceptance gates.
+
+## 2026-07-22 — atomic Runtime-auth import (`556dc1e`)
+
+Runtime-auth accepts only owner-owned, mode-0600, singly linked provider-native
+files below owner-only `MC_HOME/runtime-auth-sources`; it cannot import the
+operator's personal harness homes. Codex/Claude source evidence is reduced to
+the pinned OAuth grant shape and MiniMax to its one declared static key. Every
+selected binding's forbidden-env and live verifier gate sees the full private
+staged set while the old canonical directory remains unchanged. Publication is
+one durable directory rename/exchange on Darwin and Linux; failed gates publish
+nothing, rotation cannot expose a mixed binding set, and identical replay keeps
+the canonical directory identity.
+
+The real verifier currently refuses by construction because production
+adapters do not yet exist, so no unverified real grant can be published.
+Focused importer/broker tests and the six-leg fast suite are green.
+
+NEXT: implement the real Codex and Claude-SDK adapter launch paths, use them for
+staged per-binding no-op verification, then wrap the importer with isolated
+provider-owned login acquisition and source cleanup. Live token spend and
+launchd activation remain operator-present acceptance gates.
