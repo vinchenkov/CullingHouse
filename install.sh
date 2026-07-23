@@ -25,6 +25,12 @@
 #   --workspace-root <path>      first Worksource workspace root
 #   --console-hour <0-23> --console-minute <0-59> --console-tz <IANA>
 #                                Daily Console schedule
+#   --runtime-bindings <csv>     selected subscription bindings
+#   --acquire-runtime-auth       run isolated Codex/Claude subscription login
+#   --codex-auth-file <path>     isolated provider-owned Codex source
+#   --claude-credentials-file <path>
+#   --minimax-token-file <path>  owner-only MiniMax subscription-key source
+#   --activate                   operator-present launchd activation gate
 #   --yes                       never prompt; fail instead (agent mode)
 
 set -eu
@@ -43,6 +49,12 @@ WORKSPACE_ROOT=""
 CONSOLE_HOUR=""
 CONSOLE_MINUTE=""
 CONSOLE_TZ=""
+RUNTIME_BINDINGS=""
+ACQUIRE_RUNTIME_AUTH=0
+CODEX_AUTH_FILE=""
+CLAUDE_CREDENTIALS_FILE=""
+MINIMAX_TOKEN_FILE=""
+ACTIVATE=0
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -55,7 +67,13 @@ while [ $# -gt 0 ]; do
     --console-hour) CONSOLE_HOUR=${2:?}; shift ;;
     --console-minute) CONSOLE_MINUTE=${2:?}; shift ;;
     --console-tz) CONSOLE_TZ=${2:?}; shift ;;
-    -h|--help) sed -n '2,30p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    --runtime-bindings) RUNTIME_BINDINGS=${2:?}; shift ;;
+    --acquire-runtime-auth) ACQUIRE_RUNTIME_AUTH=1 ;;
+    --codex-auth-file) CODEX_AUTH_FILE=${2:?}; shift ;;
+    --claude-credentials-file) CLAUDE_CREDENTIALS_FILE=${2:?}; shift ;;
+    --minimax-token-file) MINIMAX_TOKEN_FILE=${2:?}; shift ;;
+    --activate) ACTIVATE=1 ;;
+    -h|--help) sed -n '2,40p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) fail "unknown flag $1 (see --help)" ;;
   esac
   shift
@@ -157,7 +175,19 @@ if [ "$DEV" -eq 0 ]; then
   "$BIN_DIR/mc" onboard home --release-source "$REPO_DIR/runner" \
     --host-release-source "$REPO_DIR"
   say "== hand-off: remaining mc onboard sections"
-  exec "$BIN_DIR/mc" onboard
+  set -- "$BIN_DIR/mc" onboard
+  [ -z "$WORKSOURCE" ] || set -- "$@" --worksource "$WORKSOURCE"
+  [ -z "$WORKSPACE_ROOT" ] || set -- "$@" --workspace-root "$WORKSPACE_ROOT"
+  [ -z "$CONSOLE_HOUR" ] || set -- "$@" --console-hour "$CONSOLE_HOUR"
+  [ -z "$CONSOLE_MINUTE" ] || set -- "$@" --console-minute "$CONSOLE_MINUTE"
+  [ -z "$CONSOLE_TZ" ] || set -- "$@" --console-tz "$CONSOLE_TZ"
+  [ -z "$RUNTIME_BINDINGS" ] || set -- "$@" --runtime-bindings "$RUNTIME_BINDINGS"
+  [ "$ACQUIRE_RUNTIME_AUTH" -eq 0 ] || set -- "$@" --acquire
+  [ -z "$CODEX_AUTH_FILE" ] || set -- "$@" --codex-auth-file "$CODEX_AUTH_FILE"
+  [ -z "$CLAUDE_CREDENTIALS_FILE" ] || set -- "$@" --claude-credentials-file "$CLAUDE_CREDENTIALS_FILE"
+  [ -z "$MINIMAX_TOKEN_FILE" ] || set -- "$@" --minimax-token-file "$MINIMAX_TOKEN_FILE"
+  [ "$ACTIVATE" -eq 0 ] || set -- "$@" --activate
+  exec "$@"
 fi
 
 ask WORKSOURCE "first Worksource id" "$WORKSOURCE"

@@ -37,7 +37,20 @@ if [ "${1:-}" = go ] && [ "${2:-}" = build ]; then
     shift
   done
   [ -n "$out" ] || exit 90
-  printf '#!/bin/sh\nexit 91\n' >"$out"
+  cat >"$out" <<'SCRIPT'
+#!/bin/sh
+if [ -n "${MC_INSTALL_TEST_LOG:-}" ]; then
+  {
+    printf 'CALL'
+    for arg do
+      printf '\t%s' "$arg"
+    done
+    printf '\n'
+  } >>"$MC_INSTALL_TEST_LOG"
+  exit 0
+fi
+exit 91
+SCRIPT
   chmod 755 "$out"
   exit 0
 fi
@@ -98,5 +111,40 @@ chmod 755 "$case_root/bin/docker"
 run_must_fail image-build-failed "production image build failed" \
   env PATH="$case_root/bin:/usr/bin:/bin" HOME="$case_root/home" \
   sh "$ROOT/install.sh" --yes --bin-dir "$case_root/install-bin"
+
+case_root="$TMP/production-forwarding"
+make_mise "$case_root/bin"
+cat >"$case_root/bin/docker" <<'EOF'
+#!/bin/sh
+case "${1:-}" in
+  info|build) exit 0 ;;
+esac
+exit 94
+EOF
+cat >"$case_root/bin/uname" <<'EOF'
+#!/bin/sh
+printf 'Linux\n'
+EOF
+chmod 755 "$case_root/bin/docker" "$case_root/bin/uname"
+mkdir -p "$case_root/home"
+forward_log="$case_root/forward.log"
+env PATH="$case_root/bin:/usr/bin:/bin" HOME="$case_root/home" \
+  MC_INSTALL_TEST_LOG="$forward_log" \
+  sh "$ROOT/install.sh" --yes --bin-dir "$case_root/install-bin" \
+    --worksource primary --workspace-root "$case_root/workspace root" \
+    --console-hour 9 --console-minute 5 --console-tz America/Los_Angeles \
+    --runtime-bindings chatgpt,claude,minimax --acquire-runtime-auth \
+    --codex-auth-file "$case_root/codex auth.json" \
+    --claude-credentials-file "$case_root/claude credentials.json" \
+    --minimax-token-file "$case_root/minimax token" --activate \
+    >/dev/null 2>&1 || fail "production-forwarding did not reach the whole wizard"
+expected=$(printf 'CALL\tonboard\t--worksource\tprimary\t--workspace-root\t%s\t--console-hour\t9\t--console-minute\t5\t--console-tz\tAmerica/Los_Angeles\t--runtime-bindings\tchatgpt,claude,minimax\t--acquire\t--codex-auth-file\t%s\t--claude-credentials-file\t%s\t--minimax-token-file\t%s\t--activate' \
+  "$case_root/workspace root" "$case_root/codex auth.json" \
+  "$case_root/claude credentials.json" "$case_root/minimax token")
+actual=$(tail -n 1 "$forward_log")
+[ "$actual" = "$expected" ] || {
+  printf 'expected: %s\nactual:   %s\n' "$expected" "$actual" >&2
+  fail "production-forwarding changed whole-wizard arguments"
+}
 
 printf 'install.sh fail-closed preflight: ok\n'

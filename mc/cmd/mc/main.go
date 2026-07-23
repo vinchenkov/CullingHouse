@@ -61,8 +61,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	// mirror operations stay on Darwin, while only the path-free spine frame
 	// enters the exact helper. Preflight is host-only and writes nothing.
 	if shouldDelegateToHelper() && args[0] == "onboard" {
-		if len(args) == 1 {
-			return writeVerbError(stdout, stderr, verbs.Domainf("production whole-wizard composition is incomplete; run the named onboarding sections in order"))
+		if len(args) == 1 || strings.HasPrefix(args[1], "-") {
+			return brokerWholeOnboard(args, stdin, stdout, stderr)
 		}
 		if len(args) >= 2 {
 			if _, err := parseOnboardArgs(args[1:]); err != nil {
@@ -509,7 +509,7 @@ func parseOnboardArgs(args []string) (verbs.OnboardArgs, error) {
 	if err := parse(fs, args); err != nil {
 		return verbs.OnboardArgs{}, err
 	}
-	if a.ActivateSupervision && a.Section != "supervision" {
+	if a.ActivateSupervision && a.Section != "" && a.Section != "supervision" {
 		return verbs.OnboardArgs{}, verbs.Usagef("mc onboard --activate is valid only for the supervision section")
 	}
 	for _, item := range []struct {

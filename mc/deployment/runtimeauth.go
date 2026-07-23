@@ -339,6 +339,31 @@ func validateStagedRuntimeGrants(dir string, bindings []string) error {
 	return nil
 }
 
+// ValidateRuntimeGrantStore is the token-free replay check used by the whole
+// wizard. It validates the exact canonical grant set and forbidden host
+// environment without minting or spending a provider turn.
+func ValidateRuntimeGrantStore(home string, bindings, environment []string) error {
+	canonicalHome, err := CanonicalHome(home)
+	if err != nil {
+		return err
+	}
+	if err := requireOwnerOnlyDirectory(canonicalHome, "MC_HOME"); err != nil {
+		return err
+	}
+	bindings, err = validateRuntimeBindings(bindings)
+	if err != nil {
+		return err
+	}
+	if err := validateRuntimeAuthEnvironment(environment); err != nil {
+		return err
+	}
+	store := filepath.Join(canonicalHome, "refresh-grants")
+	if err := requireOwnerOnlyDirectory(store, "runtime grant store"); err != nil {
+		return err
+	}
+	return validateStagedRuntimeGrants(store, bindings)
+}
+
 func syncDirectory(path string) error {
 	f, err := os.Open(path)
 	if err != nil {

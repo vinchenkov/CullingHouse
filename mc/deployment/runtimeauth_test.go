@@ -194,6 +194,31 @@ func TestImportRuntimeAuthHealthyReplayRunsGatesWithoutReplacingTheStore(t *test
 	}
 }
 
+func TestValidateRuntimeGrantStoreIsTokenFreeAndFailClosed(t *testing.T) {
+	home := filepath.Join(t.TempDir(), "home")
+	if err := os.Mkdir(home, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	sources := validRuntimeAuthSources(t, home)
+	bindings := []string{"chatgpt", "claude", "minimax"}
+	if _, err := ImportRuntimeAuth(home, sources, RuntimeAuthVerifyFunc(func(string, string) error { return nil })); err != nil {
+		t.Fatal(err)
+	}
+	if err := ValidateRuntimeGrantStore(home, bindings, []string{"PATH=/usr/bin"}); err != nil {
+		t.Fatalf("validate canonical store: %v", err)
+	}
+	if err := ValidateRuntimeGrantStore(home, bindings, []string{"OPENAI_API_KEY=metered"}); err == nil || !strings.Contains(err.Error(), "OPENAI_API_KEY") {
+		t.Fatalf("forbidden environment accepted: %v", err)
+	}
+	grant := filepath.Join(home, "refresh-grants", "claude.json")
+	if err := os.Chmod(grant, 0o640); err != nil {
+		t.Fatal(err)
+	}
+	if err := ValidateRuntimeGrantStore(home, bindings, nil); err == nil || !strings.Contains(err.Error(), "mode-0600") {
+		t.Fatalf("widened canonical grant accepted: %v", err)
+	}
+}
+
 func TestImportRuntimeAuthRejectsUnsafeSourcesAndBindingSets(t *testing.T) {
 	for name, tc := range map[string]struct {
 		mutate func(t *testing.T, root string, sources *RuntimeAuthSources)
