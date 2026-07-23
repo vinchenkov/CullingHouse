@@ -215,3 +215,30 @@ NEXT: implement the real Codex and Claude-SDK adapter launch paths, use them for
 staged per-binding no-op verification, then wrap the importer with isolated
 provider-owned login acquisition and source cleanup. Live token spend and
 launchd activation remain operator-present acceptance gates.
+
+## 2026-07-22 — real production adapters (`3007478`)
+
+The runner now selects the closed `codex/chatgpt`, `claude-sdk/claude`, and
+`claude-sdk/minimax` routes intrinsically; the old route list survives only as
+an explicit fake-adapter stand-in for token-free Docker acceptance. Unknown
+routes, malformed resume modes, missing native handles, and escaping trace
+locators refuse. Codex receives only its projected auth/broker channel and
+writes its dated rollout under the run's durable session mount. Claude and
+MiniMax use the locked Agent SDK with no inherited settings, closed preset
+tools, isolated config, and an eager mode-0600/fsynced SessionStore supporting
+resume and subagent transcripts. MiniMax's compatible base URL is pinned in
+both catalogs.
+
+The production Docker build installs `@openai/codex` 0.145.0 and
+`@anthropic-ai/claude-agent-sdk` 0.3.217 outside the bind-mounted source path;
+the fake image installs neither. The adapter directly executes the locked
+Linux-arm64 Codex binary, avoiding a redundant Node runtime for npm's thin
+launcher. An unprivileged production-container probe and focused Docker
+boundary tests proved both runtime pins and fake-route rejection. Adapter,
+resident, catalog, and native-store focused tests plus the six-leg fast suite
+are green.
+
+NEXT: make Runtime-auth's staged verifier launch each real adapter through the
+production image with a fixed no-op prompt and exact staged grant, then wrap
+the importer with isolated provider-owned login acquisition and source cleanup.
+Live token spend and launchd activation remain operator-present acceptance gates.

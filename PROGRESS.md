@@ -6,17 +6,17 @@ REPO PATH: `~/dev/ai/homie`. Never relocate this repo into `~/Documents`,
 `~/Desktop`, or `~/Downloads`: macOS TCC can revoke an agent session's own
 filesystem access there during fan-out. Full Disk Access does not fix it.
 
-LAST GREEN SHA: `556dc1e` — Runtime-auth extracts isolated provider-native
-sources into the closed grant union, runs every gate before publication, and
-atomically exchanges the complete grant directory. Failed gates preserve the
-old store byte-for-byte. The six-leg fast suite is green.
+LAST GREEN SHA: `3007478` — the closed production runner selects real Codex,
+Claude, and MiniMax adapters, durably registers their native session locators,
+and the arm64 production image contains exact locked runtimes. The six-leg
+fast suite and focused production-image Docker boundary are green.
 Full `docker_boundary` + full `docker_e2e` (-count=1, `ok mc/e2e 169s`), the
 extended Playwright dashboard smoke, and the install.sh dev walk were last
 green at `d0ef4bb`. The full Docker lanes last ran green at `c8f37e9`-era HEAD
 (26 `docker_boundary` subtests; 10 `docker_e2e` tests including both credential
-legs). Focused production-image Docker tests were green at `d6c6384`; the real
-onboarding crossing was green at `bf5981d`. Production image `mc-prod` rebuilt
-from `bf5981d`: `sha256:e05d634fbbc4cb5da0541cdb41eb119979bd7145bde1e2271b970727f871439a`,
+legs). The real onboarding crossing was green at `bf5981d`. Production image
+`mc-prod` rebuilt from `3007478`:
+`sha256:225733a0d05c1dbd72958bbd320650a5b78e7f05d7fb058366a3d0a6b5f03ddd`,
 arm64/linux, native. LESSON pinned by `ada715d`: the resident's
 `SPINE_SCHEMA_VERSION` (resident-control.ts:12) mirrors
 `substrate.CurrentSchemaVersion` in lockstep — every schema bump must touch
@@ -49,21 +49,16 @@ the approve landing fence to assignment-armed tasks; v12 retires
 1. `TestOnboardConcurrentFreshHomeNeverDeletesTheWinner` (`mc/verbs`), roughly
    1 in 21 full-suite runs. Repro:
    `cd mc && for i in $(seq 1 25); do mise exec -- go test ./verbs/ -count=1 || break; done`
-   A concurrent provisioner creates a non-empty SQLite file before its schema
-   transaction commits; `onboard.go` temporarily mistakes that state for
-   corruption. It should await/retry and refuse only if the file stays
-   table-less. Fail-closed, pre-existing, not a Phase 3 blocker. Diagnosis:
-   `IMPLEMENTATION-NOTES.md` (2026-07-15). Seen again at `4757df2`, followed by
-   8/8 isolated greens and a green full-suite rerun.
+   Concurrent provision creates a non-empty SQLite file before schema commit;
+   `onboard.go` temporarily calls it corruption. Fail-closed and pre-existing;
+   diagnosis is in `IMPLEMENTATION-NOTES.md` (2026-07-15).
 
 2. `resident one-use dispatch control > rejects every identity mismatch before
    accepting child output` (`resident/src/resident-control.test.ts`),
    load-sensitive. Repro while another suite runs:
    `for i in $(seq 1 8); do ./resident/check.sh || break; done`
-   The test-only child exits immediately after its hello, allowing subprocess
-   reaping to race the fd-3 socket poller and surface `EBADF`. Production waits
-   for the ack. Fail-closed and not a Phase 3 blocker. Capture the exact failing
-   test name on the next sighting.
+   Test-only child exit can race the fd-3 poller and surface `EBADF`; production
+   waits for ack. Fail-closed and pre-existing.
 
 ## Phase state
 
@@ -134,7 +129,9 @@ the approve landing fence to assignment-armed tasks; v12 retires
   - [x] Resident runtime-grant parsing/projection is a closed OAuth/static
         union and every non-fake route fails closed without it (`8886c09`).
   - [x] Runtime-auth import is isolated, owner-only, transactionally published,
-        and deliberately blocked on the still-missing real no-op (`556dc1e`).
+        and blocked until every real adapter no-op passes (`556dc1e`).
+  - [x] Real Codex/Claude-SDK/MiniMax adapters, native-session persistence,
+        closed selection, and locked arm64 production runtime (`3007478`).
 - [ ] Release prep — install/onboard front door and construction-document
       disposition.
 
@@ -191,7 +188,7 @@ these are the constraints a Phase 4+ change must not break.
   (repurposed, never delete); `gateway_control_version` retained (golden
   bytes); the resident's schema mirror tracks the Go schema in lockstep.
   Catalog/env fencing and the OAuth/static grant union are complete
-  (`675cbe0`, `8886c09`); atomic import remains open.
+  (`675cbe0`, `8886c09`); atomic import is complete (`556dc1e`).
 
 ## Known later obligations
 
@@ -213,7 +210,7 @@ native resume, container reconciliation, Homie credential projection,
 dashboard LaunchAgent generation, and the four non-Console tabs. Details and
 commit map are in the closed Phase 4 ledger.
 
-NEXT: implement the real Codex and Claude-SDK adapter launch paths, use them for
-staged per-binding no-op verification, then wrap the importer with isolated
-provider-owned login acquisition and source cleanup. Live token spend and
-launchd activation remain operator-present acceptance gates.
+NEXT: make Runtime-auth's staged verifier launch each real adapter through the
+production image with a fixed no-op prompt and exact staged grant, then wrap
+the importer with isolated provider-owned login acquisition and source cleanup.
+Live token spend and launchd activation remain operator-present acceptance gates.
