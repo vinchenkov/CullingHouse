@@ -6,19 +6,17 @@ REPO PATH: `~/dev/ai/homie`. Never relocate this repo into `~/Documents`,
 `~/Desktop`, or `~/Downloads`: macOS TCC can revoke an agent session's own
 filesystem access there during fan-out. Full Disk Access does not fix it.
 
-LAST GREEN SHA: `d6c6384` — Phase 5 production doctor composes host-only facts
-with a version-fenced, path-free helper runtime report; Container and Verify
-reuse it, helper absence remains a complete exit-0 diagnosis, and the unnamed
-wizard refuses until every mixed-authority section is split. The six-leg fast
-suite is green.
+LAST GREEN SHA: `bf5981d` — production Routing stays host-only after a private
+identity check; Worksource paths are host-canonicalized/rechecked data; and
+Tunables/Surfaces mutate only through the fixed-spine helper. First-run and
+idempotent real-helper crossings plus the six-leg fast suite are green.
 Full `docker_boundary` + full `docker_e2e` (-count=1, `ok mc/e2e 169s`), the
 extended Playwright dashboard smoke, and the install.sh dev walk were last
-green at `d0ef4bb`. Docker lanes last ran green
-at `c8f37e9`-era HEAD (full `docker_boundary` 26 subtests, full `docker_e2e`
-10 tests incl. both credential legs) and are untouched since: commits after
-are test-only or the new `dashboard/` package. Production image `mc-prod`
-rebuilt from `d6c6384`:
-`sha256:ea411c714c35c2df2962aafb4646199d1f0bff6769653af9c50816ab5abb8ad9`,
+green at `d0ef4bb`. The full Docker lanes last ran green at `c8f37e9`-era HEAD
+(26 `docker_boundary` subtests; 10 `docker_e2e` tests including both credential
+legs). Focused production-image Docker tests were green at `d6c6384`; the real
+onboarding crossing was green at `bf5981d`. Production image `mc-prod` rebuilt
+from `bf5981d`: `sha256:e05d634fbbc4cb5da0541cdb41eb119979bd7145bde1e2271b970727f871439a`,
 arm64/linux, native. LESSON pinned by `ada715d`: the resident's
 `SPINE_SCHEMA_VERSION` (resident-control.ts:12) mirrors
 `substrate.CurrentSchemaVersion` in lockstep — every schema bump must touch
@@ -40,7 +38,7 @@ Phase-completion Docker regression:
 `cd mc && mise exec -- go test -tags docker_e2e -timeout 15m ./e2e/...`
 Phase-completion dashboard browser smoke: `./dashboard/smoke.sh` (no Docker).
 
-Schema is v12. `mc onboard home` migrates v1 through v12 in place. v11 widened
+Schema is v13. `mc onboard home` migrates v1 through v13 in place. v11 widened
 the approve landing fence to assignment-armed tasks; v12 retires
 `egress_policy`/`network_allow` and narrows `runtime_auth_delivery` to
 `projection|materialized` (ADR-022) via the chain's first rebuild-and-copy
@@ -128,6 +126,9 @@ the approve landing fence to assignment-armed tasks; v12 retires
         Home/routing/service facts, preserves the total nine-row/exit-0
         diagnostic contract, and drives real Container/Verify sections
         (`d6c6384`).
+  - [x] Production Routing, Worksource, Tunables, and Surfaces are split by
+        authority through one closed onboarding-state frame; real first-run
+        and inputless replay crossed the native helper (`bf5981d`).
 - [ ] Release prep — install/onboard front door and construction-document
       disposition.
 
@@ -208,7 +209,7 @@ native resume, container reconciliation, Homie credential projection,
 dashboard LaunchAgent generation, and the four non-Console tabs. Details and
 commit map are in the closed Phase 4 ledger.
 
-NEXT: split Routing, Worksource, Tunables, Surfaces, Runtime-auth, and
-Supervision into host/path-free-helper halves, then make the unnamed production
+NEXT: implement the fail-closed Runtime-auth import/health section and the
+unloaded Supervision artifact/health section, then make the unnamed production
 wizard run the complete ordered composition. Keep live-token and launchd-load
 acceptance legs parked.

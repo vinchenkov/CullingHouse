@@ -138,3 +138,26 @@ NEXT: split Routing, Worksource, Tunables, Surfaces, Runtime-auth, and
 Supervision into host/path-free-helper halves, then make the unnamed production
 wizard run the complete ordered composition. Keep live-token and launchd-load
 acceptance legs parked.
+
+## 2026-07-22 — split production onboarding state (`bf5981d`)
+
+Production Routing now remains wholly on Darwin after the fixed helper proves
+the mirrored deployment identity. Worksource input is validated, symlink-
+resolved, and rechecked on Darwin; only its canonical schema value crosses to
+the helper, which never stats or mounts it. The helper returns every registered
+root so the host can prove inputless replay reachability. Tunables and Surfaces
+cross as bounded scalar answers and mutate only through the helper's fixed
+spine lock domain. The shared private command rejects unknown fields, mixed
+section arms, trailing data, build/schema/deployment drift, and malformed
+responses.
+
+Focused tests prove the authority split, canonicalization, pre/post host checks,
+closed identity grammar, and exact replay. A disposable native arm64 helper
+completed first-run and idempotent Routing, Worksource, Tunables, and Surfaces;
+composed doctor reported Worksource and Surfaces healthy. The helper, volume,
+home, workspace, and host binary were removed. The six-leg fast suite is green.
+
+NEXT: implement the fail-closed Runtime-auth import/health section and the
+unloaded Supervision artifact/health section, then make the unnamed production
+wizard run the complete ordered composition. Keep live-token and launchd-load
+acceptance legs parked.
