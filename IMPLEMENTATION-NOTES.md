@@ -1249,3 +1249,37 @@ rules in code the sealed lane does not own.
   credentials. Provider-flow acquisition and source cleanup remain the next
   wrapper around this transaction.
 - Needs your decision: no.
+
+## 2026-07-22 — Production adapters own credentials and native transcripts at the run boundary
+- Where: Phase 5 production runner/image; spec §9, §11.2/§11.4, §15.4,
+  Inv. 20/26; ADR-022 D3–D8.
+- Gap: the agent runner still selected only the fake harness and assumed every
+  native trace was `native.jsonl`. The production image carried neither the
+  Codex executable nor Claude Agent SDK, and Codex's dated rollout tree would
+  otherwise land under an image-local home. The npm Codex launcher also needs
+  Node even though its locked platform package already contains the native
+  arm64 executable.
+- Choice: close selection over `codex/chatgpt`, `claude-sdk/claude`, and
+  `claude-sdk/minimax`; retain `agentRunnerRoutes` solely as an explicit fake
+  stand-in list for token-free acceptance fixtures. Codex executes the exact
+  locked Linux-arm64 native binary, receives only its projected auth/broker
+  channel, and mounts its `sessions` tree onto the run's durable session root.
+  Claude/MiniMax run through the exact locked Agent SDK with inherited settings
+  disabled, closed preset tools, isolated config, and a mode-0600 fsynced
+  SessionStore in that same run root. MiniMax's compatible base URL is pinned
+  in both binding catalogs. Every real adapter emits the actual native handle
+  and relative trace locator; the runner validates and registers that pair.
+  The production Docker build installs locked dependencies outside `/app/src`
+  so the source bind cannot hide them; the fake build installs none.
+- Evidence: adapter tests cover exact argv/env, closed route/mode selection,
+  unsafe locator refusal, durable Codex rollout discovery, Claude eager resume
+  storage/idempotency/subagent traces, and SDK isolation. Resident tests prove
+  the duplicate durable Codex session mount. The arm64 production image builds,
+  and an unprivileged container probe reports Codex 0.145.0 and Agent SDK
+  0.3.217; Docker boundary tests prove both pins and fake-route rejection. The
+  six-leg fast suite passes.
+- Spec impact: none. Directly invoking the locked platform executable avoids
+  adding a second JavaScript runtime solely for its thin launcher; Bun remains
+  the adapter runtime required by the image. Live no-op verification remains
+  the import gate and is the next micro-step.
+- Needs your decision: no.

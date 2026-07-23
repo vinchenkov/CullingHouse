@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import {
   startCredentialProjector,
+	PRODUCTION_RUNTIME_BINDINGS,
   type CredentialProjectorHandle,
   type RuntimeGrant,
   type RefreshGrant,
@@ -12,6 +13,10 @@ import { CODEX_DUMMY_REFRESH_TOKEN } from "./token-service";
 // grant map and the on-disk store; no projection artifact may carry it.
 
 const handles: CredentialProjectorHandle[] = [];
+
+test("MiniMax production traffic is pinned to its Anthropic-compatible endpoint", () => {
+	expect(PRODUCTION_RUNTIME_BINDINGS.minimax.base_url).toBe("https://api.minimax.io/anthropic");
+});
 
 afterEach(async () => {
   for (const handle of handles.splice(0)) handle.stop();

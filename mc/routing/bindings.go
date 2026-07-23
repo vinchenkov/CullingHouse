@@ -18,6 +18,7 @@ type BindingSpec struct {
 	Delivery               CredentialDelivery
 	ProviderCredentialKeys []string
 	DeclaredStaticKey      string
+	BaseURL                string
 	TokenURL               string
 	ClientID               string
 }
@@ -37,6 +38,7 @@ var productionBindings = map[string]BindingSpec{
 		ID: "minimax", Harness: "claude-sdk", Channel: "static", Delivery: CredentialMaterialized,
 		ProviderCredentialKeys: []string{"ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"},
 		DeclaredStaticKey:      "ANTHROPIC_AUTH_TOKEN",
+		BaseURL:                "https://api.minimax.io/anthropic",
 	},
 }
 

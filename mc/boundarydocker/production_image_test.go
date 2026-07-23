@@ -11,8 +11,8 @@ import (
 )
 
 // prodImage is the untagged production build (runner/image/build-prod.sh).
-// It differs from mc-fake-e2e in exactly one way: its `mc` is compiled WITHOUT
-// `-tags test_fake_routing`.
+// Its `mc` is compiled WITHOUT `-tags test_fake_routing`, and it alone carries
+// the pinned real adapter runtime.
 const prodImage = "mc-prod"
 
 func requireProdImage(t *testing.T) {
@@ -77,6 +77,20 @@ func TestProductionImageHasNoFakeRouteDockerBoundary(t *testing.T) {
 	if strings.Contains(fake, `unresolved binding \"fake\"`) {
 		t.Fatalf("the fake-route image ALSO rejected the fake binding, so the fixture "+
 			"proves nothing about the production build:\n%s", fake)
+	}
+}
+
+func TestProductionImageCarriesPinnedRealAdapterRuntime(t *testing.T) {
+	requireProdImage(t)
+	out, err := dockerRun(t, prodImage, "sh", "-c",
+		"/app/node_modules/@openai/codex-linux-arm64/vendor/aarch64-unknown-linux-musl/bin/codex --version; "+
+			"test -f /app/node_modules/@anthropic-ai/claude-agent-sdk/package.json; "+
+			"bun -e 'const p=require(\"/app/node_modules/@anthropic-ai/claude-agent-sdk/package.json\"); console.log(p.version)'")
+	if err != nil {
+		t.Fatalf("inspect production adapter runtime: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "0.145.0") || !strings.Contains(out, "0.3.217") {
+		t.Fatalf("production adapter runtime is not pinned:\n%s", out)
 	}
 }
 

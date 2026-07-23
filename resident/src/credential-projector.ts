@@ -36,6 +36,7 @@ export const PRODUCTION_RUNTIME_BINDINGS = {
     harness: "claude-sdk",
     channel: "static",
     env_name: "ANTHROPIC_AUTH_TOKEN",
+	base_url: "https://api.minimax.io/anthropic",
   },
 } as const;
 

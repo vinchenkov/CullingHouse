@@ -5,7 +5,7 @@
 // Docker-free, token-free: part of the fast suite.
 
 import { describe, expect, test } from "bun:test";
-import { harnessEnv, makeLineSplitter, type RunEnvelope } from "./main";
+import { adapterInvocation, harnessEnv, makeLineSplitter, nativeLocator, type RunEnvelope } from "./main";
 
 const envelope = (over: Partial<RunEnvelope>): RunEnvelope => ({
   run_id: "abc123",
@@ -74,5 +74,30 @@ describe("makeLineSplitter", () => {
     const feed = makeLineSplitter((l) => got.push(l));
     feed("1\n2\n3\n");
     expect(got).toEqual(["1", "2", "3"]);
+  });
+});
+
+describe("closed adapter selection", () => {
+  test("the three production bindings select their real adapter", () => {
+    expect(adapterInvocation(envelope({ harness: "codex", model_binding: "chatgpt", harness_config: undefined })).argv)
+      .toContain("/app/src/agent-runner/adapters/codex.ts");
+    expect(adapterInvocation(envelope({ harness: "claude-sdk", model_binding: "claude", harness_config: undefined })).argv)
+      .toContain("/app/src/agent-runner/adapters/claude.ts");
+    expect(adapterInvocation(envelope({ harness: "claude-sdk", model_binding: "minimax", harness_config: undefined })).argv)
+      .toEqual(expect.arrayContaining(["--binding", "minimax"]));
+  });
+
+  test("an explicit test route selects the fake stand-in and unknown routes refuse", () => {
+    const run = envelope({ harness: "codex", model_binding: "chatgpt" });
+    expect(adapterInvocation(run, "codex/chatgpt").defaultNativeFile).toBe("native.jsonl");
+    expect(() => adapterInvocation(envelope({ harness: "unknown", model_binding: "unknown" }))).toThrow("unsupported runtime route");
+  });
+
+  test("native resume and trace locators are fail-closed", () => {
+    expect(() => adapterInvocation(envelope({
+      harness: "codex", model_binding: "chatgpt", mode: "native", harness_config: undefined,
+    }))).toThrow("native_session_ref");
+    expect(nativeLocator("2026/07/native.jsonl")).toBe("2026/07/native.jsonl");
+    expect(() => nativeLocator("../escape.jsonl")).toThrow("safe native trace locator");
   });
 });

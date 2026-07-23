@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
-// main.ts — the skeleton pipeline agent runner (docs/phase1b-contract.md §4,
-// spec §11.5 "the pipeline runner": one turn, one harness, exit with it).
+// main.ts — the pipeline agent runner (docs/phase1b-contract.md §4,
+// spec §11.5: one turn, one selected adapter, exit with it).
 //
 // Flow, exactly the contract's:
 //   1. read /mc/run.json (fixed path, RO mount — §11.5 launch envelope);
@@ -31,7 +31,9 @@
 // envelope + a stub mc) — the agent container never sets either.
 const RUN_JSON = process.env["MC_RUN_JSON"] || "/mc/run.json";
 const HARNESS_CLI = process.env["MC_HARNESS_CLI"] || "/app/src/fake-harness/cli.ts";
-const NATIVE_FILENAME = "native.jsonl"; // cli.ts's fixed name; registered via --file
+const CODEX_ADAPTER = process.env["MC_CODEX_ADAPTER"] || "/app/src/agent-runner/adapters/codex.ts";
+const CLAUDE_ADAPTER = process.env["MC_CLAUDE_ADAPTER"] || "/app/src/agent-runner/adapters/claude.ts";
+const FAKE_NATIVE_FILENAME = "native.jsonl";
 
 export interface RunEnvelope {
   run_id: string;
@@ -42,8 +44,60 @@ export interface RunEnvelope {
   pool_ids?: number[];
   heartbeat_interval_s: number;
   brief: string;
-  harness_config: { behavior: string };
-  mounts: { session: string };
+  mode?: "fresh" | "native";
+  native_session_ref?: string;
+  harness_config?: { behavior: string };
+  mounts: { session: string; workspace?: string };
+}
+
+export interface AdapterInvocation {
+  argv: string[];
+  defaultNativeFile?: string;
+}
+
+/** Select exactly one adapter. MC_AGENT_RUNNER_ROUTES is deliberately a
+ * test/development fake-stand-in list; a production deployment leaves it
+ * empty and reaches the closed real catalog below. */
+export function adapterInvocation(
+  run: RunEnvelope,
+  fakeRoutes = process.env["MC_AGENT_RUNNER_ROUTES"] ?? "",
+): AdapterInvocation {
+  const routeKey = `${run.harness}/${run.model_binding}`;
+  const standIns = fakeRoutes.split(",").filter((route) => route !== "");
+  if (routeKey === "fake/fake" || standIns.includes(routeKey)) {
+    const behavior = run.harness_config?.behavior;
+    if (!behavior) throw new Error(`fake adapter route ${JSON.stringify(routeKey)} requires harness_config.behavior`);
+    return {
+      argv: ["bun", HARNESS_CLI, "--behavior", behavior, "--session-dir", run.mounts.session],
+      defaultNativeFile: FAKE_NATIVE_FILENAME,
+    };
+  }
+
+  const mode = run.mode ?? "fresh";
+  if (mode !== "fresh" && mode !== "native") throw new Error(`unsupported adapter mode ${JSON.stringify(mode)}`);
+  if (mode === "native" && !run.native_session_ref) throw new Error("native adapter mode requires native_session_ref");
+  const common = [
+    "--session-dir", run.mounts.session,
+    "--workspace", run.mounts.workspace ?? "/workspace/source",
+  ];
+  const resume = run.native_session_ref ? ["--native-ref", run.native_session_ref] : [];
+  if (routeKey === "codex/chatgpt") {
+    return { argv: ["bun", CODEX_ADAPTER, ...common, "--mode", mode, ...resume] };
+  }
+  if (routeKey === "claude-sdk/claude" || routeKey === "claude-sdk/minimax") {
+    return {
+      argv: ["bun", CLAUDE_ADAPTER, ...common, "--binding", run.model_binding, ...resume],
+    };
+  }
+  throw new Error(`unsupported runtime route ${JSON.stringify(routeKey)}`);
+}
+
+export function nativeLocator(value: unknown, fallback?: string): string {
+  const locator = typeof value === "string" && value !== "" ? value : fallback;
+  if (!locator || locator.startsWith("/") || locator.split("/").some((part) => part === "" || part === "." || part === "..")) {
+    throw new Error("adapter session-start omitted a safe native trace locator");
+  }
+  return locator;
 }
 
 /** The env-interpolation channel (contract §4): how a scripted behavior
@@ -94,41 +148,25 @@ async function mc(argv: string[]): Promise<number> {
 
 async function main(): Promise<number> {
   const run = (await Bun.file(RUN_JSON).json()) as RunEnvelope;
-	// This runner contains only the fake adapter. fake/fake always runs; a
-	// non-fake (production) route runs only when the deployment has authorized
-	// this adapter to stand in for it via MC_AGENT_RUNNER_ROUTES (a comma list
-	// of `harness/model_binding`). Unset ⇒ fake-only, fail-closed. The gate is
-	// symmetric with the resident's own launch allowlist.
-	const routeKey = `${run.harness}/${run.model_binding}`;
-	const authorizedRoutes = (process.env["MC_AGENT_RUNNER_ROUTES"] ?? "").split(",").filter((r) => r !== "");
-	if (!(run.harness === "fake" && run.model_binding === "fake") && !authorizedRoutes.includes(routeKey)) {
-		log(
-			`unsupported runtime route ${JSON.stringify(routeKey)}; ` +
-				"this test runner contains only the fake adapter",
-		);
-		return 2;
-	}
+  let invocation: AdapterInvocation;
+  try {
+    invocation = adapterInvocation(run);
+  } catch (err) {
+    log(err instanceof Error ? err.message : String(err));
+    return 2;
+  }
   log(`run ${run.run_id} role=${run.role} subject=${run.subject_id ?? "none"}`);
 
-  const proc = Bun.spawn(
-    [
-      "bun",
-      HARNESS_CLI,
-      "--behavior",
-      run.harness_config.behavior,
-      "--session-dir",
-      run.mounts.session,
-    ],
-    {
+  const proc = Bun.spawn(invocation.argv, {
       stdin: new TextEncoder().encode(run.brief),
       stdout: "pipe",
       stderr: "inherit",
       env: harnessEnv(run, process.env),
-    },
-  );
+  });
 
   let heartbeatTimer: ReturnType<typeof setInterval> | undefined;
   let sessionSeen = false;
+  let protocolError = false;
   let registration: Promise<number> | undefined;
 
   const onEvent = (line: string) => {
@@ -136,13 +174,21 @@ async function main(): Promise<number> {
     // the runner acts only on session-start (spec §9).
     console.log(line);
     if (sessionSeen) return;
-    let ev: { event?: string; session_id?: string };
+    let ev: { event?: string; session_id?: string; native_file?: string };
     try {
       ev = JSON.parse(line) as typeof ev;
     } catch {
       return; // not an event line; ignore
     }
     if (ev.event !== "session-start" || typeof ev.session_id !== "string") return;
+    let file: string;
+    try {
+      file = nativeLocator(ev.native_file, invocation.defaultNativeFile);
+    } catch (err) {
+      protocolError = true;
+      log(err instanceof Error ? err.message : String(err));
+      return;
+    }
     sessionSeen = true;
     // Register the native session locators (ADR-001 D5, §15.4) …
     registration = mc([
@@ -152,7 +198,7 @@ async function main(): Promise<number> {
       "--native-ref",
       ev.session_id,
       "--file",
-      NATIVE_FILENAME,
+      file,
     ]).catch((err) => {
       log(`mc run register-session failed to start: ${String(err)}`);
       return 2;
@@ -180,7 +226,7 @@ async function main(): Promise<number> {
   // A rejected/nonzero mc call remains nonfatal; mc() already logs it.
   if (registration !== undefined) await registration;
   log(`harness exited ${code}${sessionSeen ? "" : " (no session-start seen)"}`);
-  return code;
+  return protocolError && code === 0 ? 2 : code;
 }
 
 if (import.meta.main) {

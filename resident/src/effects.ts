@@ -540,17 +540,17 @@ async function spawn(effect: SpawnEffect, deps: TickDeps): Promise<void> {
 			return;
 		}
 	}
-	// The image ships one adapter — the fake agent-runner. fake/fake always
-	// launches; any non-fake (production) route launches only when the operator
-	// has explicitly authorized this adapter to stand in for it. An unlisted
-	// route is refused, so the default posture stays fake-only and fail-closed.
+	// The production image owns this closed route catalog. agentRunnerRoutes is
+	// retained only for explicit fake-adapter stand-ins in boundary acceptance;
+	// unknown routes remain refused before any launch artifact is written.
 	const routeKey = `${effect.harness}/${effect.model_binding}`;
+	const productionRoutes = new Set(["codex/chatgpt", "claude-sdk/claude", "claude-sdk/minimax"]);
 	const launchable = (effect.harness === "fake" && effect.model_binding === "fake") ||
+		productionRoutes.has(routeKey) ||
 		(config.agentRunnerRoutes?.includes(routeKey) ?? false);
 	if (!launchable) {
 		log(
-			`spawn refused: unsupported route ${JSON.stringify(routeKey)}; ` +
-				"the current resident image contains only the explicitly test-tagged fake adapter (fail-closed)",
+			`spawn refused: unsupported route ${JSON.stringify(routeKey)} (fail-closed)`,
 		);
 		return;
 	}
@@ -687,7 +687,13 @@ async function spawn(effect: SpawnEffect, deps: TickDeps): Promise<void> {
     ...planBinds,
 		...(codexAuthPath === undefined
 			? []
-			: ["-v", `${codexAuthPath}:/mc/codex/auth.json`, "-e", "CODEX_HOME=/mc/codex"]),
+			: [
+				"-v", `${codexAuthPath}:/mc/codex/auth.json`,
+				// Codex's dated rollout tree lands in the same durable run folder
+				// registered as /mc/session, never in an image-local CODEX_HOME.
+				"-v", `${sessionDir}:/mc/codex/sessions`,
+				"-e", "CODEX_HOME=/mc/codex",
+			]),
     "-v", `${config.spineVolume}:${posix.dirname(config.spineDbPath)}`,
     "-e", `MC_SPINE=${config.spineDbPath}`,
     ...credentialEnv,

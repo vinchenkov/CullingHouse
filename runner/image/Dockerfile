@@ -1,4 +1,5 @@
-# mc-fake-e2e — the walking skeleton's minimal base image
+# Shared fake/production runner base. The fake build remains minimal; the
+# production build flips RUNTIME_DEPS=1 to install the pinned real adapters.
 # (docs/phase1b-contract.md §1 "The image"). Deliberately NOT
 # mcspike-08-base: the fake family is deterministic, token-free, and
 # networkless, so no harness CLIs, Node, or Playwright ride along.
@@ -14,6 +15,7 @@ FROM ubuntu:24.04
 ARG BUN_VERSION=1.3.9
 ARG GIT_MIN=2.48
 ARG TINI_VERSION=0.19.0
+ARG RUNTIME_DEPS=0
 
 RUN apt-get update \
  && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
@@ -36,6 +38,19 @@ RUN curl -fsSL https://bun.sh/install | BUN_INSTALL=/opt/bun bash -s "bun-v${BUN
  && chmod -R a+rX /opt/bun \
  && bun --version
 
+# The runner source remains bind-mounted at /app/src. Production-only package
+# dependencies live one level above that mount so the mount cannot hide them;
+# the fake image does not install or carry a harness CLI.
+COPY runner/agent-runner/package.json runner/agent-runner/bun.lock /opt/mc-agent-runner/
+RUN if [ "$RUNTIME_DEPS" = "1" ]; then \
+      cd /opt/mc-agent-runner \
+      && bun install --production --frozen-lockfile \
+      && install -d /app \
+      && mv node_modules /app/node_modules \
+      && chmod -R a+rX /app/node_modules; \
+    elif [ "$RUNTIME_DEPS" != "0" ]; then \
+      echo "RUNTIME_DEPS must be 0 or 1" >&2; exit 1; \
+    fi
 # The bind-mounted workspace's apparent uid varies by Docker Desktop file
 # sharing; in-container git must still read/write it (worktrees, mc-land).
 RUN git config --system safe.directory '*'
@@ -56,10 +71,10 @@ RUN groupadd --gid 10001 mc-completion \
 # "the production image contains no fake route and has its own untagged
 # build"). Defaulting to `mc` keeps the existing e2e build unchanged.
 ARG MC_BIN=mc
-COPY ${MC_BIN} /usr/local/libexec/mc-real
-COPY mc-dispatch /usr/local/bin/mc
-COPY mc-complete /usr/local/libexec/mc-complete
-COPY mc-land /usr/local/bin/mc-land
+COPY runner/image/${MC_BIN} /usr/local/libexec/mc-real
+COPY runner/image/mc-dispatch /usr/local/bin/mc
+COPY runner/image/mc-complete /usr/local/libexec/mc-complete
+COPY runner/image/mc-land /usr/local/bin/mc-land
 RUN chown root:root /usr/local/bin/mc /usr/local/bin/mc-land \
  && chown mc-completion:mc-completion /usr/local/libexec/mc-real /usr/local/libexec/mc-complete \
  && chmod 0755 /usr/local/bin/mc /usr/local/bin/mc-land \

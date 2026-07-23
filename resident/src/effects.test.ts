@@ -746,7 +746,7 @@ describe("spawn effect", () => {
     expect(rig.logs.some((line) => line.includes("task precreate descriptor is malformed"))).toBe(true);
   });
 
-  test("canonical route is refused before the fake-only skeleton can mislabel execution", async () => {
+  test("canonical route reaches the real credential gate without a fake stand-in", async () => {
     const rig = makeRig();
     await applyEffect(
       { ...spawnEffect, harness: "codex", model_binding: "chatgpt" },
@@ -754,7 +754,7 @@ describe("spawn effect", () => {
     );
     expect(rig.fakeFs.events).toEqual([]);
     expect(rig.docker.calls).toEqual([]);
-    expect(rig.logs.some((l) => l.includes("spawn refused") && l.includes("unsupported route"))).toBe(true);
+    expect(rig.logs.some((l) => l.includes("runtime credential projector unavailable"))).toBe(true);
   });
 
   // Design B (production completion-seal E2E): the shipped image carries only
@@ -783,9 +783,9 @@ describe("spawn effect", () => {
     expect(rig.logs.some((l) => l.includes("unsupported route"))).toBe(false);
   });
 
-  test("a non-fake route absent from the adapter allowlist stays refused (fail-closed)", async () => {
+  test("an unknown route absent from the test stand-in list stays refused", async () => {
     const rig = makeRig({ config: { ...testConfig, agentRunnerRoutes: ["codex/chatgpt"] } });
-    await applyEffect({ ...spawnEffect, harness: "claude-sdk", model_binding: "claude" }, rig.deps);
+    await applyEffect({ ...spawnEffect, harness: "unknown", model_binding: "unknown" }, rig.deps);
     expect(rig.docker.calls).toEqual([]);
     expect(rig.logs.some((l) => l.includes("spawn refused") && l.includes("unsupported route"))).toBe(true);
   });
@@ -948,6 +948,7 @@ describe("spawn effect", () => {
       expect(rig.fakeFs.writes.get("/tmp/mc-home/runs/run-78-worker.codex-auth.json")).toBe('{"auth_mode":"chatgpt"}');
       const create = rig.docker.calls[0]!;
       expect(create).toContain("/tmp/mc-home/runs/run-78-worker.codex-auth.json:/mc/codex/auth.json");
+	  expect(create).toContain("/tmp/mc-home/sessions/run-78-worker:/mc/codex/sessions");
       expect(create).toContain("CODEX_HOME=/mc/codex");
       expect(create).toContain("CODEX_REFRESH_TOKEN_URL_OVERRIDE=http://host.docker.internal:7799/oauth/token");
       expect(create).not.toContain("--network");

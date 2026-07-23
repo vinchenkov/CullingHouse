@@ -41,6 +41,7 @@ async function runRunner(opts: {
 	  harness?: string;
 	  modelBinding?: string;
 	  agentRunnerRoutes?: string;
+	  claudeAdapterBody?: string;
 }): Promise<RunResult> {
   const root = mkdtempSync(join(tmpdir(), "mc-runner-test-"));
   roots.push(root);
@@ -86,6 +87,9 @@ async function runRunner(opts: {
   );
   chmodSync(mcStub, 0o755);
 
+  const claudeAdapter = join(root, "claude-adapter.ts");
+  if (opts.claudeAdapterBody !== undefined) writeFileSync(claudeAdapter, opts.claudeAdapterBody);
+
   const proc = Bun.spawn(["bun", MAIN], {
     stdin: "ignore",
     stdout: "ignore",
@@ -95,6 +99,7 @@ async function runRunner(opts: {
       PATH: `${binDir}:${process.env["PATH"] ?? ""}`,
       MC_RUN_JSON: runJsonPath,
       MC_HARNESS_CLI: HARNESS_CLI,
+	  ...(opts.claudeAdapterBody !== undefined ? { MC_CLAUDE_ADAPTER: claudeAdapter } : {}),
       ...(opts.agentRunnerRoutes !== undefined ? { MC_AGENT_RUNNER_ROUTES: opts.agentRunnerRoutes } : {}),
     },
   });
@@ -119,11 +124,11 @@ const crashBehavior = {
 };
 
 describe("agent runner process behaviors (contract §4, spec §11.5)", () => {
-	  test("refuses a canonical route before invoking the fake adapter", async () => {
+	  test("refuses an unknown route before invoking any adapter", async () => {
 	    const res = await runRunner({
 	      behavior: { steps: [{ do: "succeed", output: "must not run" }] },
-	      harness: "codex",
-	      modelBinding: "chatgpt",
+	      harness: "unknown",
+	      modelBinding: "unknown",
 	    });
 	    expect(res.exitCode).toBe(2);
 	    expect(res.stderr).toContain("unsupported runtime route");
@@ -145,16 +150,19 @@ describe("agent runner process behaviors (contract §4, spec §11.5)", () => {
 	    expect(res.mcCalls.some((c) => c.startsWith("run register-session"))).toBe(true);
 	  }, 20_000);
 
-	  test("a non-fake route absent from MC_AGENT_RUNNER_ROUTES stays refused", async () => {
+	  test("a canonical route absent from the fake stand-in list uses its real adapter", async () => {
 	    const res = await runRunner({
-	      behavior: { steps: [{ do: "succeed", output: "must not run" }] },
+	      behavior: { steps: [{ do: "succeed", output: "unused" }] },
 	      harness: "claude-sdk",
 	      modelBinding: "claude",
 	      agentRunnerRoutes: "codex/chatgpt",
+	      claudeAdapterBody: `console.log(JSON.stringify({event:"session-start",session_id:"claude-native",native_file:"native.jsonl"}));`,
 	    });
-	    expect(res.exitCode).toBe(2);
-	    expect(res.stderr).toContain("unsupported runtime route");
-	    expect(res.mcCalls).toEqual([]);
+	    expect(res.exitCode).toBe(0);
+	    expect(res.stderr).not.toContain("unsupported runtime route");
+	    expect(res.mcCalls).toContain(
+	      "run register-session proc-test-run --native-ref claude-native --file native.jsonl",
+	    );
 	  }, 20_000);
 
   test("a crashed harness's exit code passes through — never converted into success", async () => {

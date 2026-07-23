@@ -19,6 +19,9 @@ func TestProductionBindingCatalogIsClosedAndDrivesRegistry(t *testing.T) {
 		if spec.Delivery == CredentialMaterialized && (spec.DeclaredStaticKey == "" || spec.TokenURL != "" || spec.ClientID != "") {
 			t.Fatalf("static binding %q is incomplete: %+v", id, spec)
 		}
+		if id == "minimax" && spec.BaseURL != "https://api.minimax.io/anthropic" {
+			t.Fatalf("MiniMax base URL is not pinned: %+v", spec)
+		}
 	}
 	delete(catalog, "chatgpt")
 	if _, ok := ProductionBindings()["chatgpt"]; !ok {
