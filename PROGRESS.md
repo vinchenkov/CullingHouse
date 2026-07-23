@@ -6,10 +6,10 @@ REPO PATH: `~/dev/ai/homie`. Never relocate this repo into `~/Documents`,
 `~/Desktop`, or `~/Downloads`: macOS TCC can revoke an agent session's own
 filesystem access there during fan-out. Full Disk Access does not fix it.
 
-LAST GREEN SHA: `bf5981d` — production Routing stays host-only after a private
-identity check; Worksource paths are host-canonicalized/rechecked data; and
-Tunables/Surfaces mutate only through the fixed-spine helper. First-run and
-idempotent real-helper crossings plus the six-leg fast suite are green.
+LAST GREEN SHA: `675cbe0` — the closed production binding catalog now drives
+routing and pre-claim credential env policy. OAuth provider/agent-identity
+keys, refresh material, and foreign static keys refuse; only MiniMax's own
+declared static token is admitted. The six-leg fast suite is green.
 Full `docker_boundary` + full `docker_e2e` (-count=1, `ok mc/e2e 169s`), the
 extended Playwright dashboard smoke, and the install.sh dev walk were last
 green at `d0ef4bb`. The full Docker lanes last ran green at `c8f37e9`-era HEAD
@@ -129,6 +129,8 @@ the approve landing fence to assignment-armed tasks; v12 retires
   - [x] Production Routing, Worksource, Tunables, and Surfaces are split by
         authority through one closed onboarding-state frame; real first-run
         and inputless replay crossed the native helper (`bf5981d`).
+  - [x] Production binding catalog owns per-binding credential delivery and
+        activates the provider-key/foreign-static pre-claim fence (`675cbe0`).
 - [ ] Release prep — install/onboard front door and construction-document
       disposition.
 
@@ -209,7 +211,6 @@ native resume, container reconciliation, Homie credential projection,
 dashboard LaunchAgent generation, and the four non-Console tabs. Details and
 commit map are in the closed Phase 4 ledger.
 
-NEXT: implement the fail-closed Runtime-auth import/health section and the
-unloaded Supervision artifact/health section, then make the unnamed production
-wizard run the complete ordered composition. Keep live-token and launchd-load
-acceptance legs parked.
+NEXT: add the closed OAuth/static grant union and fail-closed resident coverage,
+then build the atomic Runtime-auth importer. Production adapters/live no-op and
+launchd activation remain operator-present acceptance gates.

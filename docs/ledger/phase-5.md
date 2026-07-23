@@ -161,3 +161,19 @@ NEXT: implement the fail-closed Runtime-auth import/health section and the
 unloaded Supervision artifact/health section, then make the unnamed production
 wizard run the complete ordered composition. Keep live-token and launchd-load
 acceptance legs parked.
+
+## 2026-07-22 — binding-owned credential policy (`675cbe0`)
+
+The production binding catalog now closes the three shipped bindings over
+harness, projection/static channel, provider credential names, declared static
+key, and OAuth authority. The routing registry derives from that catalog.
+Host-side pre-claim env attestation uses the binding resolved from the attested
+routing table rather than the contradictory Worksource-profile delivery field.
+OAuth provider/agent-identity keys, refresh material, the shipped floor, and
+foreign static keys refuse before claim; MiniMax alone admits its declared
+static token. The test-fake catalog remains tag-scoped. The six-leg fast suite
+is green.
+
+NEXT: add the closed OAuth/static grant union and fail-closed resident coverage,
+then build the atomic Runtime-auth importer. Production adapters/live no-op and
+launchd activation remain operator-present acceptance gates.
