@@ -6,11 +6,11 @@ REPO PATH: `~/dev/ai/homie`. Never relocate this repo into `~/Documents`,
 `~/Desktop`, or `~/Downloads`: macOS TCC can revoke an agent session's own
 filesystem access there during fan-out. Full Disk Access does not fix it.
 
-LAST GREEN SHA: `4fa0dee` — Runtime-auth now spends its mandatory live no-op
-through the locked production adapter/image and requires exact native-session
-evidence before atomic grant publication. Real-agent containers fail closed on
-mandatory inner credential sandboxes. The six-leg fast suite and focused
-production-image Docker boundary are green.
+LAST GREEN SHA: `6202498` — Home onboarding now atomically installs the exact
+owner-only production runner tree consumed by real containers and Runtime-auth.
+The live verifier still requires exact native-session evidence before grant
+publication, and real-agent containers fail closed on mandatory inner
+credential sandboxes. The six-leg fast suite is green.
 Full `docker_boundary` + full `docker_e2e` (-count=1, `ok mc/e2e 169s`), the
 extended Playwright dashboard smoke, and the install.sh dev walk were last
 green at `d0ef4bb`. The full Docker lanes last ran green at `c8f37e9`-era HEAD
@@ -136,6 +136,9 @@ the approve landing fence to assignment-armed tasks; v12 retires
   - [x] Runtime-auth live no-op crosses the installed production adapter,
         adopts staged provider rotation durably, and requires exact native
         evidence before closed-set revalidation/publication (`4fa0dee`).
+  - [x] Home onboarding atomically publishes the fixed production runner
+        manifest under `MC_HOME/release/runner`; replay and upgrades preserve
+        a closed owner-only runtime mount (`6202498`).
 - [ ] Release prep — install/onboard front door and construction-document
       disposition.
 
@@ -214,7 +217,6 @@ native resume, container reconciliation, Homie credential projection,
 dashboard LaunchAgent generation, and the four non-Console tabs. Details and
 commit map are in the closed Phase 4 ledger.
 
-NEXT: install the owner-only release runner assets under
-`MC_HOME/release/runner`, then wrap Runtime-auth with isolated provider-owned
-login acquisition and source cleanup. Live token spend and launchd activation
-remain operator-present acceptance gates.
+NEXT: wrap Runtime-auth with isolated provider-owned login acquisition and
+source cleanup, using only `MC_HOME/runtime-auth-sources` as the flow home.
+Live token spend and launchd activation remain operator-present acceptance gates.

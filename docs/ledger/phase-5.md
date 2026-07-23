@@ -269,3 +269,25 @@ NEXT: install the owner-only release runner assets under
 `MC_HOME/release/runner`, then wrap Runtime-auth with isolated provider-owned
 login acquisition and source cleanup. Live token spend and launchd activation
 remain operator-present acceptance gates.
+
+## 2026-07-22 — owner-only installed runner release (`6202498`)
+
+The install front door now passes the repository runner tree as source evidence
+to Home onboarding; it performs no copy itself. The host-side Home section
+admits only the fixed five-file production manifest, rejects symlinked or
+group/other-writable source entries, writes owner-only files/directories into a
+sibling stage, fsyncs it, and atomically publishes
+`MC_HOME/release/runner`. Tests, fake harnesses, dependency metadata, and
+provider state never enter the runtime source mount. Byte-identical replay
+preserves directory identity; changed or corrupted owned trees are replaced as
+one unit.
+
+The Runtime-auth verifier now validates the entire exact installed tree before
+mounting it. Deployment tests cover publication, modes, replay, upgrade,
+symlink refusal before writes, and unexpected-entry rejection; a CLI test
+crosses the Home flag. Production/fake-tag builds, the install shell contract,
+and the fixed six-leg fast suite are green.
+
+NEXT: wrap Runtime-auth with isolated provider-owned login acquisition and
+source cleanup, using only `MC_HOME/runtime-auth-sources` as the flow home.
+Live token spend and launchd activation remain operator-present acceptance gates.
