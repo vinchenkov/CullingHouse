@@ -401,3 +401,24 @@ rebuilt arm64-native from `f10ddfc` as
 NEXT: compose the production whole wizard over the completed sections without
 implicitly activating launchd or spending tokens; then implement and verify
 backup/restore and remaining Phase-5 real-runtime obligations.
+
+## 2026-07-22 — production whole-wizard composition (`291aca8`)
+
+The production no-section onboarding command now runs the completed sections
+in their contract order and returns one ordered aggregate receipt. It forwards
+the caller's Worksource, schedule, runtime-auth, and activation inputs without
+reinterpreting them. A structurally healthy canonical grant store permits a
+token-free replay; otherwise the wizard stops at Runtime Auth without invoking
+an adapter. Supervision is prepared but reported `needs-operator` unless the
+caller explicitly supplies `--activate`, after which final Verify runs.
+
+Tests cover the no-spend stop, unloaded preparation, explicit activation path,
+invalid nested receipts, and shell-level preservation of arguments containing
+spaces. Full `mc/check.sh` is green. No provider turn was spent and no launchd
+job was loaded. The arm64 production image was rebuilt from `291aca8` as
+`sha256:bffdaa99d6d29690049fede4fb6dec27eaed7ff37033055a9283bec9ab827260`;
+its helper contains exact release identity
+`291aca8f349b7548855cfae5ba901bf66aca8eae`.
+
+NEXT: implement and verify production backup/restore before continuing the
+remaining Phase-5 real-runtime obligations.

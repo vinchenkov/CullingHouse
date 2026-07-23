@@ -1501,3 +1501,23 @@ rules in code the sealed lane does not own.
   tick the activation commit point and strengthens restart health without
   adding authoritative state.
 - Needs your decision: no.
+
+## 2026-07-22 — Whole onboarding replay validates grants without a live no-op
+- Where: Phase 5 whole wizard; spec §17 and the runtime-auth gate.
+- Gap: replaying the whole wizard through the named Runtime Auth section would
+  invoke every selected real adapter's no-op and spend a provider turn even
+  when the already-published canonical grants were unchanged. Skipping the
+  section without validation would instead let missing, widened, or
+  environment-contaminated credentials pass the wizard.
+- Choice: on a whole-wizard run with no explicit acquisition/import input,
+  validate the exact canonical grant filenames, owner-only modes, selected
+  binding set, and forbidden host environment without invoking an adapter. If
+  any structural check fails, stop at Runtime Auth with `needs-input`; explicit
+  auth inputs still take the existing isolated live-verification path.
+- Evidence: tests prove healthy replay reaches later sections without calling
+  Runtime Auth, while absent grants, forbidden environment, and widened files
+  refuse. The shell front-door test proves all explicit auth inputs and the
+  activation flag retain their argument boundaries. Full `mc/check.sh` passes.
+- Spec impact: conservative internal mechanism. It preserves the live gates on
+  new or rotated grants while making idempotent whole-wizard replay token-free.
+- Needs your decision: no.

@@ -6,17 +6,16 @@ REPO PATH: `~/dev/ai/homie`. Never relocate this repo into `~/Documents`,
 `~/Desktop`, or `~/Downloads`: macOS TCC can revoke an agent session's own
 filesystem access there during fan-out. Full Disk Access does not fix it.
 
-LAST GREEN SHA: `f10ddfc` — explicit operator-present Supervision activation is
-transactional and commits only after both exact per-user jobs are loaded and a
-new release-bound resident tick receipt exists. Full mc and resident checks
-are green; launchd was not loaded.
+LAST GREEN SHA: `291aca8` — the production whole wizard composes every completed
+section, reuses structurally healthy grants without token spend, and stops at
+the explicit activation gate. Full mc checks are green; launchd was not loaded.
 Full `docker_boundary` + full `docker_e2e` (-count=1, `ok mc/e2e 169s`), the
 extended Playwright dashboard smoke, and the install.sh dev walk were last
 green at `d0ef4bb`. The full Docker lanes last ran green at `c8f37e9`-era HEAD
 (26 `docker_boundary` subtests; 10 `docker_e2e` tests including both credential
 legs). The real onboarding crossing was green at `bf5981d`. Production image
-`mc-prod` rebuilt for `f10ddfc`:
-`sha256:a1f1529f9e433ba79f17d73f3acd3a1290172cc88cc437132e3b1468c098ddf5`,
+`mc-prod` rebuilt for `291aca8`:
+`sha256:bffdaa99d6d29690049fede4fb6dec27eaed7ff37033055a9283bec9ab827260`,
 arm64/linux, native. LESSON pinned by `ada715d`: the resident's
 `SPINE_SCHEMA_VERSION` (resident-control.ts:12) mirrors
 `substrate.CurrentSchemaVersion` in lockstep — every schema bump must touch
@@ -153,6 +152,9 @@ the approve landing fence to assignment-armed tasks; v12 retires
   - [x] Operator-present supervision activation installs/loads both exact jobs
         transactionally, requires a fresh release-bound tick receipt, rolls
         back every partial first activation, and drives doctor (`f10ddfc`).
+  - [x] The production whole wizard composes all deterministic sections,
+        preserves every dual-input flag, spends no token on healthy replay,
+        and never implicitly activates launchd (`291aca8`).
 - [ ] Release prep — install/onboard front door and construction-document
       disposition.
 
@@ -232,6 +234,6 @@ native resume, container reconciliation, Homie credential projection,
 dashboard LaunchAgent generation, and the four non-Console tabs. Details and
 commit map are in the closed Phase 4 ledger.
 
-NEXT: compose the production whole wizard over the completed sections without
-implicitly activating launchd or spending tokens; then implement and verify
-backup/restore and remaining Phase-5 real-runtime obligations.
+NEXT: implement and verify the production backup/restore crossing, including
+closed snapshot contents, atomic restore, identity checks, and failure recovery;
+then continue the remaining Phase-5 real-runtime obligations.
