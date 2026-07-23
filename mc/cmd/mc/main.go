@@ -495,6 +495,7 @@ func parseOnboardArgs(args []string) (verbs.OnboardArgs, error) {
 	fs.StringVar(&a.ClaudeCredentialsFile, "claude-credentials-file", "", "owner-only Claude credential source")
 	fs.StringVar(&a.MinimaxTokenFile, "minimax-token-file", "", "owner-only MiniMax token source")
 	fs.BoolVar(&a.AcquireRuntimeAuth, "acquire", false, "run isolated provider-owned OAuth subscription logins")
+	fs.BoolVar(&a.ActivateSupervision, "activate", false, "install and load prepared native supervision (operator-present)")
 	fs.StringVar(&a.ReleaseSource, "release-source", "", "repository runner source (install.sh only)")
 	fs.StringVar(&a.HostReleaseSource, "host-release-source", "", "repository root for native host payloads (install.sh only)")
 	fs.IntVar(&a.TimeoutMinutes, "timeout-minutes", 0, "lease timeout")
@@ -507,6 +508,9 @@ func parseOnboardArgs(args []string) (verbs.OnboardArgs, error) {
 	fs.StringVar(&consoleTZ, "console-tz", "", "Daily Console IANA timezone")
 	if err := parse(fs, args); err != nil {
 		return verbs.OnboardArgs{}, err
+	}
+	if a.ActivateSupervision && a.Section != "supervision" {
+		return verbs.OnboardArgs{}, verbs.Usagef("mc onboard --activate is valid only for the supervision section")
 	}
 	for _, item := range []struct {
 		name  string

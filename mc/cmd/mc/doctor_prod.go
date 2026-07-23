@@ -7,8 +7,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
 	"os/exec"
+	"path/filepath"
+	"time"
 
+	"mc/deployment"
 	"mc/substrate"
 	"mc/verbs"
 )
@@ -54,6 +58,34 @@ func productionDoctorResult() (any, error) {
 	host, err := verbs.DoctorHostFacts()
 	if err != nil {
 		return nil, err
+	}
+	supervision := verbs.DoctorFinding{
+		Check: "supervision", Status: "fail", OnboardSection: "supervision",
+	}
+	home, homeErr := configuredCanonicalHome()
+	userHome, userHomeErr := os.UserHomeDir()
+	switch {
+	case homeErr != nil:
+		supervision.Detail = "not checked: MC_HOME unresolved: " + homeErr.Error()
+	case userHomeErr != nil:
+		supervision.Detail = "not checked: operator home unresolved: " + userHomeErr.Error()
+	default:
+		active, inspectErr := deployment.InspectActiveSupervision(
+			home, filepath.Join(userHome, "Library", "LaunchAgents"), releaseBuildID,
+			launchdController{}, time.Now(),
+		)
+		if inspectErr != nil {
+			supervision.Detail = inspectErr.Error()
+		} else {
+			supervision.Status = "ok"
+			supervision.Detail = fmt.Sprintf("%s and %s loaded; recent release-bound resident tick observed",
+				active.ResidentLabel, active.DashboardLabel)
+		}
+	}
+	for i := range host {
+		if host[i].Check == "supervision" {
+			host[i] = supervision
+		}
 	}
 	req := verbs.DoctorRuntimeRequest{
 		ProtocolVersion: 1, ReleaseBuildID: releaseBuildID,

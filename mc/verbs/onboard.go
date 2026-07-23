@@ -62,6 +62,7 @@ type OnboardArgs struct {
 	ClaudeCredentialsFile string
 	MinimaxTokenFile      string
 	AcquireRuntimeAuth    bool
+	ActivateSupervision   bool
 	// ReleaseSource is the repo's runner/ tree supplied only by install.sh.
 	// Home copies its fixed production manifest into MC_HOME; deployments never
 	// execute runner source directly from the clone.

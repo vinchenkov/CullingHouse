@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"mc/deployment"
 	"mc/verbs"
@@ -113,19 +114,76 @@ func brokerOnboardState(args []string, stdout, stderr io.Writer) int {
 		for i, root := range result.WorkspaceRoots {
 			roots[i] = deployment.WorkspaceRoot{ID: root.ID, Root: root.Root}
 		}
-		prepareStatus, prepared, err := deployment.PrepareSupervision(home, deployment.SupervisionSpec{
-			ReleaseBuildID: releaseBuildID, MCPath: mcPath, BunPath: bunPath,
-			DockerPath: dockerPath, Image: productionImageRef, SpineVolume: names.Volume,
-			WorkspaceRoots: roots,
-		}, launchdLabelLoaded)
-		if err != nil {
-			return writeVerbError(stdout, stderr, verbs.Domainf("prepare native supervision: %v", err))
+		prepareStatus := "ok"
+		prepared := deployment.SupervisionResult{
+			ResidentLabel:  "com.mission-control." + names.Suffix + ".resident",
+			DashboardLabel: "com.mission-control." + names.Suffix + ".dashboard",
+			Root:           filepath.Join(home, "supervision"),
+		}
+		skipPrepare := false
+		if a.ActivateSupervision {
+			residentLoaded, residentErr := launchdLabelLoaded(prepared.ResidentLabel)
+			dashboardLoaded, dashboardErr := launchdLabelLoaded(prepared.DashboardLabel)
+			if residentErr != nil || dashboardErr != nil {
+				return writeVerbError(stdout, stderr, verbs.Usagef("inspect existing native supervision: resident=%v dashboard=%v", residentErr, dashboardErr))
+			}
+			skipPrepare = residentLoaded && dashboardLoaded
+		}
+		if !skipPrepare {
+			prepareStatus, prepared, err = deployment.PrepareSupervision(home, deployment.SupervisionSpec{
+				ReleaseBuildID: releaseBuildID, MCPath: mcPath, BunPath: bunPath,
+				DockerPath: dockerPath, Image: productionImageRef, SpineVolume: names.Volume,
+				WorkspaceRoots: roots,
+			}, launchdLabelLoaded)
+			if err != nil {
+				return writeVerbError(stdout, stderr, verbs.Domainf("prepare native supervision: %v", err))
+			}
 		}
 		status = prepareStatus
 		detail = fmt.Sprintf("resident/dashboard configs and per-user LaunchAgents %s at %s; %s and %s verified unloaded",
 			prepareStatus, prepared.Root, prepared.ResidentLabel, prepared.DashboardLabel)
+		if a.ActivateSupervision {
+			userHome, err := os.UserHomeDir()
+			if err != nil {
+				return writeVerbError(stdout, stderr, verbs.Usagef("resolve operator home for LaunchAgents: %v", err))
+			}
+			activationStatus, active, err := deployment.ActivateSupervision(
+				home, filepath.Join(userHome, "Library", "LaunchAgents"), releaseBuildID,
+				deployment.SupervisionActivationDeps{
+					Launchd: launchdController{}, Now: time.Now, Sleep: time.Sleep,
+				},
+			)
+			if err != nil {
+				return writeVerbError(stdout, stderr, verbs.Domainf("activate native supervision: %v", err))
+			}
+			status = activationStatus
+			detail = fmt.Sprintf("%s and %s loaded as per-user LaunchAgents; observed a release-bound resident tick",
+				active.ResidentLabel, active.DashboardLabel)
+		}
 	}
 	return writeOnboardSection(stdout, stderr, a.Section, status, detail)
+}
+
+type launchdController struct{}
+
+func (launchdController) Loaded(label string) (bool, error) { return launchdLabelLoaded(label) }
+
+func (launchdController) Bootstrap(plist string) error {
+	target := fmt.Sprintf("gui/%d", os.Getuid())
+	out, err := exec.Command("launchctl", "bootstrap", target, plist).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("launchctl bootstrap %s %s: %v: %s", target, plist, err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+func (launchdController) Bootout(label string) error {
+	target := fmt.Sprintf("gui/%d/%s", os.Getuid(), label)
+	out, err := exec.Command("launchctl", "bootout", target).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("launchctl bootout %s: %v: %s", target, err, strings.TrimSpace(string(out)))
+	}
+	return nil
 }
 
 func launchdLabelLoaded(label string) (bool, error) {
