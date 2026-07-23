@@ -1544,3 +1544,29 @@ rules in code the sealed lane does not own.
   with identical snapshot semantics and a narrower helper authority surface.
   Invariants 1–26 and the fail-closed posture are preserved.
 - Needs your decision: no.
+
+## 2026-07-23 — Cross-harness takeover review of the Phase-5 range on the mount surfaces
+- Where: AGENTS.md §2 takeover before ADR-023 D6 work; scoped adversarial
+  review of `git diff d0ef4bb..b95df99 -- mc/verbs/mountattest.go
+  mc/verbs/dispatchseam.go mc/verbs/envattest.go resident/src/effects.ts`
+  against phase3-contract mount/boundary rules and ADR-017 D6 / ADR-023 D6.
+- Gap: none found that blocks. Verdict: concerns, no blockers. The
+  initiative-child refusal (`mountattest.go:238-249`) is untouched and still
+  fires under real routing only; env attestation was tightened, not loosened;
+  the legacy land lane (`mc-land <branch> <verified_sha> <target_ref>`) is
+  intact.
+- Findings held as concerns, both already logged as deviations in this file:
+  (1) non-fake agent containers now run `--security-opt seccomp=unconfined`
+  while ADR-019:88 still reads "never unconfined" — the governing ADR text is
+  stale relative to the logged inner-bwrap-sandbox deviation; (2) the
+  resident's hardcoded `productionRoutes` set duplicates mc's closed catalog
+  (`mc/routing/bindings.go:26-43`) and can drift — a shared-source or
+  drift-pinning test is owed opportunistically. Informational: homieWake's
+  RO `/workspaces/<id>` destination is absent from phase3-contract.md:221's
+  Homie row (logged earlier); production routes launch without
+  `harness_config.behavior` by design; Codex `/mc/codex/sessions` RW re-alias
+  is within contract §4's letter.
+- Choice: log-and-go (no invariant breaks; both concerns already have logged
+  rationale and tests). No code changed by this review.
+- Spec impact: ADR-019 seccomp text should be amended when next touched.
+- Needs your decision: no.
