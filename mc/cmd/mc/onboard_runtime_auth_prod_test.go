@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -61,7 +62,7 @@ func TestBrokerOnboardRuntimeAuthPublishesOnlyAfterAllLiveGates(t *testing.T) {
 		return nil
 	})
 	var stdout, stderr bytes.Buffer
-	if code := brokerOnboardRuntimeAuth(runtimeAuthBrokerArgs(t, home), &stdout, &stderr); code != 0 {
+	if code := brokerOnboardRuntimeAuth(runtimeAuthBrokerArgs(t, home), nil, &stdout, &stderr); code != 0 {
 		t.Fatalf("broker exit %d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
 	}
 	if strings.Join(seen, ",") != "chatgpt,claude,minimax" {
@@ -95,7 +96,7 @@ func TestBrokerOnboardRuntimeAuthVerifierFailurePublishesNothing(t *testing.T) {
 		return nil
 	})
 	var stdout, stderr bytes.Buffer
-	if code := brokerOnboardRuntimeAuth(runtimeAuthBrokerArgs(t, home), &stdout, &stderr); code != 1 {
+	if code := brokerOnboardRuntimeAuth(runtimeAuthBrokerArgs(t, home), nil, &stdout, &stderr); code != 1 {
 		t.Fatalf("broker exit %d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
 	}
 	if !strings.Contains(stderr.String(), "provider rejected no-op") {
@@ -103,5 +104,55 @@ func TestBrokerOnboardRuntimeAuthVerifierFailurePublishesNothing(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(home, "refresh-grants")); !os.IsNotExist(err) {
 		t.Fatalf("failed gate published grants: %v", err)
+	}
+}
+
+func TestBrokerOnboardRuntimeAuthAcquiresInDisposableProviderHomes(t *testing.T) {
+	home := filepath.Join(t.TempDir(), "home")
+	if err := os.Mkdir(home, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("MC_HOME", home)
+	for _, key := range []string{"ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN", "CODEX_ACCESS_TOKEN", "CODEX_API_KEY", "OPENAI_API_KEY"} {
+		t.Setenv(key, "")
+	}
+	originalVerifier, originalLogin := productionRuntimeAuthVerifier, productionRuntimeAuthLogin
+	t.Cleanup(func() {
+		productionRuntimeAuthVerifier = originalVerifier
+		productionRuntimeAuthLogin = originalLogin
+	})
+	productionRuntimeAuthVerifier = deployment.RuntimeAuthVerifyFunc(func(string, string) error { return nil })
+	productionRuntimeAuthLogin = func(binary string, _ []string, environment []string, _ io.Reader, _ io.Writer) error {
+		value := func(name string) string {
+			for _, entry := range environment {
+				if got, value, ok := strings.Cut(entry, "="); ok && got == name {
+					return value
+				}
+			}
+			return ""
+		}
+		switch binary {
+		case "codex":
+			return os.WriteFile(filepath.Join(value("CODEX_HOME"), "auth.json"),
+				[]byte("{\"auth_mode\":\"chatgpt\",\"OPENAI_API_KEY\":null,\"tokens\":{\"access_token\":\"ca\",\"id_token\":\"ci\",\"refresh_token\":\"cr\",\"account_id\":\"acct\"}}"), 0o600)
+		case "claude":
+			return os.WriteFile(filepath.Join(value("CLAUDE_CONFIG_DIR"), ".credentials.json"),
+				[]byte("{\"claudeAiOauth\":{\"accessToken\":\"aa\",\"refreshToken\":\"ar\",\"expiresAt\":9999999999999,\"scopes\":[\"user:inference\"]}}"), 0o600)
+		}
+		return errors.New("unexpected provider login")
+	}
+	var stdout, stderr bytes.Buffer
+	args := []string{"onboard", "runtime-auth", "--acquire", "--runtime-bindings", "chatgpt,claude"}
+	if code := brokerOnboardRuntimeAuth(args, strings.NewReader(""), &stdout, &stderr); code != 0 {
+		t.Fatalf("acquire broker exit %d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
+	}
+	for _, binding := range []string{"chatgpt", "claude"} {
+		if _, err := os.Stat(filepath.Join(home, "refresh-grants", binding+".json")); err != nil {
+			t.Fatalf("missing published %s grant: %v", binding, err)
+		}
+	}
+	entries, err := os.ReadDir(filepath.Join(home, "runtime-auth-sources"))
+	if err != nil || len(entries) != 0 {
+		t.Fatalf("provider sources survived verified import: %v, %v", entries, err)
 	}
 }

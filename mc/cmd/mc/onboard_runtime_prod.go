@@ -15,6 +15,7 @@ import (
 // Tests replace this seam. Production constructs the real verifier only after
 // canonical MC_HOME is known, because installed runner assets are home-owned.
 var productionRuntimeAuthVerifier deployment.RuntimeAuthVerifier
+var productionRuntimeAuthLogin deployment.RuntimeAuthLoginFunc
 
 func selectedRuntimeBindings(raw string) ([]string, error) {
 	if raw == "" {
@@ -30,7 +31,7 @@ func selectedRuntimeBindings(raw string) ([]string, error) {
 	return parts, nil
 }
 
-func brokerOnboardRuntimeAuth(args []string, stdout, stderr io.Writer) int {
+func brokerOnboardRuntimeAuth(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	a, err := parseOnboardArgs(args[1:])
 	if err != nil {
 		return writeVerbError(stdout, stderr, err)
@@ -50,13 +51,43 @@ func brokerOnboardRuntimeAuth(args []string, stdout, stderr io.Writer) int {
 	if verifier == nil {
 		verifier = deployment.NewAdapterNoopVerifier(home)
 	}
-	status, err := deployment.ImportRuntimeAuth(home, deployment.RuntimeAuthSources{
+	sources := deployment.RuntimeAuthSources{
 		Bindings: bindings, CodexAuthFile: a.CodexAuthFile,
 		ClaudeCredentialsFile: a.ClaudeCredentialsFile,
 		MinimaxTokenFile:      a.MinimaxTokenFile, Environment: os.Environ(),
-	}, verifier)
-	if err != nil {
-		return writeVerbError(stdout, stderr, verbs.Domainf("runtime-auth import refused: %v", err))
+	}
+	var acquisition *deployment.RuntimeAuthAcquisition
+	if a.AcquireRuntimeAuth {
+		selected := map[string]bool{}
+		for _, binding := range bindings {
+			selected[binding] = true
+		}
+		if (selected["chatgpt"] && a.CodexAuthFile != "") || (selected["claude"] && a.ClaudeCredentialsFile != "") {
+			return writeVerbError(stdout, stderr, verbs.Usagef("mc onboard runtime-auth --acquire cannot also receive OAuth source flags"))
+		}
+		if selected["minimax"] && a.MinimaxTokenFile == "" {
+			return writeVerbError(stdout, stderr, verbs.Usagef("mc onboard runtime-auth --acquire requires an owner-only --minimax-token-file before starting OAuth login"))
+		}
+		acquisition, err = deployment.AcquireRuntimeAuth(home, bindings, stdin, stderr, sources.Environment, productionRuntimeAuthLogin)
+		if err != nil {
+			return writeVerbError(stdout, stderr, verbs.Domainf("runtime-auth acquisition refused: %v", err))
+		}
+		sources.CodexAuthFile = acquisition.CodexAuthFile
+		sources.ClaudeCredentialsFile = acquisition.ClaudeCredentialsFile
+	}
+	status, importErr := deployment.ImportRuntimeAuth(home, sources, verifier)
+	var cleanupErr error
+	if acquisition != nil {
+		cleanupErr = acquisition.Cleanup()
+	}
+	if importErr != nil {
+		if cleanupErr != nil {
+			return writeVerbError(stdout, stderr, verbs.Domainf("runtime-auth import refused: %v; isolated source cleanup also failed: %v", importErr, cleanupErr))
+		}
+		return writeVerbError(stdout, stderr, verbs.Domainf("runtime-auth import refused: %v", importErr))
+	}
+	if cleanupErr != nil {
+		return writeVerbError(stdout, stderr, verbs.Domainf("runtime-auth grants were published but isolated source cleanup failed: %v", cleanupErr))
 	}
 	return writeOnboardSection(stdout, stderr, "runtime-auth", status,
 		fmt.Sprintf("%d binding grants passed forbidden-env and live no-op gates and were atomically published", len(bindings)))

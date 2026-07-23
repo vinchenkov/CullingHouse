@@ -74,7 +74,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 			case "home":
 				return brokerOnboardHome(args, stdout, stderr)
 			case "runtime-auth":
-				return brokerOnboardRuntimeAuth(args, stdout, stderr)
+				return brokerOnboardRuntimeAuth(args, stdin, stdout, stderr)
 			case "routing", "worksource", "tunables", "surfaces":
 				return brokerOnboardState(args, stdout, stderr)
 			case "container":
@@ -494,6 +494,7 @@ func parseOnboardArgs(args []string) (verbs.OnboardArgs, error) {
 	fs.StringVar(&a.CodexAuthFile, "codex-auth-file", "", "owner-only Codex auth source")
 	fs.StringVar(&a.ClaudeCredentialsFile, "claude-credentials-file", "", "owner-only Claude credential source")
 	fs.StringVar(&a.MinimaxTokenFile, "minimax-token-file", "", "owner-only MiniMax token source")
+	fs.BoolVar(&a.AcquireRuntimeAuth, "acquire", false, "run isolated provider-owned OAuth subscription logins")
 	fs.StringVar(&a.ReleaseSource, "release-source", "", "repository runner source (install.sh only)")
 	fs.IntVar(&a.TimeoutMinutes, "timeout-minutes", 0, "lease timeout")
 	fs.IntVar(&a.GraceMinutes, "grace-minutes", 0, "lease grace")

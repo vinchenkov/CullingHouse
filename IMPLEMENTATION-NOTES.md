@@ -1361,3 +1361,31 @@ rules in code the sealed lane does not own.
   runner-source bind while preserving the rule that setup writes through the
   wizard under MC_HOME rather than teaching the shell front door setup logic.
 - Needs your decision: no.
+
+## 2026-07-22 — OAuth acquisition runs only in disposable provider-owned homes
+- Where: Phase 5 Runtime auth; spec §17.3, §11.4, Inv. 13/16.
+- Gap: accepting already-written source paths made atomic import testable, but
+  did not run the providers' own subscription login flows or prove that those
+  flows were isolated from the operator's personal harness homes. Copying the
+  existing personal Codex login would create a second owner of a rotating
+  refresh token and was explicitly forbidden.
+- Choice: `mc onboard runtime-auth --acquire` runs plain `codex login` and
+  `claude auth login --claudeai` sequentially in unique mode-0700 flow homes
+  below `MC_HOME/runtime-auth-sources`. The command environment is rebuilt
+  from a small transport/locale/CA allowlist, with isolated `HOME`,
+  `CODEX_HOME`, or `CLAUDE_CONFIG_DIR`; personal homes, provider endpoint
+  overrides, and provider credentials cannot enter. Claude's explicit
+  `--claudeai` form excludes its metered Console login. A selected MiniMax
+  binding must have its owner-only subscription-key file before either OAuth
+  flow starts. The exact created flow root is removed after success or failure;
+  canonical grants survive only if every live gate passed.
+- Evidence: acquisition tests assert exact provider argv, isolated environment
+  and paths, ambient-key refusal before any write, failure cleanup, and success
+  cleanup. A broker crossing builds provider-native fixtures through the login
+  seam, publishes both OAuth grants, and proves the disposable flow is empty
+  afterward. Current installed CLI help independently confirms both pinned
+  command surfaces.
+- Spec impact: conservative internal mechanism. It implements the mandated
+  provider-owned subscription flows without adding credential formats,
+  adopting personal state, or allowing a metered login mode.
+- Needs your decision: no.
