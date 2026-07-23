@@ -7,14 +7,17 @@ import (
 	"runtime"
 )
 
-const (
-	productionHelperName = "mc-helper"
-	productionSpinePath  = "/mc/spine/spine.db"
-)
+const productionSpinePath = "/mc/spine/spine.db"
 
 func shouldDelegateToHelper() bool { return runtime.GOOS == "darwin" }
-func helperContainerName() string  { return productionHelperName }
-func helperSpinePath() string      { return productionSpinePath }
+func helperContainerName() string {
+	m, err := productionHelperManager(execDockerRunner{})
+	if err != nil {
+		return ""
+	}
+	return m.names.Helper
+}
+func helperSpinePath() string { return productionSpinePath }
 
 func privateHelperScopeOK() bool {
 	if runtime.GOOS != "linux" {

@@ -12,15 +12,16 @@ import (
 )
 
 // The image contract's two uids (runner/image/Dockerfile): mc-completion owns
-// the spine and the setuid wrapper; agents run as 10002.
+// the spine and setuid gates; agents and the helper process run as 10002.
 const (
 	imageOwnerUID = 10001
 	imageAgentUID = 10002
 )
 
-// completionWrapperPath is the image's setuid completion wrapper — the one
-// binary whose suid bit realizes the §11.5 gate for agent containers.
-const completionWrapperPath = "/usr/local/libexec/mc-complete"
+// privilegedMCPath is the image's general setuid mc — every ordinary agent
+// and helper verb reaches the spine through this gate. Sealed completion has
+// an additional narrow publisher wrapper, but it is not the general broker.
+const privilegedMCPath = "/usr/local/libexec/mc-real"
 
 // stNOSUID is statfs's ST_NOSUID mount flag: set when the filesystem ignores
 // suid bits, which would silently disarm the completion wrapper.
@@ -45,7 +46,7 @@ func containerRuntimeCapabilityProbe(spinePath string) (string, error) {
 		return "", err
 	}
 	if flag != 0 {
-		return "", fmt.Errorf("no-new-privileges is forced; the setuid completion wrapper cannot elevate")
+		return "", fmt.Errorf("no-new-privileges is forced; the setuid mc gate cannot elevate")
 	}
 	uidMap, err := os.ReadFile("/proc/self/uid_map")
 	if err != nil {
@@ -56,10 +57,9 @@ func containerRuntimeCapabilityProbe(spinePath string) (string, error) {
 	}
 
 	// The live refusal leg: open the spine with the agent's uid and demand
-	// the kernel's EACCES. The helper runs as root, which may assume any
-	// euid; a setuid-shaped credential (euid≠ruid) can drop to its real uid
-	// instead. Any other credential cannot exercise the gate and fails
-	// closed rather than deriving the answer from permission bits.
+	// the kernel's EACCES. The final helper enters through setuid mc, so it can
+	// drop to its real uid for the negative arm and restore its effective uid
+	// for the brokered read. Root remains accepted only for old probe fixtures.
 	ruid, euid := syscall.Getuid(), syscall.Geteuid()
 	probeUID := 0
 	switch {
@@ -92,30 +92,30 @@ func containerRuntimeCapabilityProbe(spinePath string) (string, error) {
 	}
 	gated.Close()
 
-	// The suid bit must be present on the completion wrapper AND honored by
+	// The suid bit must be present on the general mc gate AND honored by
 	// its mount: a nosuid filesystem stats identically and disarms the gate.
-	wrapper, err := os.Stat(completionWrapperPath)
+	wrapper, err := os.Stat(privilegedMCPath)
 	if err != nil {
-		return "", fmt.Errorf("completion wrapper missing: %v", err)
+		return "", fmt.Errorf("privileged mc missing: %v", err)
 	}
 	if wrapper.Mode()&fs.ModeSetuid == 0 {
-		return "", fmt.Errorf("completion wrapper %s has no suid bit (mode %v)", completionWrapperPath, wrapper.Mode())
+		return "", fmt.Errorf("privileged mc %s has no suid bit (mode %v)", privilegedMCPath, wrapper.Mode())
 	}
 	if st, ok := wrapper.Sys().(*syscall.Stat_t); !ok || int(st.Uid) != imageOwnerUID {
-		return "", fmt.Errorf("completion wrapper is not owned by uid %d", imageOwnerUID)
+		return "", fmt.Errorf("privileged mc is not owned by uid %d", imageOwnerUID)
 	}
 	var mount syscall.Statfs_t
-	if err := syscall.Statfs(completionWrapperPath, &mount); err != nil {
-		return "", fmt.Errorf("statfs completion wrapper: %v", err)
+	if err := syscall.Statfs(privilegedMCPath, &mount); err != nil {
+		return "", fmt.Errorf("statfs privileged mc: %v", err)
 	}
 	if mount.Flags&stNOSUID != 0 {
-		return "", fmt.Errorf("completion wrapper filesystem is mounted nosuid; the gate cannot elevate")
+		return "", fmt.Errorf("privileged mc filesystem is mounted nosuid; the gate cannot elevate")
 	}
 
 	if runtime.GOARCH != "arm64" {
 		return "", fmt.Errorf("non-native architecture %s; the deployment target is arm64 with no emulation", runtime.GOARCH)
 	}
 	return fmt.Sprintf(
-		"helper exec round-trip proven by this crossing; agent uid %d direct spine open EACCES; helper spine read ok; completion wrapper suid honored (owner %d); NoNewPrivs=0; identity uid_map; native %s",
+		"helper exec round-trip proven by this crossing; agent uid %d direct spine open EACCES; helper spine read ok; general mc suid honored (owner %d); NoNewPrivs=0; identity uid_map; native %s",
 		probeUID, imageOwnerUID, runtime.GOARCH), nil
 }

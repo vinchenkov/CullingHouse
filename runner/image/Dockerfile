@@ -40,15 +40,16 @@ RUN curl -fsSL https://bun.sh/install | BUN_INSTALL=/opt/bun bash -s "bun-v${BUN
 # sharing; in-container git must still read/write it (worktrees, mc-land).
 RUN git config --system safe.directory '*'
 
-# The public dispatcher keeps ordinary mc verbs at the calling uid. Only its
-# sealed-completion arm enters the setuid completion wrapper; /mc/private is
-# the kernel traversal gate that makes the mounted seal unreachable to uid
-# 10002 even if Docker presents it as writable.
+# The public dispatcher sends ordinary verbs through the real setuid mc gate.
+# A privileged invocation pins identity to /mc/run.json in code, so the model
+# cannot redirect the authorization envelope through its environment. The
+# sealed-completion arm still uses its narrower publisher wrapper; /mc/private
+# is the traversal gate that keeps the mounted seal unreachable to uid 10002.
 RUN groupadd --gid 10001 mc-completion \
  && useradd --uid 10001 --gid 10001 --no-create-home --shell /usr/sbin/nologin mc-completion \
  && groupadd --gid 10002 mc-model \
  && useradd --uid 10002 --gid 10002 --no-create-home --shell /usr/sbin/nologin mc-model \
- && install -d -o 10001 -g 10001 -m 0700 /mc/private \
+ && install -d -o 10001 -g 10001 -m 0700 /mc/private /mc/spine \
  && install -d -o 10001 -g 10001 -m 0711 /usr/local/libexec
 # MC_BIN selects WHICH mc binary is baked, and it is the only difference
 # between the fake-route e2e image and the production image (contract §8:
@@ -59,10 +60,10 @@ COPY ${MC_BIN} /usr/local/libexec/mc-real
 COPY mc-dispatch /usr/local/bin/mc
 COPY mc-complete /usr/local/libexec/mc-complete
 COPY mc-land /usr/local/bin/mc-land
-RUN chown root:root /usr/local/libexec/mc-real /usr/local/bin/mc /usr/local/bin/mc-land \
- && chown mc-completion:mc-completion /usr/local/libexec/mc-complete \
- && chmod 0755 /usr/local/libexec/mc-real /usr/local/bin/mc /usr/local/bin/mc-land \
- && chmod 6755 /usr/local/libexec/mc-complete
+RUN chown root:root /usr/local/bin/mc /usr/local/bin/mc-land \
+ && chown mc-completion:mc-completion /usr/local/libexec/mc-real /usr/local/libexec/mc-complete \
+ && chmod 0755 /usr/local/bin/mc /usr/local/bin/mc-land \
+ && chmod 6755 /usr/local/libexec/mc-real /usr/local/libexec/mc-complete
 
 # tini as PID 1 (§11.2): signal forwarding + zombie reaping for hang/reap.
 ENTRYPOINT ["/usr/bin/tini", "--"]

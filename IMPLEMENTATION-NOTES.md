@@ -1071,3 +1071,36 @@ rules in code the sealed lane does not own.
   ADR-016 decisions and §17; no invariant or section order changes, so no new
   ADR is warranted.
 - Needs your decision: no.
+
+## 2026-07-22 — final helper requires the general setuid mc gate, not a root process
+- Where: Phase 5 production Home bootstrap; spec §11.5 and §16.4;
+  `docs/phase3-contract.md` §§4/6; ADR-019 D3; `runner/image/Dockerfile`,
+  `mc/verbs/verbs.go`, and the helper manager.
+- Gap: the current image elevated only the sealed-completion publisher. The
+  ordinary `mc-real` was root-owned mode 0755 and the image had no default
+  user, so a warm helper could reach the spine only by running its whole
+  process as root. That contradicted the Phase-3 contract's general privileged
+  `mc`, ADR-019's fixed helper uid 10002, and §11.5's kernel gate for ordinary
+  agent/helper verbs. Merely changing the helper user would make every
+  delegated command unable to open the spine.
+- Choice: `mc-real` is now owned by uid 10001 and mode 6755; helpers and agents
+  run as uid 10002. A privileged invocation ignores the agent-controlled
+  `MC_RUN_JSON` override and resolves only the immutable `/mc/run.json`; its
+  absence is host scope only in the spine-only helper/setup classes, while its
+  presence keeps every agent role-scoped. The completion publisher remains a
+  separate narrow wrapper for its filesystem operation. `/mc/spine` is baked
+  uid-10001/mode-0700 so Docker's first named-volume copy-up establishes the
+  gate without root helper startup or a CHOWN capability.
+- Evidence: the production image rebuilt native arm64; focused Docker tests
+  prove `mc-real` is `10001:10001` mode 6755 and an agent cannot redirect an
+  injected run identity. A fresh derived helper ran as `10002:10002`, with
+  network none, CapDrop=ALL, finite 500m/512MiB/128 bounds, and exactly one
+  named-volume mount. `mc onboard home` initialized schema 13 through the
+  path-free crossing, and the in-helper capability probe proved uid-10002
+  direct-open EACCES, brokered read success, honored suid, NoNewPrivs=0,
+  identity uid_map, and native arm64. The disposable helper/volume/home were
+  removed after the proof.
+- Spec impact: none. This removes the root-helper shortcut and restores the
+  already-binding general setuid boundary; it does not broaden an agent's verb
+  authorization or add a new behavior.
+- Needs your decision: no.

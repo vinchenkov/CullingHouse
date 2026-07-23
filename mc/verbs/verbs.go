@@ -21,6 +21,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"runtime"
 	"strings"
 	"time"
 
@@ -172,13 +173,24 @@ func RequireOperatorVerb(id *RunIdentity, verb string) error {
 	return Domainf("%s is an operator verb, denied to pipeline runs (§18 deny rule 1)", verb)
 }
 
-// RunJSONPath resolves the run.json location: the fixed in-container mount
-// /mc/run.json (§11.5), overridable via MC_RUN_JSON for the CLI test tier
-// (within-container scope separation is best-effort by decision, §11.5;
-// see deviation note D-mc-3).
+// RunJSONPath resolves the fixed in-container identity mount. Direct host and
+// CLI-test invocations retain MC_RUN_JSON as a test seam; a privileged image
+// invocation structurally ignores it and consumes only /mc/run.json (§11.5).
 func RunJSONPath() string {
-	if p := os.Getenv("MC_RUN_JSON"); p != "" {
-		return p
+	return runJSONPathForCredentials(runtime.GOOS, os.Getuid(), os.Geteuid(), os.Getenv("MC_RUN_JSON"))
+}
+
+// runJSONPathForCredentials makes the production setuid boundary explicit
+// and independently testable. A privileged image invocation must consume the
+// immutable nested mount; an agent-controlled environment can never redirect
+// or suppress its identity. Direct host/test invocations retain the override
+// seam because their real and effective uids are equal.
+func runJSONPathForCredentials(goos string, ruid, euid int, override string) string {
+	if goos != "windows" && ruid != euid {
+		return "/mc/run.json"
+	}
+	if override != "" {
+		return override
 	}
 	return "/mc/run.json"
 }

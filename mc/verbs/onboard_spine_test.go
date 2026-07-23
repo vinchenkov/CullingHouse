@@ -3,6 +3,7 @@ package verbs
 import (
 	"database/sql"
 	"encoding/json"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -147,5 +148,57 @@ func TestOnboardSpineFrameCarriesNoPathOrConfigField(t *testing.T) {
 		if strings.Contains(strings.ToLower(string(b)), forbidden) {
 			t.Fatalf("private frame carries %q: %s", forbidden, b)
 		}
+	}
+}
+
+func TestProductionHomeHostHalfPublishesOnlyReturnedMirror(t *testing.T) {
+	home := filepath.Join(t.TempDir(), "mc-home")
+	t.Setenv("MC_HOME", home)
+	req, err := PrepareOnboardHome()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if req.MirrorState != "absent" || req.MirrorUUID != "" {
+		t.Fatalf("fresh request = %#v", req)
+	}
+	uuid := strings.Repeat("a", 32)
+	status, _, err := FinalizeOnboardHome(OnboardSpineResult{
+		ProtocolVersion: 1, Status: "initialized", DeploymentUUID: uuid,
+		SchemaVersion: substrate.CurrentSchemaVersion,
+	})
+	if err != nil || status != "done" {
+		t.Fatalf("finalize status=%q err=%v", status, err)
+	}
+	b, err := os.ReadFile(filepath.Join(home, deploymentUUIDFilename))
+	if err != nil || string(b) != uuid+"\n" {
+		t.Fatalf("mirror = %q err=%v", b, err)
+	}
+	if _, err := os.Stat(filepath.Join(home, "spine.db")); !os.IsNotExist(err) {
+		t.Fatalf("host half created/opened a spine: %v", err)
+	}
+	req, err = PrepareOnboardHome()
+	if err != nil || req.MirrorState != "present" || req.MirrorUUID != uuid {
+		t.Fatalf("repeat request = %#v err=%v", req, err)
+	}
+}
+
+func TestProductionHomeHostHalfRejectsUntrustedHelperResponse(t *testing.T) {
+	t.Setenv("MC_HOME", filepath.Join(t.TempDir(), "mc-home"))
+	base := OnboardSpineResult{
+		ProtocolVersion: 1, Status: "initialized", DeploymentUUID: strings.Repeat("a", 32),
+		SchemaVersion: substrate.CurrentSchemaVersion,
+	}
+	bad := base
+	bad.DeploymentUUID = "not-a-uuid"
+	if _, _, err := FinalizeOnboardHome(bad); err == nil {
+		t.Fatal("invalid helper UUID was accepted")
+	}
+	bad = base
+	bad.Status = "invented"
+	if _, _, err := FinalizeOnboardHome(bad); err == nil {
+		t.Fatal("invalid helper status was accepted")
+	}
+	if _, err := os.Stat(os.Getenv("MC_HOME")); !os.IsNotExist(err) {
+		t.Fatalf("rejected helper response wrote MC_HOME: %v", err)
 	}
 }

@@ -80,6 +80,18 @@ func TestProductionImageHasNoFakeRouteDockerBoundary(t *testing.T) {
 	}
 }
 
+func TestProductionImageGeneralMCIsSetuidDockerBoundary(t *testing.T) {
+	requireProdImage(t)
+	out, err := dockerRun(t, "--user", "10002:10002", prodImage,
+		"sh", "-c", "stat -c '%u:%g %a' /usr/local/libexec/mc-real")
+	if err != nil {
+		t.Fatalf("inspect privileged mc: %v\n%s", err, out)
+	}
+	if strings.TrimSpace(out) != "10001:10001 6755" {
+		t.Fatalf("privileged mc ownership/mode = %q, want 10001:10001 6755", strings.TrimSpace(out))
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Row 8 — the landing container's scope INVERSION.
 //
@@ -133,6 +145,7 @@ func TestLandingContainerHasHostScopeAndNoRunJsonDockerBoundary(t *testing.T) {
 		}
 		out, err := dockerRun(t, "--user", "10002:10002",
 			"-v", runJSON+":/mc/run.json:ro",
+			"-e", "MC_RUN_JSON=/tmp/agent-controlled-missing.json",
 			prodImage, "mc", "__land-sealed", "/mc/landing.json")
 		if err == nil {
 			t.Fatalf("mc __land-sealed succeeded with a forged run.json mounted:\n%s", out)

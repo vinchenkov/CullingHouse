@@ -1,6 +1,7 @@
-// mc_dispatch is the public, unprivileged mc entrypoint baked into the agent
-// image. Only a Worker completion carrying --seal-request crosses to the
-// setuid wrapper; every other verb retains the calling model/runner uid.
+// mc_dispatch is the public mc entrypoint baked into the image. Ordinary
+// verbs enter the setuid real binary, which fixes privileged identity reads
+// to /mc/run.json. A Worker completion carrying --seal-request enters the
+// narrower setuid publisher wrapper instead.
 package main
 
 import (

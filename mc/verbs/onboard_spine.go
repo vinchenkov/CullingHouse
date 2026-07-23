@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"mc/substrate"
 )
@@ -26,6 +27,82 @@ type OnboardSpineResult struct {
 	Status          string `json:"status"`
 	DeploymentUUID  string `json:"deployment_uuid"`
 	SchemaVersion   int    `json:"schema_version"`
+}
+
+// PrepareOnboardHome performs the host half of the production Home crossing.
+// It validates the canonical home before any write and sends only the
+// deployment mirror observation to the helper; it never receives a spine
+// path and therefore cannot open the runtime-local database.
+func PrepareOnboardHome() (OnboardSpineRequest, error) {
+	if _, _, err := onboardPreflight(); err != nil {
+		return OnboardSpineRequest{}, err
+	}
+	home, err := mcHomeDir()
+	if err != nil {
+		return OnboardSpineRequest{}, err
+	}
+	uuid, exists, err := readDeploymentMirror(home)
+	if err != nil {
+		return OnboardSpineRequest{}, err
+	}
+	req := OnboardSpineRequest{
+		ProtocolVersion: 1,
+		SchemaVersion:   substrate.CurrentSchemaVersion,
+		MirrorState:     "absent",
+	}
+	if exists {
+		req.MirrorState = "present"
+		req.MirrorUUID = uuid
+	}
+	return req, nil
+}
+
+// FinalizeOnboardHome is the host half after the helper has committed and
+// re-read spine identity. It scaffolds MC_HOME and atomically publishes only
+// the returned UUID mirror; no database bytes cross kernels.
+func FinalizeOnboardHome(result OnboardSpineResult) (string, string, error) {
+	if result.ProtocolVersion != 1 || result.SchemaVersion != substrate.CurrentSchemaVersion {
+		return "", "", Domainf("helper onboard-spine response has mismatched protocol/schema identity")
+	}
+	if len(result.DeploymentUUID) != 32 {
+		return "", "", Domainf("helper onboard-spine response has invalid deployment UUID")
+	}
+	if _, err := hex.DecodeString(result.DeploymentUUID); err != nil || strings.ToLower(result.DeploymentUUID) != result.DeploymentUUID {
+		return "", "", Domainf("helper onboard-spine response has invalid deployment UUID")
+	}
+	validStatus := map[string]bool{
+		"ok": true, "initialized": true, "repair-mirror": true,
+		"migrated": true, "migrated-repair-mirror": true,
+	}
+	if !validStatus[result.Status] {
+		return "", "", Domainf("helper onboard-spine response has invalid status %q", result.Status)
+	}
+	home, err := mcHomeDir()
+	if err != nil {
+		return "", "", err
+	}
+	mirrored, mirrorExists, err := readDeploymentMirror(home)
+	if err != nil {
+		return "", "", err
+	}
+	if mirrorExists && mirrored != result.DeploymentUUID {
+		return "", "", Domainf("deployment identity mismatch: MC_HOME has %s but helper proved spine %s — restore the matching backup (§16.4)", mirrored, result.DeploymentUUID)
+	}
+	changed, err := scaffoldOnboardHome(home)
+	if err != nil {
+		return "", "", err
+	}
+	if !mirrorExists {
+		if err := writeDeploymentMirror(home, result.DeploymentUUID); err != nil {
+			return "", "", err
+		}
+		changed = true
+	}
+	status := "ok"
+	if changed || result.Status != "ok" {
+		status = "done"
+	}
+	return status, fmt.Sprintf("deployment %s provisioned through helper (schema %d)", result.DeploymentUUID, result.SchemaVersion), nil
 }
 
 func validateOnboardSpineRequest(req OnboardSpineRequest) error {

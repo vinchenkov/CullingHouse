@@ -84,18 +84,18 @@ run_must_fail stopped-daemon "docker daemon is not responding" \
   sh "$ROOT/install.sh" --yes --bin-dir "$case_root/install-bin"
 [ ! -e "$case_root/install-bin/mc" ] || fail "stopped-daemon wrote mc before preflight passed"
 
-case_root="$TMP/missing-helper"
+case_root="$TMP/image-build-failed"
 make_mise "$case_root/bin"
 cat >"$case_root/bin/docker" <<'EOF'
 #!/bin/sh
 case "${1:-}" in
   info) exit 0 ;;
-  inspect) exit 1 ;;
+  build) exit 1 ;;
 esac
 exit 94
 EOF
 chmod 755 "$case_root/bin/docker"
-run_must_fail missing-helper "warm helper is not provisioned" \
+run_must_fail image-build-failed "production image build failed" \
   env PATH="$case_root/bin:/usr/bin:/bin" HOME="$case_root/home" \
   sh "$ROOT/install.sh" --yes --bin-dir "$case_root/install-bin"
 

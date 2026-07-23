@@ -51,6 +51,17 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	if args[0] == "__onboard-spine" {
 		return runPrivateOnboardSpine(args, stdin, stdout, stderr)
 	}
+	// Production Home is a composed crossing: host-side canonical-path and
+	// mirror operations stay on Darwin, while only the path-free spine frame
+	// enters the exact helper. Preflight is host-only and writes nothing.
+	if shouldDelegateToHelper() && args[0] == "onboard" && len(args) == 2 {
+		switch args[1] {
+		case "preflight":
+			return runLocal(args, stdin, stdout, stderr)
+		case "home":
+			return brokerOnboardHome(stdout, stderr)
+		}
+	}
 	// The launch-time identity recheck reads HOST files by definition: it must
 	// run locally even when every ordinary verb self-delegates into the helper.
 	if args[0] == "__mount-recheck" || args[0] == "__task-parent-recheck" || args[0] == "__completion-seal-recheck" || args[0] == "__task-skeleton-recover" || args[0] == "__setup-first-task" || args[0] == "__setup-accepted-seal" || args[0] == "__setup-verifier-projection" || args[0] == "__land-sealed" {
@@ -69,6 +80,9 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	// Self-delegation: host-side mc with no direct spine path but a named
 	// warm helper delegates the whole invocation into the lock domain.
 	if shouldDelegateToHelper() {
+		if _, err := ensureRuntimeHelper(); err != nil {
+			return writeVerbError(stdout, stderr, verbs.Usagef("ensure warm helper: %v", err))
+		}
 		if args[0] == "dispatch" {
 			return brokerDispatch(args, stdin, stdout, stderr)
 		}

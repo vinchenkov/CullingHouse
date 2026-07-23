@@ -131,16 +131,21 @@ else
   mkdir -p "$BIN_DIR"
   say "== build (production)"
   ( cd "$REPO_DIR/mc" && mise exec -- go build -o "$BIN_DIR/mc" ./cmd/mc )
+  say "== build (production image, native arm64)"
+  ( cd "$REPO_DIR" && ./runner/image/build-prod.sh ) || \
+    fail "production image build failed — fix the reported build/runtime error, then re-run the front door"
 fi
 say "   installed $BIN_DIR/mc"
 
 # --- 3. Hand off to the wizard ---------------------------------------------
 
 if [ "$DEV" -eq 0 ]; then
-  if ! docker inspect mc-helper >/dev/null 2>&1; then
-    fail "warm helper is not provisioned — production onboarding is incomplete; run the container bootstrap repair, then re-run the front door"
-  fi
-  say "== hand-off: mc onboard (through the warm helper)"
+  [ -z "$MC_HOME_IN" ] || export MC_HOME="$MC_HOME_IN"
+  say "== hand-off: mc onboard preflight"
+  "$BIN_DIR/mc" onboard preflight
+  say "== hand-off: mc onboard home (through the managed helper)"
+  "$BIN_DIR/mc" onboard home
+  say "== hand-off: remaining mc onboard sections"
   exec "$BIN_DIR/mc" onboard
 fi
 
