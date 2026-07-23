@@ -50,6 +50,9 @@ type helperContainerInspect struct {
 		NetworkMode    string   `json:"NetworkMode"`
 		IpcMode        string   `json:"IpcMode"`
 		PidMode        string   `json:"PidMode"`
+		UTSMode        string   `json:"UTSMode"`
+		UsernsMode     string   `json:"UsernsMode"`
+		CgroupnsMode   string   `json:"CgroupnsMode"`
 		Privileged     bool     `json:"Privileged"`
 		CapAdd         []string `json:"CapAdd"`
 		CapDrop        []string `json:"CapDrop"`
@@ -241,6 +244,7 @@ func (m *helperManager) helperExact(c helperContainerInspect, imageID string) bo
 		c.Config.User == "10002:10002" && stringSliceEqual(c.Config.Cmd, []string{"/bin/sleep", "infinity"}) &&
 		helperLabelsExact(c.Config.Labels) &&
 		c.HostConfig.NetworkMode == "none" && c.HostConfig.IpcMode == "private" && c.HostConfig.PidMode == "" &&
+		c.HostConfig.UTSMode == "" && c.HostConfig.UsernsMode == "" && c.HostConfig.CgroupnsMode == "private" &&
 		!c.HostConfig.Privileged && len(c.HostConfig.Binds) == 0 && len(c.HostConfig.CapAdd) == 0 &&
 		stringSliceEqual(c.HostConfig.CapDrop, []string{"ALL"}) && len(c.HostConfig.SecurityOpt) == 0 &&
 		c.HostConfig.NanoCPUs == 500000000 && c.HostConfig.Memory == 536870912 &&

@@ -149,11 +149,188 @@ func Reset(id *RunIdentity, spine string, confirm bool) (any, error) {
 	return map[string]any{"spine": spine, "snapshot": snapshot, "reset": true}, nil
 }
 
-type doctorFinding struct {
+type DoctorFinding struct {
 	Check          string `json:"check"`
 	Status         string `json:"status"` // ok | fail | deferred
 	Detail         string `json:"detail"`
 	OnboardSection string `json:"onboard_section"` // §17 repairing section
+}
+
+type doctorFinding = DoctorFinding
+
+// DoctorRuntimeReport is the path-free helper→host half of production doctor.
+// It contains only spine-derived facts and the kernel capability result; no
+// MC_HOME path or configuration byte crosses into or out of the helper.
+type DoctorRuntimeReport struct {
+	ProtocolVersion     int             `json:"protocol_version"`
+	ReleaseBuildID      string          `json:"release_build_id"`
+	ControlVersion      int             `json:"control_version"`
+	SpineSchemaVersion  int             `json:"spine_schema_version"`
+	ConfigSchemaVersion int             `json:"config_schema_version"`
+	SpineUUID           string          `json:"spine_uuid,omitempty"`
+	Findings            []DoctorFinding `json:"findings"`
+}
+
+type DoctorRuntimeRequest struct {
+	ProtocolVersion     int    `json:"protocol_version"`
+	ReleaseBuildID      string `json:"release_build_id"`
+	ControlVersion      int    `json:"control_version"`
+	SpineSchemaVersion  int    `json:"spine_schema_version"`
+	ConfigSchemaVersion int    `json:"config_schema_version"`
+}
+
+func DoctorRuntimeUnavailable(req DoctorRuntimeRequest, detail string) DoctorRuntimeReport {
+	runes := []rune(detail)
+	if len(runes) > 2048 {
+		detail = string(runes[:2048]) + "…"
+	}
+	return DoctorRuntimeReport{Findings: []DoctorFinding{
+		{Check: "spine", Status: "fail", Detail: "not checked: " + detail, OnboardSection: "home"},
+		{Check: "worksources", Status: "fail", Detail: "not checked: spine unavailable", OnboardSection: "worksource"},
+		{Check: "surfaces", Status: "fail", Detail: "not checked: spine unavailable", OnboardSection: "surfaces"},
+		{Check: "container-runtime", Status: "fail", Detail: detail, OnboardSection: "container"},
+	}, ProtocolVersion: req.ProtocolVersion, ReleaseBuildID: req.ReleaseBuildID,
+		ControlVersion: req.ControlVersion, SpineSchemaVersion: req.SpineSchemaVersion,
+		ConfigSchemaVersion: req.ConfigSchemaVersion}
+}
+
+// DoctorRuntime filters the existing total doctor surface down to facts whose
+// authority lives in the runtime kernel. The helper has no MC_HOME bind, so
+// host findings computed by Doctor are discarded and recomputed on Darwin.
+func DoctorRuntime(spine string, req DoctorRuntimeRequest, releaseBuildID string, controlVersion, configSchemaVersion int) (DoctorRuntimeReport, error) {
+	if req.ProtocolVersion != 1 || req.ReleaseBuildID != releaseBuildID ||
+		req.ControlVersion != controlVersion || req.SpineSchemaVersion != substrate.CurrentSchemaVersion ||
+		req.ConfigSchemaVersion != configSchemaVersion {
+		return DoctorRuntimeReport{}, Domainf("private doctor-runtime build/schema identity mismatch")
+	}
+	res, err := Doctor(nil, spine)
+	if err != nil {
+		return DoctorRuntimeReport{}, err
+	}
+	report := res.(map[string]any)
+	all := report["findings"].([]doctorFinding)
+	keep := map[string]bool{
+		"spine": true, "worksources": true, "surfaces": true, "container-runtime": true,
+	}
+	runtimeFindings := make([]DoctorFinding, 0, len(keep))
+	spineOK := false
+	for _, finding := range all {
+		if keep[finding.Check] {
+			runtimeFindings = append(runtimeFindings, finding)
+			if finding.Check == "spine" && finding.Status == "ok" {
+				spineOK = true
+			}
+		}
+	}
+	result := DoctorRuntimeReport{
+		ProtocolVersion: req.ProtocolVersion, ReleaseBuildID: req.ReleaseBuildID,
+		ControlVersion: req.ControlVersion, SpineSchemaVersion: req.SpineSchemaVersion,
+		ConfigSchemaVersion: req.ConfigSchemaVersion, Findings: runtimeFindings,
+	}
+	if spineOK {
+		inspection, err := inspectSpineReadOnly(spine)
+		if err != nil {
+			return DoctorRuntimeReport{}, err
+		}
+		result.SpineUUID = inspection.uuid
+	}
+	return result, nil
+}
+
+// DoctorHostFacts computes only Darwin-authoritative facts. Passing no spine
+// is deliberate: it makes a host database open impossible, and the filtered
+// result contains only MC_HOME/routing and the two host-service findings.
+func DoctorHostFacts() ([]DoctorFinding, error) {
+	res, err := Doctor(nil, "")
+	if err != nil {
+		return nil, err
+	}
+	report := res.(map[string]any)
+	all := report["findings"].([]doctorFinding)
+	keep := map[string]bool{
+		"mc-home": true, "routing": true, "runtime-auth": true, "supervision": true,
+	}
+	findings := make([]DoctorFinding, 0, len(keep))
+	for _, finding := range all {
+		if keep[finding.Check] {
+			findings = append(findings, finding)
+		}
+	}
+	return findings, nil
+}
+
+// ComposeDoctor joins the two authority-local reports and performs the only
+// cross-kernel comparison: the small deployment UUID mirror versus the
+// helper-proved spine UUID. It preserves Doctor's public finding order.
+func ComposeDoctor(host []DoctorFinding, runtimeReport DoctorRuntimeReport) (any, error) {
+	wantSection := map[string]string{
+		"mc-home": "home", "spine": "home", "worksources": "worksource",
+		"surfaces": "surfaces", "routing": "routing", "container-runtime": "container",
+		"runtime-auth": "runtime-auth", "supervision": "supervision",
+	}
+	if len(host) != 4 || len(runtimeReport.Findings) != 4 {
+		return nil, Domainf("composed doctor halves have invalid finding counts")
+	}
+	byCheck := map[string]DoctorFinding{}
+	for _, finding := range append(append([]DoctorFinding{}, host...), runtimeReport.Findings...) {
+		section, known := wantSection[finding.Check]
+		if !known || finding.OnboardSection != section ||
+			(finding.Status != "ok" && finding.Status != "fail" && finding.Status != "deferred") {
+			return nil, Domainf("invalid composed doctor finding %q", finding.Check)
+		}
+		if _, duplicate := byCheck[finding.Check]; duplicate {
+			return nil, Domainf("duplicate composed doctor finding %q", finding.Check)
+		}
+		byCheck[finding.Check] = finding
+	}
+	for _, required := range []string{"mc-home", "spine", "worksources", "surfaces", "routing", "container-runtime", "runtime-auth", "supervision"} {
+		if _, ok := byCheck[required]; !ok {
+			return nil, Domainf("missing composed doctor finding %q", required)
+		}
+	}
+
+	identity := DoctorFinding{Check: "deployment-identity", Status: "fail", OnboardSection: "home"}
+	switch {
+	case byCheck["mc-home"].Status != "ok":
+		identity.Detail = "not checked: MC_HOME unresolved"
+	case byCheck["spine"].Status != "ok" || runtimeReport.SpineUUID == "":
+		identity.Detail = "not checked: spine unavailable"
+	default:
+		home, err := mcHomeDir()
+		if err != nil {
+			identity.Detail = err.Error()
+			break
+		}
+		mirrored, exists, mirrorErr := readDeploymentMirror(home)
+		switch {
+		case mirrorErr != nil:
+			identity.Detail = mirrorErr.Error()
+		case !exists:
+			identity.Detail = fmt.Sprintf("%s is missing; run the home repair section (§16.4)", filepath.Join(home, deploymentUUIDFilename))
+		case mirrored != runtimeReport.SpineUUID:
+			identity.Detail = fmt.Sprintf("MC_HOME identity %s does not match spine identity %s — restore the matching backup (§16.4)", mirrored, runtimeReport.SpineUUID)
+		default:
+			identity.Status = "ok"
+			identity.Detail = fmt.Sprintf("MC_HOME and spine agree on %s", runtimeReport.SpineUUID)
+		}
+	}
+
+	order := []string{"mc-home", "spine", "deployment-identity", "worksources", "surfaces", "routing", "container-runtime", "runtime-auth", "supervision"}
+	findings := make([]DoctorFinding, 0, len(order))
+	for _, check := range order {
+		if check == "deployment-identity" {
+			findings = append(findings, identity)
+		} else {
+			findings = append(findings, byCheck[check])
+		}
+	}
+	ok := true
+	for _, finding := range findings {
+		if finding.Status == "fail" {
+			ok = false
+		}
+	}
+	return map[string]any{"ok": ok, "findings": findings}, nil
 }
 
 // Doctor validates what Phase 2 can validate — MC_HOME shape, spine

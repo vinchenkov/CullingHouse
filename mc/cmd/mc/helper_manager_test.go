@@ -82,6 +82,7 @@ func exactHelperFixture(names deployment.Names, imageID string) helperContainerI
 	c.Config.Cmd = []string{"/bin/sleep", "infinity"}
 	c.HostConfig.NetworkMode = "none"
 	c.HostConfig.IpcMode = "private"
+	c.HostConfig.CgroupnsMode = "private"
 	c.HostConfig.CapDrop = []string{"ALL"}
 	c.HostConfig.NanoCPUs = 500000000
 	c.HostConfig.Memory = 536870912
@@ -110,6 +111,8 @@ func TestHelperExactRejectsAuthorityWidening(t *testing.T) {
 		"root user":        func(c *helperContainerInspect) { c.Config.User = "0:0" },
 		"tier label":       func(c *helperContainerInspect) { c.Config.Labels["mc-tier"] = "pipeline" },
 		"host network":     func(c *helperContainerInspect) { c.HostConfig.NetworkMode = "host" },
+		"host pid":         func(c *helperContainerInspect) { c.HostConfig.PidMode = "host" },
+		"host userns":      func(c *helperContainerInspect) { c.HostConfig.UsernsMode = "host" },
 		"privileged":       func(c *helperContainerInspect) { c.HostConfig.Privileged = true },
 		"cap add":          func(c *helperContainerInspect) { c.HostConfig.CapAdd = []string{"CHOWN"} },
 		"NNP":              func(c *helperContainerInspect) { c.HostConfig.SecurityOpt = []string{"no-new-privileges:true"} },

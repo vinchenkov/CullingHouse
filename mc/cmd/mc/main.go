@@ -51,16 +51,31 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	if args[0] == "__onboard-spine" {
 		return runPrivateOnboardSpine(args, stdin, stdout, stderr)
 	}
+	if args[0] == "__doctor-runtime" {
+		return runPrivateDoctorRuntime(args, stdin, stdout, stderr)
+	}
 	// Production Home is a composed crossing: host-side canonical-path and
 	// mirror operations stay on Darwin, while only the path-free spine frame
 	// enters the exact helper. Preflight is host-only and writes nothing.
-	if shouldDelegateToHelper() && args[0] == "onboard" && len(args) == 2 {
-		switch args[1] {
-		case "preflight":
-			return runLocal(args, stdin, stdout, stderr)
-		case "home":
-			return brokerOnboardHome(stdout, stderr)
+	if shouldDelegateToHelper() && args[0] == "onboard" {
+		if len(args) == 1 {
+			return writeVerbError(stdout, stderr, verbs.Domainf("production whole-wizard composition is incomplete; run the named onboarding sections in order"))
 		}
+		if len(args) == 2 {
+			switch args[1] {
+			case "preflight":
+				return runLocal(args, stdin, stdout, stderr)
+			case "home":
+				return brokerOnboardHome(stdout, stderr)
+			case "container":
+				return brokerOnboardContainer(args, stdout, stderr)
+			case "verify":
+				return brokerOnboardVerify(args, stdout, stderr)
+			}
+		}
+	}
+	if shouldDelegateToHelper() && args[0] == "doctor" {
+		return brokerDoctor(args, stdout, stderr)
 	}
 	// The launch-time identity recheck reads HOST files by definition: it must
 	// run locally even when every ordinary verb self-delegates into the helper.

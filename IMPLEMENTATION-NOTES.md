@@ -1104,3 +1104,31 @@ rules in code the sealed lane does not own.
   already-binding general setuid boundary; it does not broaden an agent's verb
   authorization or add a new behavior.
 - Needs your decision: no.
+
+## 2026-07-22 — production doctor is composed, never whole-verb delegated
+- Where: Phase 5 `mc doctor`, `mc onboard container`, and `mc onboard verify`;
+  spec §16.4/§17; the exact spine-only helper from `ca4eae4`.
+- Gap: delegating the old whole doctor into the helper made its host checks
+  inspect `/home/mc-model/.mission-control`, which the helper deliberately
+  cannot mount, while a missing helper turned doctor into exit 2 instead of
+  the required complete exit-0 diagnostic report. Running doctor on Darwin
+  would instead violate Inv. 24 by opening the runtime-local spine.
+- Choice: a version-fenced, 64-KiB-bounded private runtime-doctor frame returns
+  exactly four helper-authoritative findings (spine, Worksources, surfaces,
+  and the kernel capability probe) plus the spine UUID. Darwin computes only
+  MC_HOME, routing, runtime-auth, and supervision facts, compares the UUID
+  mirror, and merges the fixed nine-row order. Helper unavailability or a
+  malformed/mismatched response becomes closed runtime findings in the same
+  exit-0 report, never a transport-level doctor failure. Container and Verify
+  reuse the in-process composition. The unnamed production wizard is now
+  explicitly refused until every mixed-authority section has its own split.
+- Evidence: unit tests pin the closed finding grammar/order, mismatch and
+  missing-field refusals, path-free frame, fixed private scope, output bound,
+  and expanded helper namespace inspection. A disposable real deployment
+  returned host Home/routing facts alongside helper spine/capability facts;
+  deployment identity and container-runtime were both `ok`, and `onboard
+  container` returned `ok` without any MC_HOME bind. The disposable resources
+  were removed; focused image Docker tests and the six-leg fast suite passed.
+- Spec impact: none. This realizes the existing two-kernel ownership split and
+  preserves doctor's total diagnostic contract.
+- Needs your decision: no.
