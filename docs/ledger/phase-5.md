@@ -351,3 +351,27 @@ NEXT: generate the resident/dashboard configs and per-user LaunchAgents from
 installed payloads, pin the immutable release identity, verify their exact
 unloaded state, and do not bootstrap them. Live token spend and launchd
 activation remain operator-present gates.
+
+## 2026-07-22 — unloaded native supervision bundle (`89c6f75`)
+
+The production Supervision section now reads the complete Worksource catalog
+through a path-free helper frame and host-rechecks every root before publishing
+anything. It atomically installs the exact resident/dashboard JSON and two
+per-deployment per-user LaunchAgent plists under `MC_HOME/supervision`, with
+absolute executable and installed-release paths, immutable release/schema
+identity, the derived spine volume, loopback dashboard bind, RunAtLoad,
+KeepAlive, throttling, and owner-only log roots.
+
+Preparation checks both labels before and after publication and refuses if
+either is loaded. It never writes the user's LaunchAgents directory and never
+bootstraps a service. Tests parse both JSON configs, lint both plists, validate
+the closed owner-only tree, prove loaded-state refusal and inode-stable replay,
+and exercise host rechecks. The resident now uses the absolute Docker path,
+mounts every Worksource read-only for Homie, and no longer requires fake
+behavior fixtures for real production adapters. Full mc and resident checks
+are green. The production image was rebuilt arm64-native from this commit as
+`sha256:a3fed3e1ab83456db379aca0ccce3210fc35ced7f2160193b71ffac8e3ee37f9`.
+
+NEXT: implement the operator-present activation transaction and real-tick
+receipt plus supervision doctor probe, testing the machinery without loading
+launchd. Then compose the whole wizard; live activation remains gated.

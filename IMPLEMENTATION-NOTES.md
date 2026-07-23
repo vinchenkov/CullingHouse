@@ -1438,3 +1438,35 @@ rules in code the sealed lane does not own.
   handshake field from a reusable development placeholder to the immutable
   production release that the handshake was designed to compare.
 - Needs your decision: no.
+
+## 2026-07-22 — Supervision preparation is an offline atomic release step
+- Where: Phase 5 Supervision; spec §12, §15.3, §17.9, Inv. 22/23.
+- Gap: the installed native sources had no production configuration or
+  init-system definitions. Generating directly into the live per-user
+  LaunchAgents directory would make ordinary development tests capable of
+  starting services. The resident's inherited skeleton config also exposed
+  only one workspace to Homie and required fake behavior fixtures even for a
+  real adapter, so a literal production config would have refused every role.
+- Choice: the production Supervision section first crosses a path-free helper
+  frame to read the complete Worksource catalog, then atomically publishes a
+  closed owner-only bundle under `MC_HOME/supervision`: resident/dashboard
+  JSON plus two per-deployment per-user LaunchAgent plists. Both derived labels
+  must be absent before and after publication. The bundle pins absolute
+  executable/release paths, immutable build/config identity, the derived spine
+  volume, loopback dashboard bind, restart policy, and owner-only log roots;
+  it neither writes `~/Library/LaunchAgents` nor bootstraps launchd. Homie now
+  receives every configured Worksource as a distinct read-only mount, while
+  fake behavior fixtures are required only for routes actually using the fake
+  adapter.
+- Evidence: deployment tests validate the exact tree, owner-only modes,
+  `plutil -lint`, required RunAtLoad/KeepAlive keys, release/workspace fences,
+  loaded-label refusal before publication, and inode-stable replay. The helper
+  frame test proves workspace roots are rechecked on the host. Resident tests
+  prove all-workspace RO mounts and real-adapter launch without fake fixtures.
+  Full `mc/check.sh` and `resident/check.sh` are green. The arm64 production
+  image was rebuilt from `89c6f75` as
+  `sha256:a3fed3e1ab83456db379aca0ccce3210fc35ced7f2160193b71ffac8e3ee37f9`.
+- Spec impact: conservative internal mechanism. It separates deterministic,
+  testable preparation from the spec-mandated operator-present load/tick
+  observation without weakening either requirement.
+- Needs your decision: no.
