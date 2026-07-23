@@ -10,11 +10,9 @@ LAST GREEN SHA: `28d6102` — production reset snapshots first, requires unloade
 supervision, removes only the exact helper by immutable ID and derived local
 volume, and replays from a matching durable backup. Full mc checks are green;
 launchd was not loaded.
-Full `docker_boundary` + full `docker_e2e` (-count=1, `ok mc/e2e 169s`), the
-extended Playwright dashboard smoke, and the install.sh dev walk were last
-green at `d0ef4bb`. The full Docker lanes last ran green at `c8f37e9`-era HEAD
-(26 `docker_boundary` subtests; 10 `docker_e2e` tests including both credential
-legs). The real onboarding crossing was green at `bf5981d`. Production image
+Full Docker lanes (26 `docker_boundary`; 10 `docker_e2e`) were green at
+`c8f37e9`-era HEAD. Extended Playwright smoke and install.sh dev walk were last
+green at `d0ef4bb`; real onboarding crossing at `bf5981d`. Production image
 `mc-prod` rebuilt for `28d6102`:
 `sha256:7b3dbd79f204038bc02dfd477ab2c3899dc535c4c0b1ba1f9a275982af0861ab`,
 arm64/linux, native. LESSON pinned by `ada715d`: the resident's
@@ -70,33 +68,13 @@ the approve landing fence to assignment-armed tasks; v12 retires
       phase3-contract §8 "advances only when" bullets verified green (ledger
       2026-07-22 "§8 sweep" + this readiness check). Operator signed off on
       advancing 2026-07-22.
-  - [x] ADR-016 through ADR-021 boundary design and adversarial review.
-  - [x] Mount policy, jurisdiction, identity/ACL containment, refusal
-        taxonomy, prepare/attest/commit crossing, authorization carrier, and
-        lock-domain guard.
-  - [x] First-task setup, recovery, completion seal, accepted-seal rebuild,
-        disposable Verifier projection, and production Worker/Verifier Docker
-        crossings.
-  - [x] Production sealed pipeline reaches `verified` and `packaged`.
-  - [x] Sealed landing steps 1–4: assignment lane, mount grammar and host
-        anchors, closed envelope arm, fenced lander, closure import, CAS ref,
-        and merge. The lane remains inert end to end.
-  - [x] Adversarial Git corpus gap analysis complete; rename inference pinned.
-  - [x] Operator-approved scoped self-abort, implemented and reviewed.
-  - [x] Landing id and attest-side carrier producer; both inert.
-  - [x] Resident sealed-landing arm and container envelope; inert.
-  - [x] Landing routed through the dispatch seam and turned on atomically.
-  - [x] ADR-022 free-internet credential projection: schema v12, forbidden-env
-        builder + pre-claim refusal, resident token service/writers/broker,
-        spawn-seam projector, gateway deny-root repurpose, doctor gateway
-        retirement, doctor container-runtime capability probe, and the
-        credential-projection Docker acceptance (synthetic mints). Commits
-        `9c45d2b`..`c8f37e9`.
-  - [x] Ran and recorded the complete Phase 3 real-mechanism/Docker acceptance
-        lane: full docker_boundary (26 subtests) + full docker_e2e (10 tests,
-        incl. the two credential legs and the packaged→approve→merge→archived
-        walk) + five-leg fast + all tag vets, all green at HEAD. §8 mechanical
-        checklist satisfied (see ledger 2026-07-22 "§8 sweep").
+  - [x] ADR-016 through ADR-021 boundary design, mount authorization,
+        jurisdiction, prepare/attest/commit, first-task and sealed-tree setup,
+        production Worker/Verifier crossings, and sealed landing are complete.
+  - [x] ADR-022 free-internet credential projection and synthetic-mint Docker
+        acceptance are complete (`9c45d2b`..`c8f37e9`).
+  - [x] Phase contract §8 mechanical checklist, Docker lanes, fast suite, tag
+        vets, and packaged→approve→merge→archived walk were recorded green.
 - [x] Phase 4 — COMPLETE 2026-07-22: all six scenario families and four
       authored deliverables green at `d0ef4bb`; full details are closed in
       `docs/ledger/phase-4.md`. ADR-023 leaves only its production
@@ -199,28 +177,14 @@ _(The parked §3 gateway/forbidden-env scope decision is RESOLVED — see
 
 ## Load-bearing invariants from completed Phase 3 (do not regress)
 
-Full narratives are in `docs/ledger/phase-3.md` and `IMPLEMENTATION-NOTES.md`;
-these are the constraints a Phase 4+ change must not break.
-
-- **Sealed landing** is a SEPARATE lane — the third `preparedDispatch` variant
-  (`landing *preparedLanding`), never a `preparedCandidate`; the spawn seam
-  dereferences `cand.spawn` unguarded, so the separation is the only thing
-  keeping those nil-safe. A landing takes no lease, opens no Run, writes
-  nothing at dispatch; `mc land report` writes. The self-abort gate is ACTION
-  identity, three parts (`MERGE_HEAD`=reviewed SHA, `MERGE_MSG`=a message this
-  landing WROTE, target at frozen preimage) — do not loosen any. The branch
-  comes from the immutable assignment, never `tasks.branch` (`complete.go:163`
-  is that column's only writer, closed to assigned tasks — this is what
-  partitions the lanes). MUST NOT RELAX: `TestNoLandingCellIsPlanAddressable`,
-  `TestPlanMountsRefusesEveryLandingCell` (`landingplan_test.go:77,103`),
+- Sealed landing stays its separate `preparedLanding` lane: no lease/Run/write
+  at dispatch; `mc land report` writes. Keep the three-part self-abort action
+  identity and assignment-derived branch. Pinned tests:
+  `TestNoLandingCellIsPlanAddressable`, `TestPlanMountsRefusesEveryLandingCell`,
   `mc/dispatch/sealed_landing_test.go`, `mc/substrate/landing_fence_test.go`.
-- **ADR-022 credentials** (all green, `9c45d2b`..`c8f37e9`): `--network none`
-  dropped for the AGENT class ONLY (setup/landing/verifier keep it, logged
-  deviation); `resolveGatewaySecretRoots` deny-mounts `MC_HOME/refresh-grants`
-  (repurposed, never delete); `gateway_control_version` retained (golden
-  bytes); the resident's schema mirror tracks the Go schema in lockstep.
-  Catalog/env fencing and the OAuth/static grant union are complete
-  (`675cbe0`, `8886c09`); atomic import is complete (`556dc1e`).
+- ADR-022 opens network only for agents; setup/landing/verifier stay offline.
+  `MC_HOME/refresh-grants` stays protected, and resident schema version stays
+  in lockstep with substrate. Details: `IMPLEMENTATION-NOTES.md`.
 
 ## Known later obligations
 
