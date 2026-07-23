@@ -19,11 +19,11 @@ type Registry map[string]string
 // ProductionRegistry is the shipped §9.1 binding catalog. The fake family is
 // deliberately absent from production.
 func ProductionRegistry() Registry {
-	return Registry{
-		"chatgpt": "codex",
-		"claude":  "claude-sdk",
-		"minimax": "claude-sdk",
+	registry := Registry{}
+	for id, spec := range productionBindings {
+		registry[id] = spec.Harness
 	}
+	return registry
 }
 
 // Route is one validated role row.

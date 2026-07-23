@@ -5,6 +5,7 @@ import (
 
 	"mc/boundary"
 	"mc/refusal"
+	"mc/routing"
 )
 
 // attestCandidateEnvPolicy validates both declared env planes before any
@@ -15,10 +16,24 @@ import (
 // foreign static keys come from the binding catalog, which does not exist
 // yet; the floor and the refresh-token fence carry the row until it does.
 // The refusal names only the enumerated field identifier, never a value.
-func attestCandidateEnvPolicy(selected PrivateDispatchWorksource) *refusal.Refusal {
-	binding := boundary.EnvBinding{Delivery: boundary.EnvDelivery(selected.RuntimeAuthDelivery)}
+func attestCandidateEnvPolicy(selected PrivateDispatchWorksource, bindingID string) *refusal.Refusal {
+	spec, ok := routing.ActiveBinding(bindingID)
+	if !ok {
+		return &refusal.Refusal{Code: refusal.CodeAuthBindingInvalid, Field: refusal.FieldNone, Summary: refusal.SummaryUnparsable}
+	}
+	foreignStaticKeys := []string{}
+	for id, candidate := range routing.ActiveBindings() {
+		if id != bindingID && candidate.DeclaredStaticKey != "" {
+			foreignStaticKeys = append(foreignStaticKeys, candidate.DeclaredStaticKey)
+		}
+	}
+	binding := boundary.EnvBinding{
+		Delivery:               boundary.EnvDelivery(spec.Delivery),
+		ProviderCredentialKeys: spec.ProviderCredentialKeys,
+		DeclaredStaticKey:      spec.DeclaredStaticKey,
+	}
 	for _, policy := range []string{selected.HarnessEnvPolicy, selected.ToolEnvPolicy} {
-		if _, err := boundary.BuildEnvPlan(policy, boundary.EnvGuard{}, binding, nil); err != nil {
+		if _, err := boundary.BuildEnvPlan(policy, boundary.EnvGuard{}, binding, foreignStaticKeys); err != nil {
 			code, summary := refusal.CodeEnvInvalid, refusal.SummaryUnparsable
 			var policyErr *boundary.EnvPolicyError
 			if errors.As(err, &policyErr) && policyErr.Kind == boundary.EnvPolicyForbidden {

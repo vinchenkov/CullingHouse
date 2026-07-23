@@ -1166,3 +1166,30 @@ rules in code the sealed lane does not own.
   Worksource data; crossing them as inert values is the least-authority split
   that preserves the existing §17 reachability and idempotency behavior.
 - Needs your decision: no.
+
+## 2026-07-22 — credential delivery is cataloged per binding, never inferred from a Worksource profile
+- Where: Phase 5 runtime-auth prerequisite; spec §11.4/§17.3; ADR-022 D2–D7;
+  `routing/bindings.go` and the pre-claim env attestation.
+- Gap: the v12 schema put `runtime_auth_delivery` on a sandbox profile, but the
+  default route deliberately mixes MiniMax's materialized static binding with
+  projected Codex/Claude OAuth bindings inside one Worksource. One profile value
+  therefore cannot describe the selected run and could either forbid MiniMax's
+  declared key or admit an OAuth provider key through the wrong plane. The
+  provider credential-key catalog was also still absent, leaving ADR-022 D7's
+  binding-specific fence inert.
+- Choice: the closed production binding catalog now owns harness, credential
+  channel, delivery class, provider credential env names, declared static key,
+  and OAuth authority identity. Pre-claim env attestation uses the binding
+  resolved from the already-attested routing table and supplies every foreign
+  static key to the boundary builder. The legacy profile column remains for
+  schema compatibility but grants no credential authority and is not consulted
+  for the selected binding.
+- Evidence: catalog closure tests bind all three production routes to exact
+  credential metadata. Dispatch tests prove Codex provider/agent-identity keys,
+  Claude provider keys, foreign static keys, refresh material, and the shipped
+  floor refuse before claim, while MiniMax alone admits its declared
+  `ANTHROPIC_AUTH_TOKEN` even when the legacy profile field says projection.
+- Spec impact: none. §11.4 explicitly decides delivery per binding; this removes
+  a contradictory implementation shortcut and activates the existing D7
+  fence. A later schema cleanup may remove the now-derivative profile column.
+- Needs your decision: no.

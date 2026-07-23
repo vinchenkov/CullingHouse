@@ -512,6 +512,9 @@ type preparedCandidate struct {
 	tun        tunables
 	token      string
 	mountState PrivateDispatchMountState
+	// binding is host-attested from routing.md immediately before mount/env
+	// attestation. It is never prepared from helper-owned state.
+	binding string
 }
 
 // attestedDispatch is the attest step's host projection: the resolved route,
@@ -660,6 +663,7 @@ func dispatchAttest(home string, prepared preparedDispatch) (attestedDispatch, e
 	if err != nil {
 		return routingRefusal(reattestedUUID, refusal.SummaryUnresolved, err), nil
 	}
+	cand.binding = route.Binding
 	// Test-fake routing is the only route family that may authorize the
 	// Phase-1 legacy workspace bind, and it now rides the same plan carrier
 	// as every ordinary mount. It cannot be parsed by an untagged production

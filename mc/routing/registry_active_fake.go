@@ -9,3 +9,16 @@ func ActiveRegistry() (Registry, bool) {
 	r["fake"] = "fake"
 	return r, true
 }
+
+func ActiveBinding(id string) (BindingSpec, bool) {
+	if id == "fake" {
+		return BindingSpec{ID: "fake", Harness: "fake", Channel: "fake", Delivery: CredentialProjection}, true
+	}
+	return ProductionBinding(id)
+}
+
+func ActiveBindings() map[string]BindingSpec {
+	out := ProductionBindings()
+	out["fake"] = BindingSpec{ID: "fake", Harness: "fake", Channel: "fake", Delivery: CredentialProjection}
+	return out
+}

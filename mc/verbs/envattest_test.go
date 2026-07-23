@@ -85,6 +85,20 @@ func TestDispatchEnvPolicyPlaneRules(t *testing.T) {
 		}
 	})
 
+	t.Run("selected Codex binding forbids its provider key", func(t *testing.T) {
+		attested := attempt(t, "harness_env_policy", `{"OPENAI_API_KEY":"metered"}`)
+		if attested.refusal == nil || attested.refusal.Code != refusal.CodeEnvForbidden {
+			t.Fatalf("refusal = %+v, want %s", attested.refusal, refusal.CodeEnvForbidden)
+		}
+	})
+
+	t.Run("selected Codex binding forbids another binding's static key", func(t *testing.T) {
+		attested := attempt(t, "harness_env_policy", `{"ANTHROPIC_AUTH_TOKEN":"foreign"}`)
+		if attested.refusal == nil || attested.refusal.Code != refusal.CodeEnvForbidden {
+			t.Fatalf("refusal = %+v, want %s", attested.refusal, refusal.CodeEnvForbidden)
+		}
+	})
+
 	t.Run("the sentinel is enumerated but the shipped floor does not grow", func(t *testing.T) {
 		attested := attempt(t, "harness_env_policy", `{"SENTINEL_API_KEY":"planted"}`)
 		if attested.refusal != nil {
@@ -98,4 +112,20 @@ func TestDispatchEnvPolicyPlaneRules(t *testing.T) {
 			t.Fatalf("declared tool secret refused: %+v", attested.refusal)
 		}
 	})
+}
+
+func TestDispatchMiniMaxBindingAllowsOnlyItsDeclaredStaticKey(t *testing.T) {
+	db := dvSpine(t)
+	// seeded selects Worker, which the default routing table binds to MiniMax.
+	dvInsertTask(t, db, dvTask(1, dispatch.ScopeTask, dispatch.StatusSeeded, 2))
+	dvExec(t, db, `UPDATE sandbox_profiles SET harness_env_policy=? WHERE id='default'`,
+		`{"ANTHROPIC_AUTH_TOKEN":"subscription"}`)
+	prepared := dfPrepare(t, db, dfRequestID)
+	attested, err := dispatchAttest(os.Getenv("MC_HOME"), prepared)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if attested.refusal != nil && attested.refusal.Code == refusal.CodeEnvForbidden {
+		t.Fatalf("MiniMax's declared static key was rejected by the profile's stale projection field: %+v", attested.refusal)
+	}
 }
