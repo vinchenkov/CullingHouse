@@ -105,7 +105,7 @@ func resolveTaskLocalSkeleton(workspaceRoot string, taskID int64, ownerUID int) 
 		if row.Rel != "" {
 			path = filepath.Join(root, filepath.FromSlash(row.Rel))
 		}
-		id, err := resolveTaskPlanRow(row, path, ownerUID)
+		id, err := resolveTaskPlanRow(row, path, ownerUID, "task-local")
 		if err != nil {
 			return nil, err
 		}
@@ -114,8 +114,8 @@ func resolveTaskLocalSkeleton(workspaceRoot string, taskID int64, ownerUID int) 
 	return roots, nil
 }
 
-func resolveTaskPlanRow(row taskPlanRow, path string, ownerUID int) (boundary.ProtectedID, error) {
-	name := "task-local row " + row.Dest
+func resolveTaskPlanRow(row taskPlanRow, path string, ownerUID int, class string) (boundary.ProtectedID, error) {
+	name := class + " row " + row.Dest
 	info, err := os.Lstat(path)
 	if os.IsNotExist(err) {
 		return boundary.ProtectedID{}, &boundary.MountError{
