@@ -417,17 +417,38 @@ func validTaskPlanDestination(dest string) bool {
 		return false
 	}
 	name, leaf, ok := strings.Cut(rest, "/")
-	if !ok || !validTaskWorktreeName(name) {
+	if !ok || !validManagedWorktreeName(name) {
 		return false
 	}
 	return leaf == "commondir" || leaf == "gitdir" || leaf == "config.worktree"
+}
+
+// validManagedWorktreeName accepts exactly the two alternatives of the closed
+// ADR-017 D6 worktree-name grammar (generalized by ADR-025 D2):
+// `mc-task-<canonical positive decimal>` for a standalone task-local
+// repository, and `mc-initiative-<canonical positive decimal>` for an
+// initiative's one shared worktree. The prefixes are distinct literals, so the
+// families cannot collide.
+func validManagedWorktreeName(name string) bool {
+	return validTaskWorktreeName(name) || validInitiativeWorktreeName(name)
 }
 
 // validTaskWorktreeName accepts exactly `mc-task-<canonical positive
 // decimal>` — the pinned administrative worktree name of a task-local
 // repository.
 func validTaskWorktreeName(name string) bool {
-	id, ok := strings.CutPrefix(name, "mc-task-")
+	return validManagedWorktreeSuffix(name, "mc-task-")
+}
+
+// validInitiativeWorktreeName accepts exactly `mc-initiative-<canonical
+// positive decimal>` — the pinned administrative worktree name of an
+// initiative's shared store (ADR-025 D1).
+func validInitiativeWorktreeName(name string) bool {
+	return validManagedWorktreeSuffix(name, "mc-initiative-")
+}
+
+func validManagedWorktreeSuffix(name, prefix string) bool {
+	id, ok := strings.CutPrefix(name, prefix)
 	if !ok || id == "" || len(id) > 19 || id[0] == '0' {
 		return false
 	}

@@ -427,7 +427,12 @@ identical on the host and in the container: the whole task root binds at
 `/workspace`, so `source/.git`, `git/worktrees/<mc-task-name>/commondir`, and
 `git/worktrees/<mc-task-name>/gitdir` resolve without host/container path
 translation. Setup creates those three files with fixed relative contents and
-covers them RO in every agent. An absent or nonempty
+covers them RO in every agent. For an initiative (ADR-025 D1) the invariant is
+narrower: the pointer BYTES are identical and resolve in the container, but the
+shared worktree is external to the store, so they do not resolve on the host.
+That is deliberate and unused — the host never executes Git (ADR-016 D5), and
+writing the container-relative bytes verbatim keeps the initiative rows
+byte-identical to this proven task grammar. An absent or nonempty
 `config.worktree` is replaced by a generated empty RO file; it can never
 reintroduce repository config. A generated empty RO cover also reserves
 `source/.mission-control`; setup, seal, and landing reject any commit tree
@@ -576,12 +581,14 @@ inert generated RO marker, and no Git source, object store, or repository
 config is mounted. It therefore exposes only the pinned committed tree, not
 dirty/unreachable bytes or credential-bearing control state.
 
-Initiative-wave/shared-worktree representation and mount semantics remain
-Parked. This ADR accepts no initiative mutable-worktree or Git-control arm; an
-initiative/child candidate needing that path is not eligible for the accepted
-Phase-3 spawn path until the operator resolves the parked design and a
-follow-on ADR extends this closed table. Nothing here treats a standalone
-task worktree as that fallback.
+Initiative-wave/shared-worktree representation and mount semantics were Parked
+here and are RESOLVED by ADR-025, the follow-on ADR this paragraph required.
+This ADR itself still accepts no initiative mutable-worktree or Git-control
+arm: an initiative/child candidate reaches a mount arm only through ADR-025's
+extension of this closed table, under ADR-023 D1/D3/D5 (shared branch
+`mc/initiative-<id>`, branchless children, one shared worktree), and until each
+ADR-025 slice lands the candidate stays refused. Nothing here or there treats a
+standalone task worktree as that fallback.
 
 The two cross-Worksource exceptions are closed:
 
@@ -645,9 +652,9 @@ path that is not a strict descendant or collides with another destination.
 | `/workspace/git/objects/pack` | setup-generated exact sealed reachable-object pack directory, RO cover | every standalone-task role; Worker adds only loose local objects |
 | `/workspace/git/packed-refs` | generated empty regular file, RO cover | every standalone-task role |
 | `/workspace/git/shallow` | generated empty regular file, RO cover | every standalone-task role |
-| `/workspace/git/worktrees/<mc-task-name>/commondir` | generated relative pointer to the task-local `git` root, RO cover | every standalone-task role |
-| `/workspace/git/worktrees/<mc-task-name>/gitdir` | generated relative pointer back to `/workspace/source/.git`, RO cover | every standalone-task role |
-| `/workspace/git/worktrees/<mc-task-name>/config.worktree` | generated empty regular file, RO cover | every standalone-task role |
+| `/workspace/git/worktrees/<mc-worktree-name>/commondir` | generated relative pointer to the task-local or initiative-local `git` root, RO cover | every standalone-task role; every initiative-child role (ADR-025 D2) |
+| `/workspace/git/worktrees/<mc-worktree-name>/gitdir` | generated relative pointer back to `/workspace/source/.git`, RO cover | every standalone-task role; every initiative-child role (ADR-025 D2) |
+| `/workspace/git/worktrees/<mc-worktree-name>/config.worktree` | generated empty regular file, RO cover | every standalone-task role; every initiative-child role (ADR-025 D2) |
 | `/workspace/artifacts/<artifact-target>/<suffix>` | one allowlisted artifact source, bilateral mode (normally RW) | ordinary owning Worksource only |
 | `/workspace/references/<reference-target>/<suffix>` | one allowlisted profile reference, RO | ordinary owning Worksource only |
 | `/workspace/seeding/<workspace-target>/source` | clean committed-tree projection of a pinned ref, or registered non-repository root, RO | Strategist(propose) only |
@@ -701,6 +708,15 @@ mount tables; they never inherit the agent table:
 | landing `/repo/task` | exact sealed task-local root and reviewed repository, RO |
 | landing `/mc/landing.json` | exact task, local/real branch, verified SHA, target ref, pre-merge SHA, closure digest, landing action identity, expected Git topology, and cleanup path, RO |
 
+`<mc-worktree-name>` in the agent table above is the closed two-alternative
+grammar `mc-task-<id>` (a standalone task's local repository) or
+`mc-initiative-<id>` (an initiative's one shared worktree, ADR-025 D1/D2). The
+prefixes are distinct literals and the id is a canonical positive decimal, so
+the families cannot collide. ADR-025 D2 grants an initiative child exactly the
+rows of that table with initiative-local sources: no destination is added, and
+the generated relative pointer bytes are the standalone-task bytes with the
+worktree name substituted.
+
 Each action receives only the rows it names. Both use the baked fixed setup/
 landing binary, `network=none`, a cleared environment plus generated safe Git
 configuration, and no harness, runner-source bind, spine, session, HOME/cache,
@@ -732,8 +748,12 @@ still-matching empty root is removed by the resident; no real ref/object was
 created. Run-keyed seal roots are removed only under the producer/lease/request
 fence above and when no accepted completion, retry, review, or landing row
 references their exact identity/digest.
-Initiative paths are not allocated under this convention while their
-representation is Parked.
+Initiative paths are allocated by ADR-025 D1 under their own convention, not
+this one: the sanitized store is
+`<workspace_root>/.mission-control/initiatives/initiative-<id>/{git,source}`
+and the one shared worktree is `<workspace_root>/.mc-worktrees/initiative-<id>`
+(ADR-023 D5), so the shared worktree is the sole row whose host source is not a
+child of the bound `/workspace` root.
 
 Landing is topology-fenced and idempotent; it creates no third authoritative
 receipt file. The canonical spine landing-pending/action identity plus exact
@@ -764,9 +784,10 @@ MiniMax's gateway delivery has no control-directory mount. No profile may
 choose a destination from this table or add another `/mc`, `/app`, `/home`,
 `/etc`, seeding, operator, trace, attachment, or records destination.
 
-The accepted non-initiative durable-record grant is also closed by role.
-Initiative/child rows do not inherit this table while their mount design is
-Parked:
+The accepted durable-record grant is also closed by role. An initiative child
+inherits exactly the standalone-task Worker/Verifier/Packager rows of this
+table under ADR-025 D2/D5 (its Refiner keeps refusing, as no standalone Refiner
+arm exists either); the arc row's own roles are granted by ADR-025 D7/D8:
 
 | Pipeline role | RO durable-record inputs | RW durable-record outputs |
 |---|---|---|

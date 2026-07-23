@@ -49,21 +49,21 @@ var nonBind = disposition{nonBind: true}
 // path would fuse the least- and most-privileged grants in the system.
 var adr017Rows = map[string]disposition{
 	// Task-local skeleton (:636-650)
-	"`/workspace`":                                              typedWithNonBind(KindTaskRoot), // bind arm, else image-rootfs
-	"`/workspace/source`":                                       typed(KindTaskSource, KindWorkspaceCommittedProjection, KindExecutionProjection, KindWorkspaceRegisteredRoot),
-	"`/workspace/source/.git`":                                  typed(KindWorkspaceSourceGitCover),
-	"`/workspace/source/.mission-control`":                      typed(KindWorkspaceSourceMissionControlCover),
-	"`/workspace/git`":                                          typed(KindTaskGit),
-	"`/workspace/git/config`":                                   typed(KindTaskGitConfigCover),
-	"`/workspace/git/hooks`":                                    typed(KindTaskGitHooksCover),
-	"`/workspace/git/info`":                                     typed(KindTaskGitInfoCover),
-	"`/workspace/git/objects/info`":                             typed(KindTaskGitObjectsInfoCover),
-	"`/workspace/git/objects/pack`":                             typed(KindSealedPack),
-	"`/workspace/git/packed-refs`":                              typed(KindTaskGitPackedRefsCover),
-	"`/workspace/git/shallow`":                                  typed(KindTaskGitShallowCover),
-	"`/workspace/git/worktrees/<mc-task-name>/commondir`":       typed(KindTaskGitWorktreeCommondirCover),
-	"`/workspace/git/worktrees/<mc-task-name>/gitdir`":          typed(KindTaskGitWorktreeGitdirCover),
-	"`/workspace/git/worktrees/<mc-task-name>/config.worktree`": typed(KindTaskGitWorktreeConfigCover),
+	"`/workspace`":                                                  typedWithNonBind(KindTaskRoot), // bind arm, else image-rootfs
+	"`/workspace/source`":                                           typed(KindTaskSource, KindWorkspaceCommittedProjection, KindExecutionProjection, KindWorkspaceRegisteredRoot),
+	"`/workspace/source/.git`":                                      typed(KindWorkspaceSourceGitCover),
+	"`/workspace/source/.mission-control`":                          typed(KindWorkspaceSourceMissionControlCover),
+	"`/workspace/git`":                                              typed(KindTaskGit),
+	"`/workspace/git/config`":                                       typed(KindTaskGitConfigCover),
+	"`/workspace/git/hooks`":                                        typed(KindTaskGitHooksCover),
+	"`/workspace/git/info`":                                         typed(KindTaskGitInfoCover),
+	"`/workspace/git/objects/info`":                                 typed(KindTaskGitObjectsInfoCover),
+	"`/workspace/git/objects/pack`":                                 typed(KindSealedPack),
+	"`/workspace/git/packed-refs`":                                  typed(KindTaskGitPackedRefsCover),
+	"`/workspace/git/shallow`":                                      typed(KindTaskGitShallowCover),
+	"`/workspace/git/worktrees/<mc-worktree-name>/commondir`":       typed(KindTaskGitWorktreeCommondirCover),
+	"`/workspace/git/worktrees/<mc-worktree-name>/gitdir`":          typed(KindTaskGitWorktreeGitdirCover),
+	"`/workspace/git/worktrees/<mc-worktree-name>/config.worktree`": typed(KindTaskGitWorktreeConfigCover),
 
 	// Allowlisted ordinary sources: the union predicate, zero claim (:651-652).
 	"`/workspace/artifacts/<artifact-target>/<suffix>`":   ordinary,

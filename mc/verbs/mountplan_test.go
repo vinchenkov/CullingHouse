@@ -421,3 +421,45 @@ func TestPlanMountsSortsEntriesByDestinationNotRequestOrder(t *testing.T) {
 		t.Fatalf("entries not sorted by destination: %q, %q", entries[0].Destination, entries[1].Destination)
 	}
 }
+
+// The ADR-017 D6 worktree-name grammar is closed over exactly two alternatives
+// after ADR-025 D2: mc-task-<id> for a standalone task and mc-initiative-<id>
+// for an initiative's one shared worktree. The prefixes are distinct literals,
+// so the two families cannot collide, and every other shape stays refused.
+func TestManagedWorktreeNameGrammarIsClosedOverBothFamilies(t *testing.T) {
+	good := []string{"mc-task-1", "mc-task-42", "mc-task-9223372036854775807",
+		"mc-initiative-1", "mc-initiative-42", "mc-initiative-9223372036854775807"}
+	for _, name := range good {
+		if !validManagedWorktreeName(name) {
+			t.Errorf("worktree name %q rejected", name)
+		}
+	}
+	bad := []string{"", "mc-task-", "mc-initiative-", "mc-task-0", "mc-initiative-0",
+		"mc-task-01", "mc-initiative-01", "mc-task--1", "mc-initiative-1a",
+		"mc-task-1/x", "mc-INITIATIVE-1", "mc-initiative", "initiative-1",
+		"mc-task-12345678901234567890", "mc-initiative-12345678901234567890"}
+	for _, name := range bad {
+		if validManagedWorktreeName(name) {
+			t.Errorf("worktree name %q accepted", name)
+		}
+	}
+}
+
+// Both worktree families' destination cells are table cells; the leaf set stays
+// closed to the three generated pointer covers.
+func TestValidTaskPlanDestinationAcceptsBothWorktreeFamilies(t *testing.T) {
+	for _, wt := range []string{"mc-task-7", "mc-initiative-7"} {
+		for _, leaf := range []string{"commondir", "gitdir", "config.worktree"} {
+			dest := "/workspace/git/worktrees/" + wt + "/" + leaf
+			if !validTaskPlanDestination(dest) {
+				t.Errorf("destination %q rejected", dest)
+			}
+		}
+		for _, leaf := range []string{"HEAD", "index", "locked", ""} {
+			dest := "/workspace/git/worktrees/" + wt + "/" + leaf
+			if validTaskPlanDestination(dest) {
+				t.Errorf("destination %q accepted", dest)
+			}
+		}
+	}
+}
