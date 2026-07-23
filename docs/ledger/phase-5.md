@@ -71,3 +71,20 @@ recorded in `IMPLEMENTATION-NOTES.md`; no new ADR is needed.
 
 NEXT: implement and test the private `__onboard-spine` state matrix, then the
 Darwin helper provision/mirror/capability composition.
+
+## 2026-07-22 — private path-free spine initializer (`e0a0397`)
+
+The Linux same-binary crossing now exposes strict-decoded
+`__onboard-spine` only under the helper's fixed scope. Its 64-KiB-bounded frame
+carries protocol/schema identity plus mirror present/absent evidence and no
+path, home, config, routing, Worksource, or credential field. The helper
+computes all database facts from its fixed spine path.
+
+The test matrix proves fresh initialize, committed-meta/absent-mirror crash
+repair, matching idempotence, mismatch refusal, empty-volume spine loss,
+foreign non-meta refusal, known-old migration, and newer-schema refusal. The
+initializer secures the volume root/database modes and never initializes over
+ambiguous bytes. The six-leg fast suite is green.
+
+NEXT: build the Darwin exact helper manager and compose home mirror publication
+plus the existing kernel capability probe around this crossing.

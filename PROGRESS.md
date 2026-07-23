@@ -6,10 +6,10 @@ REPO PATH: `~/dev/ai/homie`. Never relocate this repo into `~/Documents`,
 `~/Desktop`, or `~/Downloads`: macOS TCC can revoke an agent session's own
 filesystem access there during fan-out. Full Disk Access does not fix it.
 
-LAST GREEN SHA: `e7c4ca2` — Phase 5 bootstrap preflight is fail-closed,
+LAST GREEN SHA: `e0a0397` — Phase 5 bootstrap preflight is fail-closed,
 credential-store ambiguity refuses, and deployment-derived helper/volume
-identities are pinned; the six-leg fast suite is green (resident/dashboard
-listener tests rerun with loopback permission).
+identities plus the path-free private spine initializer are pinned; the six-leg
+fast suite is green (resident/dashboard listener tests rerun with loopback permission).
 Full `docker_boundary` + full `docker_e2e` (-count=1, `ok mc/e2e 169s`), the
 extended Playwright dashboard smoke, and the install.sh dev walk were last
 green at `d0ef4bb`. Docker lanes last ran green
@@ -117,6 +117,8 @@ the approve landing fence to assignment-armed tasks; v12 retires
         resident startup before any token-free route can launch (`9cec34f`).
   - [x] Canonical MC_HOME aliases derive one domain-separated runtime identity;
         different homes cannot share helper or spine-volume names (`e7c4ca2`).
+  - [x] Private `__onboard-spine` has a strict path-free frame and complete
+        init/repair/match/mismatch/loss/migrate/newer state matrix (`e0a0397`).
 - [ ] Release prep — install/onboard front door and construction-document
       disposition.
 
@@ -199,6 +201,6 @@ native resume, container reconciliation, Homie credential projection,
 dashboard LaunchAgent generation, and the four non-Console tabs. Details and
 commit map are in the closed Phase 4 ledger.
 
-NEXT: implement the path-free private `__onboard-spine` state matrix inside
-Linux `mc`, then compose the Darwin helper provision/mirror/capability crossing.
-Keep live-token and launchd-load legs parked.
+NEXT: compose the Darwin exact-image/volume/helper manager, mirror publication,
+and capability probe around `__onboard-spine`; then route production Home
+through it. Keep live-token and launchd-load legs parked.
