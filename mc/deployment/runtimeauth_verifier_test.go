@@ -13,11 +13,13 @@ import (
 func verifierRunnerSource(t *testing.T, root string) string {
 	t.Helper()
 	source := filepath.Join(root, "release", "runner")
-	if err := os.MkdirAll(filepath.Join(source, "agent-runner", "adapters"), 0o700); err != nil {
-		t.Fatal(err)
+	for _, rel := range runnerReleaseDirs[1:] {
+		if err := os.MkdirAll(filepath.Join(source, filepath.FromSlash(rel)), 0o700); err != nil {
+			t.Fatal(err)
+		}
 	}
-	for _, name := range []string{"codex.ts", "claude.ts"} {
-		if err := os.WriteFile(filepath.Join(source, "agent-runner", "adapters", name), []byte("// fixture\n"), 0o600); err != nil {
+	for _, rel := range runnerReleaseFiles {
+		if err := os.WriteFile(filepath.Join(source, filepath.FromSlash(rel)), []byte("// fixture\n"), 0o600); err != nil {
 			t.Fatal(err)
 		}
 	}

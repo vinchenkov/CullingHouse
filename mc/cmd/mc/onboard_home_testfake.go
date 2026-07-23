@@ -4,8 +4,8 @@ package main
 
 import "io"
 
-func brokerOnboardHome(stdout, stderr io.Writer) int {
-	return runLocal([]string{"onboard", "home"}, nil, stdout, stderr)
+func brokerOnboardHome(args []string, stdout, stderr io.Writer) int {
+	return runLocal(args, nil, stdout, stderr)
 }
 
 func brokerOnboardContainer(args []string, stdout, stderr io.Writer) int {

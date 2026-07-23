@@ -61,6 +61,10 @@ type OnboardArgs struct {
 	CodexAuthFile         string
 	ClaudeCredentialsFile string
 	MinimaxTokenFile      string
+	// ReleaseSource is the repo's runner/ tree supplied only by install.sh.
+	// Home copies its fixed production manifest into MC_HOME; deployments never
+	// execute runner source directly from the clone.
+	ReleaseSource string
 	// Tunables; zero = accept the §16.3 schema defaults.
 	TimeoutMinutes      int
 	GraceMinutes        int
@@ -119,7 +123,18 @@ func onboardSection(section string, a OnboardArgs) (string, string, error) {
 	case "preflight":
 		return onboardPreflight()
 	case "home":
-		return onboardHome(a.Spine)
+		status, detail, err := onboardHome(a.Spine)
+		if err != nil || a.ReleaseSource == "" {
+			return status, detail, err
+		}
+		releaseStatus, err := installOnboardRunnerRelease(a.ReleaseSource)
+		if err != nil {
+			return "", "", err
+		}
+		if releaseStatus == "done" {
+			status = "done"
+		}
+		return status, detail + "; runner release " + releaseStatus, nil
 	case "runtime-auth":
 		return "deferred", "subscription auth flows, live no-op turns, and the forbidden-env scan run in Phase 3/5 (§11.4, §17)", nil
 	case "routing":
@@ -140,6 +155,18 @@ func onboardSection(section string, a OnboardArgs) (string, string, error) {
 		return onboardVerify(a.Spine)
 	}
 	return "", "", Usagef("unknown onboarding section %q", section)
+}
+
+func installOnboardRunnerRelease(source string) (string, error) {
+	home, err := mcHomeDir()
+	if err != nil {
+		return "", err
+	}
+	status, err := deployment.InstallRunnerRelease(home, source)
+	if err != nil {
+		return "", Domainf("install production runner release: %v", err)
+	}
+	return status, nil
 }
 
 const deploymentUUIDFilename = "deployment.uuid"

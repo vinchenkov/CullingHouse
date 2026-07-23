@@ -190,10 +190,7 @@ func (v *AdapterNoopVerifier) Verify(binding, stagedGrantDir string) error {
 	if !ok {
 		return fmt.Errorf("unknown production binding %q", binding)
 	}
-	if err := requireOwnerOnlyDirectory(v.RunnerSourceDir, "installed runner source"); err != nil {
-		return err
-	}
-	if _, err := os.Stat(filepath.Join(v.RunnerSourceDir, "agent-runner", "adapters", "codex.ts")); err != nil {
+	if err := ValidateRunnerRelease(v.RunnerSourceDir); err != nil {
 		return fmt.Errorf("installed runner source is incomplete: %w", err)
 	}
 	root, err := os.MkdirTemp(filepath.Dir(stagedGrantDir), ".runtime-auth-verify-")

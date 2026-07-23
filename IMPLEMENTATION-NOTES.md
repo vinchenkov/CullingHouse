@@ -1337,3 +1337,27 @@ rules in code the sealed lane does not own.
   route and makes the existing fail-closed publication rule observable at the
   actual adapter boundary.
 - Needs your decision: no.
+
+## 2026-07-22 — Home onboarding atomically owns the production runner release
+- Where: Phase 5 install/Home and image source mount; spec §11.2, §17.2.
+- Gap: production containers bind runner source read-only rather than baking it
+  into the image, but the deployment had no canonical installed source tree.
+  Running from the repository clone would couple a live deployment to mutable
+  development bytes and left Runtime-auth's real verifier permanently refused.
+- Choice: `install.sh` passes its absolute repository `runner/` path only as
+  evidence to `mc onboard home`. The host-side Home section validates
+  operator ownership, excludes symlinks/group-writable files, copies a fixed
+  five-file production manifest into an owner-only sibling stage, fsyncs it,
+  and atomically publishes `MC_HOME/release/runner`. Tests, fake harnesses,
+  package metadata, and provider state are not copied. Replays preserve
+  directory identity when bytes match; upgrades atomically exchange the whole
+  tree. Runtime-auth validates that exact closed tree before mounting it.
+- Evidence: deployment tests cover closed-manifest publication, file/directory
+  modes, idempotent identity, changed-release replacement, symlink refusal
+  before writes, and unexpected-entry refusal. A real CLI test crosses the
+  Home flag, both production and fake-tag builds compile, the install shell
+  contract passes, and the fixed six-leg fast suite is green.
+- Spec impact: conservative internal mechanism. It implements the spec's
+  runner-source bind while preserving the rule that setup writes through the
+  wizard under MC_HOME rather than teaching the shell front door setup logic.
+- Needs your decision: no.

@@ -10,10 +10,18 @@ import (
 	"io"
 	"os/exec"
 
+	"mc/deployment"
 	"mc/verbs"
 )
 
-func brokerOnboardHome(stdout, stderr io.Writer) int {
+func brokerOnboardHome(args []string, stdout, stderr io.Writer) int {
+	a, err := parseOnboardArgs(args[1:])
+	if err != nil {
+		return writeVerbError(stdout, stderr, err)
+	}
+	if a.Section != "home" {
+		return writeVerbError(stdout, stderr, verbs.Usagef("usage: mc onboard home [--release-source <runner-dir>]"))
+	}
 	req, err := verbs.PrepareOnboardHome()
 	if err != nil {
 		return writeVerbError(stdout, stderr, err)
@@ -55,6 +63,20 @@ func brokerOnboardHome(stdout, stderr io.Writer) int {
 	status, detail, err := verbs.FinalizeOnboardHome(result)
 	if err != nil {
 		return writeVerbError(stdout, stderr, err)
+	}
+	if a.ReleaseSource != "" {
+		home, err := configuredCanonicalHome()
+		if err != nil {
+			return writeVerbError(stdout, stderr, verbs.Usagef("resolve runner release home: %v", err))
+		}
+		releaseStatus, err := deployment.InstallRunnerRelease(home, a.ReleaseSource)
+		if err != nil {
+			return writeVerbError(stdout, stderr, verbs.Domainf("install production runner release: %v", err))
+		}
+		if releaseStatus == "done" {
+			status = "done"
+		}
+		detail += "; runner release " + releaseStatus
 	}
 	return writeOnboardSection(stdout, stderr, "home", status, detail)
 }
