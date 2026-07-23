@@ -496,6 +496,7 @@ func parseOnboardArgs(args []string) (verbs.OnboardArgs, error) {
 	fs.StringVar(&a.MinimaxTokenFile, "minimax-token-file", "", "owner-only MiniMax token source")
 	fs.BoolVar(&a.AcquireRuntimeAuth, "acquire", false, "run isolated provider-owned OAuth subscription logins")
 	fs.StringVar(&a.ReleaseSource, "release-source", "", "repository runner source (install.sh only)")
+	fs.StringVar(&a.HostReleaseSource, "host-release-source", "", "repository root for native host payloads (install.sh only)")
 	fs.IntVar(&a.TimeoutMinutes, "timeout-minutes", 0, "lease timeout")
 	fs.IntVar(&a.GraceMinutes, "grace-minutes", 0, "lease grace")
 	fs.IntVar(&a.HeartbeatIntervalS, "heartbeat-interval-s", 0, "heartbeat interval")

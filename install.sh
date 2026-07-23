@@ -144,7 +144,8 @@ if [ "$DEV" -eq 0 ]; then
   say "== hand-off: mc onboard preflight"
   "$BIN_DIR/mc" onboard preflight
   say "== hand-off: mc onboard home (through the managed helper)"
-  "$BIN_DIR/mc" onboard home --release-source "$REPO_DIR/runner"
+  "$BIN_DIR/mc" onboard home --release-source "$REPO_DIR/runner" \
+    --host-release-source "$REPO_DIR"
   say "== hand-off: remaining mc onboard sections"
   exec "$BIN_DIR/mc" onboard
 fi
@@ -158,5 +159,6 @@ ask CONSOLE_TZ "Daily Console timezone (IANA)" "${CONSOLE_TZ:-$(readlink /etc/lo
 say "== hand-off: mc onboard (development tier)"
 MC_HOME="$MC_HOME_IN" MC_SPINE="$MC_HOME_IN/spine.db" exec "$BIN_DIR/mc" onboard \
   --release-source "$REPO_DIR/runner" \
+  --host-release-source "$REPO_DIR" \
   --worksource "$WORKSOURCE" --workspace-root "$WORKSPACE_ROOT" \
   --console-hour "$CONSOLE_HOUR" --console-minute "$CONSOLE_MINUTE" --console-tz "$CONSOLE_TZ"

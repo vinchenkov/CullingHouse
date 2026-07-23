@@ -65,7 +65,8 @@ type OnboardArgs struct {
 	// ReleaseSource is the repo's runner/ tree supplied only by install.sh.
 	// Home copies its fixed production manifest into MC_HOME; deployments never
 	// execute runner source directly from the clone.
-	ReleaseSource string
+	ReleaseSource     string
+	HostReleaseSource string
 	// Tunables; zero = accept the §16.3 schema defaults.
 	TimeoutMinutes      int
 	GraceMinutes        int
@@ -125,17 +126,30 @@ func onboardSection(section string, a OnboardArgs) (string, string, error) {
 		return onboardPreflight()
 	case "home":
 		status, detail, err := onboardHome(a.Spine)
-		if err != nil || a.ReleaseSource == "" {
+		if err != nil {
 			return status, detail, err
 		}
-		releaseStatus, err := installOnboardRunnerRelease(a.ReleaseSource)
-		if err != nil {
-			return "", "", err
+		if a.ReleaseSource != "" {
+			releaseStatus, err := installOnboardRunnerRelease(a.ReleaseSource)
+			if err != nil {
+				return "", "", err
+			}
+			if releaseStatus == "done" {
+				status = "done"
+			}
+			detail += "; runner release " + releaseStatus
 		}
-		if releaseStatus == "done" {
-			status = "done"
+		if a.HostReleaseSource != "" {
+			hostStatus, err := installOnboardHostRelease(a.HostReleaseSource)
+			if err != nil {
+				return "", "", err
+			}
+			if hostStatus == "done" {
+				status = "done"
+			}
+			detail += "; host release " + hostStatus
 		}
-		return status, detail + "; runner release " + releaseStatus, nil
+		return status, detail, nil
 	case "runtime-auth":
 		return "deferred", "subscription auth flows, live no-op turns, and the forbidden-env scan run in Phase 3/5 (§11.4, §17)", nil
 	case "routing":
@@ -166,6 +180,18 @@ func installOnboardRunnerRelease(source string) (string, error) {
 	status, err := deployment.InstallRunnerRelease(home, source)
 	if err != nil {
 		return "", Domainf("install production runner release: %v", err)
+	}
+	return status, nil
+}
+
+func installOnboardHostRelease(source string) (string, error) {
+	home, err := mcHomeDir()
+	if err != nil {
+		return "", err
+	}
+	status, err := deployment.InstallHostRelease(home, source)
+	if err != nil {
+		return "", Domainf("install native host release: %v", err)
 	}
 	return status, nil
 }

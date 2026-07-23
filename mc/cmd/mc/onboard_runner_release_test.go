@@ -30,12 +30,35 @@ func onboardRunnerSource(t *testing.T) string {
 	return root
 }
 
-func TestOnboardHomePublishesTheInstallerSuppliedRunnerRelease(t *testing.T) {
+func onboardHostSource(t *testing.T) string {
+	t.Helper()
+	root := filepath.Join(t.TempDir(), "repo")
+	files := []string{
+		"dashboard/src/api.ts", "dashboard/src/main.ts", "dashboard/src/mc.ts", "dashboard/src/server.ts",
+		"dashboard/src/ui/app.js", "dashboard/src/ui/index.html", "dashboard/src/ui/style.css",
+		"resident/src/credential-projector.ts", "resident/src/effects.ts", "resident/src/main.ts",
+		"resident/src/refresh-broker.ts", "resident/src/resident-control.ts", "resident/src/task-skeleton.ts",
+		"resident/src/tick-loop.ts", "resident/src/token-service.ts", "resident/src/types.ts",
+	}
+	for _, rel := range files {
+		path := filepath.Join(root, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte("// "+rel+"\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return root
+}
+
+func TestOnboardHomePublishesTheInstallerSuppliedReleases(t *testing.T) {
 	home := filepath.Join(t.TempDir(), "home")
 	spine := filepath.Join(home, "spine.db")
 	env := []string{"MC_HOME=" + home, "MC_SPINE=" + spine}
 	source := onboardRunnerSource(t)
-	res := runMC(t, env, "", "onboard", "home", "--release-source", source)
+	hostSource := onboardHostSource(t)
+	res := runMC(t, env, "", "onboard", "home", "--release-source", source, "--host-release-source", hostSource)
 	if res.code != 0 {
 		t.Fatalf("onboard home release = code %d stderr %q", res.code, res.stderr)
 	}
@@ -51,6 +74,9 @@ func TestOnboardHomePublishesTheInstallerSuppliedRunnerRelease(t *testing.T) {
 		t.Fatalf("home section = %#v", section)
 	}
 	if err := deployment.ValidateRunnerRelease(filepath.Join(home, "release", "runner")); err != nil {
+		t.Fatal(err)
+	}
+	if err := deployment.ValidateHostRelease(filepath.Join(home, "release", "host")); err != nil {
 		t.Fatal(err)
 	}
 }

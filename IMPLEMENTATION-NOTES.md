@@ -1389,3 +1389,27 @@ rules in code the sealed lane does not own.
   provider-owned subscription flows without adding credential formats,
   adopting personal state, or allowing a metered login mode.
 - Needs your decision: no.
+
+## 2026-07-22 — Native host units run from a closed installed payload
+- Where: Phase 5 Home/supervision; spec §11.2, §12, §17.2/§17.9.
+- Gap: resident and dashboard still existed only as repository TypeScript/UI
+  sources. A LaunchAgent pointing into the clone would make production
+  supervision depend on mutable development bytes and could accidentally
+  include tests or package state in its execution surface.
+- Choice: Home onboarding receives the repository root only as source evidence
+  and atomically publishes a separate owner-only
+  `MC_HOME/release/host`. Its closed manifest is the exact transitive
+  resident/dashboard source and dashboard UI graph: sixteen files, no tests,
+  lockfiles, packages, or runner/provider bytes. It is a sibling of the runner
+  tree rather than part of `/app/src`, so agent containers gain no visibility
+  into native-host code. Replay preserves directory identity and upgrades
+  exchange the payload as one directory.
+- Evidence: deployment tests prove closed publication, excluded test files,
+  mode/ownership validation, idempotent identity, and changed-payload atomic
+  replacement. The real Home CLI test crosses both installer source carriers
+  and validates both installed trees; production/fake builds and the shell
+  front-door contract pass.
+- Spec impact: conservative internal mechanism. It supplies the immutable input
+  required by the two native supervised units without changing either unit's
+  state authority or container visibility.
+- Needs your decision: no.

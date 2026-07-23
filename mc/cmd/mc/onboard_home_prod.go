@@ -20,7 +20,7 @@ func brokerOnboardHome(args []string, stdout, stderr io.Writer) int {
 		return writeVerbError(stdout, stderr, err)
 	}
 	if a.Section != "home" {
-		return writeVerbError(stdout, stderr, verbs.Usagef("usage: mc onboard home [--release-source <runner-dir>]"))
+		return writeVerbError(stdout, stderr, verbs.Usagef("usage: mc onboard home [--release-source <runner-dir>] [--host-release-source <repo-dir>]"))
 	}
 	req, err := verbs.PrepareOnboardHome()
 	if err != nil {
@@ -77,6 +77,20 @@ func brokerOnboardHome(args []string, stdout, stderr io.Writer) int {
 			status = "done"
 		}
 		detail += "; runner release " + releaseStatus
+	}
+	if a.HostReleaseSource != "" {
+		home, err := configuredCanonicalHome()
+		if err != nil {
+			return writeVerbError(stdout, stderr, verbs.Usagef("resolve host release home: %v", err))
+		}
+		hostStatus, err := deployment.InstallHostRelease(home, a.HostReleaseSource)
+		if err != nil {
+			return writeVerbError(stdout, stderr, verbs.Domainf("install native host release: %v", err))
+		}
+		if hostStatus == "done" {
+			status = "done"
+		}
+		detail += "; host release " + hostStatus
 	}
 	return writeOnboardSection(stdout, stderr, "home", status, detail)
 }

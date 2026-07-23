@@ -43,45 +43,45 @@ func requireOperatorSourceDirectory(path, label string) error {
 	return nil
 }
 
-func readRunnerReleaseSource(root, rel string) ([]byte, error) {
+func readReleaseSource(root, rel string) ([]byte, error) {
 	parts := strings.Split(filepath.FromSlash(rel), string(os.PathSeparator))
 	dir := root
 	for _, part := range parts[:len(parts)-1] {
 		dir = filepath.Join(dir, part)
-		if err := requireOperatorSourceDirectory(dir, "runner source directory"); err != nil {
+		if err := requireOperatorSourceDirectory(dir, "release source directory"); err != nil {
 			return nil, err
 		}
 	}
 	path := filepath.Join(root, filepath.FromSlash(rel))
 	before, err := os.Lstat(path)
 	if err != nil {
-		return nil, fmt.Errorf("inspect runner source %q: %w", path, err)
+		return nil, fmt.Errorf("inspect release source %q: %w", path, err)
 	}
 	uid, links, ok := statOwner(before)
 	if before.Mode()&os.ModeSymlink != 0 || !before.Mode().IsRegular() ||
 		!ok || int(uid) != os.Getuid() || links != 1 || before.Mode().Perm()&0o022 != 0 {
-		return nil, fmt.Errorf("runner source %q must be a singly linked, operator-owned regular file that is not group/other writable", path)
+		return nil, fmt.Errorf("release source %q must be a singly linked, operator-owned regular file that is not group/other writable", path)
 	}
 	if before.Size() <= 0 || before.Size() > maxRunnerReleaseFileBytes {
-		return nil, fmt.Errorf("runner source %q has invalid size", path)
+		return nil, fmt.Errorf("release source %q has invalid size", path)
 	}
 	f, err := os.Open(path)
 	if err != nil {
-		return nil, fmt.Errorf("open runner source %q: %w", path, err)
+		return nil, fmt.Errorf("open release source %q: %w", path, err)
 	}
 	defer f.Close()
 	after, err := f.Stat()
 	if err != nil || !os.SameFile(before, after) {
-		return nil, fmt.Errorf("runner source %q changed during inspection", path)
+		return nil, fmt.Errorf("release source %q changed during inspection", path)
 	}
 	body, err := io.ReadAll(io.LimitReader(f, maxRunnerReleaseFileBytes+1))
 	if err != nil || len(body) > maxRunnerReleaseFileBytes {
-		return nil, fmt.Errorf("read runner source %q: invalid bounded content", path)
+		return nil, fmt.Errorf("read release source %q: invalid bounded content", path)
 	}
 	return body, nil
 }
 
-func writeRunnerReleaseFile(root, rel string, body []byte) error {
+func writeReleaseFile(root, rel string, body []byte) error {
 	path := filepath.Join(root, filepath.FromSlash(rel))
 	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 	if err != nil {
@@ -187,7 +187,7 @@ func InstallRunnerRelease(home, source string) (string, error) {
 	}
 	bodies := make(map[string][]byte, len(runnerReleaseFiles))
 	for _, rel := range runnerReleaseFiles {
-		body, err := readRunnerReleaseSource(source, rel)
+		body, err := readReleaseSource(source, rel)
 		if err != nil {
 			return "", err
 		}
@@ -212,7 +212,7 @@ func InstallRunnerRelease(home, source string) (string, error) {
 		}
 	}
 	for _, rel := range runnerReleaseFiles {
-		if err := writeRunnerReleaseFile(stage, rel, bodies[rel]); err != nil {
+		if err := writeReleaseFile(stage, rel, bodies[rel]); err != nil {
 			return "", fmt.Errorf("stage runner file %q: %w", rel, err)
 		}
 	}
