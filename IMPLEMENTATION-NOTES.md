@@ -1132,3 +1132,37 @@ rules in code the sealed lane does not own.
 - Spec impact: none. This realizes the existing two-kernel ownership split and
   preserves doctor's total diagnostic contract.
 - Needs your decision: no.
+
+## 2026-07-22 — Worksource onboarding crosses canonical roots as data, not authority
+- Where: Phase 5 production `mc onboard routing|worksource|tunables|surfaces`;
+  spec §17 and Inv. 24; the spine-only helper boundary.
+- Gap: Worksource onboarding must both prove a Darwin workspace directory and
+  persist/compare its canonical root in the runtime-local spine. Whole-verb
+  delegation lets the helper attempt host filesystem reads it cannot and must
+  not gain; host-side execution would open SQLite in the wrong kernel. An
+  inputless idempotent replay also owes reachability checks for every stored
+  root, so a one-way mutation frame is insufficient.
+- Choice: one closed, build/schema/deployment-bound private state frame admits
+  only routing identity, Worksource schema data, tunable scalars, or console
+  schedule scalars. Darwin validates and canonicalizes a supplied workspace,
+  rechecks it immediately before helper execution, and rechecks every root in
+  the bounded helper response before reporting success. The helper treats root
+  strings only as SQLite values: it never stats, resolves, opens, or mounts
+  them. Routing crosses only the deployment identity and stays wholly on the
+  host; tunables and surfaces remain wholly in the helper transaction.
+- Idempotency: exact Worksource/root replay is `ok`; a second ID, rebinding,
+  missing profile, mismatched identity, malformed union arm, or unavailable
+  returned root fails closed. A path disappearing in the unavoidable final
+  syscall window can leave the already-attested schema row but cannot produce
+  a healthy result; the section remains retryable and the next replay continues
+  to fail until the same canonical root is restored or explicitly repaired.
+- Evidence: unit tests prove canonicalization, no helper path lookup, host
+  pre/post checks, identity/closed-frame refusal, and replay for all three
+  spine sections. A disposable native production helper completed and replayed
+  Routing, Worksource, Tunables, and Surfaces; composed doctor then reported
+  both Worksource and Surfaces healthy. The exact disposable helper, volume,
+  home, workspace, and host binary were removed after the proof.
+- Spec impact: none. Canonical workspace roots are already required durable
+  Worksource data; crossing them as inert values is the least-authority split
+  that preserves the existing §17 reachability and idempotency behavior.
+- Needs your decision: no.

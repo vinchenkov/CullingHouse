@@ -70,3 +70,50 @@ func TestPrivateDoctorRuntimeUsesOnlyFixedHelperScope(t *testing.T) {
 		t.Fatalf("runtime findings = %#v", got.json["findings"])
 	}
 }
+
+func TestPrivateOnboardStateIsIdentityBoundAndClosed(t *testing.T) {
+	spine := filepath.Join(t.TempDir(), "spine.db")
+	initialized := runMC(t, spineEnv(spine), onboardSpineFrame(t), "__onboard-spine")
+	if initialized.code != 0 {
+		t.Fatalf("initialize: code=%d stderr=%q", initialized.code, initialized.stderr)
+	}
+	uuid, _ := initialized.json["deployment_uuid"].(string)
+	request := map[string]any{
+		"protocol_version": 1, "release_build_id": "development",
+		"control_version": 1, "spine_schema_version": substrate.CurrentSchemaVersion,
+		"config_schema_version": 1, "deployment_uuid": uuid, "section": "routing",
+	}
+	frame, err := json.Marshal(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	withoutScope := runMC(t, nil, string(frame), "__onboard-state")
+	if withoutScope.code != 1 || !strings.Contains(withoutScope.stderr, "fixed spine scope") {
+		t.Fatalf("without scope: code=%d stderr=%q", withoutScope.code, withoutScope.stderr)
+	}
+	got := runMC(t, spineEnv(spine), string(frame), "__onboard-state")
+	if got.code != 0 || got.json["status"] != "ok" || got.json["deployment_uuid"] != uuid {
+		t.Fatalf("state identity: code=%d stderr=%q json=%v", got.code, got.stderr, got.json)
+	}
+
+	request["home"] = "/host"
+	unknown, err := json.Marshal(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	refused := runMC(t, spineEnv(spine), string(unknown), "__onboard-state")
+	if refused.code != 2 || !strings.Contains(refused.stderr, "unknown field") {
+		t.Fatalf("unknown field: code=%d stderr=%q json=%v", refused.code, refused.stderr, refused.json)
+	}
+
+	delete(request, "home")
+	request["deployment_uuid"] = "wrong"
+	mismatch, err := json.Marshal(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	refused = runMC(t, spineEnv(spine), string(mismatch), "__onboard-state")
+	if refused.code != 1 || !strings.Contains(refused.stderr, "deployment identity mismatch") {
+		t.Fatalf("identity mismatch: code=%d stderr=%q json=%v", refused.code, refused.stderr, refused.json)
+	}
+}

@@ -638,42 +638,55 @@ func validateRoutingPath(path string, registry routing.Registry, allowFakeDecorr
 // (§17 section 6). An existing Worksource means the deployment is past this
 // section; the full interactive richness (git contract, sandbox review,
 // directive authoring) rides on `mc worksource add` and the agent shepherd.
-func onboardWorksource(a OnboardArgs) (string, string, error) {
-	if err := requireSpineFile(a.Spine); err != nil {
-		return "", "", err
-	}
+func prepareOnboardWorksource(a OnboardArgs) (OnboardArgs, error) {
 	supplied := a.Worksource != "" || a.WorkspaceRoot != ""
 	if supplied && (a.Worksource == "" || a.WorkspaceRoot == "") {
-		return "", "", Usagef("mc onboard worksource requires --worksource and --workspace-root together")
+		return OnboardArgs{}, Usagef("mc onboard worksource requires --worksource and --workspace-root together")
 	}
 	if supplied && (!validStructuralText(a.Worksource, maxPrivateScalarBytes) ||
 		!validStructuralText(a.WorkspaceRoot, maxPrivateScalarBytes)) {
-		return "", "", Usagef("mc onboard Worksource and workspace root must be valid UTF-8 without controls and at most 4096 bytes (ADR-016 D2)")
+		return OnboardArgs{}, Usagef("mc onboard Worksource and workspace root must be valid UTF-8 without controls and at most 4096 bytes (ADR-016 D2)")
 	}
-	workspaceRoot := ""
 	if supplied {
 		if !filepath.IsAbs(a.WorkspaceRoot) {
-			return "", "", Usagef("mc onboard worksource --workspace-root must be absolute, got %q", a.WorkspaceRoot)
+			return OnboardArgs{}, Usagef("mc onboard worksource --workspace-root must be absolute, got %q", a.WorkspaceRoot)
 		}
 		st, err := os.Stat(a.WorkspaceRoot)
 		if err != nil {
-			return "", "", Domainf("inspect workspace root %q: %v", a.WorkspaceRoot, err)
+			return OnboardArgs{}, Domainf("inspect workspace root %q: %v", a.WorkspaceRoot, err)
 		}
 		if !st.IsDir() {
-			return "", "", Usagef("mc onboard worksource --workspace-root must name a directory, got %q", a.WorkspaceRoot)
+			return OnboardArgs{}, Usagef("mc onboard worksource --workspace-root must name a directory, got %q", a.WorkspaceRoot)
 		}
-		workspaceRoot, err = filepath.EvalSymlinks(a.WorkspaceRoot)
+		workspaceRoot, err := filepath.EvalSymlinks(a.WorkspaceRoot)
 		if err != nil {
-			return "", "", Domainf("resolve workspace root %q: %v", a.WorkspaceRoot, err)
+			return OnboardArgs{}, Domainf("resolve workspace root %q: %v", a.WorkspaceRoot, err)
 		}
-		workspaceRoot = filepath.Clean(workspaceRoot)
+		a.WorkspaceRoot = filepath.Clean(workspaceRoot)
 	}
+	return a, nil
+}
+
+type OnboardWorkspaceRoot struct {
+	ID   string `json:"id"`
+	Root string `json:"root"`
+}
+
+// onboardWorksourceDB is the helper-authoritative half. Workspace roots are
+// durable schema data here, never filesystem authority: this function does
+// not stat, resolve, or open them.
+func onboardWorksourceDB(a OnboardArgs) (string, string, []OnboardWorkspaceRoot, error) {
+	if err := requireSpineFile(a.Spine); err != nil {
+		return "", "", nil, err
+	}
+	supplied := a.Worksource != "" || a.WorkspaceRoot != ""
 	db, err := substrate.Open(a.Spine)
 	if err != nil {
-		return "", "", Usagef("%v", err)
+		return "", "", nil, Usagef("%v", err)
 	}
 	defer db.Close()
 	status, detail := "", ""
+	var roots []OnboardWorkspaceRoot
 	err = inTx(db, func(ctx context.Context, q Q) error {
 		var existing int
 		if err := q.QueryRowContext(ctx, `SELECT COUNT(*) FROM worksources`).Scan(&existing); err != nil {
@@ -692,9 +705,10 @@ func onboardWorksource(a OnboardArgs) (string, string, error) {
 				if err != nil {
 					return err
 				}
-				if storedRoot != workspaceRoot {
-					return Domainf("Worksource %s already points at %q, not requested workspace %q; refuse implicit rebinding (§17)", a.Worksource, storedRoot, workspaceRoot)
+				if storedRoot != a.WorkspaceRoot {
+					return Domainf("Worksource %s already points at %q, not requested workspace %q; refuse implicit rebinding (§17)", a.Worksource, storedRoot, a.WorkspaceRoot)
 				}
+				roots = append(roots, OnboardWorkspaceRoot{ID: a.Worksource, Root: storedRoot})
 			} else {
 				rows, err := q.QueryContext(ctx, `
 					SELECT w.id, p.workspace_root
@@ -713,10 +727,7 @@ func onboardWorksource(a OnboardArgs) (string, string, error) {
 					if !storedRoot.Valid {
 						return Domainf("Worksource %s has no sandbox profile; repair it before onboarding can call the section healthy", id)
 					}
-					st, err := os.Stat(storedRoot.String)
-					if err != nil || !st.IsDir() {
-						return Domainf("Worksource %s workspace root %q is unavailable: %v", id, storedRoot.String, err)
-					}
+					roots = append(roots, OnboardWorkspaceRoot{ID: id, Root: storedRoot.String})
 				}
 				if err := rows.Err(); err != nil {
 					return err
@@ -732,7 +743,7 @@ func onboardWorksource(a OnboardArgs) (string, string, error) {
 		if _, err := q.ExecContext(ctx, `
 			INSERT INTO sandbox_profiles (id, workspace_root)
 			VALUES ('default', ?)
-			ON CONFLICT (id) DO NOTHING`, workspaceRoot); err != nil {
+			ON CONFLICT (id) DO NOTHING`, a.WorkspaceRoot); err != nil {
 			return err
 		}
 		var storedRoot string
@@ -742,8 +753,8 @@ func onboardWorksource(a OnboardArgs) (string, string, error) {
 		).Scan(&storedRoot); err != nil {
 			return err
 		}
-		if storedRoot != workspaceRoot {
-			return Domainf("sandbox profile default already points at %q, not requested workspace %q; refuse implicit rebinding (§17)", storedRoot, workspaceRoot)
+		if storedRoot != a.WorkspaceRoot {
+			return Domainf("sandbox profile default already points at %q, not requested workspace %q; refuse implicit rebinding (§17)", storedRoot, a.WorkspaceRoot)
 		}
 		if _, err := q.ExecContext(ctx, `
 			INSERT INTO worksources (id, title, kind, sandbox_profile)
@@ -754,10 +765,36 @@ func onboardWorksource(a OnboardArgs) (string, string, error) {
 			return err
 		}
 		status = "done"
-		detail = fmt.Sprintf("Worksource %s at %s", a.Worksource, workspaceRoot)
+		detail = fmt.Sprintf("Worksource %s at %s", a.Worksource, a.WorkspaceRoot)
+		roots = append(roots, OnboardWorkspaceRoot{ID: a.Worksource, Root: a.WorkspaceRoot})
 		return nil
 	})
 	if err != nil {
+		return "", "", nil, err
+	}
+	return status, detail, roots, nil
+}
+
+func validateOnboardWorkspaceRoots(roots []OnboardWorkspaceRoot) error {
+	for _, root := range roots {
+		st, err := os.Stat(root.Root)
+		if err != nil || !st.IsDir() {
+			return Domainf("Worksource %s workspace root %q is unavailable: %v", root.ID, root.Root, err)
+		}
+	}
+	return nil
+}
+
+func onboardWorksource(a OnboardArgs) (string, string, error) {
+	prepared, err := prepareOnboardWorksource(a)
+	if err != nil {
+		return "", "", err
+	}
+	status, detail, roots, err := onboardWorksourceDB(prepared)
+	if err != nil {
+		return "", "", err
+	}
+	if err := validateOnboardWorkspaceRoots(roots); err != nil {
 		return "", "", err
 	}
 	return status, detail, nil
@@ -847,16 +884,8 @@ func onboardTunables(a OnboardArgs) (string, string, error) {
 // dashboard is core with loopback defaults, and Discord is skippable
 // entirely (§17 section 8) — both land with their Phase 3/5 processes.
 func onboardSurfaces(a OnboardArgs) (string, string, error) {
-	if a.ConsoleScheduleSet {
-		if a.ConsoleHour < 0 || a.ConsoleHour > 23 {
-			return "", "", Usagef("mc onboard surfaces --console-hour must be 0..23")
-		}
-		if a.ConsoleMinute < 0 || a.ConsoleMinute > 59 {
-			return "", "", Usagef("mc onboard surfaces --console-minute must be 0..59")
-		}
-		if _, err := time.LoadLocation(a.ConsoleTZ); a.ConsoleTZ == "" || err != nil {
-			return "", "", Usagef("mc onboard surfaces --console-tz %q is not a loadable IANA timezone", a.ConsoleTZ)
-		}
+	if err := validateOnboardSurfaceAnswers(a); err != nil {
+		return "", "", err
 	}
 	if err := requireSpineFile(a.Spine); err != nil {
 		return "", "", err
@@ -899,6 +928,24 @@ func onboardSurfaces(a OnboardArgs) (string, string, error) {
 		return "", "", err
 	}
 	return status, detail, nil
+}
+
+func validateOnboardSurfaceAnswers(a OnboardArgs) error {
+	if !a.ConsoleScheduleSet && (a.ConsoleHour != 0 || a.ConsoleMinute != 0 || a.ConsoleTZ != "") {
+		return Usagef("mc onboard surfaces console schedule fields require the complete schedule")
+	}
+	if a.ConsoleScheduleSet {
+		if a.ConsoleHour < 0 || a.ConsoleHour > 23 {
+			return Usagef("mc onboard surfaces --console-hour must be 0..23")
+		}
+		if a.ConsoleMinute < 0 || a.ConsoleMinute > 59 {
+			return Usagef("mc onboard surfaces --console-minute must be 0..59")
+		}
+		if _, err := time.LoadLocation(a.ConsoleTZ); a.ConsoleTZ == "" || err != nil {
+			return Usagef("mc onboard surfaces --console-tz %q is not a loadable IANA timezone", a.ConsoleTZ)
+		}
+	}
+	return nil
 }
 
 // onboardVerify is the §17 closing section: a full mc doctor, failing the

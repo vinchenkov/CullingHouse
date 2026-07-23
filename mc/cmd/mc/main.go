@@ -54,6 +54,9 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	if args[0] == "__doctor-runtime" {
 		return runPrivateDoctorRuntime(args, stdin, stdout, stderr)
 	}
+	if args[0] == "__onboard-state" {
+		return runPrivateOnboardState(args, stdin, stdout, stderr)
+	}
 	// Production Home is a composed crossing: host-side canonical-path and
 	// mirror operations stay on Darwin, while only the path-free spine frame
 	// enters the exact helper. Preflight is host-only and writes nothing.
@@ -61,12 +64,17 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		if len(args) == 1 {
 			return writeVerbError(stdout, stderr, verbs.Domainf("production whole-wizard composition is incomplete; run the named onboarding sections in order"))
 		}
-		if len(args) == 2 {
+		if len(args) >= 2 {
+			if _, err := parseOnboardArgs(args[1:]); err != nil {
+				return writeVerbError(stdout, stderr, err)
+			}
 			switch args[1] {
 			case "preflight":
 				return runLocal(args, stdin, stdout, stderr)
 			case "home":
 				return brokerOnboardHome(stdout, stderr)
+			case "routing", "worksource", "tunables", "surfaces":
+				return brokerOnboardState(args, stdout, stderr)
 			case "container":
 				return brokerOnboardContainer(args, stdout, stderr)
 			case "verify":
@@ -469,7 +477,7 @@ func positionalID(name string, args []string) (int64, []string, error) {
 	return id, rest, nil
 }
 
-func cmdOnboard(args []string) (any, error) {
+func parseOnboardArgs(args []string) (verbs.OnboardArgs, error) {
 	a := verbs.OnboardArgs{Spine: helperSpinePath()}
 	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
 		a.Section = args[0]
@@ -489,7 +497,7 @@ func cmdOnboard(args []string) (any, error) {
 	fs.IntVar(&consoleMinute, "console-minute", -1, "Daily Console delivery minute (0..59)")
 	fs.StringVar(&consoleTZ, "console-tz", "", "Daily Console IANA timezone")
 	if err := parse(fs, args); err != nil {
-		return nil, err
+		return verbs.OnboardArgs{}, err
 	}
 	for _, item := range []struct {
 		name  string
@@ -502,7 +510,7 @@ func cmdOnboard(args []string) (any, error) {
 		{"hard-deadline-minutes", a.HardDeadlineMinutes},
 	} {
 		if item.value < 0 {
-			return nil, verbs.Usagef("mc onboard --%s must be non-negative", item.name)
+			return verbs.OnboardArgs{}, verbs.Usagef("mc onboard --%s must be non-negative", item.name)
 		}
 	}
 	provided := map[string]bool{}
@@ -510,12 +518,20 @@ func cmdOnboard(args []string) (any, error) {
 	consoleSet := provided["console-hour"] || provided["console-minute"] || provided["console-tz"]
 	if consoleSet {
 		if !provided["console-hour"] || !provided["console-minute"] || !provided["console-tz"] {
-			return nil, verbs.Usagef("mc onboard console schedule requires --console-hour, --console-minute, and --console-tz together")
+			return verbs.OnboardArgs{}, verbs.Usagef("mc onboard console schedule requires --console-hour, --console-minute, and --console-tz together")
 		}
 		a.ConsoleScheduleSet = true
 		a.ConsoleHour = consoleHour
 		a.ConsoleMinute = consoleMinute
 		a.ConsoleTZ = consoleTZ
+	}
+	return a, nil
+}
+
+func cmdOnboard(args []string) (any, error) {
+	a, err := parseOnboardArgs(args)
+	if err != nil {
+		return nil, err
 	}
 	id, err := verbs.LoadIdentity()
 	if err != nil {
