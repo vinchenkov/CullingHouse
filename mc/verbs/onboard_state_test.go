@@ -128,3 +128,41 @@ func TestOnboardStateFrameIsClosedAndIdentityBound(t *testing.T) {
 		t.Fatalf("routing identity frame leaked host/config data: %+v", routing)
 	}
 }
+
+func TestOnboardStateSupervisionReturnsHostRecheckedWorkspaceCatalog(t *testing.T) {
+	_, spine := provisionOnboardStateFixture(t)
+	root := filepath.Join(t.TempDir(), "workspace")
+	if err := os.Mkdir(root, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	worksource, err := PrepareOnboardState(OnboardArgs{
+		Section: "worksource", Worksource: "primary", WorkspaceRoot: root,
+	}, testOnboardBuild, testOnboardControl, testOnboardConfig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := OnboardState(spine, worksource, testOnboardBuild, testOnboardControl, testOnboardConfig); err != nil {
+		t.Fatal(err)
+	}
+
+	req, err := PrepareOnboardState(OnboardArgs{Section: "supervision"}, testOnboardBuild, testOnboardControl, testOnboardConfig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := OnboardState(spine, req, testOnboardBuild, testOnboardControl, testOnboardConfig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.WorkspaceRoots) != 1 || result.WorkspaceRoots[0].ID != "primary" {
+		t.Fatalf("supervision roots=%+v", result.WorkspaceRoots)
+	}
+	if status, _, err := FinalizeOnboardState(req, result); err != nil || status != "ok" {
+		t.Fatalf("supervision finalize status=%q err=%v", status, err)
+	}
+	if err := os.Remove(root); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := FinalizeOnboardState(req, result); err == nil || !strings.Contains(err.Error(), "unavailable") {
+		t.Fatalf("supervision accepted vanished workspace: %v", err)
+	}
+}

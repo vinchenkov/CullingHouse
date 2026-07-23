@@ -75,7 +75,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 				return brokerOnboardHome(args, stdout, stderr)
 			case "runtime-auth":
 				return brokerOnboardRuntimeAuth(args, stdin, stdout, stderr)
-			case "routing", "worksource", "tunables", "surfaces":
+			case "routing", "worksource", "tunables", "surfaces", "supervision":
 				return brokerOnboardState(args, stdout, stderr)
 			case "container":
 				return brokerOnboardContainer(args, stdout, stderr)

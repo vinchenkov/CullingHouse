@@ -41,6 +41,9 @@ export interface ResidentConfig {
   runnerSrcDir: string;
   /** Host workspace root, mounted at /workspace/source (§6.2 canonical path). */
   workspaceRoot: string;
+  /** Closed production Worksource catalog for Homie's operator-wide read
+   * scope. The legacy single root remains the /workspace/source alias. */
+  workspaceRoots?: Array<{ id: string; root: string }>;
   /** Docker named volume holding the spine (Inv. 24). */
   spineVolume: string;
   /** In-container spine db file path; volume mounts at its dirname; exported

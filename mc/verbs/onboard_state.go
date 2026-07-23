@@ -71,6 +71,7 @@ func PrepareOnboardState(a OnboardArgs, releaseBuildID string, controlVersion, c
 	var err error
 	switch a.Section {
 	case "routing":
+	case "supervision":
 	case "worksource":
 		a, err = prepareOnboardWorksource(a)
 		if err != nil {
@@ -144,6 +145,10 @@ func validateOnboardStateIdentity(req OnboardStateRequest, releaseBuildID string
 		if worksourceFields || tunableFields || surfaceFields {
 			return Domainf("private onboard-state routing frame carries another section's fields")
 		}
+	case "supervision":
+		if worksourceFields || tunableFields || surfaceFields {
+			return Domainf("private onboard-state supervision frame carries another section's fields")
+		}
 	case "worksource":
 		if tunableFields || surfaceFields {
 			return Domainf("private onboard-state worksource frame carries another section's fields")
@@ -207,6 +212,8 @@ func OnboardState(spine string, req OnboardStateRequest, releaseBuildID string, 
 		status, detail, err = onboardTunables(a)
 	case "surfaces":
 		status, detail, err = onboardSurfaces(a)
+	case "supervision":
+		status, detail, roots, err = onboardWorksourceDB(OnboardArgs{Section: "worksource", Spine: spine})
 	}
 	if err != nil {
 		return OnboardStateResult{}, err
@@ -243,7 +250,7 @@ func FinalizeOnboardState(req OnboardStateRequest, result OnboardStateResult) (s
 		!validStructuralText(result.Detail, maxPrivateScalarBytes) {
 		return "", "", Domainf("private onboard-state response identity mismatch")
 	}
-	if req.Section == "worksource" {
+	if req.Section == "worksource" || req.Section == "supervision" {
 		if len(result.WorkspaceRoots) == 0 {
 			return "", "", Domainf("private onboard-state response omitted workspace roots")
 		}
@@ -253,7 +260,7 @@ func FinalizeOnboardState(req OnboardStateRequest, result OnboardStateResult) (s
 				return "", "", Domainf("private onboard-state response carries an invalid workspace root")
 			}
 		}
-		if req.Worksource != "" && (len(result.WorkspaceRoots) != 1 ||
+		if req.Section == "worksource" && req.Worksource != "" && (len(result.WorkspaceRoots) != 1 ||
 			result.WorkspaceRoots[0].ID != req.Worksource || result.WorkspaceRoots[0].Root != req.WorkspaceRoot) {
 			return "", "", Domainf("private onboard-state response changed the requested Worksource")
 		}

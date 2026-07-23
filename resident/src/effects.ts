@@ -239,6 +239,7 @@ type HomieStopEffect = Extract<Effect, { action: "homie-stop" }>;
 async function homieWake(effect: HomieWakeEffect, deps: TickDeps): Promise<void> {
   const { config, log } = deps;
   const { session, launch, mode, binding, container_name } = effect;
+  const workspaces = config.workspaceRoots ?? [{ id: "default", root: config.workspaceRoot }];
 
   // 1. folder (trace-only, Inv. 26) + the sibling envelope dir.
   const sessionDir = `${config.mcHome}/sessions/${session}`;
@@ -259,7 +260,10 @@ async function homieWake(effect: HomieWakeEffect, deps: TickDeps): Promise<void>
     binding,
     launch,
     ...(behavior !== undefined ? { harness_config: { behavior } } : {}),
-    mounts: { session: "/mc/session" },
+    mounts: {
+      session: "/mc/session",
+      workspaces: workspaces.map((w) => ({ id: w.id, path: `/workspaces/${w.id}` })),
+    },
   };
   const runJsonPath = runJsonHostPath(config.mcHome, session);
   await deps.fs.writeFile(runJsonPath, JSON.stringify(runJson, null, 2) + "\n");
@@ -290,6 +294,7 @@ async function homieWake(effect: HomieWakeEffect, deps: TickDeps): Promise<void>
     // Operator read-scope: the Homie reads the operator's workspace but never
     // writes it (Inv. 22, §15.3).
     "-v", `${config.workspaceRoot}:/workspace/source:ro`,
+    ...workspaces.flatMap((w) => ["-v", `${w.root}:/workspaces/${w.id}:ro`]),
     "-v", `${config.spineVolume}:${posix.dirname(config.spineDbPath)}`,
     "-e", `MC_SPINE=${config.spineDbPath}`,
     ...(config.agentRunnerRoutes && config.agentRunnerRoutes.length > 0
@@ -424,10 +429,6 @@ async function spawn(effect: SpawnEffect, deps: TickDeps): Promise<void> {
     return;
   }
   const behavior = config.roleBehaviors[role];
-  if (behavior === undefined) {
-    log(`spawn refused: no behavior mapped for role ${JSON.stringify(role)} (fail-closed)`);
-    return;
-  }
 	if (effect.mount_plan.accepted_seal_rebuild !== undefined) {
 		const step = effect.mount_plan.accepted_seal_rebuild;
 		if (role.split(":", 1)[0] !== "verifier" || effect.subject_id !== step.task_id) {
@@ -545,13 +546,19 @@ async function spawn(effect: SpawnEffect, deps: TickDeps): Promise<void> {
 	// unknown routes remain refused before any launch artifact is written.
 	const routeKey = `${effect.harness}/${effect.model_binding}`;
 	const productionRoutes = new Set(["codex/chatgpt", "claude-sdk/claude", "claude-sdk/minimax"]);
-	const launchable = (effect.harness === "fake" && effect.model_binding === "fake") ||
+	const isFakeFamily = effect.harness === "fake" && effect.model_binding === "fake";
+	const usesFakeAdapter = isFakeFamily || (config.agentRunnerRoutes?.includes(routeKey) ?? false);
+	const launchable = isFakeFamily ||
 		productionRoutes.has(routeKey) ||
 		(config.agentRunnerRoutes?.includes(routeKey) ?? false);
 	if (!launchable) {
 		log(
 			`spawn refused: unsupported route ${JSON.stringify(routeKey)} (fail-closed)`,
 		);
+		return;
+	}
+	if (usesFakeAdapter && behavior === undefined) {
+		log(`spawn refused: no behavior mapped for role ${JSON.stringify(role)} using fake adapter (fail-closed)`);
 		return;
 	}
 
@@ -562,7 +569,6 @@ async function spawn(effect: SpawnEffect, deps: TickDeps): Promise<void> {
 	// as spawn-side hygiene (contract §1); every real agent route gets the
 	// open network by requirement, with the projector as its only credential
 	// material.
-	const isFakeFamily = effect.harness === "fake" && effect.model_binding === "fake";
 	const projection = isFakeFamily
 		? null
 		: deps.credentials?.project(effect.harness, effect.model_binding) ?? {
@@ -601,7 +607,7 @@ async function spawn(effect: SpawnEffect, deps: TickDeps): Promise<void> {
 		brief: effect.brief,
     pool_ids: effect.pool_ids ?? [],
     heartbeat_interval_s: effect.heartbeat_interval_s,
-    harness_config: { behavior },
+    ...(behavior === undefined ? {} : { harness_config: { behavior } }),
     mounts: { session: "/mc/session" },
   };
   const runJsonPath = runJsonHostPath(config.mcHome, run_id);

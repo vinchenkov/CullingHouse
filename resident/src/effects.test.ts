@@ -783,6 +783,18 @@ describe("spawn effect", () => {
     expect(rig.logs.some((l) => l.includes("unsupported route"))).toBe(false);
   });
 
+  test("a production adapter launches without fake behavior fixtures", async () => {
+    const rig = makeRig({
+      config: { ...testConfig, roleBehaviors: {} },
+      credentials: { project: () => ({ env: { TEST_PROJECTED_CREDENTIAL: "present" } }) },
+    });
+    rig.docker.enqueue(ok("container-id\n"), ok(""));
+    await applyEffect({ ...spawnEffect, harness: "codex", model_binding: "chatgpt" }, rig.deps);
+    expect(rig.docker.calls[0]![0]).toBe("create");
+    const runJson = JSON.parse(rig.fakeFs.writes.get("/tmp/mc-home/runs/run-42-worker.json")!);
+    expect(runJson.harness_config).toBeUndefined();
+  });
+
   test("an unknown route absent from the test stand-in list stays refused", async () => {
     const rig = makeRig({ config: { ...testConfig, agentRunnerRoutes: ["codex/chatgpt"] } });
     await applyEffect({ ...spawnEffect, harness: "unknown", model_binding: "unknown" }, rig.deps);
@@ -1557,7 +1569,11 @@ describe("homie tier (lease-free)", () => {
   };
 
   test("wake: folder → run.json → create → launch-bind(id) → start", async () => {
-    const rig = makeRig();
+    const workspaces = [
+      { id: "alpha", root: "/host/workspace" },
+      { id: "beta", root: "/host/second-workspace" },
+    ];
+    const rig = makeRig({ config: { ...testConfig, workspaceRoots: workspaces } });
     rig.docker.enqueue(ok("")); // rm -f any stale same-named container
     rig.docker.enqueue(ok(cid + "\n")); // create prints the 64-hex id
     rig.mc.enqueue(ok(JSON.stringify({ session: "h-abc", launch: wake.launch, container_id: cid, bound_at: "t" })));
@@ -1578,6 +1594,10 @@ describe("homie tier (lease-free)", () => {
     // The route key rides as `binding`; the behavior comes from config.
     expect(parsed.binding).toBe("claude");
     expect(parsed.harness_config).toEqual({ behavior: "/mc/behaviors/homie.json" });
+    expect(parsed.mounts.workspaces).toEqual([
+      { id: "alpha", path: "/workspaces/alpha" },
+      { id: "beta", path: "/workspaces/beta" },
+    ]);
 
     // docker: rm -f (clear stale name), create, then start; launch-bind between.
     expect(rig.docker.calls[0]).toEqual(["rm", "-f", "mc-homie-h-abc"]);
@@ -1587,6 +1607,8 @@ describe("homie tier (lease-free)", () => {
     expect(create).toContain("--rm");
     // Operator read-scope: the workspace is bound RO, never RW.
     expect(create).toContain(`${testConfig.workspaceRoot}:/workspace/source:ro`);
+    expect(create).toContain("/host/workspace:/workspaces/alpha:ro");
+    expect(create).toContain("/host/second-workspace:/workspaces/beta:ro");
     expect(rig.docker.calls[2]).toEqual(["start", "mc-homie-h-abc"]);
 
     // launch-bind CASes the exact docker id onto the launch, before start.

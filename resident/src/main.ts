@@ -27,6 +27,7 @@ import {
 
 interface MainConfig extends ResidentConfig {
   mcPath: string;
+  dockerPath?: string;
   tickIntervalMs?: number;
   releaseBuildId: string;
   configSchemaVersion: number;
@@ -138,6 +139,19 @@ async function main(): Promise<void> {
     console.error("resident: agentRunnerRoutes must be an array of harness/model_binding strings");
     process.exit(2);
   }
+  if (config.dockerPath !== undefined &&
+      (typeof config.dockerPath !== "string" || !config.dockerPath.startsWith("/"))) {
+    console.error("resident: dockerPath must be an absolute path");
+    process.exit(2);
+  }
+  if (config.workspaceRoots !== undefined &&
+      (!Array.isArray(config.workspaceRoots) || config.workspaceRoots.length === 0 ||
+        !config.workspaceRoots.every((w) => w !== null && typeof w === "object" &&
+          /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(w.id) &&
+          typeof w.root === "string" && w.root.startsWith("/")))) {
+    console.error("resident: workspaceRoots must be a non-empty closed Worksource catalog");
+    process.exit(2);
+  }
 
   const envInterval = process.env["MC_TICK_INTERVAL_MS"];
   const intervalMs = envInterval
@@ -173,7 +187,7 @@ async function main(): Promise<void> {
     setTimer: (fn, ms) => setInterval(fn, ms),
     clearTimer: (h) => clearInterval(h as ReturnType<typeof setInterval>),
 		runMc,
-    docker: execVia("docker"),
+    docker: execVia(config.dockerPath ?? "docker"),
     log,
     fs: {
       mkdir: async (path, opts) => {
