@@ -7,26 +7,11 @@ REPO PATH: `~/dev/ai/homie`. Never relocate this repo into `~/Documents`,
 filesystem access there during fan-out. Full Disk Access does not fix it.
 
 LAST GREEN SHA: `3703c2b` — ADR-025 S1.5b-1: `precreateInitiativeSkeleton`, the
-resident-side two-root precreate (store root 0555 {git,source} + empty 0700
-worktree on separate bases, D1; proves both parents; refuses recover/existing/
-non-0700-parent). Inert (exported + tested, not wired into applyEffect until
-S1.5b-2). Atop S1.5a/a.2 (the Go register + continue verbs + CLIs) and S1.4c-2b
-(the whole route-free InitiativeSetup dispatch lane, LIVE in-process). Only the
-resident effect handler (S1.5b-2) remains to complete S1 — after which S2/S3a's
-mount vouch is reachable end-to-end. Under real routing a
-promoted-uncut initiative drives Decide (0d emission) → route-free attest
-(captureInitiativePrecreate) → commit (claims the lease, opens a worker/pipeline
-run keyed on the arc with empty binding + no harness/brief, carries the
-shared-store precreate plan). The first tick ADR-025 stops being purely inert —
-but nothing EXECUTES until S1.5's resident runs it. Atop S1.4c-1/2a (the
-mount-plan step + validation + captureInitiativePrecreate), S1.4a/b (predicate +
-data plumbing + RealRouting gate), S1.3 (the container side of the cut), S1.1
-(`initiative_setup_receipts` v14 + read), and S2/S3a (inert host-side mount
-arms). Tested: pure-Decide emission + a full-path `Dispatch()` verb test (effect,
-claimed lease, worker/pipeline run). The Darwin private frame fails closed on the
-arm (its carrier S1.4c-2c is owed, non-blocking). S2 was adversarially reviewed
-(3 lenses, no findings). Full fast suite green (the load-sensitive resident EBADF
-flake — intermittent #2, ~1 in 3 under heavy looping — clears on re-run);
+resident-side two-root precreate (store 0555 {git,source} + empty 0700 worktree
+on separate bases). Inert; only the resident effect handler (S1.5b-2) remains to
+complete S1 (the ADR-025 slice map is in the phase bullet below + the phase-5
+ledger). Full fast suite green (the load-sensitive resident EBADF flake —
+intermittent #2, ~1 in 3 under heavy looping — clears on re-run);
 `verbs`/`dispatch`/`substrate` cold `-count=1` green; launchd not loaded. Prior
 codex green was `28d6102`.
 Full Docker lanes (26 `docker_boundary`; 10 `docker_e2e`) were green at
@@ -107,94 +92,35 @@ resident `SPINE_SCHEMA_VERSION` moved to 14 in lockstep.
       active goal. Build and mechanically verify the real-subscription,
       onboarding, supervision, and restore paths before the operator-present
       live acceptance.
-  - [x] Production install fails closed before writes when Docker is absent or
-        stopped, and exits nonzero when the warm helper is missing (`bc0dee4`).
-  - [x] Credential-store read ambiguity and duplicate binding owners refuse
-        resident startup before any token-free route can launch (`9cec34f`).
-  - [x] Canonical MC_HOME aliases derive one domain-separated runtime identity;
-        different homes cannot share helper or spine-volume names (`e7c4ca2`).
-  - [x] Private `__onboard-spine` has a strict path-free frame and complete
-        init/repair/match/mismatch/loss/migrate/newer state matrix (`e0a0397`).
-  - [x] Production Home builds the native image, reconciles only its derived
-        managed helper, runs it as uid 10002 with one named spine volume and
-        finite bounds, crosses through general setuid `mc`, publishes only the
-        host UUID mirror, and passes the live capability probe (`ca4eae4`).
-  - [x] Production doctor merges a closed four-finding helper report with host
-        Home/routing/service facts, preserves the total nine-row/exit-0
-        diagnostic contract, and drives real Container/Verify sections
-        (`d6c6384`).
-  - [x] Production Routing, Worksource, Tunables, and Surfaces are split by
-        authority through one closed onboarding-state frame; real first-run
-        and inputless replay crossed the native helper (`bf5981d`).
-  - [x] Production binding catalog owns per-binding credential delivery and
-        activates the provider-key/foreign-static pre-claim fence (`675cbe0`).
-  - [x] Resident runtime-grant parsing/projection is a closed OAuth/static
-        union and every non-fake route fails closed without it (`8886c09`).
-  - [x] Runtime-auth import is isolated, owner-only, transactionally published,
-        and blocked until every real adapter no-op passes (`556dc1e`).
-  - [x] Real Codex/Claude-SDK/MiniMax adapters, native-session persistence,
-        closed selection, and locked arm64 production runtime (`3007478`).
-  - [x] Runtime-auth live no-op crosses the installed production adapter,
-        adopts staged provider rotation durably, and requires exact native
-        evidence before closed-set revalidation/publication (`4fa0dee`).
-  - [x] Home onboarding atomically publishes the fixed production runner
-        manifest under `MC_HOME/release/runner`; replay and upgrades preserve
-        a closed owner-only runtime mount (`6202498`).
-  - [x] Provider-owned Codex/Claude subscription logins run in disposable,
-        minimal-environment homes and clean their sources around verified
-        atomic import; metered/ambient credentials refuse first (`bd4385b`).
-  - [x] Native resident/dashboard source and UI are atomically installed as a
-        closed owner-only host payload, separate from the agent-visible runner
-        tree (`1513fe3`).
-  - [x] Production native host and Linux helper builds share one immutable
-        release commit identity; malformed build identities fail closed before
-        compilation (`73b710b`).
-  - [x] Supervision atomically prepares exact resident/dashboard configs and
-        per-user LaunchAgent plists only while both labels are unloaded;
-        Homie receives the complete Worksource catalog read-only (`89c6f75`).
-  - [x] Operator-present supervision activation installs/loads both exact jobs
-        transactionally, requires a fresh release-bound tick receipt, rolls
-        back every partial first activation, and drives doctor (`f10ddfc`).
-  - [x] The production whole wizard composes all deterministic sections,
-        preserves every dual-input flag, spends no token on healthy replay,
-        and never implicitly activates launchd (`291aca8`).
-  - [x] Production backup/restore crosses path-free framed snapshots with
-        digest/schema/deployment fences, atomic owner-only host publication,
-        retention, lost-slot-only restore, and resident startup/due chores
-        (`072061f`).
-  - [x] Production reset is confirmation-gated, requires supervision unloaded,
-        commits a host backup before exact helper/volume teardown, and has an
-        identity-bound already-reset replay (`28d6102`).
-  - [~] ADR-025 accepted (production initiative mounts/cut/arc landing).
-        Landed inert host-side, all fail-closed until a receipt producer exists
-        (details in `docs/ledger/phase-5.md`): D10 reserve + two-family worktree
-        grammar + two-base child skeleton/resolver (`fc72175`); S2 the
-        receipt-vouched Worker mount arm (`6fd88cb`, 3-lens review clean); S3a
-        the Verifier/Packager forced-RO reader arm (`875dcd8`). A real child
-        still resolves an absent store and refuses; every other role/shape
-        refuses. S1.1 landed the `initiative_setup_receipts` spine table (v14) +
-        `LoadSubjectInitiativeSetup` + loader wiring (keyed on the parent
-        initiative) + `CutSHA` carrier — the READ half of the D3 receipt; the
-        register/write is owed to S1.5. S1.3 landed the container side of the
-        cut. S1.4a/b landed the inert dispatch foundation (the
-        `nextInitiativeSetup` predicate + `KindInitiativeSetup`, the `RealRouting`
-        fake-safe gate, and the loadRecords receipt JOIN — all flowing into
-        `Decide` but unused, zero behavioral change); design + the build-tag
-        fake-safety nuance in IMPLEMENTATION-NOTES 2026-07-23 / ledger 2026-07-24.
-        S1.4c wired the whole route-free InitiativeSetup dispatch lane, now LIVE
-        in-process: under real routing a promoted-uncut initiative drives
-        Decide→attest→commit, claiming the lease and opening a worker/pipeline run
-        that carries the shared-store precreate plan (the first tick ADR-025 stops
-        being purely inert — but nothing executes until S1.5's resident runs it).
-        S1.5a/a.2 landed the Go side of the resident handoff:
-        `RegisterInitiativeSetup` (the receipt write deferred from S1.1 — the last
-        missing producer) + `ContinueInitiativeSetup` (the seal-free lease
-        terminal — the run the lane opens must release the singleton lease) +
-        their `mc initiative setup-register`/`setup-continue` CLIs. S1.5b-1
-        landed `precreateInitiativeSkeleton` (the two-root TS primitive; inert).
-        Owed: S1.5b-2 (the effect handler wiring precreate + container + register
-        + continue — completes S1), S1.4c-2c (the Darwin private-frame carrier —
-        non-blocking, guarded fail-closed), S3b (D6 fence), S4–S6.
+  - [x] Production install/bootstrap: fail-closed preflight (`bc0dee4`);
+        credential-store refusal + domain-separated deployment identities
+        (`9cec34f`/`e7c4ca2`); private `__onboard-spine` state matrix (`e0a0397`);
+        native uid-10002 helper + Home crossing (`ca4eae4`); composed
+        host/helper doctor (`d6c6384`).
+  - [x] Production onboarding wizard: Routing/Worksource/Tunables/Surfaces split
+        (`bf5981d`); binding catalog + pre-claim fence (`675cbe0`); resident
+        runtime-grant OAuth/static union (`8886c09`); isolated runtime-auth import
+        (`556dc1e`); real Codex/Claude-SDK/MiniMax adapters + arm64 runtime
+        (`3007478`); live no-op crossing + staged rotation (`4fa0dee`); runner
+        manifest publish (`6202498`); provider-owned subscription logins
+        (`bd4385b`); native source/UI install (`1513fe3`); shared release
+        identity (`73b710b`); the composed whole wizard (`291aca8`).
+  - [x] Production supervision + lifecycle: LaunchAgent prep while unloaded
+        (`89c6f75`); operator-present activation with rollback (`f10ddfc`);
+        path-free backup/restore (`072061f`); confirmation-gated reset (`28d6102`).
+  - [~] ADR-025 accepted (production initiative mounts/cut/arc landing); full
+        slice map in `docs/ledger/phase-5.md`. Groundwork + S2/S3a landed the
+        inert host-side mount arms (Worker RW + Verifier/Packager RO,
+        receipt-vouched; `fc72175`/`6fd88cb`/`875dcd8`; S2 3-lens review clean).
+        S1 (the cut) is nearly complete, all still inert end-to-end until S1.5b-2
+        runs it: S1.1 the `initiative_setup_receipts` v14 table + read; S1.3 the
+        container side (`MaterializeInitiativeStore` + `mc __setup-initiative`);
+        S1.4 the whole route-free dispatch lane, LIVE in-process (emission gated on
+        `RealRouting`; design + build-tag nuance in IMPLEMENTATION-NOTES
+        2026-07-23); S1.5a/a.2 the Go register+continue verbs + CLIs; S1.5b-1
+        `precreateInitiativeSkeleton`. Owed: S1.5b-2 (the resident handler —
+        completes S1), S1.4c-2c (Darwin private-frame carrier — non-blocking,
+        guarded fail-closed), S3b (D6 fence), S4–S6.
 - [ ] Release prep — install/onboard front door and construction-document
       disposition.
 
