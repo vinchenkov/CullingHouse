@@ -18,6 +18,7 @@ package verbs
 // initiative_setup_receipts and re-verifies the landed bytes.
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -42,6 +43,44 @@ type InitiativeSetupSpec struct {
 
 func initiativeSharedBranch(initiativeID int64) string {
 	return "mc/initiative-" + strconv.FormatInt(initiativeID, 10)
+}
+
+// verifyLandedInitiativeStoreMatches is the initiative analog of
+// verifyLandedStoreMatches (ADR-025 D3's retry-residue acceptance): a retry that
+// finds its own prior store — a prior attempt that materialized before its
+// receipt was recorded — is accepted idempotently when the store exactly
+// reproduces the recorded cut (sole ref at the cut SHA, config reproducing the
+// object format + UUID, pack reproducing the closure digest, fsck-clean).
+// Any divergence refuses without overwriting. It checks the store git dir only;
+// the derived shared worktree is re-cut by materialization on a clean retry.
+func verifyLandedInitiativeStoreMatches(storeRoot string, initiativeID int64, objectFormat, cutSHA, uuid, closureDigest string) (SetupResult, error) {
+	gitDir := filepath.Join(storeRoot, "git")
+	refBytes, err := os.ReadFile(filepath.Join(gitDir, "refs", "heads", "mc", "initiative-"+strconv.FormatInt(initiativeID, 10)))
+	if err != nil || strings.TrimSpace(string(refBytes)) != cutSHA {
+		return SetupResult{}, Domainf("initiative retry residue ref does not match the pinned cut SHA")
+	}
+	cfg, err := os.ReadFile(filepath.Join(gitDir, "config"))
+	if err != nil || !bytes.Equal(cfg, generatedTaskGitConfig(objectFormat, uuid)) {
+		return SetupResult{}, Domainf("initiative retry residue config does not match the pinned identity")
+	}
+	digest, err := digestLandedPack(filepath.Join(gitDir, "objects", "pack"))
+	if err != nil {
+		return SetupResult{}, err
+	}
+	if digest != closureDigest {
+		return SetupResult{}, Domainf("initiative retry residue pack does not match the pinned closure digest")
+	}
+	if err := fsckClean(gitDir); err != nil {
+		return SetupResult{}, err
+	}
+	count, err := landedObjectCount(gitDir)
+	if err != nil {
+		return SetupResult{}, err
+	}
+	return SetupResult{
+		BaseSHA: cutSHA, ObjectFormat: objectFormat, LocalRepoUUID: uuid,
+		ClosureDigest: closureDigest, ObjectCount: count, FsckClean: true,
+	}, nil
 }
 
 // MaterializeInitiativeStore builds the complete sanitized initiative store

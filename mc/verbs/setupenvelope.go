@@ -25,6 +25,12 @@ const (
 	// `/mc/setup.json`. The union stays closed by refusing cross-arm authority
 	// in BOTH directions.
 	SetupOperationSealedLanding = "sealed-landing"
+	// SetupOperationInitiativeSetup is the ADR-025 D3 initiative shared-store cut.
+	// It materializes the sanitized store AND the separate shared worktree from
+	// the current tip of the target ref (fresh) or the recorded cut SHA (retry);
+	// unlike the task arm it carries a second container root (WorktreeRoot) for
+	// the external `.mc-worktrees/initiative-<id>` checkout (ADR-025 D1).
+	SetupOperationInitiativeSetup = "initiative-setup"
 )
 
 // SetupEnvelope is /mc/setup.json: the frozen, credential-free, host-path-free
@@ -91,6 +97,12 @@ type SetupEnvelope struct {
 	VerifiedSHA string `json:"verified_sha,omitempty"`
 	PreMergeSHA string `json:"pre_merge_sha,omitempty"`
 	CoverRoot   string `json:"cover_root,omitempty"`
+
+	// WorktreeRoot is the ADR-025 initiative arm's second container root: the
+	// external shared-worktree checkout base. It is set ONLY by the
+	// initiative-setup operation; every other arm must leave it empty (closed
+	// union). TaskRoot carries the store root for this arm.
+	WorktreeRoot string `json:"worktree_root,omitempty"`
 }
 
 func validateSetupEnvelope(env SetupEnvelope) error {
@@ -111,6 +123,11 @@ func validateSetupEnvelope(env SetupEnvelope) error {
 	if env.Operation != SetupOperationSealedLanding &&
 		(env.LandingID != "" || env.VerifiedSHA != "" || env.PreMergeSHA != "" || env.CoverRoot != "") {
 		return Domainf("setup envelope carries sealed landing authority")
+	}
+	// The second container root belongs only to the initiative arm. Stated once
+	// so no other arm silently inherits a shared-worktree bind.
+	if env.Operation != SetupOperationInitiativeSetup && env.WorktreeRoot != "" {
+		return Domainf("setup envelope carries initiative-setup authority")
 	}
 	if err := validateSetupObjectFormat(env.ObjectFormat); err != nil {
 		return err
@@ -145,6 +162,40 @@ func validateSetupEnvelope(env SetupEnvelope) error {
 			}
 		default:
 			return Domainf("setup envelope mode %q is neither fresh nor retry", env.Mode)
+		}
+	case SetupOperationInitiativeSetup:
+		// The initiative arm is the first-task closure arm generalized to the
+		// two-base cut: same fresh/retry closure discipline, plus a second
+		// container root and the initiative branch/worktree grammar. It carries
+		// no accepted-seal authority.
+		if env.CompletionRunID != "" || env.CompletionRequest != "" || env.SealedSHA != "" || env.ClosureDigest != "" ||
+			env.ManifestDigest != "" || env.SealRoot != "" || env.SealDevice != "" || env.ProjectionRoot != "" ||
+			env.SealInode != "" || env.SealOwnerUID != 0 {
+			return Domainf("initiative setup envelope carries accepted-seal authority")
+		}
+		if env.Branch != initiativeSharedBranch(env.TaskID) || env.WorktreeName != initiativeWorktreeName(env.TaskID) {
+			return Domainf("initiative setup envelope branch/worktree name does not match the initiative id")
+		}
+		if env.SourceRepo == "" || env.TaskRoot == "" || env.WorktreeRoot == "" {
+			return Domainf("initiative setup envelope carries no source/store/worktree paths")
+		}
+		switch env.Mode {
+		case "fresh":
+			if env.TargetRef == "" {
+				return Domainf("initiative setup envelope fresh mode has no target ref")
+			}
+		case "retry":
+			if len(env.PinnedBaseSHA) != oidLen(env.ObjectFormat) || !assignmentHex.MatchString(env.PinnedBaseSHA) {
+				return Domainf("initiative setup envelope retry cut SHA is malformed")
+			}
+			if len(env.PinnedClosureDigest) != 64 || !assignmentHex.MatchString(env.PinnedClosureDigest) {
+				return Domainf("initiative setup envelope retry closure digest is malformed")
+			}
+			if !assignmentUUID.MatchString(env.PinnedLocalRepoUUID) {
+				return Domainf("initiative setup envelope retry local repository UUID is malformed")
+			}
+		default:
+			return Domainf("initiative setup envelope mode %q is neither fresh nor retry", env.Mode)
 		}
 	case SetupOperationAcceptedSealRebuild:
 		if env.Mode != "" || env.TargetRef != "" || env.PinnedBaseSHA != "" ||
@@ -288,6 +339,49 @@ func RunFirstTaskSetup(env SetupEnvelope) (SetupResult, error) {
 	if env.Mode == "retry" && (result.ClosureDigest != env.PinnedClosureDigest ||
 		result.BaseSHA != env.PinnedBaseSHA || result.LocalRepoUUID != env.PinnedLocalRepoUUID) {
 		return SetupResult{}, Domainf("first-task retry did not reproduce the pinned closure assignment")
+	}
+	return result, nil
+}
+
+// RunInitiativeSetup is the in-container executor entrypoint for the ADR-025 D3
+// shared-store cut: it validates the frozen envelope, materializes the store
+// and the separate shared worktree, and in retry mode either accepts an
+// exact-matching prior store idempotently or proves the re-cut reproduced the
+// recorded closure exactly. It emits the cut SHA (SetupResult.BaseSHA); the
+// resident stat's the two roots host-side to register the durable receipt.
+func RunInitiativeSetup(env SetupEnvelope) (SetupResult, error) {
+	if err := validateSetupEnvelope(env); err != nil {
+		return SetupResult{}, err
+	}
+	if env.Operation != SetupOperationInitiativeSetup {
+		return SetupResult{}, Domainf("setup envelope is not an initiative setup operation")
+	}
+	if env.Mode == "retry" {
+		// A prior attempt may have materialized the store before its receipt was
+		// recorded. Accept an exact-matching residue idempotently (D3); a
+		// divergent one refuses without overwriting.
+		if entries, err := os.ReadDir(filepath.Join(env.TaskRoot, "git")); err == nil && len(entries) > 0 {
+			return verifyLandedInitiativeStoreMatches(env.TaskRoot, env.TaskID, env.ObjectFormat,
+				env.PinnedBaseSHA, env.PinnedLocalRepoUUID, env.PinnedClosureDigest)
+		}
+	}
+	uuid := env.PinnedLocalRepoUUID
+	if env.Mode == "fresh" {
+		var err error
+		if uuid, err = newRepoUUID(); err != nil {
+			return SetupResult{}, err
+		}
+	}
+	result, err := MaterializeInitiativeStore(env.SourceRepo, env.TaskRoot, env.WorktreeRoot, InitiativeSetupSpec{
+		InitiativeID: env.TaskID, Mode: env.Mode, TargetRef: env.TargetRef,
+		PinnedBaseSHA: env.PinnedBaseSHA, ObjectFormat: env.ObjectFormat, LocalRepoUUID: uuid,
+	})
+	if err != nil {
+		return SetupResult{}, err
+	}
+	if env.Mode == "retry" && (result.ClosureDigest != env.PinnedClosureDigest ||
+		result.BaseSHA != env.PinnedBaseSHA || result.LocalRepoUUID != env.PinnedLocalRepoUUID) {
+		return SetupResult{}, Domainf("initiative retry did not reproduce the pinned closure assignment")
 	}
 	return result, nil
 }

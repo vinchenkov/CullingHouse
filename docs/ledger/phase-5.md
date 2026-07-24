@@ -724,3 +724,49 @@ MaterializeInitiativeStore, emit the cut SHA; the roots are stat'd host-side by
 the resident, so the container emits only the SHA), and the two main.go
 registration sites. Then S1.4 (dispatch step), S1.5 (resident precreate +
 RegisterInitiativeSetup write).
+
+## 2026-07-23 — ADR-025 S1.3b: mc __setup-initiative subcommand + envelope
+
+Wraps S1.3a's MaterializeInitiativeStore in the closed setup-envelope union so
+the resident (S1.5) can launch the cut in a container. Still inert: nothing
+invokes __setup-initiative yet.
+
+- SetupEnvelope: new `SetupOperationInitiativeSetup` arm + a second container
+  root `WorktreeRoot` (the external `.mc-worktrees/initiative-<id>` checkout;
+  TaskRoot carries the store root). A single top-level guard keeps the union
+  closed — `WorktreeRoot` may ride ONLY the initiative arm, mirroring the
+  sealed-landing-authority guard. The arm is the first-task closure arm
+  generalized: same fresh/retry discipline, the initiative branch/worktree
+  grammar (`mc/initiative-<id>` / `mc-initiative-<id>`), and no accepted-seal
+  authority.
+- RunInitiativeSetup mirrors RunFirstTaskSetup: fresh mints a repo UUID; retry
+  with a non-empty store accepts an exact-matching residue idempotently via
+  `verifyLandedInitiativeStoreMatches` (store-only: ref at cut, config, pack
+  digest, fsck) or refuses a divergent one; a clean retry re-cuts from the
+  pinned SHA and proves the closure reproduces. It emits only the cut SHA
+  (SetupResult.BaseSHA) — the resident stat's the two roots host-side for the
+  receipt.
+- main.go: `__setup-initiative` added to the local-run guard list and a
+  host-scoped `case` mirroring `__setup-first-task`.
+- Tests (host-side real git): fresh materializes + reports (store ref +
+  worktree checkout); retry reproduces the pinned closure on a clean store;
+  retry accepts exact residue idempotently and refuses a divergent digest; the
+  envelope arm is closed (branch/worktree/target/worktree-root/seal-authority
+  refusals, and WorktreeRoot rejected on a first-task envelope). Full fast suite
+  green.
+
+With S1.3a+S1.3b the container side of the InitiativeSetup cut is complete.
+NEXT: S1.4 — dispatch emits the InitiativeSetup step (D3: for a seeded
+scope='initiative' row whose branch is set but whose setup receipt is absent, at
+the first promotion-observable tick, before any other initiative-family spawn),
+studying the existing task precreate/setup step emission in the dispatch effect.
+Then S1.5 (resident precreate + run the container + RegisterInitiativeSetup
+write, deferred from S1.1).
+
+Flake note (2026-07-23): during S1.3b's full-suite run the four `mc-land split
+boundary` bun tests (runner/image/mc-land.test.ts) HUNG — each "timed out after
+5000ms", exit 143, the file taking 3045s vs its normal ~25s. The tests exec a
+`sh mc-land … main` git merge; the hang is a transient git-subprocess stall, not
+a logic failure (S1.3b touches only mc/verbs + mc/cmd/mc/main.go, never mc-land).
+An isolated re-run of runner/image was 41 pass/0 fail in 24.8s; verbs+cmd/mc are
+green cold. No reliable repro, so not added to the PROGRESS intermittent list.

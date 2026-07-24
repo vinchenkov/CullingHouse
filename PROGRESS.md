@@ -161,11 +161,11 @@ resident `SPINE_SCHEMA_VERSION` moved to 14 in lockstep.
         refuses. S1.1 landed the `initiative_setup_receipts` spine table (v14) +
         `LoadSubjectInitiativeSetup` + loader wiring (keyed on the parent
         initiative) + `CutSHA` carrier — the READ half of the D3 receipt; the
-        register/write is owed to S1.5. S1.3a landed `MaterializeInitiativeStore`
-        (the cross-base store/worktree cut, real-git spike-validated + host-side
-        tested). Owed: S1.3b (`__setup-initiative` subcommand/envelope), S1.4
-        (dispatch step), S1.5 (resident precreate + register), S3b (D6 fence),
-        S4–S6.
+        register/write is owed to S1.5. S1.3 landed the container side of the
+        cut: `MaterializeInitiativeStore` (cross-base store/worktree,
+        spike-validated) and the `mc __setup-initiative` subcommand/envelope
+        arm, host-side tested. Owed: S1.4 (dispatch step), S1.5 (resident
+        precreate + register), S3b (D6 fence), S4–S6.
 - [ ] Release prep — install/onboard front door and construction-document
       disposition.
 
@@ -231,19 +231,17 @@ native resume, container reconciliation, Homie credential projection,
 dashboard LaunchAgent generation, and the four non-Console tabs. Details and
 commit map are in the closed Phase 4 ledger.
 
-NEXT: ADR-025 S1.3b — the `mc __setup-initiative` subcommand that wraps the
-S1.3a `MaterializeInitiativeStore`. Build: (1) a `SetupEnvelope` InitiativeSetup
-arm (add `SetupOperationInitiativeSetup` + a `validateSetupEnvelope` arm;
-container-dest fields for the store root and the external worktree root — reuse
-`TaskRoot` as store root and add a `WorktreeRoot`, or add both; the branch/
-worktree name guard must equal `mc/initiative-<id>` / `mc-initiative-<id>`);
-(2) `RunInitiativeSetup(env)` mirroring `RunFirstTaskSetup` (`setupenvelope.go:
-255-293`): mint a fresh repo UUID, resolve object format, call
-`MaterializeInitiativeStore`, and emit the cut SHA on stdout — the resident
-stat's the two roots host-side, so the container emits only the SHA (reuse
-`SetupResult.BaseSHA` or a lean result); include the retry idempotent-residue
-verify (a `verifyLandedStoreMatches` analog) if the store is non-empty; (3) the
-two `main.go` sites — the local-run guard list (`main.go:104`) and a
-`case "__setup-initiative":` mirroring `__setup-first-task` (`main.go:285-300`).
-Then S1.4 (dispatch step), S1.5 (resident precreate + `RegisterInitiativeSetup`
-write, deferred from S1.1), S3b (D6 fence), S4–S6. See ADR-025 §Slices.
+NEXT: ADR-025 S1.4 — dispatch emits the `InitiativeSetup` step. Per D3: for any
+live, seeded `scope='initiative'` row whose `tasks.branch` is set but whose
+initiative setup receipt is ABSENT, dispatch emits an `InitiativeSetup` step at
+the first tick where promotion is observable and BEFORE any other
+initiative-family spawn for that row. Study the existing task precreate/setup
+step emission in the dispatch effect (how `TaskPrecreate`/`captureTaskSetup`
+ride the prepared plan and how the resident consumes them; grep
+`PrivateDispatchTaskPrecreate`, `snapshot.TaskPrecreate`, the dispatch effect
+step types, and how `scope='initiative'` rows with `branch` set are recognized
+in `mc/dispatch`). The step carries the initiative id + the target ref (fresh
+cut) and, on retry, the recorded cut SHA — but the RECEIPT is not a
+task_assignments row (D3). Then S1.5 (resident precreate + run the container +
+`RegisterInitiativeSetup` write, deferred from S1.1), S3b (D6 fence), S4–S6. See
+ADR-025 §Slices.

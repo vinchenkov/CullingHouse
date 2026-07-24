@@ -178,6 +178,111 @@ func TestMaterializeInitiativeStoreRefusesResidueInAWorktree(t *testing.T) {
 	}
 }
 
+func freshInitiativeEnvelope(src, storeRoot, worktreeRoot, objfmt string) SetupEnvelope {
+	return SetupEnvelope{
+		SchemaVersion: 1, Operation: SetupOperationInitiativeSetup,
+		RunID: "setup-run", TaskID: 7, Mode: "fresh", ObjectFormat: objfmt,
+		TargetRef: "HEAD", Branch: "mc/initiative-7", WorktreeName: "mc-initiative-7",
+		SourceRepo: src, TaskRoot: storeRoot, WorktreeRoot: worktreeRoot,
+	}
+}
+
+func TestRunInitiativeSetupFreshMaterializesAndReports(t *testing.T) {
+	src, base, objfmt := buildSourceRepo(t)
+	store, wt := mkInitiativeBases(t)
+	res, err := RunInitiativeSetup(freshInitiativeEnvelope(src, store, wt, objfmt))
+	if err != nil {
+		t.Fatalf("fresh initiative setup: %v", err)
+	}
+	if res.BaseSHA != base || !res.FsckClean || res.ObjectCount < 5 {
+		t.Fatalf("result = %+v, want cut %s and a clean nonempty closure", res, base)
+	}
+	if _, err := os.Stat(filepath.Join(store, "git", "refs", "heads", "mc", "initiative-7")); err != nil {
+		t.Fatalf("fresh setup left no store ref: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(wt, "README.md")); err != nil {
+		t.Fatalf("fresh setup did not check out the shared worktree: %v", err)
+	}
+}
+
+func TestRunInitiativeSetupRetryReproducesThePinnedClosure(t *testing.T) {
+	src, _, objfmt := buildSourceRepo(t)
+	store0, wt0 := mkInitiativeBases(t)
+	fresh, err := RunInitiativeSetup(freshInitiativeEnvelope(src, store0, wt0, objfmt))
+	if err != nil {
+		t.Fatalf("seed fresh: %v", err)
+	}
+	store, wt := mkInitiativeBases(t)
+	env := freshInitiativeEnvelope(src, store, wt, objfmt)
+	env.Mode = "retry"
+	env.TargetRef = ""
+	env.PinnedBaseSHA, env.PinnedClosureDigest, env.PinnedLocalRepoUUID = fresh.BaseSHA, fresh.ClosureDigest, fresh.LocalRepoUUID
+	res, err := RunInitiativeSetup(env)
+	if err != nil {
+		t.Fatalf("retry initiative setup: %v", err)
+	}
+	if res.ClosureDigest != fresh.ClosureDigest || res.BaseSHA != fresh.BaseSHA || res.LocalRepoUUID != fresh.LocalRepoUUID {
+		t.Fatalf("retry result %+v did not reproduce the pinned closure %+v", res, fresh)
+	}
+}
+
+// A retry that finds its OWN prior store (a prior attempt that materialized
+// before its receipt was recorded) is accepted idempotently, not refused as
+// residue (ADR-025 D3).
+func TestRunInitiativeSetupRetryAcceptsExactResidueIdempotently(t *testing.T) {
+	src, _, objfmt := buildSourceRepo(t)
+	store, wt := mkInitiativeBases(t)
+	fresh, err := RunInitiativeSetup(freshInitiativeEnvelope(src, store, wt, objfmt))
+	if err != nil {
+		t.Fatalf("seed fresh: %v", err)
+	}
+	env := freshInitiativeEnvelope(src, store, wt, objfmt) // same store — residue present
+	env.Mode = "retry"
+	env.TargetRef = ""
+	env.PinnedBaseSHA, env.PinnedClosureDigest, env.PinnedLocalRepoUUID = fresh.BaseSHA, fresh.ClosureDigest, fresh.LocalRepoUUID
+	res, err := RunInitiativeSetup(env)
+	if err != nil {
+		t.Fatalf("idempotent residue retry: %v", err)
+	}
+	if res.BaseSHA != fresh.BaseSHA || res.ClosureDigest != fresh.ClosureDigest {
+		t.Fatalf("residue verify = %+v, want the recorded cut", res)
+	}
+	// A divergent pinned digest against the same residue refuses without overwriting.
+	env.PinnedClosureDigest = strings.Repeat("0", 64)
+	if _, err := RunInitiativeSetup(env); err == nil {
+		t.Fatal("residue retry accepted a divergent pinned closure digest")
+	}
+}
+
+// The initiative arm is a closed union member: its second container root never
+// rides another arm, and it carries no accepted-seal authority.
+func TestValidateInitiativeSetupEnvelopeIsAClosedArm(t *testing.T) {
+	base := freshInitiativeEnvelope("/src", "/store", "/wt", "sha1")
+	if err := validateSetupEnvelope(base); err != nil {
+		t.Fatalf("a valid initiative envelope was rejected: %v", err)
+	}
+	bad := map[string]func(e *SetupEnvelope){
+		"branch":           func(e *SetupEnvelope) { e.Branch = "mc/initiative-8" },
+		"worktree_name":    func(e *SetupEnvelope) { e.WorktreeName = "mc-initiative-8" },
+		"no_worktree_root": func(e *SetupEnvelope) { e.WorktreeRoot = "" },
+		"no_target":        func(e *SetupEnvelope) { e.TargetRef = "" },
+		"seal_authority":   func(e *SetupEnvelope) { e.SealedSHA = strings.Repeat("a", 40) },
+	}
+	for name, mut := range bad {
+		e := base
+		mut(&e)
+		if err := validateSetupEnvelope(e); err == nil {
+			t.Fatalf("%s: a malformed initiative envelope was accepted", name)
+		}
+	}
+	// The WorktreeRoot field never rides a non-initiative arm.
+	ft := freshEnvelope("/src", "/task", "sha1")
+	ft.WorktreeRoot = "/wt"
+	if err := validateSetupEnvelope(ft); err == nil {
+		t.Fatal("a first-task envelope carrying a worktree root was accepted")
+	}
+}
+
 func TestMaterializeInitiativeStoreRefusesReservedRootComponent(t *testing.T) {
 	src, _, objfmt := buildSourceRepo(t)
 	// .mc-worktrees at the tree top must be refused (ADR-025 D10) — a child could
