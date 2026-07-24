@@ -6,14 +6,15 @@ REPO PATH: `~/dev/ai/homie`. Never relocate this repo into `~/Documents`,
 `~/Desktop`, or `~/Downloads`: macOS TCC can revoke an agent session's own
 filesystem access there during fan-out. Full Disk Access does not fix it.
 
-LAST GREEN SHA: `fc72175` — ADR-025 accepted (production initiative mounts,
-adversarially verified through three lenses); groundwork landed inert: the
-`.mc-worktrees` reserved component, the closed two-family worktree-name grammar
-(D6 amended in place), and `initiativePlanRows`/`resolveInitiativeSkeleton` (the
-two-base child table, derived from `taskPlanRows`). Nothing calls the resolver
-yet — the `mountattest.go:238-249` initiative-child refusal still stands, so the
-change is fail-closed. Full `mc/check.sh` green; launchd not loaded. Prior
-codex green was `28d6102` (production reset lifecycle).
+LAST GREEN SHA: `6fd88cb` — ADR-025 S2: the receipt-vouched initiative-child
+Worker mount arm now derives the D2 shared-store rows (two host bases), gates
+the capture on `SubjectInitiativeID` before the task arm, vouches both setup
+roots, and suppresses seal emission (D4). Inert end-to-end: no S1 receipt
+producer, so a real child resolves an absent store and health-refuses; every
+non-Worker/non-repo case retains today's refusal. Adversarially reviewed
+through three lenses (fail-closed, D2/D5 rows, D4/carrier), no findings. Full
+fast suite green; `verbs`/`substrate` cold `-count=1` green; launchd not loaded.
+Prior codex green was `28d6102` (production reset lifecycle).
 Full Docker lanes (26 `docker_boundary`; 10 `docker_e2e`) were green at
 `c8f37e9`-era HEAD. Extended Playwright smoke and install.sh dev walk were last
 green at `d0ef4bb`; real onboarding crossing at `bf5981d`. Production image
