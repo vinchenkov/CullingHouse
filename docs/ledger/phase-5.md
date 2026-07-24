@@ -1181,3 +1181,43 @@ recorded, not silent.
 NEXT: S3b.3b-5 (the owed end-to-end commit test) then S3b.4 (the resident
 create-path gate at effects.ts:683 — `requireInitiativeChildrenAbsent` + `mc
 __verify-initiative-clean`, both already landed) which makes the D6 fence LIVE.
+
+## 2026-07-24 — ADR-025 S3b.3b-5: end-to-end coverage of the D6 commit fence
+
+Closed the owed refusal-branch coverage on the S3b.3b-4 commit re-authoring
+fence (`cc7dac9`). First verified the fence's reach: `DispatchCommitPrivate`
+(dispatchprivate.go:335/339) sets `commit := dispatchCommit` and calls it, so the
+fence added to `dispatchCommit` guards the private (broker) path — the one that
+can strip the marker — not only the in-process path.
+
+`seedDispatchableInitiativeChild` builds the first spine-driven real-routed
+initiative-child Worker fixture: seeded initiative 7 + its seeded plan-reviewed
+child 10 (the dispatch selection recipe from dispatch_test.go:518-525) over the
+exact on-disk `initiative-7` store (`isBuildAt`), the D3 receipt vouching the
+resolved store/worktree roots (`maSetupIdentity`), a repo Worksource, and a prior
+ended child pipeline run for a non-empty producer-absence set. dvSpine's
+routing.md already maps worker → claude-sdk/minimax (a REAL route), so the marker
+is authored — no special routing setup needed.
+
+Two tests through dfPrepare/dispatchAttest/dfCommit: the happy path asserts the
+committed effect's `mount_plan.initiative_child` carries `{7, [run-10-prior]}`
+(the marker survives attest→commit→effect); the strip path nulls
+`attested.mountPlan.InitiativeChild` (a pointer field, mutable in place) and
+asserts a stale refusal that opens no NEW run and leaves the lease free.
+
+Debugging note worth keeping: `dfAssertInert` asserts `COUNT(*) FROM runs == 0`,
+which is wrong for any fixture that SEEDS a prior run — the refusal is inert but
+the seeded row remains. Assert "no new run" (count unchanged) + free lease
+instead. The fence itself was correct on the first try (diagnosed via a throwaway
+`t.Logf` of `route.Harness`/marker/effect: eff was already `refused/preflight.stale`).
+
+An earlier general-purpose agent tasked with mapping this fixture stalled
+(watchdog, no result); the fixture was built directly from the two reference
+tests (`TestDispatchRepoWorkerCommitsTaskLocalMountPlan`:1641 and
+`maInitiativeChildCandidate`:836) plus the domain child-gate.
+
+NEXT: S3b.4 — the resident create-path gate (types.ts `MountPlan.initiative_child`
++ effects.ts spawn() running `requireInitiativeChildrenAbsent` then `mc
+__verify-initiative-clean` before the child `docker create`), which makes the D6
+fence LIVE. Detailed plan (incl. the store/worktree-path derive-vs-carry choice)
+is in PROGRESS NEXT.

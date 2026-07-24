@@ -6,24 +6,23 @@ REPO PATH: `~/dev/ai/homie`. Never relocate this repo into `~/Documents`,
 `~/Desktop`, or `~/Downloads`: macOS TCC can revoke an agent session's own
 filesystem access there during fan-out. Full Disk Access does not fix it.
 
-LAST GREEN SHA: `cc7a3a8` — ADR-025 S3b.3b-3/4: the dispatch side of the D6
-producer-absence marker is COMPLETE. `expectedInitiativeChildMarker(state, fake)`
-authors the `initiative_child` plan marker (initiative id + frozen prior-child
-run set) on a real-routed initiative child at attest, and `dispatchCommit`
-re-derives + DeepEqual-fences it against the broker's frame (closing the
-private-path strip fail-open). Built on: S3b.3b-2 (`bfcf9b9`, the marker type +
-validatePrivateMountPlan arm + closed-union exclusions), S3b.3b-1 (`4f43ba6`,
-freeze `SubjectInitiativePriorChildRuns` into the mount state), S3b.3a
-(`8b9c209`, the loader), S3b.2 (`cf71fc7`, the `mc __verify-initiative-clean`
-cleanliness executor), S3b.1 (`ad88dc9`, the resident absence loop). All the
-D6 INPUTS now reach the effect's mount_plan; the resident does not yet consume
-them. OWED coverage: S3b.3b-5 — an end-to-end real-routed initiative-child COMMIT
-test (happy path carries the marker in the effect + a private-frame strip returns
-CodeStale); the fence's refusal branch is currently only unit-covered via
-`expectedInitiativeChildMarker`. Then S3b.4 (resident create-path gate) makes D6
-LIVE. S1 (the
-cut) is COMPLETE (S1.5b-2 `8aba956`): the receipt producer exists and S2/S3a's
-mount vouch is reachable end-to-end. Full fast suite green (the load-sensitive resident EBADF flake —
+LAST GREEN SHA: `cc7dac9` — ADR-025 S3b.3b-5: the owed end-to-end coverage on the
+D6 commit re-authoring fence — a real-routed initiative-child Worker driven
+through dfPrepare/dispatchAttest/dfCommit (happy path carries the marker in the
+committed effect; a stripped `attested.mountPlan.InitiativeChild` returns a stale
+refusal with no new run / free lease). Verified `DispatchCommitPrivate` routes
+through `dispatchCommit`, so the fence guards the private path too. The full
+dispatch side of the D6 marker (S3b.3b-1..5) is now COMPLETE + covered: the
+`initiative_child` marker (id + frozen prior-child run set) is authored at attest
+on a real-routed child (`expectedInitiativeChildMarker`), re-derived + DeepEqual-
+fenced at `dispatchCommit` against the broker frame, and reaches the effect's
+mount_plan. Commit chain: S3b.1 `ad88dc9` (resident absence loop) → S3b.2
+`cf71fc7` (`mc __verify-initiative-clean` executor) → S3b.3a `8b9c209` (loader) →
+S3b.3b-1 `4f43ba6` (freeze into mount state) → S3b.3b-2 `bfcf9b9` (marker type +
+validation) → S3b.3b-3/4 `cc7a3a8` (author + commit fence) → S3b.3b-5 `cc7dac9`
+(e2e coverage). S1 (the cut) is COMPLETE (S1.5b-2 `8aba956`). Only S3b.4 (the
+resident create-path gate) remains to make D6 LIVE — the resident does not yet
+consume the marker. Full fast suite green (the load-sensitive resident EBADF flake —
 intermittent #2, ~1 in 3 under heavy looping — clears on re-run);
 `verbs`/`dispatch`/`substrate` cold `-count=1` green; launchd not loaded. Prior
 codex green was `28d6102`.
@@ -199,24 +198,29 @@ native resume, container reconciliation, Homie credential projection,
 dashboard LaunchAgent generation, and the four non-Console tabs. Details and
 commit map are in the closed Phase 4 ledger.
 
-NEXT: ADR-025 S3b.3b-5 then S3b.4. FIRST S3b.3b-5 (owed coverage): an end-to-end
-real-routed initiative-child COMMIT test closing the fence's untested refusal
-branch. Build a full spine fixture (initiative + child task + D3 receipt + the
-real on-disk store, mirroring `maInitiativeChildCandidate` at
-mountattest_test.go:836 but driven through `dfPrepare`/`dispatchAttest`/`dfCommit`
-like `TestDispatchRepoWorkerCommitsTaskLocalMountPlan`:1641): assert the committed
-effect's `mount_plan.initiative_child` carries the frozen prior-child set, then a
-private-frame variant (dispatchprivate_test.go pattern, e.g.
-`TestPrivateDispatchRecheckStalesOnMountEvidenceDrift`:868) whose
-`Attestation.MountPlan.InitiativeChild` is stripped/mutated returns CodeStale.
-THEN S3b.4 — the resident create-path gate (effects.ts:683): add the
-`initiative_child` field to the TS `MountPlan` (types.ts), and before the
-initiative child's `docker create`, call
-`requireInitiativeChildrenAbsent(marker.prior_child_runs)` then launch `mc
-__verify-initiative-clean` (S3b.1/S3b.2, both landed) with the store/worktree
-binds; any failure logs + returns (fail-closed, no spawn). Wire the dep (real
-main.ts, fake test-helpers.ts) + effects.test.ts (fence-clean → create proceeds;
-a present prior child or a dirty worktree → spawn refused; exact fence-container
-argv). That makes D6 LIVE. Then S4–S6; the Darwin private-frame carrier
+NEXT: ADR-025 S3b.4 — the resident create-path gate that makes the D6 fence LIVE
+(the whole dispatch side, S3b.1/S3b.2 executors + S3b.3 marker, is landed +
+covered). In resident/src: (1) types.ts — add `initiative_child?: { initiative_id:
+number; prior_child_runs: string[] }` to `MountPlan`. (2) effects.ts `spawn()` —
+when `effect.mount_plan.initiative_child` is present, BEFORE the `docker create`
+(~effects.ts:705), run the two D6 fences fail-closed (log + return on any failure,
+no spawn): first `requireInitiativeChildrenAbsent(marker.prior_child_runs, deps)`
+(already landed, effects.ts:394), then launch `mc __verify-initiative-clean`
+(S3b.2, already landed) in a container mirroring the `initiativeSetup` handler's
+run (network none, uid 10002, cap-drop ALL) binding ONLY store + worktree +
+fence.json — `${store}:/repo/store:ro`, `${store}/git:/repo/store/git`,
+`${worktree}:/repo/worktree`, `${fenceJson}:/mc/fence.json:ro` — with envelope
+{schema_version:1, operation:"initiative-clean-fence", initiative_id,
+store_root:"/repo/store", worktree_root:"/repo/worktree"}; rm the fence.json after.
+OPEN CHOICE: the store/worktree HOST paths — derive from the plan entries (store =
+source of the `/workspace` entry, worktree = source of `/workspace/source`; the
+ADR-025 D2 table fixes those destinations) OR carry them in the marker (cleaner
+data flow but re-touches the Go marker/validation/commit-fence + the 3 S3b.3b
+tests). Lean derive-from-entries (less churn; destinations are fixed by D2). (3)
+Wire nothing new in TickDeps — reuse `deps.docker`/`deps.fs`/`deps.runMc`. (4)
+effects.test.ts: fence-clean (both docker inspects absent + `__verify-initiative-clean`
+exit 0) → create proceeds; a present prior child → spawn refused (no create); a
+non-zero clean fence → spawn refused; assert the exact fence-container argv +
+fs events (write/rm fence.json). Then S4–S6; the Darwin private-frame carrier
 (S1.4c-2c) is owed but non-blocking. See ADR-025 §Slices + the D6-fence scout
-(phase-5 ledger, 2026-07-23 + 2026-07-24) + the S3b.3b scout map.
+(phase-5 ledger 2026-07-23/24) + the S3b.3b scout map.
