@@ -6,21 +6,23 @@ REPO PATH: `~/dev/ai/homie`. Never relocate this repo into `~/Documents`,
 `~/Desktop`, or `~/Downloads`: macOS TCC can revoke an agent session's own
 filesystem access there during fan-out. Full Disk Access does not fix it.
 
-LAST GREEN SHA: `a4b0fee` — ADR-025 S1.4c-2a: `captureInitiativePrecreate`, the
-attest-side authoring of the shared-store precreate step — the hardest, most
-novel piece of the InitiativeSetup lane. Proves the two operator-owned 0700
-parents; fresh (children absent → cut at the arc target ref) vs retry (present →
-reuse the on-disk cut, pins RE-DERIVED from the landed ref/config/pack since the
-receipt IS the assignment, D3); partial state refuses. Inert (nothing calls it
-until the S1.4c-2b lane). Atop S1.4c-1 (the mount-plan step + validation),
-S1.4a/b (the inert predicate + data plumbing + RealRouting gate), S1.3 (the
-container side of the cut), S1.1 (`initiative_setup_receipts` v14 + read), and
-S2/S3a (inert host-side mount arms). A 2nd Plan-agent trace mapped the full lane;
-its build-tag audit found NO default-build test breaks. Still inert end-to-end:
-nothing emits or invokes the cut yet. S2 was adversarially reviewed (3 lenses, no
-findings). Full fast suite green (the recurring load-sensitive resident EBADF
-flake — intermittent #2 — clears on re-run); `verbs`/`dispatch`/`substrate` cold
-`-count=1` green; launchd not loaded. Prior codex green was `28d6102`.
+LAST GREEN SHA: `b4c0c9e` — ADR-025 S1.4c-2b: the whole route-free
+InitiativeSetup dispatch lane is LIVE in-process. Under real routing a
+promoted-uncut initiative drives Decide (0d emission) → route-free attest
+(captureInitiativePrecreate) → commit (claims the lease, opens a worker/pipeline
+run keyed on the arc with empty binding + no harness/brief, carries the
+shared-store precreate plan). The first tick ADR-025 stops being purely inert —
+but nothing EXECUTES until S1.5's resident runs it. Atop S1.4c-1/2a (the
+mount-plan step + validation + captureInitiativePrecreate), S1.4a/b (predicate +
+data plumbing + RealRouting gate), S1.3 (the container side of the cut), S1.1
+(`initiative_setup_receipts` v14 + read), and S2/S3a (inert host-side mount
+arms). Tested: pure-Decide emission + a full-path `Dispatch()` verb test (effect,
+claimed lease, worker/pipeline run). The Darwin private frame fails closed on the
+arm (its carrier S1.4c-2c is owed, non-blocking). S2 was adversarially reviewed
+(3 lenses, no findings). Full fast suite green (the load-sensitive resident EBADF
+flake — intermittent #2, ~1 in 3 under heavy looping — clears on re-run);
+`verbs`/`dispatch`/`substrate` cold `-count=1` green; launchd not loaded. Prior
+codex green was `28d6102`.
 Full Docker lanes (26 `docker_boundary`; 10 `docker_e2e`) were green at
 `c8f37e9`-era HEAD. Extended Playwright smoke and install.sh dev walk were last
 green at `d0ef4bb`; real onboarding crossing at `bf5981d`. Production image
