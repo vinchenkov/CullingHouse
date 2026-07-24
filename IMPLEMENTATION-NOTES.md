@@ -1685,3 +1685,50 @@ rules in code the sealed lane does not own.
 - Spec impact: none — no decision reordered, only the landing order of two inert
   slices; every existing refusal stays fail-closed until S6.
 - Needs your decision: no.
+
+## 2026-07-23 — ADR-025 S1.4 effect model + fake-safe emission gate (delegated design)
+- Where: ADR-025 D3 ("Dispatch emits an InitiativeSetup step … at the first
+  promotion-observable tick and before any other initiative-family spawn").
+  The mechanism is delegated; this records the design settled before coding.
+- Effect model: the InitiativeSetup is the FIRST standalone setup-container
+  dispatch action. Every existing setup container (first-task, accepted-seal,
+  verifier-projection) is an attest-time FOLD onto an agent spawn's mount plan,
+  invisible to pure `dispatch.Decide`. D3 requires the opposite — a distinct
+  action emitted by Decide ahead of family spawns. So a new `KindInitiativeSetup`
+  action carrying only the initiative id (fresh/retry is authored at attest from
+  on-disk store residue, since an absent receipt means there is no spine pin —
+  "never re-resolve main" is enforced by the existing verifyLandedInitiativeStore
+  residue check, not a task_assignments pin). A new `runs.role` value is avoided
+  (it is a closed schema CHECK — would force another migration); the setup run
+  opens at Worker tier (D3: "setup authority stays Worker-tier") keyed on the
+  initiative id with NO agent route/brief — a route-free, brief-free,
+  lease-claiming action the current seam cannot yet express (the spawn path
+  always resolves routing.md + builds a brief). It holds the global execution
+  lease (Inv. 1: one sanctioned pipeline container); Inv. 3/11 preserved.
+- The fake-regression hazard (non-obvious): `domain.Promote` (domain/task.go:47)
+  sets `branch='mc/initiative-<id>'` for EVERY initiative promotion, fake or real,
+  and the fake/real distinction is `route.Harness == "fake"` resolved
+  PER-CANDIDATE at attest (dispatchseam.go:671), invisible to pure Decide. A
+  naive predicate (seeded+scope=initiative+branch-set+receipt-absent) would emit
+  KindInitiativeSetup for Phase 4's fake-routed promoted initiatives too, altering
+  the asserted fake dispatch sequence — a regression. The fake lane needs no cut
+  (children fall through to the legacy whole-Worksource bind and make the shared
+  worktree themselves, ADR-025 Context).
+- Choice: gate the emission on a new `Config.RealRouting bool` = `!allowFakeDecorrelation`
+  (from `routing.ActiveRegistry()`, the global "only real harnesses permitted"
+  signal), threaded into Decide and DEFAULTING FALSE. Fake test mode
+  (allowFakeDecorrelation=true) → RealRouting=false → no emission → Phase 4 and
+  every unit fixture unchanged. Production (allowFakeDecorrelation=false) →
+  RealRouting=true → emission fires. This is a coarse but conservative proxy for
+  "production" (no per-route global exists); a mixed fake/real deployment does
+  not occur in practice (test = all-fake, prod = all-real). Touching the
+  otherwise-frozen dispatch.go is the sanctioned ADR-025 D3 exception.
+- Naming: the mount-plan step type is `PrivateDispatchInitiativePrecreate` —
+  `PrivateDispatchInitiativeSetup` is already the S1.1 receipt-identity alias.
+- Decomposition: S1.4a inert data + predicate (Task field + loadRecords JOIN +
+  KindInitiativeSetup type + Config.RealRouting + nextInitiativeSetup helper,
+  NOT yet called by Decide — additive, zero behavioral change); S1.4b wires the
+  emission into Decide + the route-free commit effect + RealRouting plumbing
+  together (the coupled behavioral unit); S1.4c the mount-plan step + attest arm.
+- Spec impact: none new; preserves Inv. 1/3/11/25. Needs your decision: no (the
+  RealRouting proxy is reversible and fail-safe toward the fake lane).

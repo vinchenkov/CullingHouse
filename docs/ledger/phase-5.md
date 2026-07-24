@@ -770,3 +770,41 @@ boundary` bun tests (runner/image/mc-land.test.ts) HUNG — each "timed out afte
 a logic failure (S1.3b touches only mc/verbs + mc/cmd/mc/main.go, never mc-land).
 An isolated re-run of runner/image was 41 pass/0 fail in 24.8s; verbs+cmd/mc are
 green cold. No reliable repro, so not added to the PROGRESS intermittent list.
+
+## 2026-07-24 — ADR-025 S1.4: design + S1.4a (inert predicate + data)
+
+S1.4 (dispatch emits the InitiativeSetup step) is the most architecturally
+loaded slice: the InitiativeSetup is the FIRST standalone setup-container
+dispatch action (every existing setup container is an attest-time fold onto an
+agent spawn, invisible to pure Decide; D3 requires a distinct action emitted
+ahead of family spawns). A Plan-agent trace + verification settled the design
+(full rationale in IMPLEMENTATION-NOTES 2026-07-23):
+
+- Effect model: new KindInitiativeSetup (route-free, brief-free, Worker-tier,
+  lease-claiming, agent-less); fresh/retry authored at attest from on-disk
+  residue (no spine pin when the receipt is absent); avoids a new runs.role
+  (closed schema CHECK).
+- The fake-regression hazard (non-obvious): domain.Promote sets branch for EVERY
+  initiative (fake or real), and fake/real is route.Harness=="fake" per candidate
+  at attest, invisible to pure Decide. A naive predicate would emit into Phase
+  4's fake lane and change its asserted sequence. Gate: Config.RealRouting =
+  !allowFakeDecorrelation, threaded into Decide, DEFAULTING FALSE — every fake/
+  unit fixture unchanged; production (allowFakeDecorrelation=false) fires it.
+
+S1.4a landed the inert foundation (additive, zero behavioral change — Decide is
+NOT yet wired): dispatch.Task.InitiativeSetupDone, Config.RealRouting (default
+false), KindInitiativeSetup + the InitiativeSetup action arm, and the pure
+nextInitiativeSetup(rec, cfg) predicate (seeded+scope=initiative+branch-set+
+receipt-absent, lowest id, gated on RealRouting) — NOT called by Decide yet.
+Unit tests exercise the predicate directly (promoted-uncut selects; fake never
+fires; receipt/row-shape refusals; lowest-id determinism). Full fast suite green.
+
+NEXT: S1.4b — wire nextInitiativeSetup into Decide (after step (0c) landing,
+before (1) occupancy so it beats every spawn path), plumb Config.RealRouting from
+!allowFakeDecorrelation at selectFromSpine, add the KindInitiativeSetup arm to
+assertWellFormed, and add the route-free commit effect (open a Worker-tier run
+keyed on the initiative id with no route/brief — the novel lease claim the seam
+cannot yet express; study the KindSpawn prepare/commit path in dispatchseam.go/
+dispatchverb.go). Then S1.4c (mount-plan step + attest arm) and S1.5 (resident).
+Also owed: loadRecords LEFT JOIN initiative_setup_receipts to set
+InitiativeSetupDone (fold into S1.4b with the RealRouting plumbing).

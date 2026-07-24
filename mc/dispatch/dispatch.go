@@ -119,6 +119,14 @@ type Task struct {
 	// `Branch` above is empty for it and this carries the branch instead.
 	// Non-nil is what puts a row in the sealed landing lane.
 	Sealed *SealedAssignment
+
+	// InitiativeSetupDone is true when this scope='initiative' row already has a
+	// durable ADR-025 D3 setup receipt (its shared store has been cut). The
+	// records loader sets it from a LEFT JOIN on initiative_setup_receipts;
+	// meaningful only on an initiative arc row, false (never applicable)
+	// elsewhere. False on a promoted (branch-set) arc row is what owes an
+	// InitiativeSetup under real routing.
+	InitiativeSetupDone bool
 }
 
 // SealedAssignment is the `task_assignments` row as dispatch reads it: the
@@ -244,6 +252,14 @@ type Config struct {
 	ConsoleHour   int
 	ConsoleMinute int
 	ConsoleLoc    *time.Location // nil = UTC
+
+	// RealRouting is true only in a production deployment (no fake harnesses
+	// permitted; = !allowFakeDecorrelation from routing.ActiveRegistry). It gates
+	// the ADR-025 D3 InitiativeSetup emission: under fake routing the shared
+	// worktree is made by the children themselves and no cut is owed, and
+	// emitting would alter the fake dispatch sequence. Defaults false so every
+	// fake/unit fixture is unchanged (ADR-025 S1.4 design note, 2026-07-23).
+	RealRouting bool
 }
 
 // DefaultConfig returns the spec §16.3 defaults.
@@ -290,6 +306,13 @@ const (
 	// KindReenter: step (2b), initiative arm — one pure mutation
 	// (packaged → seeded); no spawn this tick, (2a) picks it up later.
 	KindReenter Kind = "reenter"
+	// KindInitiativeSetup: the ADR-025 D3 shared-store cut. A standalone
+	// setup-container action (NOT an agent spawn and NOT a fold onto one) emitted
+	// under real routing ahead of any initiative-family spawn for a promoted
+	// initiative whose store has not been cut yet. It claims the global lease
+	// (Inv. 1) and opens a Worker-tier run keyed on the initiative, but resolves
+	// no agent route/brief; the resident runs `mc __setup-initiative`.
+	KindInitiativeSetup Kind = "initiative-setup"
 )
 
 // Role names the leased pipeline role a spawn opens (§3; Strategist mode
@@ -382,15 +405,24 @@ type Reenter struct {
 	TaskID int64
 }
 
+// InitiativeSetup is the KindInitiativeSetup payload (ADR-025 D3). It names only
+// the initiative arc row; fresh-vs-retry and the target ref are authored at
+// attest from on-disk store residue (an absent receipt means there is no spine
+// pin), not carried as a pure-dispatch fact.
+type InitiativeSetup struct {
+	InitiativeID int64
+}
+
 // Action is the single evaluation result. Exactly one payload is non-nil for
 // the non-idle kinds; KindIdle carries only IdleReason.
 type Action struct {
-	Kind    Kind
-	Idle    IdleReason
-	Reap    *Reap
-	Spawn   *Spawn
-	Land    *Land
-	Reenter *Reenter
+	Kind            Kind
+	Idle            IdleReason
+	Reap            *Reap
+	Spawn           *Spawn
+	Land            *Land
+	Reenter         *Reenter
+	InitiativeSetup *InitiativeSetup
 }
 
 func idle(r IdleReason) Action { return Action{Kind: KindIdle, Idle: r} }
@@ -703,6 +735,34 @@ func refinementStart(rec Records) (Task, bool) {
 // ---------------------------------------------------------------------------
 // Step (3): the single next dispatch (queue has room).
 // ---------------------------------------------------------------------------
+
+// nextInitiativeSetup is the ADR-025 D3 gate. Under real routing it selects a
+// live, seeded scope='initiative' row that has been promoted (branch set) but
+// whose shared store has not been cut yet (no setup receipt) — the initiative
+// that owes an InitiativeSetup before any other initiative-family spawn. It
+// picks the lowest id deterministically, one per tick. Under fake routing it
+// never fires (the fake lane's children make the shared worktree themselves, and
+// emitting would alter the fake dispatch sequence — ADR-025 S1.4 design note).
+//
+// It is a pure predicate; the emission is wired into Decide by S1.4b.
+func nextInitiativeSetup(rec Records, cfg Config) (int64, bool) {
+	if !cfg.RealRouting {
+		return 0, false
+	}
+	best, found := int64(0), false
+	for _, t := range rec.Tasks {
+		if t.Scope != ScopeInitiative || t.Status != StatusSeeded || t.Branch == "" || t.InitiativeSetupDone {
+			continue
+		}
+		if t.Archived || t.Blocked || !worksourceActive(t) {
+			continue
+		}
+		if !found || t.ID < best {
+			best, found = t.ID, true
+		}
+	}
+	return best, found
+}
 
 // nextDispatch is the §10 (3) query: unarchived, unblocked, stage_rank > 0,
 // initiatives hidden while they have open children. Order: expedite partition

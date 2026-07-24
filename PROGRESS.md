@@ -163,10 +163,12 @@ resident `SPINE_SCHEMA_VERSION` moved to 14 in lockstep.
         `LoadSubjectInitiativeSetup` + loader wiring (keyed on the parent
         initiative) + `CutSHA` carrier — the READ half of the D3 receipt; the
         register/write is owed to S1.5. S1.3 landed the container side of the
-        cut: `MaterializeInitiativeStore` (cross-base store/worktree,
-        spike-validated) and the `mc __setup-initiative` subcommand/envelope
-        arm, host-side tested. Owed: S1.4 (dispatch step), S1.5 (resident
-        precreate + register), S3b (D6 fence), S4–S6.
+        cut. S1.4a landed the inert dispatch foundation (the
+        `nextInitiativeSetup` predicate + `KindInitiativeSetup` + the
+        `RealRouting` fake-safe gate, NOT yet wired into `Decide`); design in
+        IMPLEMENTATION-NOTES 2026-07-23. Owed: S1.4b (Decide emission + route-free
+        commit), S1.4c (mount-plan step + attest), S1.5 (resident precreate +
+        register), S3b (D6 fence), S4–S6.
 - [ ] Release prep — install/onboard front door and construction-document
       disposition.
 
@@ -232,17 +234,22 @@ native resume, container reconciliation, Homie credential projection,
 dashboard LaunchAgent generation, and the four non-Console tabs. Details and
 commit map are in the closed Phase 4 ledger.
 
-NEXT: ADR-025 S1.4 — dispatch emits the `InitiativeSetup` step. Per D3: for any
-live, seeded `scope='initiative'` row whose `tasks.branch` is set but whose
-initiative setup receipt is ABSENT, dispatch emits an `InitiativeSetup` step at
-the first tick where promotion is observable and BEFORE any other
-initiative-family spawn for that row. Study the existing task precreate/setup
-step emission in the dispatch effect (how `TaskPrecreate`/`captureTaskSetup`
-ride the prepared plan and how the resident consumes them; grep
-`PrivateDispatchTaskPrecreate`, `snapshot.TaskPrecreate`, the dispatch effect
-step types, and how `scope='initiative'` rows with `branch` set are recognized
-in `mc/dispatch`). The step carries the initiative id + the target ref (fresh
-cut) and, on retry, the recorded cut SHA — but the RECEIPT is not a
-task_assignments row (D3). Then S1.5 (resident precreate + run the container +
-`RegisterInitiativeSetup` write, deferred from S1.1), S3b (D6 fence), S4–S6. See
-ADR-025 §Slices.
+NEXT: ADR-025 S1.4b — wire the InitiativeSetup emission (S1.4a landed the inert
+predicate + types + the `RealRouting` gate; design in IMPLEMENTATION-NOTES
+2026-07-23). Do THREE coupled things in one green step: (1) call
+`nextInitiativeSetup(rec, cfg)` from `Decide` immediately after step (0c)
+landing and BEFORE the (1) occupancy loop (so it beats every spawn path — at-cap
+2a and with-room 3), returning `Action{Kind: KindInitiativeSetup, ...}`; add the
+`KindInitiativeSetup` arm to `assertWellFormed` in `dispatch_test.go`. (2) Plumb
+`Config.RealRouting = !allowFakeDecorrelation` (from `routing.ActiveRegistry()`)
+where dispatch builds the tick Config (`selectFromSpine`/`loadRecords` in
+`dispatchverb.go`), and add `loadRecords` `LEFT JOIN initiative_setup_receipts
+isr ON isr.initiative_id = t.id` to set `Task.InitiativeSetupDone`. (3) The
+route-free commit effect: `KindInitiativeSetup` opens a Worker-tier run keyed on
+the initiative id with NO agent route/brief (the novel lease claim the seam
+cannot yet express — study the `KindSpawn` prepare/commit path at
+`dispatchseam.go:579-603` + `dispatchverb.go` applySpawn, and add an
+`applyInitiativeSetup`). Tests: pure-dispatch (real→emits ahead of Strategist and
+even at WIP cap; fake→unchanged) + seam (committed effect claims the lease, opens
+a route-less Worker-tier run). Then S1.4c (mount-plan step + attest arm) and S1.5
+(resident + `RegisterInitiativeSetup`). See ADR-025 §Slices.
