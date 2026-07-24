@@ -6,15 +6,22 @@ REPO PATH: `~/dev/ai/homie`. Never relocate this repo into `~/Documents`,
 `~/Desktop`, or `~/Downloads`: macOS TCC can revoke an agent session's own
 filesystem access there during fan-out. Full Disk Access does not fix it.
 
-LAST GREEN SHA: `8b9c209` — ADR-025 S3b.3a: `substrate.LoadInitiativePriorChildRuns`
-— the id-sorted pipeline-tier run ids of an initiative's child tasks (the D6
-producer-absence input), a MaxInitiativePriorChildRuns=512 cap that REFUSES
-rather than truncates. Standalone + tested, NOT yet wired. Prior inert D6 halves:
-S3b.2 (`cf71fc7`, the `mc __verify-initiative-clean` cleanliness executor) and
-S3b.1 (`ad88dc9`, the resident `requireInitiativeChildrenAbsent` absence loop).
-Owed to make D6 LIVE: S3b.3b (wire the projection into `loadDispatchMountState` +
-author the `initiative_child` spawn-plan marker) then S3b.4 (resident create-path
-gate). S1 (the
+LAST GREEN SHA: `cc7a3a8` — ADR-025 S3b.3b-3/4: the dispatch side of the D6
+producer-absence marker is COMPLETE. `expectedInitiativeChildMarker(state, fake)`
+authors the `initiative_child` plan marker (initiative id + frozen prior-child
+run set) on a real-routed initiative child at attest, and `dispatchCommit`
+re-derives + DeepEqual-fences it against the broker's frame (closing the
+private-path strip fail-open). Built on: S3b.3b-2 (`bfcf9b9`, the marker type +
+validatePrivateMountPlan arm + closed-union exclusions), S3b.3b-1 (`4f43ba6`,
+freeze `SubjectInitiativePriorChildRuns` into the mount state), S3b.3a
+(`8b9c209`, the loader), S3b.2 (`cf71fc7`, the `mc __verify-initiative-clean`
+cleanliness executor), S3b.1 (`ad88dc9`, the resident absence loop). All the
+D6 INPUTS now reach the effect's mount_plan; the resident does not yet consume
+them. OWED coverage: S3b.3b-5 — an end-to-end real-routed initiative-child COMMIT
+test (happy path carries the marker in the effect + a private-frame strip returns
+CodeStale); the fence's refusal branch is currently only unit-covered via
+`expectedInitiativeChildMarker`. Then S3b.4 (resident create-path gate) makes D6
+LIVE. S1 (the
 cut) is COMPLETE (S1.5b-2 `8aba956`): the receipt producer exists and S2/S3a's
 mount vouch is reachable end-to-end. Full fast suite green (the load-sensitive resident EBADF flake —
 intermittent #2, ~1 in 3 under heavy looping — clears on re-run);
@@ -192,28 +199,24 @@ native resume, container reconciliation, Homie credential projection,
 dashboard LaunchAgent generation, and the four non-Console tabs. Details and
 commit map are in the closed Phase 4 ledger.
 
-NEXT: ADR-025 S3b.3 — dispatch projection + child-spawn marker authoring (Go), the
-first LIVE-making slice for the D6 fence (S3b.1/S3b.2 landed the two inert halves:
-the resident `requireInitiativeChildrenAbsent` loop and the `mc
-__verify-initiative-clean` executor). Design decided (S3b scout, phase-5 ledger
-2026-07-24): mechanism A2 — dispatch projects the prior-child run-id SET into the
-frozen mount plan (positive inspect-by-name, no `mc-initiative-id` label / no
-`docker ps --filter` enumeration-trust surface). Build: (a)
-`LoadInitiativePriorChildRuns(ctx,q,initiativeID)` — all `runs.id` whose subject ∈
-`tasks WHERE initiative_id=I`, excluding the current run (schema.sql:698-704 runs
-→ tasks(id)); (b) freeze it into `DispatchMountState`
-(substrate/dispatch_mount_projection.go:17, new `SubjectInitiativePriorChildRuns
-[]string`, omitempty) via the SubjectInitiativeSetup projection keyed on
-SubjectInitiativeID:269; (c) emit an `InitiativeChild` marker (new
-`MountPlan.initiative_child` sibling in resident types.ts, mirrored on the Go
-`PrivateDispatch…` carrier) in the initiative-child attest arm — the arm resolving
-`initiativePlanRows` (mountattest.go:346-368, the S2/S3a RO arms). Marker carries
-the prior-child run-id set + store/worktree identities + branch. Token/DeepEqual/
-plan-digest fences must hold; a sibling run opening between prepare and commit
-yields a stale-class inert refusal (harmless, as the setup/landing lanes already
-accept). Tests: marker carries the right set+identities+branch; stale-set refusal.
-Then S3b.4 (resident wiring at the effects.ts:683 create path — gate
-`requireInitiativeChildrenAbsent` + launch `mc __verify-initiative-clean`, making
-it LIVE), S3b.5 (deps/e2e). Then S4–S6; the Darwin private-frame carrier
+NEXT: ADR-025 S3b.3b-5 then S3b.4. FIRST S3b.3b-5 (owed coverage): an end-to-end
+real-routed initiative-child COMMIT test closing the fence's untested refusal
+branch. Build a full spine fixture (initiative + child task + D3 receipt + the
+real on-disk store, mirroring `maInitiativeChildCandidate` at
+mountattest_test.go:836 but driven through `dfPrepare`/`dispatchAttest`/`dfCommit`
+like `TestDispatchRepoWorkerCommitsTaskLocalMountPlan`:1641): assert the committed
+effect's `mount_plan.initiative_child` carries the frozen prior-child set, then a
+private-frame variant (dispatchprivate_test.go pattern, e.g.
+`TestPrivateDispatchRecheckStalesOnMountEvidenceDrift`:868) whose
+`Attestation.MountPlan.InitiativeChild` is stripped/mutated returns CodeStale.
+THEN S3b.4 — the resident create-path gate (effects.ts:683): add the
+`initiative_child` field to the TS `MountPlan` (types.ts), and before the
+initiative child's `docker create`, call
+`requireInitiativeChildrenAbsent(marker.prior_child_runs)` then launch `mc
+__verify-initiative-clean` (S3b.1/S3b.2, both landed) with the store/worktree
+binds; any failure logs + returns (fail-closed, no spawn). Wire the dep (real
+main.ts, fake test-helpers.ts) + effects.test.ts (fence-clean → create proceeds;
+a present prior child or a dirty worktree → spawn refused; exact fence-container
+argv). That makes D6 LIVE. Then S4–S6; the Darwin private-frame carrier
 (S1.4c-2c) is owed but non-blocking. See ADR-025 §Slices + the D6-fence scout
-(phase-5 ledger, 2026-07-23 + 2026-07-24).
+(phase-5 ledger, 2026-07-23 + 2026-07-24) + the S3b.3b scout map.

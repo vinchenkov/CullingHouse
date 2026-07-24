@@ -1126,3 +1126,58 @@ NEXT: ADR-025 S3b.3 — dispatch projection (`LoadInitiativePriorChildRuns` +
 marker authored in the initiative-child attest arm (mountattest.go:346-368). Then
 S3b.4 wires the resident create path (effects.ts:683) to gate absence + launch the
 clean fence, making D6 LIVE.
+
+## 2026-07-24 — ADR-025 S3b.3: the dispatch side of the D6 producer-absence marker
+
+Scoped the marker-authoring path + fake-regression risk (read-only Plan agent),
+then built the dispatch half of the D6 fence in four green micro-commits. The
+scout's two load-bearing findings held up empirically: (1) an omitempty projection
+field leaves every frozen golden byte-identical; (2) the marker must be re-authored
+at commit (stronger than TaskPrecreate, which rides only the plan digest +
+attest-determinism recheck) to close the private-path strip.
+
+- S3b.3a (`8b9c209`): `substrate.LoadInitiativePriorChildRuns` — id-sorted
+  pipeline-tier run ids of an initiative's child tasks, MaxInitiativePriorChildRuns
+  =512 cap that REFUSES (never truncates — a dropped id is a container never
+  confirmed absent). Standalone loader + test; no caller.
+- S3b.3b-1 (`4f43ba6`): wire it into `loadDispatchMountState` as a new omitempty
+  `DispatchMountState.SubjectInitiativePriorChildRuns`, populated inside the
+  `SubjectInitiativeID != nil` block. Same code path prepare + commit so the
+  commit mount-state DeepEqual never spuriously stales on nil-vs-empty. The
+  DispatchSeam/MountPlanDigest/PreparationToken/DispatchKey golden vectors stayed
+  green — the omitempty byte-safety claim confirmed.
+- S3b.3b-2 (`bfcf9b9`): the `PrivateDispatchInitiativeChild` plan marker
+  (initiative id + prior-child set) + its `validatePrivateMountPlan` arm. Unlike
+  the setup/landing steps it carries NO entries refusal (it rides an ordinary
+  initiative-child agent plan) but never shares a token with a mutating setup step
+  or a landing; the broker-supplied set is re-validated fail-closed (bounded,
+  structural text, non-nil, id-sorted + duplicate-free so a broker cannot reorder
+  or pad past the commit DeepEqual). Symmetric exclusions added to the
+  InitiativePrecreate + Landing arms.
+- S3b.3b-3/4 (`cc7a3a8`): `expectedInitiativeChildMarker(state, fake)` authors the
+  marker at attest (a pure function of the frozen state — no host probe), gated on
+  `!allowLegacyFakeWorkspace` (== `route.Harness=="fake"`, dispatchseam.go:683) so a
+  fake child authors nothing and the fake E2E plan bytes stay unchanged. The
+  `dispatchCommit` re-authoring fence re-derives the marker from the refrozen
+  `currentMountState` and DeepEqual-refuses (CodeStale) a stripped/doctored frame —
+  the fail-open closer, since `validatePrivateMountPlan` admits a nil marker.
+
+Regression verdict (the S1.4-note hazard): NOT gated on the projection. Unlike
+S1.4's `nextInitiativeSetup` (which emits a dispatch ACTION lengthening the fake
+sequence), this emits no action — one omitempty state field + one
+`!allowLegacyFakeWorkspace`-gated omitempty marker. The golden byte/token vectors
+build from struct literals that never set the field; the real-`loadDispatchMountState`
+flows are self-consistent (prepare + commit recompute); the fake E2E
+`initiative_lifecycle_test` asserts behavior, not bytes, and authors no marker
+under fake routing. Full mc + resident fast suites green.
+
+OWED (S3b.3b-5): the commit fence's REFUSAL branch is only unit-covered via
+`expectedInitiativeChildMarker`. An end-to-end real-routed initiative-child COMMIT
+test — happy path (marker in the committed effect) + a private-frame strip →
+CodeStale — is owed before S3b.4 wires the resident. The fence is fail-closed
+(can only refuse more), so shipping it ahead of that test is safe; the gap is
+recorded, not silent.
+
+NEXT: S3b.3b-5 (the owed end-to-end commit test) then S3b.4 (the resident
+create-path gate at effects.ts:683 — `requireInitiativeChildrenAbsent` + `mc
+__verify-initiative-clean`, both already landed) which makes the D6 fence LIVE.
