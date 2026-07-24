@@ -857,8 +857,24 @@ func cmdInitiative(args []string) (any, error) {
 			CutSHA:       *cutSHA,
 		}
 		return withSpine(func(db *sql.DB) (any, error) { return verbs.RegisterInitiativeSetup(db, receipt) })
+	case "setup-continue":
+		// The seal-free lease terminal: the InitiativeSetup run ends normally and
+		// frees the singleton lease so the next tick can dispatch a child Worker.
+		fs := newFlags("mc initiative setup-continue")
+		runID := fs.String("run", "", "pipeline run id")
+		if err := parse(fs, args[1:]); err != nil {
+			return nil, err
+		}
+		idn, err := verbs.LoadIdentity()
+		if err != nil {
+			return nil, err
+		}
+		if err := verbs.RequireHostScope(idn, "mc initiative setup-continue"); err != nil {
+			return nil, err
+		}
+		return withSpine(func(db *sql.DB) (any, error) { return verbs.ContinueInitiativeSetup(db, *runID) })
 	default:
-		return nil, verbs.Usagef("usage: mc initiative add|setup-register …")
+		return nil, verbs.Usagef("usage: mc initiative add|setup-register|setup-continue …")
 	}
 }
 

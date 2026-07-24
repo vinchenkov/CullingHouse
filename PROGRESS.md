@@ -183,11 +183,14 @@ resident `SPINE_SCHEMA_VERSION` moved to 14 in lockstep.
         Decide→attest→commit, claiming the lease and opening a worker/pipeline run
         that carries the shared-store precreate plan (the first tick ADR-025 stops
         being purely inert — but nothing executes until S1.5's resident runs it).
-        S1.5a landed `RegisterInitiativeSetup` + the `mc initiative setup-register`
-        CLI (the receipt write deferred from S1.1 — the last missing producer).
-        Owed: S1.5b (the resident TS handler: precreate + `mc __setup-initiative`
-        + register), S1.4c-2c (the Darwin private-frame carrier — non-blocking,
-        guarded fail-closed), S3b (D6 fence), S4–S6.
+        S1.5a/a.2 landed the Go side of the resident handoff:
+        `RegisterInitiativeSetup` (the receipt write deferred from S1.1 — the last
+        missing producer) + `ContinueInitiativeSetup` (the seal-free lease
+        terminal — the run the lane opens must release the singleton lease) +
+        their `mc initiative setup-register`/`setup-continue` CLIs. Owed: S1.5b
+        (the resident TS handler that calls them), S1.4c-2c (the Darwin
+        private-frame carrier — non-blocking, guarded fail-closed), S3b (D6
+        fence), S4–S6.
 - [ ] Release prep — install/onboard front door and construction-document
       disposition.
 
@@ -266,12 +269,24 @@ both parent identities before creating (mirror how the task precreate executes o
 `mc __setup-initiative` in the network=none/uid-10002/cap-drop container (store
 RW, worktree RW, real repo RO), capturing the SetupResult stdout; (3) on the
 emitted cut SHA, stat's the two roots host-side and calls `mc initiative
-setup-register --run … --initiative … --store-device/inode/owner-uid …
---worktree-device/inode/owner-uid … --cut-sha …`. Add the TS `initiative_precreate`
-mount-plan type. Study `runFirstTaskSetup` (effects.ts) + its test harness (fake
-docker/runMc/fs). This is the last piece of S1 — once it lands, S2/S3a's mount
-vouch is reachable end-to-end. Then S3b (D6 fence), S4–S6. The Darwin
-private-frame carrier (S1.4c-2c) is owed but non-blocking. This is the ATOMIC remainder:
+setup-register …` then `mc initiative setup-continue --run …` (the seal-free
+lease terminal), then `fs.rm` the envelope. Both Go verbs + CLIs already exist
+(S1.5a/a.2). Add the TS `initiative_precreate` mount-plan type + the
+`initiative-setup` Effect variant. KEY DIFFERENCES from the task path (full map:
+resident Plan-agent trace, this session): (i) it is a TOP-LEVEL effect with its
+own `applyEffect` case, NOT a spawn arm — no route/harness/brief/agent-launch;
+(ii) TWO roots on two non-nested bases (store 0555 {git,source}, worktree 0700,
+no children) — the precreate helper returns BOTH identities; (iii) the register
+happens AFTER the container (the cut SHA is only known post-materialize), unlike
+the task's pre-container register; (iv) ONE receipt = register + assignment (no
+`setup-record`/`task_assignments`); (v) a SECOND D10 cover — bind an empty RO
+cover over `/repo/source/.mc-worktrees` in addition to the `.mission-control`
+cover; (vi) container dests are the resident's choice but must match the envelope
+(`source_repo:/repo/source`, `task_root`=store, `worktree_root`=worktree). Study
+`runFirstTaskSetup` (effects.ts:747) + `precreateTaskSkeleton` (task-skeleton.ts)
++ the effects.test.ts fake docker/runMc/fs rig. Once it lands, S2/S3a's mount
+vouch is reachable end-to-end and S1 is COMPLETE. Then S3b (D6 fence), S4–S6. The
+Darwin private-frame carrier (S1.4c-2c) is owed but non-blocking. This is the ATOMIC remainder:
 emission + commit MUST land together (a Decide that emits an uncommittable Kind
 wedges/spins production once RealRouting is true). Full Plan-agent map in the
 ledger 2026-07-24; the lane FUSES the landing lane (route-free) with the spawn

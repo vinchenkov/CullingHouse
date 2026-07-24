@@ -978,3 +978,25 @@ Full fast suite green.
 
 NEXT: S1.5b — the resident effect handler (precreate + `mc __setup-initiative`
 container + `mc initiative setup-register`), completing S1.
+
+## 2026-07-24 — ADR-025 S1.5a.2: ContinueInitiativeSetup (the lease terminal)
+
+A gap the resident Plan-agent map caught in S1.5a: `applyInitiativeSetup` claims
+the singleton lease (Inv. 1) and NOTHING released it, so a completed cut would
+hold the lease until watchdog-reaped and the pipeline could not dispatch the
+first child Worker. ContinueInitiativeSetup is the seal-free lease terminal
+(mirror ContinueFirstTaskSetup, taskcontinuation.go:28): a host-scope, run-fenced
+completion that ends the setup run `setup-complete` and frees the lease WITHOUT
+charging a dispatch retry (no agent ran, D4). Its ONLY evidence is the
+initiative_setup_receipts row — the receipt IS the assignment (D3), so there is
+no second task_assignments check the task path makes. A lost-response replay is
+idempotent (re-proves the receipt, returns AlreadyContinued). New host-scoped CLI
+`mc initiative setup-continue`. With RegisterInitiativeSetup (S1.5a) the Go side
+of S1.5 is complete: register + continue + both CLIs.
+
+Tests: fresh completion (outcome setup-complete, lease released, no retry
+charged, idempotent replay); refuses before the receipt exists and mutates
+nothing (run not ended, lease intact). Full fast suite green.
+
+NEXT: S1.5b — the resident TS effect handler (precreate + `mc __setup-initiative`
++ `mc initiative setup-register` + `mc initiative setup-continue`), completing S1.
