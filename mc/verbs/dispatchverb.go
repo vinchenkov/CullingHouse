@@ -167,6 +167,13 @@ func selectFromSpine(ctx context.Context, q Q) (spineSelection, error) {
 			return sel, Domainf("lock.console_tz %q is not a loadable IANA zone (§16.3): %v", sel.tun.consoleTZ, err)
 		}
 	}
+	// ADR-025 D3 / S1.4: the InitiativeSetup emission fires only in a production
+	// deployment (no fake harnesses permitted). allowFakeDecorrelation is true
+	// exactly in the test_fake_routing build, where the fake lane's children make
+	// the shared worktree themselves and no cut is owed; a default (production)
+	// build reports false. The emission itself is gated by Config.RealRouting in
+	// dispatch.Decide (wired in S1.4c); here it stays inert until then.
+	_, allowFakeDecorrelation := routing.ActiveRegistry()
 	cfg := dispatch.Config{
 		ReviewWIPCap:   3, // Inv. 18; the substrate trigger is the backstop
 		TimeoutMinutes: sel.tun.timeoutMinutes,
@@ -178,6 +185,7 @@ func selectFromSpine(ctx context.Context, q Q) (spineSelection, error) {
 		ConsoleHour:   sel.tun.consoleHour,
 		ConsoleMinute: sel.tun.consoleMinute,
 		ConsoleLoc:    loc,
+		RealRouting:   !allowFakeDecorrelation,
 	}
 	sel.action = dispatch.Decide(sel.rec, sel.lk, cfg, dispatch.Clock{Now: sel.now})
 	return sel, nil
@@ -299,9 +307,10 @@ func loadRecords(ctx context.Context, q Q) (dispatch.Records, error) {
 		       t.blocked, t.dispatch_retries, t.decision, t.decided_at, t.archived,
 		       t.worksource, t.branch, t.verified_sha, t.target_ref, t.plan_reviewed, w.status,
 		       a.branch, a.target_ref, a.task_root_key, a.object_format,
-		       a.base_sha, a.local_repo_uuid, a.closure_digest
+		       a.base_sha, a.local_repo_uuid, a.closure_digest, isr.initiative_id
 		FROM tasks t JOIN worksources w ON w.id = t.worksource
-		LEFT JOIN task_assignments a ON a.task_id = t.id`)
+		LEFT JOIN task_assignments a ON a.task_id = t.id
+		LEFT JOIN initiative_setup_receipts isr ON isr.initiative_id = t.id`)
 	if err != nil {
 		return rec, err
 	}
@@ -322,14 +331,20 @@ func loadRecords(ctx context.Context, q Q) (dispatch.Records, error) {
 			aBranch, aTarget, aRootKey sql.NullString
 			aFormat, aBase, aUUID      sql.NullString
 			aDigest                    sql.NullString
+			// The initiative setup receipt (ADR-025 D3), joined by initiative id.
+			// Present only on a scope='initiative' arc row whose shared store has
+			// been cut; NULL is "no cut yet" (owes an InitiativeSetup under real
+			// routing) — and, on every non-initiative row, structurally absent.
+			setupReceipt sql.NullInt64
 		)
 		if err := rows.Scan(&t.ID, &t.Title, &scope, &initiativeID, &t.Priority,
 			&createdAt, &status, &blocked, &t.DispatchRetries, &decision,
 			&decidedAt, &archived, &t.Worksource, &branch, &verifiedSHA,
 			&target, &planReviewed, &t.WorksourceStatus,
-			&aBranch, &aTarget, &aRootKey, &aFormat, &aBase, &aUUID, &aDigest); err != nil {
+			&aBranch, &aTarget, &aRootKey, &aFormat, &aBase, &aUUID, &aDigest, &setupReceipt); err != nil {
 			return rec, err
 		}
+		t.InitiativeSetupDone = setupReceipt.Valid
 		if aBranch.Valid {
 			t.Sealed = &dispatch.SealedAssignment{
 				Branch: aBranch.String, TargetRef: aTarget.String,

@@ -164,12 +164,13 @@ resident `SPINE_SCHEMA_VERSION` moved to 14 in lockstep.
         `LoadSubjectInitiativeSetup` + loader wiring (keyed on the parent
         initiative) + `CutSHA` carrier — the READ half of the D3 receipt; the
         register/write is owed to S1.5. S1.3 landed the container side of the
-        cut. S1.4a landed the inert dispatch foundation (the
-        `nextInitiativeSetup` predicate + `KindInitiativeSetup` + the
-        `RealRouting` fake-safe gate, NOT yet wired into `Decide`); design in
-        IMPLEMENTATION-NOTES 2026-07-23. Owed: S1.4b (Decide emission + route-free
-        commit), S1.4c (mount-plan step + attest), S1.5 (resident precreate +
-        register), S3b (D6 fence), S4–S6.
+        cut. S1.4a/b landed the inert dispatch foundation (the
+        `nextInitiativeSetup` predicate + `KindInitiativeSetup`, the `RealRouting`
+        fake-safe gate, and the loadRecords receipt JOIN — all flowing into
+        `Decide` but unused, zero behavioral change); design + the build-tag
+        fake-safety nuance in IMPLEMENTATION-NOTES 2026-07-23 / ledger 2026-07-24.
+        Owed: S1.4c (the atomic emission + route-free commit + mount-plan unit),
+        S1.5 (resident precreate + register), S3b (D6 fence), S4–S6.
 - [ ] Release prep — install/onboard front door and construction-document
       disposition.
 
@@ -235,22 +236,39 @@ native resume, container reconciliation, Homie credential projection,
 dashboard LaunchAgent generation, and the four non-Console tabs. Details and
 commit map are in the closed Phase 4 ledger.
 
-NEXT: ADR-025 S1.4b — wire the InitiativeSetup emission (S1.4a landed the inert
-predicate + types + the `RealRouting` gate; design in IMPLEMENTATION-NOTES
-2026-07-23). Do THREE coupled things in one green step: (1) call
-`nextInitiativeSetup(rec, cfg)` from `Decide` immediately after step (0c)
-landing and BEFORE the (1) occupancy loop (so it beats every spawn path — at-cap
-2a and with-room 3), returning `Action{Kind: KindInitiativeSetup, ...}`; add the
-`KindInitiativeSetup` arm to `assertWellFormed` in `dispatch_test.go`. (2) Plumb
-`Config.RealRouting = !allowFakeDecorrelation` (from `routing.ActiveRegistry()`)
-where dispatch builds the tick Config (`selectFromSpine`/`loadRecords` in
-`dispatchverb.go`), and add `loadRecords` `LEFT JOIN initiative_setup_receipts
-isr ON isr.initiative_id = t.id` to set `Task.InitiativeSetupDone`. (3) The
-route-free commit effect: `KindInitiativeSetup` opens a Worker-tier run keyed on
-the initiative id with NO agent route/brief (the novel lease claim the seam
-cannot yet express — study the `KindSpawn` prepare/commit path at
-`dispatchseam.go:579-603` + `dispatchverb.go` applySpawn, and add an
-`applyInitiativeSetup`). Tests: pure-dispatch (real→emits ahead of Strategist and
-even at WIP cap; fake→unchanged) + seam (committed effect claims the lease, opens
-a route-less Worker-tier run). Then S1.4c (mount-plan step + attest arm) and S1.5
-(resident + `RegisterInitiativeSetup`). See ADR-025 §Slices.
+NEXT: ADR-025 S1.4c — the ATOMIC emission + route-free commit + mount-plan unit
+(S1.4a/b landed the inert predicate, types, RealRouting gate, and the receipt
+JOIN). The emission and its commit handler MUST land together — a Decide that
+emits an uncommittable Kind would wedge/spin production once RealRouting is true.
+Do:
+  1. Emission: call `nextInitiativeSetup(rec, cfg)` from `Decide` right after
+     step (0c) landing and BEFORE the (1) occupancy loop (so it beats at-cap 2a
+     and with-room 3); return `Action{Kind: KindInitiativeSetup, InitiativeSetup:
+     ...}`. Add the `KindInitiativeSetup` arm to `assertWellFormed`
+     (`dispatch_test.go`).
+  2. The route-free seam commit: `KindInitiativeSetup` needs host attest (for the
+     mount-plan precreate identities, below) but NO routing. Generalize the
+     spawn prepare/attest/commit path (`dispatchseam.go` prepare :579-603, commit
+     `dispatchCommit` :745-836 is deeply spawn-shaped — reselect, mount-plan-
+     required, routing-digest, `applySpawn`) to a second candidate kind: open a
+     Worker-tier run keyed on the initiative id with NO route/brief/harness
+     (`applyInitiativeSetup` beside `applySpawn` :467; the run's binding has no
+     route — pick a sentinel/empty). Effect `{"action":"initiative-setup",
+     run_id, role:"worker", subject_id, heartbeat_interval_s, mount_plan}`.
+  3. The mount-plan step `PrivateDispatchInitiativePrecreate` (distinct name from
+     the S1.1 receipt alias `PrivateDispatchInitiativeSetup`) carrying
+     InitiativeID + workspace + the two proven-absent parent identities
+     (`.mission-control/initiatives`, `.mc-worktrees`) + a fresh/retry Setup
+     (fresh/retry decided at attest FROM ON-DISK RESIDUE, not a spine pin —
+     mirror the task precreate/recovery split). Author it in a NEW arm of
+     `captureDispatchMountHostSnapshot` keyed on "subject is a scope=initiative
+     row owed setup" (the arc row's `SubjectInitiativeID` is NIL — cannot reuse
+     the child arm at `mountattest.go:586`). Freeze receipt-presence + arc target
+     ref into `DispatchMountState`.
+BUILD-TAG CAVEAT (critical): the fast suite runs default build → RealRouting=TRUE
+(the test_fake_routing tag → FALSE protects the Phase 4 fake E2E). So default-
+build full-path seam tests that promote an UNCUT initiative will CORRECTLY switch
+to KindInitiativeSetup once wired — AUDIT `dispatchverb_test.go`/`dispatchseam_test.go`
+for those and update them to expect it (not a regression). Pure-dispatch tests
+use DefaultConfig (RealRouting=false) and are unaffected unless they set it. Then
+S1.5 (resident precreate + `RegisterInitiativeSetup` write). See ADR-025 §Slices.

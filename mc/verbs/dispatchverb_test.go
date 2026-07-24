@@ -515,6 +515,44 @@ func ptr64(v int64) *int64 { return &v }
 // lane inverts (children never dispatch; the Editor re-reviews forever).
 // ---------------------------------------------------------------------------
 
+// loadRecords projects the ADR-025 D3 initiative-setup-receipt presence onto the
+// arc row's InitiativeSetupDone (S1.4): true once the shared store is cut, false
+// (owes an InitiativeSetup) otherwise, and structurally false on non-initiative
+// rows.
+func TestDispatchLoadRecordsProjectsInitiativeSetupReceipt(t *testing.T) {
+	db := dvSpine(t)
+	for _, id := range []int64{1, 2} {
+		dvExec(t, db, `INSERT INTO tasks (id, title, scope, priority, created_at, status,
+			dispatch_retries, origin, worksource, target_ref)
+			VALUES (?, 'arc', 'initiative', 1, ?, 'proposed', 3, 'user', 'ws-test', 'main')`,
+			id, dvOld.Format(spineTime))
+		dvExec(t, db, `UPDATE tasks SET status='seeded', branch=? WHERE id=?`,
+			fmt.Sprintf("mc/initiative-%d", id), id)
+	}
+	dvExec(t, db, `INSERT INTO tasks (id, title, scope, priority, created_at, status,
+		dispatch_retries, origin, worksource, target_ref)
+		VALUES (3, 'standalone', 'task', 1, ?, 'proposed', 3, 'autonomous', 'ws-test', 'main')`,
+		dvOld.Format(spineTime))
+	// Only initiative 1 has been cut.
+	dvExec(t, db, `INSERT INTO initiative_setup_receipts
+		(initiative_id, store_device, store_inode, store_owner_uid,
+		 worktree_device, worktree_inode, worktree_owner_uid, cut_sha)
+		VALUES (1, '17', '42', 501, '17', '99', 501, ?)`, strings.Repeat("a", 40))
+
+	rec, err := loadRecords(context.Background(), db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[int64]bool{}
+	for _, task := range rec.Tasks {
+		got[task.ID] = task.InitiativeSetupDone
+	}
+	want := map[int64]bool{1: true, 2: false, 3: false}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("projected InitiativeSetupDone = %v, want %v", got, want)
+	}
+}
+
 func TestDispatchLoadRecordsProjectsPlanReviewed(t *testing.T) {
 	db := dvSpine(t)
 

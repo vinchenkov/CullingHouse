@@ -808,3 +808,32 @@ cannot yet express; study the KindSpawn prepare/commit path in dispatchseam.go/
 dispatchverb.go). Then S1.4c (mount-plan step + attest arm) and S1.5 (resident).
 Also owed: loadRecords LEFT JOIN initiative_setup_receipts to set
 InitiativeSetupDone (fold into S1.4b with the RealRouting plumbing).
+
+## 2026-07-24 — ADR-025 S1.4b: data plumbing + a build-tag correction
+
+S1.4b landed the safe, fully-inert data foundation for the emission: the
+loadRecords `LEFT JOIN initiative_setup_receipts isr ON isr.initiative_id = t.id`
+setting `dispatch.Task.InitiativeSetupDone`, and `Config.RealRouting =
+!allowFakeDecorrelation` in selectFromSpine. Both flow into Decide but stay
+unused (nextInitiativeSetup isn't called yet — S1.4c), so zero behavioral change
+and no latent trap. Test: loadRecords projects InitiativeSetupDone true for a cut
+initiative, false for an uncut one, structurally false on a standalone task.
+
+Build-tag correction to the S1.4a fake-safety framing (IMPLEMENTATION-NOTES
+2026-07-23): `routing.ActiveRegistry()` is BUILD-TAG-selected —
+`registry_active.go` (default, `!test_fake_routing`) returns allowFake=FALSE;
+`registry_active_fake.go` (`test_fake_routing`) returns TRUE. The fast suite runs
+`go test ./...` on the DEFAULT build, so RealRouting = !false = TRUE there. So:
+(1) the Phase 4 FAKE lane (its E2E carries `//go:build test_fake_routing`, e.g.
+mc/e2e/e2e_test.go) sees RealRouting=FALSE — the gate protects it, as designed.
+(2) Default-build SEAM tests (dispatchverb/dispatchseam, production registry)
+see RealRouting=TRUE — they are genuinely real-routing, so once S1.4c wires the
+emission, any that promote an uncut initiative through the full
+selectFromSpine→Decide path will CORRECTLY switch to KindInitiativeSetup and must
+be updated to expect it (not a regression — the right behavior). Pure-dispatch
+tests (dispatch_test.go) use DefaultConfig (RealRouting=false) and are unaffected
+unless they set it. This nuance is the key S1.4c gotcha: audit default-build
+full-path tests for promoted-uncut initiatives before wiring the emission.
+
+NEXT: S1.4c — the atomic emission + route-free commit + mount-plan unit (see
+PROGRESS NEXT).
