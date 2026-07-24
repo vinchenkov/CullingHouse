@@ -6,7 +6,7 @@ REPO PATH: `~/dev/ai/homie`. Never relocate this repo into `~/Documents`,
 `~/Desktop`, or `~/Downloads`: macOS TCC can revoke an agent session's own
 filesystem access there during fan-out. Full Disk Access does not fix it.
 
-LAST GREEN SHA: `<this-commit>` — ADR-025 S1.5b-2: the resident `initiative-setup`
+LAST GREEN SHA: `8aba956` — ADR-025 S1.5b-2: the resident `initiative-setup`
 effect handler, completing S1 (the cut). On the route-free effect it precreates
 the two-root skeleton, runs `mc __setup-initiative` binding the real repo RO
 under BOTH D10 covers (`.mission-control` AND `.mc-worktrees`) + store git/source
