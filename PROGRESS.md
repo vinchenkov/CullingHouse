@@ -6,15 +6,16 @@ REPO PATH: `~/dev/ai/homie`. Never relocate this repo into `~/Documents`,
 `~/Desktop`, or `~/Downloads`: macOS TCC can revoke an agent session's own
 filesystem access there during fan-out. Full Disk Access does not fix it.
 
-LAST GREEN SHA: `6fd88cb` — ADR-025 S2: the receipt-vouched initiative-child
-Worker mount arm now derives the D2 shared-store rows (two host bases), gates
-the capture on `SubjectInitiativeID` before the task arm, vouches both setup
-roots, and suppresses seal emission (D4). Inert end-to-end: no S1 receipt
+LAST GREEN SHA: `875dcd8` — ADR-025 S3a: the initiative-child derive arm now
+also admits a child Verifier/Packager with every row forced RO (D5), atop S2's
+receipt-vouched Worker arm (D2 rows over two host bases, capture gate before the
+task arm, two-root vouch, D4 seal suppression). Inert end-to-end: no S1 receipt
 producer, so a real child resolves an absent store and health-refuses; every
-non-Worker/non-repo case retains today's refusal. Adversarially reviewed
-through three lenses (fail-closed, D2/D5 rows, D4/carrier), no findings. Full
-fast suite green; `verbs`/`substrate` cold `-count=1` green; launchd not loaded.
-Prior codex green was `28d6102` (production reset lifecycle).
+other role/shape retains today's refusal. S2 was adversarially reviewed through
+three lenses (fail-closed, D2/D5 rows, D4/carrier), no findings. STILL OWED in
+S3: the D6 producer-absence + store-worktree cleanliness fence. Full fast suite
+green; `verbs`/`substrate` cold `-count=1` green; launchd not loaded. Prior
+codex green was `28d6102` (production reset lifecycle).
 Full Docker lanes (26 `docker_boundary`; 10 `docker_e2e`) were green at
 `c8f37e9`-era HEAD. Extended Playwright smoke and install.sh dev walk were last
 green at `d0ef4bb`; real onboarding crossing at `bf5981d`. Production image
