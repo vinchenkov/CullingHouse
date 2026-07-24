@@ -880,3 +880,34 @@ dispatchInitiativeSetupRound + prepare divert; route-free
 dispatchAttestInitiativeSetup + captureInitiativePrecreate (two parents,
 fresh/retry from residue); dispatchCommitInitiativeSetup + applyInitiativeSetup
 (lease claim, worker/pipeline run, no route/brief; receipt). Then S1.5 (resident).
+
+## 2026-07-24 — ADR-025 S1.4c-2a: captureInitiativePrecreate (the hard part)
+
+The route-free InitiativeSetup lane (S1.4c-2) is large enough to split; this
+landed its single hardest, most novel piece — the attest-side authoring of the
+shared-store precreate step — as an inert helper (nothing calls it until the
+S1.4c-2b lane wires in). It runs host-side and never runs Git (ADR-016 D5); it
+only reads administrative files.
+
+`captureInitiativePrecreate(ws, id, ownerUID, targetRef)`: proves the two
+operator-owned mode-0700 parents (`.mission-control/initiatives` for the store,
+`.mc-worktrees` for the shared worktree — separate host bases, D1), then decides
+fresh-vs-retry from the `initiative-<id>` children's presence:
+- both absent → FRESH: cut at the current tip of the arc target ref
+  (probeRepoObjectFormat for the format).
+- both present → RETRY over on-disk residue. This is the genuinely new logic:
+  the initiative has NO spine assignment to restate (the setup receipt IS its
+  assignment, D3), so the retry pins are RE-DERIVED from the landed bytes — cut
+  SHA from `git/refs/heads/mc/initiative-<id>`, object format + repo UUID parsed
+  from the closed-grammar `git/config` (validateTaskGitConfig first), closure
+  digest from `digestLandedPack` — never re-resolving main. The two roots
+  (store 0555, worktree 0700) are proven present and carried as recovery roots.
+- partial/mixed (one child present) → refuse.
+
+Tests (host-side real git): fresh cut from the target ref; a retry whose pins are
+re-derived from a store built by MaterializeInitiativeStore and match its
+SetupResult exactly; and refusals (partial state, non-0700 parent, absent
+parent). Full fast suite green.
+
+NEXT: S1.4c-2b — wire the lane (emission→route-free attest→commit) around
+captureInitiativePrecreate; see PROGRESS NEXT.

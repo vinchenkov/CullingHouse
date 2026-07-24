@@ -171,9 +171,10 @@ resident `SPINE_SCHEMA_VERSION` moved to 14 in lockstep.
         `Decide` but unused, zero behavioral change); design + the build-tag
         fake-safety nuance in IMPLEMENTATION-NOTES 2026-07-23 / ledger 2026-07-24.
         S1.4c-1 landed the inert `PrivateDispatchInitiativePrecreate` mount-plan
-        step + validation (two proven parents, fresh/retry Setup; unauthored yet).
-        Owed: S1.4c-2 (the atomic emission + route-free lane), S1.5 (resident
-        precreate + register), S3b (D6 fence), S4–S6.
+        step + validation; S1.4c-2a landed `captureInitiativePrecreate` (the
+        attest-side authoring — two proven parents, on-disk fresh/retry, inert).
+        Owed: S1.4c-2b (the lane wiring: emission→route-free attest→commit), S1.5
+        (resident precreate + register), S3b (D6 fence), S4–S6.
 - [ ] Release prep — install/onboard front door and construction-document
       disposition.
 
@@ -239,31 +240,30 @@ native resume, container reconciliation, Homie credential projection,
 dashboard LaunchAgent generation, and the four non-Console tabs. Details and
 commit map are in the closed Phase 4 ledger.
 
-NEXT: ADR-025 S1.4c-2 — the ATOMIC route-free InitiativeSetup dispatch lane
-(S1.4a/b/c-1 landed the predicate, types, RealRouting gate, receipt JOIN, and the
-mount-plan step + validation). Emission + commit MUST land together — a Decide
-that emits an uncommittable Kind wedges/spins production once RealRouting is true.
-The full Plan-agent map is in the ledger 2026-07-24; the lane FUSES the landing
-lane (route-free) with the spawn lane's lease claim. Do:
+NEXT: ADR-025 S1.4c-2b — wire the route-free InitiativeSetup lane around the
+now-landed `captureInitiativePrecreate` (S1.4c-2a). This is the ATOMIC remainder:
+emission + commit MUST land together (a Decide that emits an uncommittable Kind
+wedges/spins production once RealRouting is true). Full Plan-agent map in the
+ledger 2026-07-24; the lane FUSES the landing lane (route-free) with the spawn
+lane's lease claim. Do:
   (a) Emission: `nextInitiativeSetup(rec, cfg)` in `Decide` right after (0c)
       landing (`dispatch.go` ~:463) and before the (1) occupancy loop; return
       `Action{Kind: KindInitiativeSetup, InitiativeSetup:...}`. Add the
       `KindInitiativeSetup` arm to `assertWellFormed` (`dispatch_test.go:115`).
       FIX `dvConfig` (`dispatchverb_test.go:134`) to set RealRouting to match the
-      real Dispatch path (the flagged oracle mismatch); verified no current
-      fixture changes action.
+      real Dispatch path (the flagged oracle mismatch — no current fixture
+      changes action).
   (b) `preparedDispatch.initiativeSetup` (a 4th mutually-exclusive variant beside
       final/candidate/landing) + `dispatchInitiativeSetupRound` (mirror
       `dispatchLandingRound` `dispatchverb.go:92`) + the prepare divert after the
       KindLand divert (`dispatchseam.go:611`); extend `dispatchRecheckAttestation`
-      (:703).
+      (:703). Freeze the arc target ref into `DispatchMountState` (needed by
+      captureInitiativePrecreate's fresh mode; loadDispatchMountState already
+      loads `SubjectTaskTargetRef` — confirm it carries the arc row's target ref).
   (c) Route-free `dispatchAttestInitiativeSetup` (mirror `dispatchAttestLanding`
-      `dispatchlandingseam.go:246` — no routing.md read) authoring the plan via a
-      NEW `captureInitiativePrecreate` (two proven parents; fresh/retry from
-      ON-DISK residue — the hardest part, no spine pin: store dir absent→fresh
-      with the arc target ref, present→retry reusing the on-disk ref; mirror
-      captureTaskPrecreate vs captureTaskRecovery). Freeze the arc target ref into
-      `DispatchMountState`.
+      `dispatchlandingseam.go:246` — no routing.md read) authoring the plan
+      `{Version:1, Entries:[], InitiativePrecreate: captureInitiativePrecreate(...)}`,
+      classifying failures as deployment health.
   (d) `dispatchCommitInitiativeSetup` (mirror `dispatchCommitLanding` :405 —
       DeepEqual/token/recheck fences; RefusalSubjectlessPipeline) + a NEW
       `applyInitiativeSetup` (`domain.Claim` role="worker"/tier=pipeline,
@@ -274,5 +274,6 @@ lane (route-free) with the spawn lane's lease claim. Do:
       `applyAction` (:432) like the KindSpawn guard.
 Test audit (already done): NO existing default-build test breaks — every other
 initiative fixture is branch-LESS so the predicate stays inert. Add pure-dispatch
-emission tests + a full-path verb test. Then S1.5 (resident precreate +
-`RegisterInitiativeSetup` write). See ADR-025 §Slices.
+emission tests + a full-path verb test. The private-frame carrier (Darwin split)
+may follow as S1.4c-2c. Then S1.5 (resident precreate + `RegisterInitiativeSetup`
+write). See ADR-025 §Slices.
