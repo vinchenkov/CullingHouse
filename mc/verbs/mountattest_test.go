@@ -392,6 +392,31 @@ func TestLoadDispatchMountStateFreezesInitiativePriorChildRuns(t *testing.T) {
 	}
 }
 
+func TestExpectedInitiativeChildMarker(t *testing.T) {
+	id := int64(9)
+	base := PrivateDispatchMountState{SubjectInitiativeID: &id, SubjectInitiativePriorChildRuns: []string{"run-a1", "run-b1"}}
+
+	// A real-routed initiative child carries the frozen set verbatim.
+	if got := expectedInitiativeChildMarker(base, false); got == nil ||
+		got.InitiativeID != id || !reflect.DeepEqual(got.PriorChildRuns, []string{"run-a1", "run-b1"}) {
+		t.Fatalf("real initiative child marker = %+v", got)
+	}
+	// Fake routing runs no D6 fence — no marker (keeps the fake E2E plan bytes stable).
+	if got := expectedInitiativeChildMarker(base, true); got != nil {
+		t.Fatalf("fake-routed marker = %+v, want nil", got)
+	}
+	// A non-initiative subject carries no marker.
+	if got := expectedInitiativeChildMarker(PrivateDispatchMountState{}, false); got != nil {
+		t.Fatalf("non-initiative marker = %+v, want nil", got)
+	}
+	// A childless first child materializes a non-nil empty slice, so the commit
+	// fence and validation never mistake it for a stripped nil marker.
+	first := expectedInitiativeChildMarker(PrivateDispatchMountState{SubjectInitiativeID: &id}, false)
+	if first == nil || first.PriorChildRuns == nil || len(first.PriorChildRuns) != 0 {
+		t.Fatalf("childless marker = %+v, want a non-nil empty set", first)
+	}
+}
+
 func TestDispatchInvalidSelectedProfileMountNeverClaimsOrSpawns(t *testing.T) {
 	db := dvSpine(t)
 	dvInsertTask(t, db, dvTask(1, dispatch.ScopeTask, dispatch.StatusProposed, 2))
@@ -882,6 +907,12 @@ func TestAttestCandidateMountsInitiativeChildWorkerSuppressesSeal(t *testing.T) 
 	}
 	if plan.TaskPrecreate != nil {
 		t.Fatalf("initiative child triggered standalone task precreate (ADR-025 D5): %+v", plan.TaskPrecreate)
+	}
+	// ADR-025 D6: the producer-absence marker rides the plan (empty prior set for
+	// this childless fixture — a non-nil [], never a stripped nil).
+	wantMarker := &PrivateDispatchInitiativeChild{InitiativeID: 7, PriorChildRuns: []string{}}
+	if !reflect.DeepEqual(plan.InitiativeChild, wantMarker) {
+		t.Fatalf("initiative child marker = %+v, want %+v", plan.InitiativeChild, wantMarker)
 	}
 	byDest := map[string]PrivateDispatchMountEntry{}
 	for _, e := range plan.Entries {

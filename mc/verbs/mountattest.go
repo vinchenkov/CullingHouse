@@ -380,6 +380,26 @@ func deriveInitiativeChildMountRequests(state PrivateDispatchMountState, role st
 	return requests, selected, nil, nil
 }
 
+// expectedInitiativeChildMarker derives the ADR-025 D6 producer-absence marker
+// from the frozen mount state alone — the initiative id and the token-frozen
+// prior-child run-id set. It is authored at attest AND re-derived at commit from
+// the re-frozen state, so a stripped or doctored marker fails the commit
+// DeepEqual. Under the legacy fake-workspace lane an initiative child falls
+// through to the whole-Worksource bind and runs no D6 fence, so no marker is
+// authored — which also keeps the fake E2E's initiative-child plan bytes
+// unchanged. The empty set is materialized as a non-nil slice so a childless
+// first child marshals as [] and validation never mistakes it for a stripped nil.
+func expectedInitiativeChildMarker(state PrivateDispatchMountState, allowLegacyFakeWorkspace bool) *PrivateDispatchInitiativeChild {
+	if allowLegacyFakeWorkspace || state.SubjectInitiativeID == nil {
+		return nil
+	}
+	runs := state.SubjectInitiativePriorChildRuns
+	if runs == nil {
+		runs = []string{}
+	}
+	return &PrivateDispatchInitiativeChild{InitiativeID: *state.SubjectInitiativeID, PriorChildRuns: runs}
+}
+
 // assembleDispatchMountInputs associates the frozen all-Worksource projection
 // with independently resolved host identities. Request derivation (including
 // the repo gate and the test-fake workspace exception) lives in
@@ -1035,6 +1055,12 @@ func attestCandidateMounts(home string, cand *preparedCandidate, allowLegacyFake
 		Version: 1, Entries: entries, JurisdictionDigest: jurisdictionDigest,
 		TaskPrecreate: snapshot.TaskPrecreate,
 	}
+	// ADR-025 D6: a real-routed initiative child carries the frozen producer-
+	// absence set so the resident can positively confirm every prior child
+	// container absent before this one is prepared. Authored purely from the
+	// frozen state (no host probe), so it re-derives identically at commit and
+	// rides the mount-state DeepEqual/token fence.
+	plan.InitiativeChild = expectedInitiativeChildMarker(cand.mountState, allowLegacyFakeWorkspace)
 	// ADR-025 D4: the sealed-completion spine must not apply to an initiative
 	// subject — an accepted-seal rebuild of a SHARED store would destroy sibling
 	// commits — so CompletionSeal (here) and the downstream AcceptedSealRebuild /

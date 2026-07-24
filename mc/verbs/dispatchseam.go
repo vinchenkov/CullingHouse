@@ -819,6 +819,17 @@ func dispatchCommit(ctx context.Context, q Q, prepared preparedDispatch, atteste
 	if attested.mountPlan == nil {
 		return nil, Domainf("dispatch: a spawn attestation carries no mount plan (ADR-016 D5)")
 	}
+	// ADR-025 D6: re-derive the producer-absence marker from the just-refrozen
+	// state and refuse a frame whose marker was stripped or doctored. On the
+	// private path attested.mountPlan is the broker's, and validatePrivateMountPlan
+	// admits a nil InitiativeChild (it is optional), so without this an initiative
+	// child's fence input could be silently dropped — a fail-open. The marker is a
+	// pure function of the frozen state, so this DeepEqual is exact; the gate
+	// matches the attest-time `route.Harness == "fake"` at dispatchseam.go:683.
+	if !reflect.DeepEqual(attested.mountPlan.InitiativeChild,
+		expectedInitiativeChildMarker(currentMountState, attested.route.Harness == "fake")) {
+		return commitInertRefusal(ctx, q, prepared, rcand, refusal.CodeStale)
+	}
 	planDigest, err := mountPlanDigest(attested.mountPlan)
 	if err != nil {
 		return nil, err
