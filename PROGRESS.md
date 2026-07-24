@@ -6,19 +6,20 @@ REPO PATH: `~/dev/ai/homie`. Never relocate this repo into `~/Documents`,
 `~/Desktop`, or `~/Downloads`: macOS TCC can revoke an agent session's own
 filesystem access there during fan-out. Full Disk Access does not fix it.
 
-LAST GREEN SHA: `999f6e7` — ADR-025 S1.4b: the inert dispatch data plumbing —
-the loadRecords `initiative_setup_receipts` JOIN (sets `Task.InitiativeSetupDone`)
-and `Config.RealRouting = !allowFakeDecorrelation` in selectFromSpine, atop
-S1.4a's `nextInitiativeSetup` predicate + `KindInitiativeSetup` type. All flow
-into `Decide` but stay unused (the emission wires in S1.4c), so zero behavioral
-change. Build-tag nuance nailed down (ledger 2026-07-24): default build →
-RealRouting=true (real seam tests get the emission in S1.4c); test_fake_routing
-tag → false (protects the Phase 4 fake E2E). Atop S1.3 (the container side of the
-cut), S1.1 (`initiative_setup_receipts` v14 + read), and S2/S3a (inert host-side
-mount arms). Still inert end-to-end: nothing emits or invokes the cut yet. S2 was
-adversarially reviewed (3 lenses, no findings). Full fast suite green;
-`dispatch`/`verbs`/`cmd/mc`/`substrate` cold `-count=1` green; launchd not
-loaded. Prior codex green was `28d6102` (production reset lifecycle).
+LAST GREEN SHA: `de0b750` — ADR-025 S1.4c-1: the inert
+`PrivateDispatchInitiativePrecreate` mount-plan step (two proven-absent parents
+on separate host bases, paired recovery roots, fresh/retry Setup) + its
+closed-class helper-boundary validation. Additive/omitempty → every existing
+plan's digest byte-identical; nothing authors it until the S1.4c-2 lane. Atop
+S1.4a/b (the inert dispatch predicate + data plumbing + RealRouting gate), S1.3
+(the container side of the cut), S1.1 (`initiative_setup_receipts` v14 + read),
+and S2/S3a (inert host-side mount arms). A 2nd Plan-agent trace mapped the full
+S1.4c-2 lane; its build-tag test audit found NO default-build test breaks. Still
+inert end-to-end: nothing emits or invokes the cut yet. S2 was adversarially
+reviewed (3 lenses, no findings). Full fast suite green (after the recurring,
+load-sensitive resident EBADF flake — intermittent #2 — cleared on re-run);
+`verbs`/`dispatch`/`substrate` cold `-count=1` green; launchd not loaded. Prior
+codex green was `28d6102` (production reset lifecycle).
 Full Docker lanes (26 `docker_boundary`; 10 `docker_e2e`) were green at
 `c8f37e9`-era HEAD. Extended Playwright smoke and install.sh dev walk were last
 green at `d0ef4bb`; real onboarding crossing at `bf5981d`. Production image
