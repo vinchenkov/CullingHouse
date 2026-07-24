@@ -1686,6 +1686,32 @@ rules in code the sealed lane does not own.
   slices; every existing refusal stays fail-closed until S6.
 - Needs your decision: no.
 
+## 2026-07-24 — ADR-025 S3b.2 clean-fence drops the tautological HEAD==tip rev-parse
+- Where: the D6 store-worktree cleanliness executor `RunInitiativeCleanFence`
+  (mc/verbs/initiativecleanfence.go). The S3b scoping plan (docs/ledger/phase-5.md
+  2026-07-24) specified TWO branch-tip assertions: `symbolic-ref HEAD ==
+  refs/heads/mc/initiative-<id>` AND `rev-parse HEAD == rev-parse
+  refs/heads/mc/initiative-<id>`.
+- Deviation: the second assertion is not implemented. With HEAD symbolic to the
+  managed branch (which the first assertion proves), `rev-parse HEAD` resolves
+  THROUGH the symref to the very ref tip it would be compared against — the
+  equality is a tautology, always true, never a second opinion. Every real
+  divergence it could nominally catch — a moved branch ref, a re-read index, an
+  in-progress merge — instead surfaces as staged/unstaged content in the
+  `git status --porcelain=v1 --untracked-files=all == ""` fence that runs first,
+  and mid-rebase detaches HEAD so the symbolic-ref assertion catches that. Ship
+  the three genuinely-independent fences (status-clean, hidden-index-flag
+  refusal via `ls-files -v`, HEAD-symbolic-to-managed-branch) and omit the
+  fourth. This follows the codebase's explicit anti-tautology stance
+  (landsealed.go:347-355, which removed exactly such a laundered-through-a-
+  subprocess check and confirmed via mutation that disabling it left the suite
+  green). The analogous landsealed check is NOT tautological only because it
+  compares HEAD to an EXTERNAL frozen verified_sha; the D6 fence has no external
+  pin (that pin is D8/S5's landing concern, deliberately distinct).
+- Spec impact: none — the fence is strictly no weaker; it refuses every state the
+  fourth check could and stays fail-closed. Preserves all invariants.
+- Needs your decision: no.
+
 ## 2026-07-23 — ADR-025 S1.4 effect model + fake-safe emission gate (delegated design)
 - Where: ADR-025 D3 ("Dispatch emits an InitiativeSetup step … at the first
   promotion-observable tick and before any other initiative-family spawn").
