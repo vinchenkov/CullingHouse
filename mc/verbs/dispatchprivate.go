@@ -494,6 +494,60 @@ func validatePrivateMountPlan(plan *PrivateDispatchMountPlan) error {
 			}
 		}
 	}
+	if step := plan.InitiativePrecreate; step != nil {
+		// ADR-025 D3: the shared-store cut is its own setup class and never shares
+		// a plan with another setup step or an agent-plane entry (mirroring the
+		// landing/completion-seal exclusions) — one token must not authorize two
+		// mutating setup containers.
+		if plan.TaskPrecreate != nil || plan.CompletionSeal != nil ||
+			plan.AcceptedSealRebuild != nil || plan.VerifierProjection != nil || plan.Landing != nil {
+			return Domainf("dispatch: private initiative precreate cannot share a plan with another setup step")
+		}
+		if len(plan.Entries) != 0 {
+			return Domainf("dispatch: private initiative precreate carries agent-plane mount entries")
+		}
+		if step.InitiativeID < 1 || step.InitiativeID > maxJavaScriptSafeInteger || step.ChildMode != taskSkeletonChildMode {
+			return Domainf("dispatch: private initiative precreate identity/mode is invalid")
+		}
+		if !validStructuralText(step.WorkspaceRoot, maxPrivateScalarBytes) ||
+			!path.IsAbs(step.WorkspaceRoot) || path.Clean(step.WorkspaceRoot) != step.WorkspaceRoot {
+			return Domainf("dispatch: private initiative precreate workspace root is invalid")
+		}
+		// The two proven-absent parents (ADR-025 D1): the store lives under
+		// .mission-control/initiatives, the shared worktree under .mc-worktrees.
+		store, worktree := step.StoreParent, step.WorktreeParent
+		if store.Canonical != path.Join(step.WorkspaceRoot, ".mission-control", "initiatives") ||
+			!validStructuralText(store.Canonical, maxPrivateScalarBytes) ||
+			!validDecimalText(store.Device) || !validDecimalText(store.Inode) || store.OwnerUID < 0 ||
+			worktree.Canonical != path.Join(step.WorkspaceRoot, ".mc-worktrees") ||
+			!validStructuralText(worktree.Canonical, maxPrivateScalarBytes) ||
+			!validDecimalText(worktree.Device) || !validDecimalText(worktree.Inode) || worktree.OwnerUID < 0 {
+			return Domainf("dispatch: private initiative precreate parent evidence is invalid")
+		}
+		if err := validatePrivateTaskSetup(step.Setup); err != nil {
+			return err
+		}
+		// Recovery roots (retry over residue) come as a pair or not at all: the
+		// initiative's store and shared worktree are cut together (ADR-025 D3).
+		if (step.RecoverStore == nil) != (step.RecoverWorktree == nil) {
+			return Domainf("dispatch: private initiative recovery carries only one of the two roots")
+		}
+		child := "initiative-" + strconv.FormatInt(step.InitiativeID, 10)
+		if root := step.RecoverStore; root != nil {
+			if root.Canonical != path.Join(store.Canonical, child) ||
+				!validStructuralText(root.Canonical, maxPrivateScalarBytes) ||
+				!validDecimalText(root.Device) || !validDecimalText(root.Inode) || root.OwnerUID != store.OwnerUID {
+				return Domainf("dispatch: private initiative recovery store evidence is invalid")
+			}
+		}
+		if root := step.RecoverWorktree; root != nil {
+			if root.Canonical != path.Join(worktree.Canonical, child) ||
+				!validStructuralText(root.Canonical, maxPrivateScalarBytes) ||
+				!validDecimalText(root.Device) || !validDecimalText(root.Inode) || root.OwnerUID != worktree.OwnerUID {
+				return Domainf("dispatch: private initiative recovery worktree evidence is invalid")
+			}
+		}
+	}
 	if step := plan.CompletionSeal; step != nil {
 		parent := step.SealsParent
 		if step.TaskID < 1 || !validStructuralText(step.RunID, maxPrivateScalarBytes) ||

@@ -406,6 +406,79 @@ func TestValidatePrivateAttestationMountPlanRules(t *testing.T) {
 	}
 }
 
+// The ADR-025 D3 initiative-precreate step is a closed setup class: two proven
+// parents at the fixed store/worktree paths, a valid fresh/retry setup, paired
+// recovery roots at the derived child paths, no agent-plane entries, and no
+// sharing a plan with another setup step. (S1.4c-1: the carrier + validation;
+// the authoring lane is S1.4c-2.)
+func TestValidatePrivateMountPlanInitiativePrecreateRules(t *testing.T) {
+	uuid := "0a1b2c3d-4e5f-6071-8293-a4b5c6d7e8f9"
+	valid := func() *PrivateDispatchMountPlan {
+		return &PrivateDispatchMountPlan{
+			Entries: []PrivateDispatchMountEntry{},
+			InitiativePrecreate: &PrivateDispatchInitiativePrecreate{
+				ChildMode: 0o700, InitiativeID: 7, WorkspaceRoot: "/srv/repo",
+				Setup:          &PrivateDispatchTaskSetup{Mode: "fresh", ObjectFormat: "sha1", TargetRef: "main"},
+				StoreParent:    PrivateDispatchPathIdentity{Canonical: "/srv/repo/.mission-control/initiatives", Device: "8", Inode: "9", OwnerUID: 501},
+				WorktreeParent: PrivateDispatchPathIdentity{Canonical: "/srv/repo/.mc-worktrees", Device: "8", Inode: "10", OwnerUID: 501},
+			},
+			Version: 1,
+		}
+	}
+	if err := validatePrivateMountPlan(valid()); err != nil {
+		t.Fatalf("valid initiative precreate rejected: %v", err)
+	}
+
+	// A retry over on-disk residue carries the paired recovery roots at their
+	// derived child paths.
+	retry := valid()
+	retry.InitiativePrecreate.Setup = &PrivateDispatchTaskSetup{
+		Mode: "retry", ObjectFormat: "sha1", PinnedBaseSHA: strings.Repeat("a", 40),
+		PinnedClosureDigest: strings.Repeat("b", 64), PinnedLocalRepoUUID: uuid,
+	}
+	retry.InitiativePrecreate.RecoverStore = &PrivateDispatchPathIdentity{Canonical: "/srv/repo/.mission-control/initiatives/initiative-7", Device: "8", Inode: "11", OwnerUID: 501}
+	retry.InitiativePrecreate.RecoverWorktree = &PrivateDispatchPathIdentity{Canonical: "/srv/repo/.mc-worktrees/initiative-7", Device: "8", Inode: "12", OwnerUID: 501}
+	if err := validatePrivateMountPlan(retry); err != nil {
+		t.Fatalf("valid initiative recovery rejected: %v", err)
+	}
+
+	bad := map[string]func(*PrivateDispatchMountPlan){
+		"id":   func(p *PrivateDispatchMountPlan) { p.InitiativePrecreate.InitiativeID = 0 },
+		"mode": func(p *PrivateDispatchMountPlan) { p.InitiativePrecreate.ChildMode = 0o755 },
+		"store_parent_path": func(p *PrivateDispatchMountPlan) {
+			p.InitiativePrecreate.StoreParent.Canonical = "/srv/repo/.mission-control/tasks"
+		},
+		"worktree_parent_path": func(p *PrivateDispatchMountPlan) {
+			p.InitiativePrecreate.WorktreeParent.Canonical = "/srv/repo/elsewhere"
+		},
+		"non_decimal_device": func(p *PrivateDispatchMountPlan) { p.InitiativePrecreate.StoreParent.Device = "x8" },
+		"negative_owner":     func(p *PrivateDispatchMountPlan) { p.InitiativePrecreate.WorktreeParent.OwnerUID = -1 },
+		"bad_setup":          func(p *PrivateDispatchMountPlan) { p.InitiativePrecreate.Setup.Mode = "sideways" },
+		"relative_workspace": func(p *PrivateDispatchMountPlan) { p.InitiativePrecreate.WorkspaceRoot = "relative/repo" },
+		"agent_entries":      func(p *PrivateDispatchMountPlan) { p.Entries = []PrivateDispatchMountEntry{{}} },
+		"shares_task_precreate": func(p *PrivateDispatchMountPlan) {
+			p.TaskPrecreate = &PrivateDispatchTaskPrecreate{}
+		},
+		"shares_landing": func(p *PrivateDispatchMountPlan) { p.Landing = &PrivateDispatchLanding{} },
+		"lone_recover_store": func(p *PrivateDispatchMountPlan) {
+			p.InitiativePrecreate.RecoverStore = &PrivateDispatchPathIdentity{Canonical: "/srv/repo/.mission-control/initiatives/initiative-7", Device: "8", Inode: "11", OwnerUID: 501}
+		},
+		"recover_store_wrong_path": func(p *PrivateDispatchMountPlan) {
+			p.InitiativePrecreate.RecoverStore = &PrivateDispatchPathIdentity{Canonical: "/srv/repo/.mc-worktrees/initiative-7", Device: "8", Inode: "11", OwnerUID: 501}
+			p.InitiativePrecreate.RecoverWorktree = &PrivateDispatchPathIdentity{Canonical: "/srv/repo/.mc-worktrees/initiative-7", Device: "8", Inode: "12", OwnerUID: 501}
+		},
+	}
+	for name, mutate := range bad {
+		t.Run(name, func(t *testing.T) {
+			p := valid()
+			mutate(p)
+			if err := validatePrivateMountPlan(p); err == nil {
+				t.Fatalf("%s: a malformed initiative precreate plan was accepted", name)
+			}
+		})
+	}
+}
+
 func TestValidatePrivateAttestationTaskPrecreateRules(t *testing.T) {
 	digest := strings.Repeat("ab", 32)
 	valid := func() *PrivateDispatchMountPlan {

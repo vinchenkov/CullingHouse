@@ -146,6 +146,33 @@ type PrivateDispatchTaskPrecreate struct {
 	WorkspaceRoot string                       `json:"workspace_root"`
 }
 
+// PrivateDispatchInitiativePrecreate is ADR-025 D3's first post-claim setup
+// operation for a shared-store cut. Unlike a task precreate it proves TWO
+// parents absent-child — the store parent `<ws>/.mission-control/initiatives`
+// and the worktree parent `<ws>/.mc-worktrees` — because the sanitized store and
+// the shared worktree live on separate host bases (ADR-025 D1). Ordinary first
+// setup proves both `initiative-<id>` children absent; recovery instead carries
+// the on-disk store/worktree identities for host-only exact-empty (the
+// initiative has no spine pin — its receipt IS its assignment, so fresh/retry is
+// decided from on-disk residue, not a frozen token fact). Setup names the
+// closure instruction the executor materializes; branch/worktree name are pure
+// derivations of the initiative id and never travel. Field order is alphabetical
+// because the containing plan is replayed through canonical JSON.
+type PrivateDispatchInitiativePrecreate struct {
+	ChildMode    int   `json:"child_mode"`
+	InitiativeID int64 `json:"initiative_id"`
+	// RecoverStore/RecoverWorktree are present only for a retry over on-disk
+	// residue: the exact existing roots whose identities the resident preserves
+	// while their children are scrubbed. Ordinary first setup proves both
+	// children absent and omits them.
+	RecoverStore    *PrivateDispatchPathIdentity `json:"recover_store,omitempty"`
+	RecoverWorktree *PrivateDispatchPathIdentity `json:"recover_worktree,omitempty"`
+	Setup           *PrivateDispatchTaskSetup    `json:"setup"`
+	StoreParent     PrivateDispatchPathIdentity  `json:"store_parent"`
+	WorkspaceRoot   string                       `json:"workspace_root"`
+	WorktreeParent  PrivateDispatchPathIdentity  `json:"worktree_parent"`
+}
+
 // PrivateDispatchCompletionSeal is the Worker-only post-claim authority for
 // its current run's otherwise-absent completion staging root.  The resident
 // derives the child as <seals_parent>/<run_id>; neither dispatch nor a caller
@@ -247,6 +274,7 @@ type PrivateDispatchMountPlan struct {
 	AcceptedSealRebuild *PrivateDispatchAcceptedSealRebuild `json:"accepted_seal_rebuild,omitempty"`
 	CompletionSeal      *PrivateDispatchCompletionSeal      `json:"completion_seal,omitempty"`
 	Entries             []PrivateDispatchMountEntry         `json:"entries"`
+	InitiativePrecreate *PrivateDispatchInitiativePrecreate `json:"initiative_precreate,omitempty"`
 	JurisdictionDigest  string                              `json:"jurisdiction_digest,omitempty"`
 	Landing             *PrivateDispatchLanding             `json:"landing,omitempty"`
 	TaskPrecreate       *PrivateDispatchTaskPrecreate       `json:"task_precreate,omitempty"`

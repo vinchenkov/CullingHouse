@@ -837,3 +837,46 @@ full-path tests for promoted-uncut initiatives before wiring the emission.
 
 NEXT: S1.4c — the atomic emission + route-free commit + mount-plan unit (see
 PROGRESS NEXT).
+
+## 2026-07-24 — ADR-025 S1.4c-1: the InitiativePrecreate mount-plan step
+
+S1.4c (dispatch emits + commits the InitiativeSetup) is the largest slice in
+ADR-025 — a whole new dispatch lane. A second Plan-agent trace mapped it fully
+and, reassuringly, the build-tag test audit found NO existing default-build test
+breaks: the only branch-set seeded initiative fixture
+(TestDispatchLoadRecordsProjectsInitiativeSetupReceipt) calls only loadRecords,
+and every other initiative fixture is branch-LESS so nextInitiativeSetup's
+`Branch != ""` conjunct keeps it inert even under RealRouting=true. (One latent
+oracle mismatch to fix in S1.4c-2: dvConfig leaves RealRouting false while the
+real Dispatch sets it true.)
+
+Effect-model decisions from the trace: the InitiativeSetup fuses the LANDING lane
+(route-free, host-attested-for-its-mount-plan, subjectless-refusal-class) with
+the SPAWN lane's lease claim — it is the only lane that claims the lease + opens
+a run (tier='pipeline', role='worker'; "Worker-tier" = role worker, there is no
+worker tier) while carrying NO route/brief/harness. The arc row's
+SubjectInitiativeID is NIL (it IS the initiative), so it cannot reuse the S2
+child attest arm; the lane needs its OWN route-free attest. The hardest part is
+fresh/retry from ON-DISK residue: the receipt IS the assignment, so when absent
+there is no spine pin, and the retry ref/OID is recovered from the on-disk store
+and re-proven only through the DeepEqual(mountState)/token/recheck fences.
+
+S1.4c-1 landed the inert carrier + validation (additive, omitempty keeps every
+existing plan's mountPlanDigest byte-identical; nothing authors it yet):
+- PrivateDispatchInitiativePrecreate (mountplan.go): two proven-absent parents
+  (store `.mission-control/initiatives`, worktree `.mc-worktrees` — separate
+  bases, D1), paired recovery roots, a fresh/retry Setup (reusing
+  PrivateDispatchTaskSetup), + the omitempty field on PrivateDispatchMountPlan.
+- validatePrivateMountPlan arm (dispatchprivate.go): closed setup class — mutual
+  exclusion with every other setup step + no agent entries; fixed parent paths;
+  decimal identity fences; derived recovery-child paths; paired-or-neither
+  recovery. Tests cover valid fresh + valid retry + a malformed table
+  (id/mode/parent-path/device/owner/setup/workspace/entries/sharing/lone-recover/
+  wrong-recover-path).
+
+NEXT: S1.4c-2 — the atomic lane (see PROGRESS NEXT): Decide emission +
+assertWellFormed + dvConfig fix; preparedDispatch.initiativeSetup +
+dispatchInitiativeSetupRound + prepare divert; route-free
+dispatchAttestInitiativeSetup + captureInitiativePrecreate (two parents,
+fresh/retry from residue); dispatchCommitInitiativeSetup + applyInitiativeSetup
+(lease claim, worker/pipeline run, no route/brief; receipt). Then S1.5 (resident).
