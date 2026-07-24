@@ -954,3 +954,27 @@ Full fast suite green.
 NEXT: S1.5 — the resident runs it (precreate the skeleton, launch
 `mc __setup-initiative`, register the receipt via `RegisterInitiativeSetup`).
 The private-frame carrier (S1.4c-2c) is owed but non-blocking.
+
+## 2026-07-24 — ADR-025 S1.5a: RegisterInitiativeSetup (the receipt write)
+
+S1.5 (the resident runs the cut) splits into the Go receipt write (this) and the
+resident TS handler (S1.5b). This lands the write deferred from S1.1 — the last
+missing producer of initiative_setup_receipts, so once S1.5b calls it, S2/S3a's
+mount vouch finally becomes reachable end-to-end.
+
+RegisterInitiativeSetup (mirrors RegisterFirstTaskSetup, tasksetup.go:45) but for
+the two-root initiative receipt: validates both operator-owned roots (store +
+worktree) and the cut SHA; fences on a LIVE Worker-tier setup run + the lease,
+both keyed on the initiative id (the run the dispatch lane opened, S1.4c-2b);
+idempotent-by-initiative_id (SELECT-then-compare like task_assignments' immutable
+reuse, NOT run-keyed like task_setup_receipts) — an exact retry replays, and any
+changed root or cut refuses (D3: the store is never re-cut). RunID is a fence
+input, never stored. New host-scoped CLI `mc initiative setup-register` (mirrors
+`mc task setup-register`) so the resident can call it.
+
+Tests: fence + idempotency (exact retry replays; changed cut / changed store root
+refuse; one row); stale/wrong-run/wrong-initiative fence; foreign-owner refusal.
+Full fast suite green.
+
+NEXT: S1.5b — the resident effect handler (precreate + `mc __setup-initiative`
+container + `mc initiative setup-register`), completing S1.

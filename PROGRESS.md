@@ -180,9 +180,11 @@ resident `SPINE_SCHEMA_VERSION` moved to 14 in lockstep.
         Decide→attest→commit, claiming the lease and opening a worker/pipeline run
         that carries the shared-store precreate plan (the first tick ADR-025 stops
         being purely inert — but nothing executes until S1.5's resident runs it).
-        Owed: S1.5 (resident precreate + `mc __setup-initiative` + register),
-        S1.4c-2c (the Darwin private-frame carrier — non-blocking, guarded
-        fail-closed), S3b (D6 fence), S4–S6.
+        S1.5a landed `RegisterInitiativeSetup` + the `mc initiative setup-register`
+        CLI (the receipt write deferred from S1.1 — the last missing producer).
+        Owed: S1.5b (the resident TS handler: precreate + `mc __setup-initiative`
+        + register), S1.4c-2c (the Darwin private-frame carrier — non-blocking,
+        guarded fail-closed), S3b (D6 fence), S4–S6.
 - [ ] Release prep — install/onboard front door and construction-document
       disposition.
 
@@ -248,24 +250,25 @@ native resume, container reconciliation, Homie credential projection,
 dashboard LaunchAgent generation, and the four non-Console tabs. Details and
 commit map are in the closed Phase 4 ledger.
 
-NEXT: ADR-025 S1.5 — the resident runs the now-dispatched InitiativeSetup cut,
-completing S1. On an `{action:"initiative-setup"}` effect (see the effect keys in
-`applyInitiativeSetup`, mc/verbs/dispatchinitiativesetupseam.go) the resident
-(resident/src/effects.ts): (1) PRECREATES the skeleton from the mount plan's
-`initiative_precreate` step — store root 0555 with exactly {git, source} under
-the proven `.mission-control/initiatives` parent, worktree dir 0700 under the
-proven `.mc-worktrees` parent (mirror how the task precreate is executed on
-`mount_plan.task_precreate`, effects.ts ~:497-521); (2) writes the setup envelope
-(operation `initiative-setup`, the two container roots + Setup instruction) and
-runs `mc __setup-initiative` in the network=none/uid-10002/cap-drop container
-(store RW, worktree RW, real repo RO); (3) on the emitted cut SHA, stat's the two
-roots host-side and REGISTERS the durable receipt via a NEW verbs
-`RegisterInitiativeSetup` (the write deferred from S1.1 — idempotent-by-
-initiative_id like task_assignments, lease-fenced; insert into
-initiative_setup_receipts). Study the task first-task setup resident path
-(`runFirstTaskSetup`, effects.ts) + `RegisterFirstTaskSetup` (tasksetup.go) as
-analogs. Then S3b (D6 fence), S4–S6. The Darwin private-frame carrier (S1.4c-2c)
-is owed but non-blocking (the resident uses the in-process `mc dispatch` path). This is the ATOMIC remainder:
+NEXT: ADR-025 S1.5b — the resident TS effect handler, completing S1 (S1.5a
+landed the `RegisterInitiativeSetup` write + `mc initiative setup-register` CLI).
+On an `{action:"initiative-setup"}` effect (effect keys in `applyInitiativeSetup`,
+mc/verbs/dispatchinitiativesetupseam.go) the resident (resident/src/effects.ts):
+(1) PRECREATES the skeleton from `mount_plan.initiative_precreate` — store root
+0555 with exactly {git, source} under the proven `.mission-control/initiatives`
+parent, worktree dir 0700 under the proven `.mc-worktrees` parent, re-attesting
+both parent identities before creating (mirror how the task precreate executes on
+`mount_plan.task_precreate`); (2) writes the setup envelope (operation
+`initiative-setup`, the two container roots + the Setup instruction) and runs
+`mc __setup-initiative` in the network=none/uid-10002/cap-drop container (store
+RW, worktree RW, real repo RO), capturing the SetupResult stdout; (3) on the
+emitted cut SHA, stat's the two roots host-side and calls `mc initiative
+setup-register --run … --initiative … --store-device/inode/owner-uid …
+--worktree-device/inode/owner-uid … --cut-sha …`. Add the TS `initiative_precreate`
+mount-plan type. Study `runFirstTaskSetup` (effects.ts) + its test harness (fake
+docker/runMc/fs). This is the last piece of S1 — once it lands, S2/S3a's mount
+vouch is reachable end-to-end. Then S3b (D6 fence), S4–S6. The Darwin
+private-frame carrier (S1.4c-2c) is owed but non-blocking. This is the ATOMIC remainder:
 emission + commit MUST land together (a Decide that emits an uncommittable Kind
 wedges/spins production once RealRouting is true). Full Plan-agent map in the
 ledger 2026-07-24; the lane FUSES the landing lane (route-free) with the spawn

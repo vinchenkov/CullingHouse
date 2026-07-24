@@ -798,31 +798,68 @@ func cmdTask(args []string) (any, error) {
 }
 
 func cmdInitiative(args []string) (any, error) {
-	if len(args) == 0 || args[0] != "add" {
-		return nil, verbs.Usagef("usage: mc initiative add <title> --worksource <id> --charter <criteria> [--priority -1..3]")
+	if len(args) == 0 {
+		return nil, verbs.Usagef("usage: mc initiative add|setup-register …")
 	}
-	title, rest, err := positional("mc initiative add", args[1:])
-	if err != nil {
-		return nil, err
+	switch args[0] {
+	case "add":
+		title, rest, err := positional("mc initiative add", args[1:])
+		if err != nil {
+			return nil, err
+		}
+		fs := newFlags("mc initiative add")
+		worksource := fs.String("worksource", "", "worksource id")
+		charter := fs.String("charter", "", "checkable initiative charter")
+		priority := fs.Int("priority", -100, "priority (-1..3)")
+		if err := parse(fs, rest); err != nil {
+			return nil, err
+		}
+		var pri *int
+		if *priority != -100 {
+			pri = priority
+		}
+		id, err := verbs.LoadIdentity()
+		if err != nil {
+			return nil, err
+		}
+		return withSpine(func(db *sql.DB) (any, error) {
+			return verbs.InitiativeAdd(db, id, title, *worksource, *charter, pri)
+		})
+	case "setup-register":
+		// The ADR-025 D3 receipt write the resident performs after
+		// `mc __setup-initiative` materializes the shared store. Like
+		// `mc task setup-register` it reads no host files — it records the
+		// resident-stat'd root identities and the cut — and is host-scoped.
+		fs := newFlags("mc initiative setup-register")
+		runID := fs.String("run", "", "pipeline run id")
+		initiativeID := fs.Int64("initiative", 0, "initiative id")
+		storeDevice := fs.String("store-device", "", "store root device")
+		storeInode := fs.String("store-inode", "", "store root inode")
+		storeOwner := fs.Int("store-owner-uid", -1, "store root owner uid")
+		worktreeDevice := fs.String("worktree-device", "", "worktree root device")
+		worktreeInode := fs.String("worktree-inode", "", "worktree root inode")
+		worktreeOwner := fs.Int("worktree-owner-uid", -1, "worktree root owner uid")
+		cutSHA := fs.String("cut-sha", "", "recorded cut SHA")
+		if err := parse(fs, args[1:]); err != nil {
+			return nil, err
+		}
+		idn, err := verbs.LoadIdentity()
+		if err != nil {
+			return nil, err
+		}
+		if err := verbs.RequireHostScope(idn, "mc initiative setup-register"); err != nil {
+			return nil, err
+		}
+		receipt := verbs.InitiativeSetupReceipt{
+			RunID: *runID, InitiativeID: *initiativeID,
+			StoreRoot:    verbs.TaskSetupIdentity{Device: *storeDevice, Inode: *storeInode, OwnerUID: *storeOwner},
+			WorktreeRoot: verbs.TaskSetupIdentity{Device: *worktreeDevice, Inode: *worktreeInode, OwnerUID: *worktreeOwner},
+			CutSHA:       *cutSHA,
+		}
+		return withSpine(func(db *sql.DB) (any, error) { return verbs.RegisterInitiativeSetup(db, receipt) })
+	default:
+		return nil, verbs.Usagef("usage: mc initiative add|setup-register …")
 	}
-	fs := newFlags("mc initiative add")
-	worksource := fs.String("worksource", "", "worksource id")
-	charter := fs.String("charter", "", "checkable initiative charter")
-	priority := fs.Int("priority", -100, "priority (-1..3)")
-	if err := parse(fs, rest); err != nil {
-		return nil, err
-	}
-	var pri *int
-	if *priority != -100 {
-		pri = priority
-	}
-	id, err := verbs.LoadIdentity()
-	if err != nil {
-		return nil, err
-	}
-	return withSpine(func(db *sql.DB) (any, error) {
-		return verbs.InitiativeAdd(db, id, title, *worksource, *charter, pri)
-	})
 }
 
 func cmdWorksource(args []string) (any, error) {
