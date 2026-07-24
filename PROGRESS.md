@@ -6,11 +6,14 @@ REPO PATH: `~/dev/ai/homie`. Never relocate this repo into `~/Documents`,
 `~/Desktop`, or `~/Downloads`: macOS TCC can revoke an agent session's own
 filesystem access there during fan-out. Full Disk Access does not fix it.
 
-LAST GREEN SHA: `3703c2b` — ADR-025 S1.5b-1: `precreateInitiativeSkeleton`, the
-resident-side two-root precreate (store 0555 {git,source} + empty 0700 worktree
-on separate bases). Inert; only the resident effect handler (S1.5b-2) remains to
-complete S1 (the ADR-025 slice map is in the phase bullet below + the phase-5
-ledger). Full fast suite green (the load-sensitive resident EBADF flake —
+LAST GREEN SHA: `<this-commit>` — ADR-025 S1.5b-2: the resident `initiative-setup`
+effect handler, completing S1 (the cut). On the route-free effect it precreates
+the two-root skeleton, runs `mc __setup-initiative` binding the real repo RO
+under BOTH D10 covers (`.mission-control` AND `.mc-worktrees`) + store git/source
+RW + worktree RW, parses the cut SHA, then `mc initiative setup-register` +
+`setup-continue`; all failures fail-closed. S1 is now COMPLETE and S2/S3a's mount
+vouch is reachable end-to-end (the ADR-025 slice map is in the phase bullet below
++ the phase-5 ledger). Full fast suite green (the load-sensitive resident EBADF flake —
 intermittent #2, ~1 in 3 under heavy looping — clears on re-run);
 `verbs`/`dispatch`/`substrate` cold `-count=1` green; launchd not loaded. Prior
 codex green was `28d6102`.
@@ -112,15 +115,15 @@ resident `SPINE_SCHEMA_VERSION` moved to 14 in lockstep.
         slice map in `docs/ledger/phase-5.md`. Groundwork + S2/S3a landed the
         inert host-side mount arms (Worker RW + Verifier/Packager RO,
         receipt-vouched; `fc72175`/`6fd88cb`/`875dcd8`; S2 3-lens review clean).
-        S1 (the cut) is nearly complete, all still inert end-to-end until S1.5b-2
-        runs it: S1.1 the `initiative_setup_receipts` v14 table + read; S1.3 the
-        container side (`MaterializeInitiativeStore` + `mc __setup-initiative`);
-        S1.4 the whole route-free dispatch lane, LIVE in-process (emission gated on
-        `RealRouting`; design + build-tag nuance in IMPLEMENTATION-NOTES
-        2026-07-23); S1.5a/a.2 the Go register+continue verbs + CLIs; S1.5b-1
-        `precreateInitiativeSkeleton`. Owed: S1.5b-2 (the resident handler —
-        completes S1), S1.4c-2c (Darwin private-frame carrier — non-blocking,
-        guarded fail-closed), S3b (D6 fence), S4–S6.
+        S1 (the cut) is COMPLETE: S1.1 the `initiative_setup_receipts` v14 table +
+        read; S1.3 the container side (`MaterializeInitiativeStore` + `mc
+        __setup-initiative`); S1.4 the whole route-free dispatch lane, LIVE
+        in-process (emission gated on `RealRouting`; design + build-tag nuance in
+        IMPLEMENTATION-NOTES 2026-07-23); S1.5a/a.2 the Go register+continue verbs
+        + CLIs; S1.5b-1 `precreateInitiativeSkeleton`; S1.5b-2 the resident
+        `initiative-setup` effect handler that runs the cut. Owed: S1.4c-2c
+        (Darwin private-frame carrier — non-blocking, guarded fail-closed), S3b
+        (D6 fence), S4–S6.
 - [ ] Release prep — install/onboard front door and construction-document
       disposition.
 
@@ -186,26 +189,25 @@ native resume, container reconciliation, Homie credential projection,
 dashboard LaunchAgent generation, and the four non-Console tabs. Details and
 commit map are in the closed Phase 4 ledger.
 
-NEXT: ADR-025 S1.5b-2 — wire the initiative-setup effect handler, completing S1
-(S1.5a/a.2 landed the Go register+continue verbs; S1.5b-1 landed
-`precreateInitiativeSkeleton`; both are ready to call). In resident/src: add the
-`initiative-setup` variant to the `Effect` union + `MountPlan.initiative_precreate`
-(types.ts), the `applyEffect` case (effects.ts:31), and the `initiativeSetup`
-handler (mirror the `task_precreate` arm at effects.ts:497 + `runFirstTaskSetup`
-at :747). The handler: (1) validate the step + subject; recheck the two parents;
-call `precreateInitiativeSkeleton` (fresh) → {store, worktree} identities; (2)
-write `/mc/setup.json` (operation `initiative-setup`, branch `mc/initiative-<id>`,
-worktree_name `mc-initiative-<id>`, `source_repo:/repo/source`, task_root=store
-dest, `worktree_root`=worktree dest, the Setup instruction) and `docker run … mc
-__setup-initiative /mc/setup.json` binding real repo RO + BOTH D10 covers
-(`.mission-control` AND `.mc-worktrees`, empty RO) + store git/source RW + the
-worktree RW; (3) parse SetupResult.base_sha; call `mc initiative setup-register
---run … --initiative … --store-device/inode/owner-uid (from store identity)
---worktree-device/inode/owner-uid (from worktree identity) --cut-sha <base_sha>`
-then `mc initiative setup-continue --run …`; `fs.rm` the envelope. Wire the three
-new TickDeps (precreate/recheck) — real in main.ts, fake in test-helpers.ts — and
-add effects.test.ts cases (fresh happy path asserting docker+mc call order;
-container-throws). NOT a spawn arm (no route/harness/brief). Once it lands S2/S3a's
-mount vouch is reachable end-to-end and S1 is COMPLETE. Then S3b (D6 fence), S4–S6;
-the Darwin private-frame carrier (S1.4c-2c) is owed but non-blocking. See ADR-025
-§Slices.
+NEXT: ADR-025 S3b — the D6 fence, now that S1 gives it a real lifecycle to guard.
+Two obligations before any next initiative-family container for initiative I is
+prepared: (1) PRODUCER-ABSENCE — confirm the ABSENCE of every prior child
+container of I (ADR-017:533 producer-absence extended per-initiative; reap's
+best-effort `docker stop` is NOT confirmation). The precedent is
+`requireAcceptedSealProducerAbsent` (effects.ts:380: `docker inspect --type
+container mc-run-<run>`/`mc-setup-<run>`, exit-1-not-found the only success).
+Child containers carry NO `mc-initiative-id` label yet (effects.ts:692-694), so
+per-initiative absence needs either a new `mc-initiative-id=<I>` label +
+`docker ps --filter label` enumeration, or dispatch projecting the prior child
+run-id set into the effect (the resident cannot query the spine) — the
+`mc-approved-run-id` label at effects.ts:966 is the scoped-label precedent. (2)
+STORE-WORKTREE CLEANLINESS — attestation asserts working tree + index clean at
+the branch tip. Every clean-tree assertion runs IN-CONTAINER via `git status
+--porcelain=v1 --untracked-files=all == ""` (verifierprojection.go:32 closest
+analog; host never runs Git per ADR-016 D5; mc-land's host dirty fence at
+runner/image/mc-land:433 resolves empty for store-linked worktrees per D8), so
+cleanliness moves into a store-mounted `mc __…` subcommand launched like
+`__setup-verifier-projection` (effects.ts:482). Scope the exact seam (label vs
+projected-set; new subcommand shape) before implementing. Then S4–S6; the Darwin
+private-frame carrier (S1.4c-2c) is owed but non-blocking. See ADR-025 §Slices +
+the 2026-07-23 D6-fence scout in docs/ledger/phase-5.md.

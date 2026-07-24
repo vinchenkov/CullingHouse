@@ -1027,3 +1027,49 @@ green.
 NEXT: S1.5b-2 — the effect handler (applyEffect case + the initiativeSetup
 function: precreate + `mc __setup-initiative` container + register + continue),
 completing S1.
+
+## 2026-07-24 — ADR-025 S1.5b-2: the resident initiative-setup effect handler (S1 COMPLETE)
+
+The route-free `initiative-setup` effect handler, the last S1 slice. On the
+effect (NOT a spawn — no route/harness/brief; ADR-025 D3's cut is agent-less)
+the resident: (1) reads `mount_plan.initiative_precreate`; refuses fail-closed if
+absent, if `subject_id !== initiative_id !== step.initiative_id`, or if
+`recover_store/worktree` is set (retry-over-residue needs the host exact-empty
+helper, which is owed — refusing leaves the residue intact for it). (2) Calls
+`precreateInitiativeSkeleton(step)` → `{store, worktree}` identities and
+validates the returned canonicals are exactly
+`<parent>/initiative-<id>`, decimal device/inode, owner_uid matching each parent
+(throws on drift). (3) Writes `<runs>/<run>.setup.json` (mode 0644, operation
+`initiative-setup`, `task_id`=initiative id, fresh `target_ref` vs retry pins,
+branch `mc/initiative-<id>`, worktree_name `mc-initiative-<id>`,
+`source_repo:/repo/source`, task_root `/repo/store`, worktree_root
+`/repo/worktree`) after an empty RO cover dir, then `docker run … mc
+__setup-initiative /mc/setup.json` binding the real Worksource RO under BOTH D10
+covers (`.mission-control` AND the second `.mc-worktrees`, effects.ts:931-932) +
+store RO with git/source RW + the worktree RW + envelope RO, in the setup-class
+resource/security envelope (network none, user 10002, cap-drop ALL, pids 128).
+(4) Parses `SetupResult.base_sha` (hex 40/64, fail-closed otherwise) as the cut
+SHA; calls `mc initiative setup-register --run … --initiative … --store-*/
+--worktree-* (from the two returned identities) --cut-sha <base_sha>` then `mc
+initiative setup-continue --run …`; `fs.rm`s the envelope. Every non-zero
+exit throws. Wired: types.ts (Effect variant + `MountPlan.initiative_precreate` +
+the `precreateInitiativeSkeleton` TickDep), effects.ts (`applyEffect` case +
+the `initiativeSetup` function), main.ts (real dep), test-helpers.ts (fake dep).
+
+Tests (effects.test.ts, fake mc/docker/fs rig): happy path asserts the exact
+fs event order (mkdir runs / mkdir cover / write / rm), the exact docker argv
+(both covers + the store/worktree binds), and the two mc calls (register with the
+derived identities + the pinned cut SHA, then continue); the envelope-content
+test inspects the written bytes on a failing-cut run (which throws before the
+terminal rm, so the write survives the fake map's delete-on-rm); plus
+failed-cut-never-registers, non-canonical-base_sha-refused, retry-over-residue-
+refused, and id-mismatch-refused. 87 effects tests green; full fast suite green
+(160 resident, no EBADF flake this run). S1 (the ADR-025 cut) is COMPLETE — the
+receipt producer now exists, so S2/S3a's inert host-side mount vouch is reachable
+end-to-end and S3b's D6 fence has a real initiative-child lifecycle to guard.
+
+NEXT: ADR-025 S3b — the D6 producer-absence + store-worktree cleanliness fence
+(resident/attestation-side). Scope the exact seam (per-initiative child
+enumeration: new `mc-initiative-id` label vs dispatch-projected run-id set; the
+in-container cleanliness subcommand shape) before implementing. See the
+2026-07-23 D6-fence scout above.

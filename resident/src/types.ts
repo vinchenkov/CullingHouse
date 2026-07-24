@@ -5,7 +5,7 @@
 // (folder + run.json writes, §10 effect order); both are injectable so
 // `bun test` never touches the real filesystem or Docker.
 
-import type { AcceptedSealIdentity, CompletionSealRequest, PathIdentity, TaskSkeletonRequest } from "./task-skeleton";
+import type { AcceptedSealIdentity, CompletionSealRequest, InitiativeSkeletonRequest, PathIdentity, TaskSkeletonRequest } from "./task-skeleton";
 
 /** Result of running an external command (mc or docker). */
 export interface ExecResult {
@@ -120,6 +120,9 @@ export interface TickDeps {
 	recheckAcceptedSeal(seal: AcceptedSealIdentity): Promise<string>;
 	/** Durably registers the exact returned identity before any setup consumer runs. */
 	registerTaskRoot(runId: string, taskId: number, identity: PathIdentity): Promise<void>;
+	/** ADR-025 D3 exclusive two-root shared-store precreate; returns both
+	 * operator-owned root identities the resident registers after the cut. */
+	precreateInitiativeSkeleton(request: InitiativeSkeletonRequest): Promise<{ store: PathIdentity; worktree: PathIdentity }>;
   /** ADR-022 credential projection for real agent routes. An absent
    * projector refuses every non-fake launch. */
   credentials?: CredentialProjector;
@@ -205,6 +208,9 @@ export interface MountPlan {
 	};
   entries: MountPlanEntry[];
 	task_precreate?: TaskSkeletonRequest;
+	/** The ADR-025 D3 shared-store cut precreate (initiative-setup effect only).
+	 * A SIBLING of entries like the other setup steps; carries no agent bind. */
+	initiative_precreate?: InitiativeSkeletonRequest;
   version: number;
 }
 
@@ -242,6 +248,18 @@ export type Effect =
   | { action: "reap"; run_id: string; stop_container?: boolean }
 	| { action: "interrupt"; task_id: number; run_id: string; stop_container: true }
   | { action: "reenter"; task_id: number }
+  // The ADR-025 D3 shared-store cut: a top-level effect (NOT a spawn), route-free
+  // and agent-less. The resident precreates the two-root skeleton, runs
+  // `mc __setup-initiative`, and registers the receipt.
+  | {
+      action: "initiative-setup";
+      run_id: string;
+      initiative_id: number;
+      subject_id: number;
+      session_path?: string;
+      heartbeat_interval_s: number;
+      mount_plan: MountPlan;
+    }
   // The lease-free Homie tier (Inv. 1/22, §15.3). A wake carries no mount plan
   // and no heartbeat interval: the resident binds a fixed operator-read-scope
   // set and the runner never heartbeats. run_id == session (the "h-" id).

@@ -1654,3 +1654,151 @@ describe("homie tier (lease-free)", () => {
     expect(rig.docker.calls).toEqual([]);
   });
 });
+
+const initiativeSetupEffect: Extract<Effect, { action: "initiative-setup" }> = {
+  action: "initiative-setup",
+  run_id: "run-init-7",
+  initiative_id: 7,
+  subject_id: 7,
+  heartbeat_interval_s: 15,
+  mount_plan: {
+    entries: [],
+    version: 1,
+    initiative_precreate: {
+      child_mode: 0o700,
+      initiative_id: 7,
+      workspace_root: "/host/workspace",
+      setup: { mode: "fresh", object_format: "sha1", target_ref: "main" },
+      store_parent: { canonical: "/host/workspace/.mission-control/initiatives", device: "8", inode: "80", owner_uid: 501 },
+      worktree_parent: { canonical: "/host/workspace/.mc-worktrees", device: "8", inode: "81", owner_uid: 501 },
+    },
+  },
+};
+
+const INIT_JSON_PATH = "/tmp/mc-home/runs/run-init-7.setup.json";
+const INIT_COVER_DIR = "/tmp/mc-home/runs/run-init-7.setup-cover";
+const STORE_ROOT = "/host/workspace/.mission-control/initiatives/initiative-7";
+const WORKTREE_ROOT = "/host/workspace/.mc-worktrees/initiative-7";
+
+/** ADR-025 D3's one-shot cut argv: the RO Worksource under BOTH reserved
+ * covers (.mission-control AND D10's second .mc-worktrees), the store RO with
+ * only its git/source children RW, the worktree RW, envelope RO. */
+const initiativeSetupRunArgv = [
+  "run", "--rm",
+  "--name", "mc-setup-run-init-7",
+  "--network", "none",
+  "--label", "mc-managed=true",
+  "--label", "mc-tier=pipeline",
+  "--label", "mc-run-id=run-init-7",
+  "--user", "10002:10002",
+  "--cap-drop", "ALL",
+  "--security-opt", "no-new-privileges=true",
+  "--cpus", "1",
+  "--memory", "1024m",
+  "--pids-limit", "128",
+  "-v", "/host/workspace:/repo/source:ro",
+  "-v", `${INIT_COVER_DIR}:/repo/source/.mission-control:ro`,
+  "-v", `${INIT_COVER_DIR}:/repo/source/.mc-worktrees:ro`,
+  "-v", `${STORE_ROOT}:/repo/store:ro`,
+  "-v", `${STORE_ROOT}/git:/repo/store/git`,
+  "-v", `${STORE_ROOT}/source:/repo/store/source`,
+  "-v", `${WORKTREE_ROOT}:/repo/worktree`,
+  "-v", `${INIT_JSON_PATH}:/mc/setup.json:ro`,
+  "mc-fake-e2e:test",
+  "mc", "__setup-initiative", "/mc/setup.json",
+];
+
+describe("initiative-setup effect (ADR-025 D3)", () => {
+  test("precreates the two roots, runs the cut, then registers and continues", async () => {
+    const rig = makeRig();
+    rig.docker.enqueue(ok(setupResultJson));
+    await applyEffect(initiativeSetupEffect, rig.deps);
+
+    expect(rig.fakeFs.events).toEqual([
+      "mkdir:/tmp/mc-home/runs",
+      `mkdir:${INIT_COVER_DIR}`,
+      `write:${INIT_JSON_PATH}`,
+      `rm:${INIT_JSON_PATH}`,
+    ]);
+    expect(rig.docker.calls).toEqual([initiativeSetupRunArgv]);
+    expect(rig.mc.calls).toEqual([
+      [
+        "initiative", "setup-register",
+        "--run", "run-init-7",
+        "--initiative", "7",
+        "--store-device", "8",
+        "--store-inode", "80",
+        "--store-owner-uid", "501",
+        "--worktree-device", "8",
+        "--worktree-inode", "81",
+        "--worktree-owner-uid", "501",
+        "--cut-sha", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      ],
+      ["initiative", "setup-continue", "--run", "run-init-7"],
+    ]);
+  });
+
+  test("the setup.json envelope pins the cut onto /repo/store with D3 branch/worktree names", async () => {
+    const rig = makeRig();
+    // The envelope is written before the cut runs; a failing cut throws before
+    // the terminal rm, so the recorded bytes survive for inspection.
+    rig.docker.enqueue(fail(1, "inspect the envelope"));
+    await expect(applyEffect(initiativeSetupEffect, rig.deps)).rejects.toThrow();
+    const envelope = JSON.parse(rig.fakeFs.writes.get(INIT_JSON_PATH)!);
+    expect(envelope).toMatchObject({
+      operation: "initiative-setup",
+      run_id: "run-init-7",
+      task_id: 7,
+      mode: "fresh",
+      object_format: "sha1",
+      target_ref: "main",
+      branch: "mc/initiative-7",
+      worktree_name: "mc-initiative-7",
+      source_repo: "/repo/source",
+      task_root: "/repo/store",
+      worktree_root: "/repo/worktree",
+    });
+  });
+
+  test("a failed cut container throws and never registers a receipt", async () => {
+    const rig = makeRig();
+    rig.docker.enqueue(fail(1, "cut boom"));
+    await expect(applyEffect(initiativeSetupEffect, rig.deps)).rejects.toThrow("initiative setup container exited");
+    expect(rig.mc.calls).toEqual([]);
+    expect(rig.fakeFs.events).not.toContain(`rm:${INIT_JSON_PATH}`);
+  });
+
+  test("a non-canonical SetupResult base_sha is refused fail-closed", async () => {
+    const rig = makeRig();
+    rig.docker.enqueue(ok('{"base_sha":"not-a-sha"}'));
+    await expect(applyEffect(initiativeSetupEffect, rig.deps)).rejects.toThrow("unparseable SetupResult");
+    expect(rig.mc.calls).toEqual([]);
+  });
+
+  test("a retry-over-residue effect is refused (recovery owed) without a cut", async () => {
+    const rig = makeRig();
+    const retry: Extract<Effect, { action: "initiative-setup" }> = {
+      ...initiativeSetupEffect,
+      mount_plan: {
+        ...initiativeSetupEffect.mount_plan,
+        initiative_precreate: {
+          ...initiativeSetupEffect.mount_plan.initiative_precreate!,
+          recover_store: { canonical: STORE_ROOT, device: "8", inode: "80", owner_uid: 501 },
+          recover_worktree: { canonical: WORKTREE_ROOT, device: "8", inode: "81", owner_uid: 501 },
+        },
+      },
+    };
+    await applyEffect(retry, rig.deps);
+    expect(rig.docker.calls).toEqual([]);
+    expect(rig.mc.calls).toEqual([]);
+    expect(rig.logs.some((l) => l.includes("recovery is not yet supported"))).toBe(true);
+  });
+
+  test("a subject/initiative id mismatch is refused fail-closed", async () => {
+    const rig = makeRig();
+    await applyEffect({ ...initiativeSetupEffect, subject_id: 8 }, rig.deps);
+    expect(rig.docker.calls).toEqual([]);
+    expect(rig.mc.calls).toEqual([]);
+    expect(rig.logs.some((l) => l.includes("id mismatch"))).toBe(true);
+  });
+});

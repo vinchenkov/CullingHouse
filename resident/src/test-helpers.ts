@@ -140,6 +140,16 @@ export function makeRig(overrides: Partial<TickDeps> = {}): TestRig {
 		}),
 		recheckAcceptedSeal: async (seal) => `${testConfig.mcHome}/seals/${seal.run_id}`,
 		registerTaskRoot: async () => {},
+		precreateInitiativeSkeleton: async (request) => ({
+			store: {
+				canonical: `${request.store_parent.canonical}/initiative-${request.initiative_id}`,
+				device: request.store_parent.device, inode: request.store_parent.inode, owner_uid: request.store_parent.owner_uid,
+			},
+			worktree: {
+				canonical: `${request.worktree_parent.canonical}/initiative-${request.initiative_id}`,
+				device: request.worktree_parent.device, inode: request.worktree_parent.inode, owner_uid: request.worktree_parent.owner_uid,
+			},
+		}),
     config: testConfig,
     ...overrides,
   };

@@ -38,6 +38,8 @@ export async function applyEffect(effect: Effect, deps: TickDeps): Promise<void>
       return;
     case "spawn":
       return spawn(effect, deps);
+    case "initiative-setup":
+      return initiativeSetup(effect, deps);
     case "land":
       // The carrier's PRESENCE is the lane discriminator: the sealed lane
       // supplies it, the legacy branch-carrying lane never does.
@@ -844,6 +846,135 @@ async function runFirstTaskSetup(
 	}
 	await deps.fs.rm(setupJsonPath);
 	log(`spawn ${run_id}: first-task setup recorded and continued for task ${step.task_id}`);
+}
+
+/** The ADR-025 D3 shared-store cut. A top-level effect, NOT a spawn: no
+ * route/harness/brief/agent. The resident precreates the two-root skeleton from
+ * the initiative_precreate plan, runs `mc __setup-initiative` in a
+ * network=none/uid-10002/cap-drop container (real repo RO + BOTH D10 covers,
+ * store git/source RW, worktree RW), then registers the receipt and continues
+ * (frees the singleton lease). Every failure is fail-closed. */
+async function initiativeSetup(
+  effect: Extract<Effect, { action: "initiative-setup" }>,
+  deps: TickDeps,
+): Promise<void> {
+  const { config, log } = deps;
+  const step = effect.mount_plan.initiative_precreate;
+  if (step === undefined) {
+    log("initiative-setup refused: no initiative_precreate plan (fail-closed)");
+    return;
+  }
+  if (effect.subject_id !== effect.initiative_id || effect.initiative_id !== step.initiative_id) {
+    log("initiative-setup refused: subject/initiative id mismatch (fail-closed)");
+    return;
+  }
+  if (step.recover_store !== undefined || step.recover_worktree !== undefined) {
+    // Retry over on-disk residue needs the host exact-empty helper, which is not
+    // wired yet (owed). Refusing here leaves the residue intact for that helper.
+    log("initiative-setup refused: retry-over-residue recovery is not yet supported (owed; fail-closed)");
+    return;
+  }
+
+  const { store, worktree } = await deps.precreateInitiativeSkeleton(step);
+  const decimal = /^(0|[1-9][0-9]*)$/;
+  if (store.canonical !== posix.join(step.store_parent.canonical, `initiative-${step.initiative_id}`) ||
+      worktree.canonical !== posix.join(step.worktree_parent.canonical, `initiative-${step.initiative_id}`) ||
+      !decimal.test(store.device) || !decimal.test(store.inode) || store.owner_uid !== step.store_parent.owner_uid ||
+      !decimal.test(worktree.device) || !decimal.test(worktree.inode) || worktree.owner_uid !== step.worktree_parent.owner_uid) {
+    throw new Error("precreated initiative skeleton returned invalid registration evidence");
+  }
+  log(`initiative-setup ${effect.run_id}: two-root skeleton precreated; running the shared-store cut`);
+
+  const setup = step.setup;
+  const envelope = {
+    schema_version: 1,
+    operation: "initiative-setup",
+    run_id: effect.run_id,
+    task_id: step.initiative_id,
+    mode: setup.mode,
+    object_format: setup.object_format,
+    ...(setup.mode === "fresh"
+      ? { target_ref: setup.target_ref }
+      : {
+          pinned_base_sha: setup.pinned_base_sha,
+          pinned_closure_digest: setup.pinned_closure_digest,
+          pinned_local_repo_uuid: setup.pinned_local_repo_uuid,
+        }),
+    branch: `mc/initiative-${step.initiative_id}`,
+    worktree_name: `mc-initiative-${step.initiative_id}`,
+    source_repo: "/repo/source",
+    task_root: "/repo/store",
+    worktree_root: "/repo/worktree",
+  };
+  const setupJsonPath = `${runsDir(config.mcHome)}/${effect.run_id}.setup.json`;
+  const coverDir = `${runsDir(config.mcHome)}/${effect.run_id}.setup-cover`;
+  await deps.fs.mkdir(runsDir(config.mcHome));
+  // One empty RO cover masks BOTH reserved roots through /repo/source: the
+  // setup container reads the real Worksource but never a live task/initiative's
+  // uncommitted bytes (ADR-017 + ADR-025 D10's second `.mc-worktrees` cover).
+  await deps.fs.mkdir(coverDir);
+  await deps.fs.writeFile(setupJsonPath, JSON.stringify(envelope, null, 2) + "\n", { mode: 0o644 });
+  const run = await deps.docker([
+    "run", "--rm",
+    "--name", `mc-setup-${effect.run_id}`,
+    "--network", "none",
+    "--label", "mc-managed=true",
+    "--label", "mc-tier=pipeline",
+    "--label", `mc-run-id=${effect.run_id}`,
+    "--user", "10002:10002",
+    "--cap-drop", "ALL",
+    "--security-opt", "no-new-privileges=true",
+    "--cpus", "1",
+    "--memory", "1024m",
+    "--pids-limit", "128",
+    "-v", `${step.workspace_root}:/repo/source:ro`,
+    "-v", `${coverDir}:/repo/source/.mission-control:ro`,
+    "-v", `${coverDir}:/repo/source/.mc-worktrees:ro`,
+    "-v", `${store.canonical}:/repo/store:ro`,
+    "-v", `${store.canonical}/git:/repo/store/git`,
+    "-v", `${store.canonical}/source:/repo/store/source`,
+    "-v", `${worktree.canonical}:/repo/worktree`,
+    "-v", `${setupJsonPath}:/mc/setup.json:ro`,
+    config.image,
+    "mc", "__setup-initiative", "/mc/setup.json",
+  ]);
+  if (run.exitCode !== 0) {
+    throw new Error(`initiative setup container exited ${run.exitCode}: ${run.stderr.trim()}`);
+  }
+  if (run.stdout.trim() === "") {
+    throw new Error("initiative setup container returned no SetupResult");
+  }
+  let cutSHA: string;
+  try {
+    const parsed = JSON.parse(run.stdout) as { base_sha?: unknown };
+    if (typeof parsed.base_sha !== "string" || !(/^[0-9a-f]{40}$|^[0-9a-f]{64}$/).test(parsed.base_sha)) {
+      throw new Error("no canonical base_sha");
+    }
+    cutSHA = parsed.base_sha;
+  } catch (err) {
+    throw new Error(`initiative setup container returned an unparseable SetupResult: ${(err as Error).message}`);
+  }
+  const registered = await deps.runMc([
+    "initiative", "setup-register",
+    "--run", effect.run_id,
+    "--initiative", String(step.initiative_id),
+    "--store-device", store.device,
+    "--store-inode", store.inode,
+    "--store-owner-uid", String(store.owner_uid),
+    "--worktree-device", worktree.device,
+    "--worktree-inode", worktree.inode,
+    "--worktree-owner-uid", String(worktree.owner_uid),
+    "--cut-sha", cutSHA,
+  ]);
+  if (registered.exitCode !== 0) {
+    throw new Error(`initiative setup register refused (exit ${registered.exitCode}): ${registered.stderr.trim()}`);
+  }
+  const continued = await deps.runMc(["initiative", "setup-continue", "--run", effect.run_id]);
+  if (continued.exitCode !== 0) {
+    throw new Error(`initiative setup continuation refused (exit ${continued.exitCode}): ${continued.stderr.trim()}`);
+  }
+  await deps.fs.rm(setupJsonPath);
+  log(`initiative-setup ${effect.run_id}: shared-store cut registered and continued for initiative ${step.initiative_id}`);
 }
 
 /** D6's closed accepted-seal setup crossing. The resident receives no source

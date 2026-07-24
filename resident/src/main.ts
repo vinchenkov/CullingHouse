@@ -17,7 +17,7 @@ import { join } from "node:path";
 import { startTickLoop } from "./tick-loop";
 import type { Exec, ResidentConfig, TickDeps } from "./types";
 import { CONFIG_SCHEMA_VERSION, execMcVia } from "./resident-control";
-import { precreateCompletionSeal, precreateTaskSkeleton, recheckAcceptedSeal } from "./task-skeleton";
+import { precreateCompletionSeal, precreateInitiativeSkeleton, precreateTaskSkeleton, recheckAcceptedSeal } from "./task-skeleton";
 import {
   parseRefreshGrant,
   startCredentialProjector,
@@ -284,6 +284,7 @@ async function main(): Promise<void> {
       rm: (path, opts) => rm(path, { force: true, recursive: opts?.recursive ?? false }),
     },
 		precreateTaskSkeleton,
+		precreateInitiativeSkeleton,
 		precreateCompletionSeal,
 		recheckCompletionSeal: async (step, state) => {
 			const result = await runMc(["__completion-seal-recheck", JSON.stringify(step), state]);
