@@ -175,12 +175,9 @@ func TestDeriveDispatchMountRequestsRefusesDirectGitWorkspace(t *testing.T) {
 	}
 }
 
-func TestDeriveDispatchMountRequestsRefusesInitiativeChildStandaloneTable(t *testing.T) {
-	root := t.TempDir()
-	workspace := maMkdir(t, root, "repo")
-	initiativeID := int64(9)
-	taskID := int64(7)
-	state := PrivateDispatchMountState{
+func maInitiativeChildState(t *testing.T, workspace string, initiativeID int64) PrivateDispatchMountState {
+	t.Helper()
+	return PrivateDispatchMountState{
 		SelectedWorksource:  "repo",
 		SubjectInitiativeID: &initiativeID,
 		Worksources: []PrivateDispatchWorksource{{
@@ -189,12 +186,132 @@ func TestDeriveDispatchMountRequestsRefusesInitiativeChildStandaloneTable(t *tes
 			ArtifactRoots: []string{}, ReadonlyMounts: []string{}, DeniedPaths: []string{},
 		}},
 	}
+}
+
+// ADR-025 D2/S2: a real-routed initiative-child Worker no longer refuses the
+// standalone table — it derives the shared-store rows, byte-identical to the
+// task table modulo the worktree name, with source/.mission-control re-based
+// onto the shared worktree.
+func TestDeriveDispatchMountRequestsDerivesInitiativeChildWorkerRows(t *testing.T) {
+	root := t.TempDir()
+	workspace := maMkdir(t, root, "repo")
+	initiativeID := int64(9)
+	taskID := int64(7)
+	state := maInitiativeChildState(t, workspace, initiativeID)
 	requests, _, r, err := deriveDispatchMountRequests(state, "worker", &taskID, false)
-	if err != nil || r == nil || len(requests) != 0 {
-		t.Fatalf("initiative-child derivation = %+v refusal %+v err %v", requests, r, err)
+	if err != nil || r != nil {
+		t.Fatalf("initiative-child derivation refused: refusal %+v err %v", r, err)
 	}
-	if r.Code != boundary.CodeRuntimeUnappliable || r.Authority != refusal.AuthorityDeployment {
-		t.Fatalf("initiative-child refusal = %+v", r)
+	want := initiativePlanRows(initiativeID)
+	if len(requests) != len(want) {
+		t.Fatalf("initiative-child derived %d rows, want %d", len(requests), len(want))
+	}
+	store := InitiativeStoreRoot(workspace, initiativeID)
+	worktree := InitiativeWorktreeRoot(workspace, initiativeID)
+	byDest := map[string]mountRequest{}
+	for _, req := range requests {
+		byDest[req.Destination] = req
+		if req.Authority != refusal.AuthorityDeployment {
+			t.Errorf("row %q authority = %q, want deployment", req.Destination, req.Authority)
+		}
+	}
+	// The shared worktree IS /workspace/source; everything else is the store.
+	if got := byDest["/workspace"].Source; got != store {
+		t.Errorf("store root source = %q, want %q", got, store)
+	}
+	if got := byDest["/workspace/source"].Source; got != worktree {
+		t.Errorf("source row = %q, want the shared worktree %q", got, worktree)
+	}
+	if got := byDest["/workspace/git"].Source; got != filepath.Join(store, "git") {
+		t.Errorf("git dir source = %q, want %q", got, filepath.Join(store, "git"))
+	}
+	// A Worker child keeps the row's declared RW on source and git.
+	if byDest["/workspace/source"].Access != boundary.AccessRW || byDest["/workspace/git"].Access != boundary.AccessRW {
+		t.Errorf("Worker child source/git access = %v/%v, want RW", byDest["/workspace/source"].Access, byDest["/workspace/git"].Access)
+	}
+	if byDest["/workspace"].Access != boundary.AccessRO {
+		t.Errorf("store root access = %v, want RO", byDest["/workspace"].Access)
+	}
+}
+
+// D5 retention: every non-Worker initiative role, and any initiative child on a
+// non-repo/profile-less Worksource, still health-refuses in S2.
+func TestDeriveDispatchMountRequestsRetainsNonWorkerInitiativeRefusal(t *testing.T) {
+	root := t.TempDir()
+	workspace := maMkdir(t, root, "repo")
+	initiativeID := int64(9)
+	taskID := int64(7)
+	repoState := maInitiativeChildState(t, workspace, initiativeID)
+	nonRepo := maInitiativeChildState(t, workspace, initiativeID)
+	nonRepo.Worksources[0].Kind = "personal"
+	cases := []struct {
+		name    string
+		state   PrivateDispatchMountState
+		role    string
+		subject *int64
+	}{
+		{"verifier", repoState, "verifier", &taskID},
+		{"packager", repoState, "packager", &taskID},
+		{"editor", repoState, "editor", &taskID},
+		{"worker_no_subject", repoState, "worker", nil},
+		{"worker_non_repo", nonRepo, "worker", &taskID},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			requests, _, r, err := deriveDispatchMountRequests(tc.state, tc.role, tc.subject, false)
+			if err != nil || r == nil || len(requests) != 0 {
+				t.Fatalf("initiative %s = %+v refusal %+v err %v", tc.name, requests, r, err)
+			}
+			if r.Code != boundary.CodeRuntimeUnappliable || r.Authority != refusal.AuthorityDeployment {
+				t.Fatalf("initiative %s refusal = %+v", tc.name, r)
+			}
+		})
+	}
+}
+
+func maSetupIdentity(t *testing.T, path string) PrivateDispatchTaskSetupIdentity {
+	t.Helper()
+	info, err := os.Lstat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	st, ok := info.Sys().(*syscall.Stat_t)
+	if !ok {
+		t.Fatalf("no stat identity for %q", path)
+	}
+	return PrivateDispatchTaskSetupIdentity{
+		Device: strconv.FormatUint(uint64(st.Dev), 10), Inode: strconv.FormatUint(st.Ino, 10),
+		OwnerUID: int(st.Uid),
+	}
+}
+
+// The shared store is admitted into an agent plan only when BOTH its resolved
+// roots match the frozen ADR-025 D3 receipt; an absent receipt or a mismatch on
+// either root refuses (a materialized-but-unattested store is never trusted).
+func TestRequireInitiativeSetupReceiptVouch(t *testing.T) {
+	ws, store, wt := isBuild(t)
+	typed, err := resolveInitiativeSkeleton(ws, 7, os.Getuid())
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	good := &PrivateDispatchInitiativeSetup{
+		StoreRoot: maSetupIdentity(t, store), WorktreeRoot: maSetupIdentity(t, wt),
+	}
+	if err := requireInitiativeSetupReceiptVouch(typed, good); err != nil {
+		t.Fatalf("valid receipt refused: %v", err)
+	}
+	if err := requireInitiativeSetupReceiptVouch(typed, nil); err == nil {
+		t.Fatal("absent receipt vouched an unattested store")
+	}
+	badStore := *good
+	badStore.StoreRoot.Inode = "999999999"
+	if err := requireInitiativeSetupReceiptVouch(typed, &badStore); err == nil {
+		t.Fatal("a store root not matching the receipt was vouched")
+	}
+	badWt := *good
+	badWt.WorktreeRoot.Inode = "999999999"
+	if err := requireInitiativeSetupReceiptVouch(typed, &badWt); err == nil {
+		t.Fatal("a shared-worktree root not matching the receipt was vouched")
 	}
 }
 
@@ -647,6 +764,96 @@ func maRepoCandidate(t *testing.T, role dispatch.Role, subject *int64) (string, 
 		}
 	}
 	return mcHome, &preparedCandidate{spawn: &dispatch.Spawn{Role: role, SubjectID: subject}, mountState: state}, ws
+}
+
+// maInitiativeChildCandidate builds a production initiative-child candidate over
+// the exact initiative-7 shared store from isBuildAt plus a real .git control,
+// a trusted MC_HOME with an empty allowlist, and a frozen D3 receipt matching
+// the resolved store/worktree roots. Like maRepoCandidate it drives the real
+// captureDispatchMountHostSnapshot and the live Git registry.
+func maInitiativeChildCandidate(t *testing.T, role dispatch.Role, subject *int64) (string, *preparedCandidate, string) {
+	t.Helper()
+	ws := grWorkspace(t)
+	store, wt := isBuildAt(t, ws)
+	if err := os.Mkdir(filepath.Join(ws, ".git"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	mcHome := maMkdir(t, filepath.Dir(ws), "mc-home-init-"+string(role))
+	if err := os.Chmod(mcHome, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(mcHome, "mount-allowlist"), []byte("version = 1\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	initiativeID := int64(7)
+	state := PrivateDispatchMountState{
+		SelectedWorksource: "repo-ws", SubjectInitiativeID: &initiativeID,
+		Worksources: []PrivateDispatchWorksource{{
+			WorksourceID: "repo-ws", Kind: "repo", Status: "active", ProfilePresent: true,
+			ProfileID: "p", WorkspaceRoot: ws,
+			ArtifactRoots: []string{}, ReadonlyMounts: []string{}, DeniedPaths: []string{},
+		}},
+		SubjectInitiativeSetup: &PrivateDispatchInitiativeSetup{
+			StoreRoot: maSetupIdentity(t, store), WorktreeRoot: maSetupIdentity(t, wt),
+		},
+	}
+	return mcHome, &preparedCandidate{spawn: &dispatch.Spawn{Role: role, SubjectID: subject}, mountState: state, runID: "run-init-child"}, ws
+}
+
+// A real-routed initiative-child Worker derives the 15 shared-store rows through
+// the real capture, is receipt-vouched, and — per ADR-025 D4 — carries NO
+// completion seal (a sealed rebuild of the SHARED store would destroy siblings)
+// and never triggers standalone task precreate (ADR-025 D5).
+func TestAttestCandidateMountsInitiativeChildWorkerSuppressesSeal(t *testing.T) {
+	subject := int64(3)
+	mcHome, cand, ws := maInitiativeChildCandidate(t, dispatch.RoleWorker, &subject)
+
+	plan, r, err := attestCandidateMounts(mcHome, cand, false)
+	if err != nil || r != nil {
+		t.Fatalf("initiative worker attest = refusal %+v err %v", r, err)
+	}
+	if plan == nil || len(plan.Entries) != 15 {
+		t.Fatalf("plan = %+v, want the 15 initiative shared-store rows", plan)
+	}
+	if plan.CompletionSeal != nil {
+		t.Fatalf("initiative child plan carries a completion seal (ADR-025 D4): %+v", plan.CompletionSeal)
+	}
+	if plan.TaskPrecreate != nil {
+		t.Fatalf("initiative child triggered standalone task precreate (ADR-025 D5): %+v", plan.TaskPrecreate)
+	}
+	byDest := map[string]PrivateDispatchMountEntry{}
+	for _, e := range plan.Entries {
+		byDest[e.Destination] = e
+	}
+	if got := byDest["/workspace/source"]; got.Source != filepath.Join(ws, ".mc-worktrees", "initiative-7") || got.Access != "rw" {
+		t.Fatalf("source row = %+v, want the shared worktree bound RW", got)
+	}
+	if got := byDest["/workspace/git"]; got.Access != "rw" || got.Source != filepath.Join(ws, ".mission-control", "initiatives", "initiative-7", "git") {
+		t.Fatalf("git dir row = %+v, want the store git bound RW", got)
+	}
+	if got := byDest["/workspace"]; got.Access != "ro" || got.Mode != 0o555 {
+		t.Fatalf("store root entry = %+v, want RO mode-0555", got)
+	}
+}
+
+// D3/D5 retention at attest: a materialized shared store with no frozen receipt
+// (the normal pre-S1 production state) health-refuses — it never becomes an
+// agent workspace.
+func TestAttestCandidateMountsInitiativeChildRefusesWithoutReceipt(t *testing.T) {
+	subject := int64(3)
+	mcHome, cand, _ := maInitiativeChildCandidate(t, dispatch.RoleWorker, &subject)
+	cand.mountState.SubjectInitiativeSetup = nil
+
+	plan, r, err := attestCandidateMounts(mcHome, cand, false)
+	if err != nil || r == nil || plan != nil {
+		t.Fatalf("no-receipt initiative attest = plan %+v refusal %+v err %v, want a health refusal", plan, r, err)
+	}
+	if r.Code != boundary.CodeRuntimeUnappliable || r.Authority != refusal.AuthorityDeployment {
+		t.Fatalf("no-receipt refusal = %+v", r)
+	}
+	if class, cerr := refusal.Classify(*r); cerr != nil || class != refusal.ClassHealth {
+		t.Fatalf("no-receipt classify = %v/%v, want health", class, cerr)
+	}
 }
 
 func TestAttestCandidateMountsDerivesTaskLocalPlanThroughRealCapture(t *testing.T) {

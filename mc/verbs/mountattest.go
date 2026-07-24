@@ -235,21 +235,18 @@ func selectedProfileMountRequests(state PrivateDispatchMountState) ([]mountReque
 // the sealed views Packager/Refiner read) refuses health rather than being
 // guessed.
 func deriveDispatchMountRequests(state PrivateDispatchMountState, role string, subjectID *int64, allowLegacyFakeWorkspace bool) ([]mountRequest, PrivateDispatchWorksource, *refusal.Refusal, error) {
-	if state.SubjectInitiativeID != nil && !allowLegacyFakeWorkspace {
-		// ADR-017 D6 explicitly excludes initiative children from the
-		// standalone-task table while their shared-worktree representation is
-		// parked. Preserve that fact in the prepared mount projection so a
-		// child Worker cannot be mistaken for an ordinary task merely because
-		// both carry a positive subject id.
-		r, err := refusalForMountError(&boundary.MountError{
-			Code: boundary.CodeRuntimeUnappliable,
-			Msg:  "initiative children have no authorized mount representation (ADR-017 D6)",
-		}, refusal.AuthorityDeployment, nil)
-		return nil, PrivateDispatchWorksource{}, &r, err
-	}
 	requests, selected, r, err := selectedProfileMountRequests(state)
 	if err != nil || r != nil {
 		return nil, selected, r, err
+	}
+	if state.SubjectInitiativeID != nil && !allowLegacyFakeWorkspace {
+		// ADR-025 D2/D5: under real routing an initiative child's only
+		// authorized mount arm is the shared-store table for a Worker on a repo
+		// Worksource. Every other role/shape retains today's health refusal
+		// until its slice lands (S3-S6); no existing refusal is weakened. Under
+		// fake routing the child falls through below to the legacy
+		// whole-Worksource bind, exactly as before.
+		return deriveInitiativeChildMountRequests(state, role, subjectID, requests, selected)
 	}
 	if selected.WorksourceID == "" || selected.Kind != "repo" {
 		return requests, selected, nil, nil
@@ -315,6 +312,54 @@ func deriveDispatchMountRequests(state PrivateDispatchMountState, role string, s
 			// format + UUID), so pin the exact bytes setup landed; the resolver
 			// separately proves they satisfy the closed grammar, and the recheck
 			// fence re-verifies this digest before bind.
+			if body, err := os.ReadFile(source); err == nil && len(body) <= maxTaskGitConfigBytes {
+				sum := sha256.Sum256(body)
+				request.ContentSHA256 = hex.EncodeToString(sum[:])
+			}
+		}
+		requests = append(requests, request)
+	}
+	return requests, selected, nil, nil
+}
+
+// deriveInitiativeChildMountRequests derives the ADR-025 D2 shared-store rows
+// for a real-routed initiative child. S2 admits exactly one arm: a Worker
+// child on a repo Worksource with a positive subject and a workspace root.
+// Every other role and shape (a child Verifier/Packager — S3, a
+// Strategist/Editor — S4, a non-repo or profile-less Worksource — D5) retains
+// today's health refusal. Like the standalone-task arm this only constructs
+// the request sources; the shared store's existence, ownership, content, and
+// receipt vouch are proved in captureDispatchMountHostSnapshot.
+func deriveInitiativeChildMountRequests(state PrivateDispatchMountState, role string, subjectID *int64, requests []mountRequest, selected PrivateDispatchWorksource) ([]mountRequest, PrivateDispatchWorksource, *refusal.Refusal, error) {
+	if selected.WorksourceID == "" || selected.Kind != "repo" || selected.WorkspaceRoot == "" ||
+		baseRole(role) != "worker" || subjectID == nil {
+		r, err := refusalForMountError(&boundary.MountError{
+			Code: boundary.CodeRuntimeUnappliable,
+			Msg:  "no authorized initiative mount arm for this role: only a repo-Worksource Worker child has a shared-store representation until the later slices land (ADR-025 D2/D5)",
+		}, refusal.AuthorityDeployment, nil)
+		return nil, selected, &r, err
+	}
+	store := InitiativeStoreRoot(selected.WorkspaceRoot, *state.SubjectInitiativeID)
+	worktree := InitiativeWorktreeRoot(selected.WorkspaceRoot, *state.SubjectInitiativeID)
+	for _, row := range initiativePlanRows(*state.SubjectInitiativeID) {
+		base := store
+		if row.Base == baseSharedWorktree {
+			base = worktree
+		}
+		source := base
+		if row.Rel != "" {
+			source = filepath.Join(base, filepath.FromSlash(row.Rel))
+		}
+		// A Worker child gets the row's declared access (RW on source/git);
+		// the forced-RO view for a child Verifier/Packager is a later slice.
+		request := mountRequest{
+			Source: source, Access: row.Access, Authority: refusal.AuthorityDeployment,
+			Kind: row.Kind, Destination: row.Dest, RequireEmptyDir: row.MustBeEmptyDir,
+		}
+		if row.WantBytes != nil {
+			sum := sha256.Sum256(row.WantBytes)
+			request.ContentSHA256 = hex.EncodeToString(sum[:])
+		} else if row.ConfigGrammar {
 			if body, err := os.ReadFile(source); err == nil && len(body) <= maxTaskGitConfigBytes {
 				sum := sha256.Sum256(body)
 				request.ContentSHA256 = hex.EncodeToString(sum[:])
@@ -528,7 +573,27 @@ func captureDispatchMountHostSnapshot(home string, state PrivateDispatchMountSta
 		if err != nil {
 			return dispatchMountHostSnapshot{}, err
 		}
-		if selected.Kind == "repo" && selected.WorkspaceRoot != "" {
+		if selected.Kind == "repo" && selected.WorkspaceRoot != "" && state.SubjectInitiativeID != nil {
+			// ADR-025 D5: an initiative child is resolved BEFORE the standalone
+			// task-skeleton arm, so a child never triggers standalone
+			// task-precreate (which validatePrivateTaskPrecreateCandidate would
+			// wedge as a protocol error). S2 has no initiative precreate — the
+			// disk cut is the S1 InitiativeSetup dispatch step, not a mount-attest
+			// effect — so an absent shared store simply health-refuses here. The
+			// resolved store and shared-worktree roots are admitted into the agent
+			// plan only when both match the frozen D3 setup receipt; a
+			// materialized-but-unattested store never becomes an agent workspace.
+			typed, err := resolveInitiativeSkeleton(selected.WorkspaceRoot, *state.SubjectInitiativeID, uid)
+			if err != nil {
+				return dispatchMountHostSnapshot{}, err
+			}
+			if err := requireInitiativeSetupReceiptVouch(typed, state.SubjectInitiativeSetup); err != nil {
+				return dispatchMountHostSnapshot{}, err
+			}
+			for kind, id := range typed {
+				snapshot.TypedRoots[kind] = []boundary.ProtectedID{id}
+			}
+		} else if selected.Kind == "repo" && selected.WorkspaceRoot != "" {
 			root := filepath.Join(selected.WorkspaceRoot, ".mission-control", "tasks", "task-"+strconv.FormatInt(*subjectTaskID, 10))
 			if _, err := os.Lstat(root); os.IsNotExist(err) {
 				step, err := captureTaskPrecreate(selected.WorkspaceRoot, *subjectTaskID, uid)
@@ -669,6 +734,48 @@ func requireTaskSetupReceiptVouch(root boundary.ProtectedID, frozen []PrivateDis
 		Code: boundary.CodeRuntimeUnappliable,
 		Msg:  "task skeleton has no durable first-task setup receipt (ADR-016 D5); a materialized-but-unattested skeleton never becomes an agent workspace",
 	}
+}
+
+// requireInitiativeSetupReceiptVouch admits a resolved shared store into the
+// agent plan only when BOTH its vouched roots — the store root (KindTaskRoot)
+// and the shared worktree root (KindTaskSource) — match the frozen ADR-025 D3
+// setup receipt. The two are checked independently because the worktree is not
+// a descendant of the store root (ADR-025 D1). An absent receipt (the normal
+// pre-S1 state) refuses: a materialized-but-unattested store never becomes an
+// agent workspace.
+func requireInitiativeSetupReceiptVouch(typed map[boundary.TypedKind]boundary.ProtectedID, receipt *PrivateDispatchInitiativeSetup) error {
+	if receipt == nil {
+		return &boundary.MountError{
+			Code: boundary.CodeRuntimeUnappliable,
+			Msg:  "initiative shared store has no durable setup receipt (ADR-025 D3); a materialized-but-unattested store never becomes an agent workspace",
+		}
+	}
+	if err := requireInitiativeRootVouch(typed[boundary.KindTaskRoot], receipt.StoreRoot, "store root"); err != nil {
+		return err
+	}
+	return requireInitiativeRootVouch(typed[boundary.KindTaskSource], receipt.WorktreeRoot, "shared worktree root")
+}
+
+func requireInitiativeRootVouch(root boundary.ProtectedID, frozen PrivateDispatchTaskSetupIdentity, label string) error {
+	if root.Info == nil {
+		return &boundary.MountError{
+			Code: boundary.CodeRuntimeUnappliable, Msg: "initiative " + label + " carries no identity evidence",
+		}
+	}
+	st, ok := root.Info.Sys().(*syscall.Stat_t)
+	if !ok {
+		return &boundary.MountError{
+			Code: boundary.CodeRuntimeUnappliable, Msg: "initiative " + label + " exposes no stat identity",
+		}
+	}
+	if frozen.Device != strconv.FormatUint(uint64(st.Dev), 10) ||
+		frozen.Inode != strconv.FormatUint(st.Ino, 10) || frozen.OwnerUID != int(st.Uid) {
+		return &boundary.MountError{
+			Code: boundary.CodeRuntimeUnappliable,
+			Msg:  "initiative " + label + " does not match its durable setup receipt (ADR-025 D3)",
+		}
+	}
+	return nil
 }
 
 func captureTaskPrecreate(workspaceRoot string, taskID int64, ownerUID int) (PrivateDispatchTaskPrecreate, error) {
@@ -918,7 +1025,12 @@ func attestCandidateMounts(home string, cand *preparedCandidate, allowLegacyFake
 		Version: 1, Entries: entries, JurisdictionDigest: jurisdictionDigest,
 		TaskPrecreate: snapshot.TaskPrecreate,
 	}
-	if !allowLegacyFakeWorkspace && cand.runID != "" && snapshot.TaskPrecreate == nil && baseRole(string(cand.spawn.Role)) == "worker" && cand.spawn.SubjectID != nil {
+	// ADR-025 D4: the sealed-completion spine must not apply to an initiative
+	// subject — an accepted-seal rebuild of a SHARED store would destroy sibling
+	// commits — so CompletionSeal (here) and the downstream AcceptedSealRebuild /
+	// VerifierProjection (below) are suppressed whenever SubjectInitiativeID is
+	// set. An initiative child uses the plain unsealed Worker terminal (D4).
+	if !allowLegacyFakeWorkspace && cand.mountState.SubjectInitiativeID == nil && cand.runID != "" && snapshot.TaskPrecreate == nil && baseRole(string(cand.spawn.Role)) == "worker" && cand.spawn.SubjectID != nil {
 		step, err := captureCompletionSealPrecreate(home, cand.runID, *cand.spawn.SubjectID, snapshot.OwnerUID)
 		if err != nil {
 			r, aerr := adaptMountError(err, refusal.AuthorityDeployment, nil)
@@ -934,7 +1046,7 @@ func attestCandidateMounts(home string, cand *preparedCandidate, allowLegacyFake
 	// condition keeps the plan coherent — a fake-routed verifier over a sealed
 	// task launches as an ordinary legacy verifier instead of receiving an
 	// unsatisfiable rebuild step the resident refuses every tick (2026-07-19).
-	if !allowLegacyFakeWorkspace && baseRole(string(cand.spawn.Role)) == "verifier" && cand.spawn.SubjectID != nil && cand.mountState.SubjectAcceptedCompletionSeal != nil && cand.mountState.SubjectAcceptedSealRebuild == nil {
+	if !allowLegacyFakeWorkspace && cand.mountState.SubjectInitiativeID == nil && baseRole(string(cand.spawn.Role)) == "verifier" && cand.spawn.SubjectID != nil && cand.mountState.SubjectAcceptedCompletionSeal != nil && cand.mountState.SubjectAcceptedSealRebuild == nil {
 		s := cand.mountState.SubjectAcceptedCompletionSeal
 		plan.AcceptedSealRebuild = &PrivateDispatchAcceptedSealRebuild{
 			TaskID: *cand.spawn.SubjectID, RunID: s.RunID, CompletionRequest: s.CompletionRequest,
@@ -942,7 +1054,7 @@ func attestCandidateMounts(home string, cand *preparedCandidate, allowLegacyFake
 			ManifestDigest: s.ManifestDigest, Device: s.Device, Inode: s.Inode, OwnerUID: s.OwnerUID,
 		}
 	}
-	if !allowLegacyFakeWorkspace && baseRole(string(cand.spawn.Role)) == "verifier" && cand.spawn.SubjectID != nil && cand.mountState.SubjectAcceptedSealRebuild != nil {
+	if !allowLegacyFakeWorkspace && cand.mountState.SubjectInitiativeID == nil && baseRole(string(cand.spawn.Role)) == "verifier" && cand.spawn.SubjectID != nil && cand.mountState.SubjectAcceptedSealRebuild != nil {
 		b := cand.mountState.SubjectAcceptedSealRebuild
 		s := cand.mountState.SubjectAcceptedCompletionSeal
 		plan.VerifierProjection = &PrivateDispatchVerifierProjection{TaskID: *cand.spawn.SubjectID, RebuildRunID: b.RunID,

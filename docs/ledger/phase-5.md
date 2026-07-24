@@ -519,3 +519,44 @@ behind an initiative-child arm (ADR-025 D2/D5) with the snapshot-capture
 `SubjectInitiativeID` gate and seal-emission suppression, replacing the S2
 refusal for a receipt-vouched child Worker while keeping every other
 combination refused.
+
+## 2026-07-23 — ADR-025 S2: initiative-child Worker mount arm (inert)
+
+S2 wires the dormant `resolveInitiativeSkeleton`/`initiativePlanRows` groundwork
+into the live derivation, replacing the `mountattest.go` initiative-child
+refusal for exactly one case — a receipt-vouched Worker child on a repo
+Worksource under real routing — while every other combination stays
+health-refused (S3–S6 owed). Still inert end-to-end: no S1 receipt producer
+exists, so a real initiative child resolves an absent shared store and
+health-refuses; the arm only comes alive when S1 lands the `InitiativeSetup`
+cut.
+
+- Carrier: `substrate.DispatchInitiativeSetup` (two vouched roots) +
+  `DispatchMountState.SubjectInitiativeSetup` (`omitempty`), with a
+  helper-boundary validator mirroring `validatePrivateTaskSetupRoots`. Nothing
+  populates it yet (S1's job); the cut SHA is deferred to its consumer
+  (IMPLEMENTATION-NOTES 2026-07-23).
+- Derive: `deriveDispatchMountRequests` routes real-routed initiative children
+  through `deriveInitiativeChildMountRequests` — the 15 D2 rows over the two
+  host bases (store root + shared worktree), RW on source/git for the Worker.
+  Fake routing is unchanged: children still fall through to the legacy
+  whole-Worksource bind. Non-Worker/non-repo/no-subject retain today's refusal.
+- Capture: `captureDispatchMountHostSnapshot` gates on `SubjectInitiativeID`
+  BEFORE the task-skeleton arm (ADR-025 D5), so a child never triggers
+  standalone task precreate; it resolves the skeleton, vouches BOTH roots
+  against the frozen receipt (`requireInitiativeSetupReceiptVouch`), and
+  populates `TypedRoots`. Absent store or absent/mismatched receipt → health.
+- Seal suppression (ADR-025 D4): `CompletionSeal` (Worker) and the
+  verifier-only `AcceptedSealRebuild`/`VerifierProjection` are gated on
+  `SubjectInitiativeID == nil` — a shared-store child uses the plain unsealed
+  terminal.
+- Tests: derive rows + two-base sources; non-Worker/non-repo/no-subject
+  refusal retention; the two-root vouch table (valid/nil/store-mismatch/
+  worktree-mismatch); a full real-capture attest proving 15 rows, RW
+  source/git, suppressed seal, no precreate; and the no-receipt attest health
+  refusal. Fast suite green; `verbs`/`substrate` cold `-count=1` green.
+
+NEXT: ADR-025 S3 — child Verifier/Packager get the D2 table with every row
+forced RO (`readOnlyView`), gated on the vouched receipt, plus the D6
+producer-absence/cleanliness fence for the shared store; Refiner over a child
+keeps refusing.

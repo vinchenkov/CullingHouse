@@ -14,6 +14,7 @@ import (
 type PrivateDispatchMountState = substrate.DispatchMountState
 type PrivateDispatchWorksource = substrate.DispatchWorksource
 type PrivateDispatchTaskSetupIdentity = substrate.DispatchTaskSetupIdentity
+type PrivateDispatchInitiativeSetup = substrate.DispatchInitiativeSetup
 type PrivateDispatchTaskAssignment = substrate.DispatchTaskAssignment
 type PrivateDispatchAcceptedCompletionSeal = substrate.DispatchAcceptedCompletionSeal
 

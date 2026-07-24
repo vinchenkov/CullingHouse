@@ -45,6 +45,28 @@ type DispatchMountState struct {
 	// token so the spine-free attest leg can pin a fresh-mode first-task
 	// closure without re-reading the spine.
 	SubjectTaskTargetRef string `json:"subject_task_target_ref,omitempty"`
+	// SubjectInitiativeSetup freezes the durable ADR-025 D3 initiative setup
+	// receipt (both vouched roots) for an initiative-child subject. It is the
+	// initiative analog of SubjectTaskSetupRoots: the host mount attest resolves
+	// the on-disk shared store and only admits it into an agent plan when the
+	// resolved store and shared-worktree roots both match this frozen receipt.
+	// The receipt itself is produced by the InitiativeSetup slice (S1); until
+	// that lands nothing populates this field, so a real-harness initiative
+	// child resolves an absent store and health-refuses. omitempty keeps every
+	// pre-existing state's canonical bytes (and its preparation token) unchanged.
+	SubjectInitiativeSetup *DispatchInitiativeSetup `json:"subject_initiative_setup,omitempty"`
+}
+
+// DispatchInitiativeSetup is the path-free durable identity of an initiative's
+// two setup roots (ADR-025 D3): the sanitized store root and the shared
+// worktree root, each carrying the canonical decimal device/inode/owner the
+// resident registered. The two are vouched independently because the worktree
+// is not a descendant of the store root (ADR-025 D1). The recorded cut SHA the
+// receipt also carries is owed to the slice that consumes it (arc verify/land),
+// not to this mount-vouch carrier.
+type DispatchInitiativeSetup struct {
+	StoreRoot    DispatchTaskSetupIdentity `json:"store_root"`
+	WorktreeRoot DispatchTaskSetupIdentity `json:"worktree_root"`
 }
 
 // DispatchTaskAssignment is the git-derived half of a task_assignments row,

@@ -148,9 +148,15 @@ the approve landing fence to assignment-armed tasks; v12 retires
   - [~] ADR-025 accepted (production initiative mounts/cut/arc landing, the
         owed ADR-017 D6 / ADR-023 D6 follow-on). Groundwork inert at `fc72175`:
         `.mc-worktrees` reserved (D10), two-family worktree grammar (D2), and
-        the two-base child skeleton row set + resolver. Slices S1 (cut) and
-        S2–S6 (mount arms, roles, arc verify, landing import) still owed; every
-        existing refusal stays fail-closed until S6.
+        the two-base child skeleton row set + resolver. S2 landed inert: the
+        receipt-vouched initiative-child Worker mount arm (D2 rows over the two
+        host bases, `SubjectInitiativeID` capture gate before the task arm,
+        two-root receipt vouch, D4 seal-emission suppression) replaces the
+        `mountattest.go` child refusal for that one case; every other
+        combination stays health-refused. Still fail-closed end-to-end — no S1
+        receipt producer exists, so a real child resolves an absent store and
+        refuses. Slices S1 (cut) and S3–S6 (Verifier/Packager RO + D6 fence,
+        roles, arc verify, landing import) still owed.
 - [ ] Release prep — install/onboard front door and construction-document
       disposition.
 
@@ -216,10 +222,10 @@ native resume, container reconciliation, Homie credential projection,
 dashboard LaunchAgent generation, and the four non-Console tabs. Details and
 commit map are in the closed Phase 4 ledger.
 
-NEXT: continue ADR-025 slice S2 — wire `resolveInitiativeSkeleton` into
-`deriveDispatchMountRequests` behind a receipt-vouched initiative-child Worker
-arm (gate `captureDispatchMountHostSnapshot` on `SubjectInitiativeID` before
-the task arm; suppress CompletionSeal/AcceptedSealRebuild emission for
-initiative subjects), replacing the `mountattest.go:238-249` refusal for that
-one case only. S1 (`__setup-initiative` cut + receipts) and S3–S6 still owed;
-see `docs/adr/025-initiative-production-mounts.md` §Slices.
+NEXT: ADR-025 slice S3 — a child Verifier/Packager subject gets the D2 table
+with every row forced RO (`readOnlyView` analog, gated on the vouched
+initiative receipt, no completion-seal gate per D4), plus the D6
+producer-absence/cleanliness fence for the shared store; a Refiner over a child
+keeps refusing (parity with the standalone table). S1 (`__setup-initiative`
+cut + receipts) and S4–S6 still owed; see
+`docs/adr/025-initiative-production-mounts.md` §Slices.

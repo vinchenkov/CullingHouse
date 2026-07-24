@@ -1646,3 +1646,19 @@ rules in code the sealed lane does not own.
 - Spec impact: none new — ADR-017:718 already specifies the `.mission-control/`
   exclusion; it is simply owed. ADR-025 D10 extends it to `.mc-worktrees/`.
 - Needs your decision: no.
+
+## 2026-07-23 — ADR-025 S2 initiative receipt carrier omits the cut SHA
+- Where: ADR-025 D3 defines the initiative setup receipt as carrying BOTH
+  vouched roots AND the recorded cut SHA. S2 added `DispatchInitiativeSetup`
+  (the mount-state carrier that the host vouch reads) with only the two roots
+  (`store_root`, `worktree_root`); the cut SHA is not carried yet.
+- Choice: the S2 vouch (`requireInitiativeSetupReceiptVouch`) admits the
+  resolved shared store into an agent plan only by matching the two root
+  identities — it has no use for the cut SHA. The receipt RECORD is produced by
+  S1 (`InitiativeSetup`) and the cut SHA is CONSUMED by arc verify/land (S5/S6:
+  pin `verified_sha`, ff-only import). Adding an unread `cut_sha` to the carrier
+  now would be a speculative field ahead of its producer and consumer. It is
+  `omitempty` and additive, so S1/S5 extend the struct without touching S2.
+- Spec impact: none — D3's receipt shape is unchanged; the mount-vouch carrier
+  is a strict subset until the slice that needs the cut SHA lands.
+- Needs your decision: no.

@@ -740,6 +740,12 @@ func validatePrivateMountState(state PrivateDispatchMountState) error {
 	if state.SubjectInitiativeID != nil && *state.SubjectInitiativeID <= 0 {
 		return Domainf("dispatch: private mount-state initiative id must be positive")
 	}
+	if state.SubjectInitiativeSetup != nil && state.SubjectInitiativeID == nil {
+		return Domainf("dispatch: private mount-state carries an initiative setup receipt with no initiative subject")
+	}
+	if err := validatePrivateInitiativeSetup(state.SubjectInitiativeSetup); err != nil {
+		return err
+	}
 	projection, err := json.Marshal(state.Worksources)
 	if err != nil || len(projection) > substrate.MaxDispatchMountProjectionBytes {
 		return Domainf("dispatch: private Worksource projection exceeds its admitted byte budget")
@@ -813,6 +819,24 @@ func validatePrivateTaskSetupRoots(roots []PrivateDispatchTaskSetupIdentity) err
 		}
 		if i > 0 && !taskSetupIdentityLess(roots[i-1], id) {
 			return Domainf("dispatch: private task setup roots are unsorted or duplicated")
+		}
+	}
+	return nil
+}
+
+// validatePrivateInitiativeSetup keeps the helper boundary strict about the
+// frozen ADR-025 D3 initiative receipt: both root identities mirror the same
+// canonical decimal device/inode and non-negative owner uid the task
+// setup-receipt roots do, so a hostile frame cannot smuggle a malformed
+// receipt past the token. Absence is the normal pre-S1 state.
+func validatePrivateInitiativeSetup(setup *PrivateDispatchInitiativeSetup) error {
+	if setup == nil {
+		return nil
+	}
+	for _, id := range []PrivateDispatchTaskSetupIdentity{setup.StoreRoot, setup.WorktreeRoot} {
+		if !decimalIdentity.MatchString(id.Device) || !decimalIdentity.MatchString(id.Inode) ||
+			len(id.Device) > 20 || len(id.Inode) > 20 || id.OwnerUID < 0 {
+			return Domainf("dispatch: private initiative setup root identity is malformed")
 		}
 	}
 	return nil
