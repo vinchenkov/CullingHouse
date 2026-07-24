@@ -107,3 +107,66 @@ func TestLoadSubjectAcceptedCompletionSealUsesTheTaskAcceptancePointer(t *testin
 		t.Fatalf("absent accepted projection=(%+v,%v), want nil,nil", absent, err)
 	}
 }
+
+// LoadInitiativePriorChildRuns freezes the ADR-025 D6 producer-absence set: the
+// pipeline-tier runs of every child task of an initiative, id-sorted, so the
+// resident can confirm each prior child container is absent before the next one
+// is prepared.
+func TestLoadInitiativePriorChildRunsCollectsChildPipelineRuns(t *testing.T) {
+	db := openSpine(t)
+	initiative := mkTask(t, db, "initiative", "seeded")
+	childA := mkChild(t, db, initiative)
+	childB := mkChild(t, db, initiative)
+
+	// Two pipeline runs under childA (worker then verifier) and one under childB.
+	mustExec(t, db, `INSERT INTO runs (id, tier, role, worksource, subject)
+		VALUES ('run-b1', 'pipeline', 'worker', 'ws', ?)`, childB)
+	mustExec(t, db, `INSERT INTO runs (id, tier, role, worksource, subject)
+		VALUES ('run-a2', 'pipeline', 'verifier', 'ws', ?)`, childA)
+	mustExec(t, db, `INSERT INTO runs (id, tier, role, worksource, subject)
+		VALUES ('run-a1', 'pipeline', 'worker', 'ws', ?)`, childA)
+
+	got, err := substrate.LoadInitiativePriorChildRuns(context.Background(), db, initiative)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	want := []string{"run-a1", "run-a2", "run-b1"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %+v, want id-sorted %+v", got, want)
+	}
+}
+
+func TestLoadInitiativePriorChildRunsExcludesUnrelatedAndHomieRuns(t *testing.T) {
+	db := openSpine(t)
+	initiative := mkTask(t, db, "initiative", "seeded")
+	child := mkChild(t, db, initiative)
+
+	otherInit := mkTask(t, db, "initiative", "seeded")
+	otherChild := mkChild(t, db, otherInit)
+	standalone := mkTask(t, db, "task", "seeded")
+
+	mustExec(t, db, `INSERT INTO runs (id, tier, role, worksource, subject)
+		VALUES ('mine', 'pipeline', 'worker', 'ws', ?)`, child)
+	// A run on a sibling initiative's child, on a standalone task, and a
+	// subject-less homie run must all be excluded.
+	mustExec(t, db, `INSERT INTO runs (id, tier, role, worksource, subject)
+		VALUES ('other-init', 'pipeline', 'worker', 'ws', ?)`, otherChild)
+	mustExec(t, db, `INSERT INTO runs (id, tier, role, worksource, subject)
+		VALUES ('standalone', 'pipeline', 'worker', 'ws', ?)`, standalone)
+	mustExec(t, db, `INSERT INTO runs (id, tier, binding)
+		VALUES ('h-abc', 'homie', 'claude')`)
+
+	got, err := substrate.LoadInitiativePriorChildRuns(context.Background(), db, initiative)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if !reflect.DeepEqual(got, []string{"mine"}) {
+		t.Fatalf("got %+v, want only the initiative's own child pipeline run", got)
+	}
+
+	// An initiative with no child runs projects an empty, non-nil set.
+	empty, err := substrate.LoadInitiativePriorChildRuns(context.Background(), db, otherInit+999)
+	if err != nil || len(empty) != 0 {
+		t.Fatalf("no-child initiative = (%+v, %v), want empty", empty, err)
+	}
+}

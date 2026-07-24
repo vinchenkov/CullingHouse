@@ -289,6 +289,49 @@ func LoadSubjectInitiativeSetup(ctx context.Context, q dispatchProjectionQuerier
 	return &out, rows.Err()
 }
 
+// MaxInitiativePriorChildRuns bounds the frozen prior-child run-id set the
+// ADR-025 D6 producer-absence fence carries in the token. It is a fail-closed
+// backstop: exceeding it REFUSES rather than truncating, because a silently
+// dropped run id is a prior child container the resident would never confirm
+// absent — the exact hole the fence exists to close.
+const MaxInitiativePriorChildRuns = 512
+
+// LoadInitiativePriorChildRuns returns the run ids of every prior pipeline-tier
+// run whose subject is a child task of the given initiative, sorted for
+// canonical determinism. It is the ADR-025 D6 producer-absence input: dispatch
+// freezes this set into the token so the resident — which cannot query the
+// spine — can positively confirm each prior child's `mc-run-<id>`/`mc-setup-<id>`
+// container is absent before a next initiative-family container is prepared.
+//
+// Like the other dispatch-prepare projections it omits the live run/lock-lease
+// fence (frozen into the token, re-derived and DeepEqual'd at commit). The
+// currently-dispatched child's own run does not appear: its run is not opened
+// until commit, after this prepare-time projection. An empty result is the
+// normal first-child state.
+func LoadInitiativePriorChildRuns(ctx context.Context, q dispatchProjectionQuerier, initiativeID int64) ([]string, error) {
+	rows, err := q.QueryContext(ctx, `
+		SELECT r.id
+		FROM runs r JOIN tasks t ON t.id = r.subject
+		WHERE t.initiative_id = ? AND r.tier = 'pipeline'
+		ORDER BY r.id`, initiativeID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []string{}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		if len(out) >= MaxInitiativePriorChildRuns {
+			return nil, fmt.Errorf("initiative %d has more than %d prior child runs", initiativeID, MaxInitiativePriorChildRuns)
+		}
+		out = append(out, id)
+	}
+	return out, rows.Err()
+}
+
 // LoadSubjectAcceptedCompletionSeal projects only the receipt explicitly
 // pointed to by the task's D6 acceptance transaction. Older schema history
 // has no pointer and remains deliberately non-consumable.
