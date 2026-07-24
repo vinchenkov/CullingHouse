@@ -6,8 +6,11 @@ REPO PATH: `~/dev/ai/homie`. Never relocate this repo into `~/Documents`,
 `~/Desktop`, or `~/Downloads`: macOS TCC can revoke an agent session's own
 filesystem access there during fan-out. Full Disk Access does not fix it.
 
-LAST GREEN SHA: `b4c0c9e` — ADR-025 S1.4c-2b: the whole route-free
-InitiativeSetup dispatch lane is LIVE in-process. Under real routing a
+LAST GREEN SHA: `0469af0` — ADR-025 S1.5a: `RegisterInitiativeSetup` + the
+`mc initiative setup-register` CLI — the receipt write deferred from S1.1 and the
+last missing producer of `initiative_setup_receipts` (two-root, run/lease-fenced
+on the initiative, idempotent-by-initiative_id, re-cut refuses). Atop S1.4c-2b:
+the whole route-free InitiativeSetup dispatch lane is LIVE in-process. Under real routing a
 promoted-uncut initiative drives Decide (0d emission) → route-free attest
 (captureInitiativePrecreate) → commit (claims the lease, opens a worker/pipeline
 run keyed on the arc with empty binding + no harness/brief, carries the
