@@ -161,9 +161,11 @@ resident `SPINE_SCHEMA_VERSION` moved to 14 in lockstep.
         refuses. S1.1 landed the `initiative_setup_receipts` spine table (v14) +
         `LoadSubjectInitiativeSetup` + loader wiring (keyed on the parent
         initiative) + `CutSHA` carrier — the READ half of the D3 receipt; the
-        register/write is owed to S1.5. Owed: S1.3 (`__setup-initiative`
-        materializer), S1.4 (dispatch step), S1.5 (resident precreate +
-        register), S3b (D6 fence), S4–S6.
+        register/write is owed to S1.5. S1.3a landed `MaterializeInitiativeStore`
+        (the cross-base store/worktree cut, real-git spike-validated + host-side
+        tested). Owed: S1.3b (`__setup-initiative` subcommand/envelope), S1.4
+        (dispatch step), S1.5 (resident precreate + register), S3b (D6 fence),
+        S4–S6.
 - [ ] Release prep — install/onboard front door and construction-document
       disposition.
 
@@ -229,16 +231,19 @@ native resume, container reconciliation, Homie credential projection,
 dashboard LaunchAgent generation, and the four non-Console tabs. Details and
 commit map are in the closed Phase 4 ledger.
 
-NEXT: ADR-025 S1.3 — the `mc __setup-initiative` materializer subcommand (Go),
-generalizing `MaterializeFirstTaskStore` (`setupenvelope.go:281`). It runs in a
-network=none, uid-10002, cap-drop-ALL container (real repo RO, store RW,
-worktree RW) and materializes the sanitized store cut from the CURRENT main tip
-plus the checkout: bare sanitized store (exact closure pack of the cut commit,
-`HEAD -> refs/heads/mc/initiative-<id>` at the cut SHA, sanitized config, empty
-hooks/info/objects-info/packed-refs/shallow, `worktrees/mc-initiative-<id>/`) and
-the shared worktree checkout with the container-relative pointer bytes. It
-records the cut SHA; a retry reuses the recorded cut SHA exactly (never
-re-resolves main). Study `MaterializeFirstTaskStore` and the `mc __` setup
-subcommands in `main.go` before implementing. Then S1.4 (dispatch step), S1.5
-(resident precreate + `RegisterInitiativeSetup` write, deferred from S1.1), S3b
-(D6 fence), S4–S6. Register/write scope: S1.5. See ADR-025 §Slices.
+NEXT: ADR-025 S1.3b — the `mc __setup-initiative` subcommand that wraps the
+S1.3a `MaterializeInitiativeStore`. Build: (1) a `SetupEnvelope` InitiativeSetup
+arm (add `SetupOperationInitiativeSetup` + a `validateSetupEnvelope` arm;
+container-dest fields for the store root and the external worktree root — reuse
+`TaskRoot` as store root and add a `WorktreeRoot`, or add both; the branch/
+worktree name guard must equal `mc/initiative-<id>` / `mc-initiative-<id>`);
+(2) `RunInitiativeSetup(env)` mirroring `RunFirstTaskSetup` (`setupenvelope.go:
+255-293`): mint a fresh repo UUID, resolve object format, call
+`MaterializeInitiativeStore`, and emit the cut SHA on stdout — the resident
+stat's the two roots host-side, so the container emits only the SHA (reuse
+`SetupResult.BaseSHA` or a lean result); include the retry idempotent-residue
+verify (a `verifyLandedStoreMatches` analog) if the store is non-empty; (3) the
+two `main.go` sites — the local-run guard list (`main.go:104`) and a
+`case "__setup-initiative":` mirroring `__setup-first-task` (`main.go:285-300`).
+Then S1.4 (dispatch step), S1.5 (resident precreate + `RegisterInitiativeSetup`
+write, deferred from S1.1), S3b (D6 fence), S4–S6. See ADR-025 §Slices.

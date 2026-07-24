@@ -678,3 +678,49 @@ and an initiative child health-refuses on an absent store exactly as before.
   `substrate`/`verbs` cold `-count=1` green.
 
 NEXT: S1.3 — the `mc __setup-initiative` materializer (see PROGRESS NEXT).
+
+## 2026-07-23 — ADR-025 S1.3a: MaterializeInitiativeStore (the cross-base cut)
+
+The git core of the InitiativeSetup cut, host-side unit-testable (parity with
+MaterializeFirstTaskStore — no Docker lane). Generalizes the first-task
+materializer to ADR-025 D1's TWO-base layout and is inert (no caller yet; the
+`mc __setup-initiative` subcommand is S1.3b, the resident invocation S1.5).
+
+Spike first (de-risking the hardest git-mechanics in ADR-025): a real-git
+experiment proved the cross-base checkout. Because the sanitized store
+(`.mission-control/initiatives/initiative-<id>`) and the shared worktree
+(`.mc-worktrees/initiative-<id>`) are NOT siblings on the host, the
+container-relative `.git`/`gitdir` pointers do not resolve host-side (ADR-025
+D1). The checkout is therefore driven with an explicit `GIT_DIR` (the linked
+worktree admin `git/worktrees/mc-initiative-<id>`, whose `commondir` = `../..`
+DOES resolve within the store) and `GIT_WORK_TREE` (the separate worktree base),
+never through the pointers. The spike confirmed: index lands in the worktree
+admin, exec bit + symlink preserved in the checkout, bare store fsck-clean, and
+the simulated container layout (store + worktree siblings under /workspace)
+resolves HEAD with a clean `status`.
+
+Divergences from the task materializer (all seven the plan flagged): two
+separate roots (store + worktree), `store/source` stays the empty structural
+mountpoint (never written), the `.git` pointer + empty `.mission-control` cover
+move to the worktree base, the checkout uses explicit GIT_DIR/GIT_WORK_TREE,
+branch `mc/initiative-<id>` / worktree `mc-initiative-<id>`, cut = current tip of
+the caller-supplied target ref (fresh) or the recorded cut SHA (retry, never
+re-resolves), and fsck runs against `<store>/git`. Reuses verbatim:
+resolveBaseOID, rejectReservedTreeComponent (already reserves `.mc-worktrees`,
+D10), requireEmptyChild, extractClosurePack, fsckClean, digestLandedPack,
+generatedTaskGitConfig, sourceGitEnv, gitOutput.
+
+Tests (host-side, real git): fsck-clean operable store (ref at cut, HEAD names
+the shared branch, store/source empty, worktree pointer bytes exact,
+.mission-control empty, checkout clean/exec/symlink, no loose objects/alternate,
+closed config keys); retry pins the recorded cut (no rebase to a moved main);
+object-format-mismatch, worktree-residue, and reserved-`.mc-worktrees` refusals.
+Full fast suite green.
+
+NEXT: S1.3b — the `mc __setup-initiative` subcommand: a SetupEnvelope
+InitiativeSetup arm (store root + worktree root container dests),
+RunInitiativeSetup (mint UUID, resolve object format, call
+MaterializeInitiativeStore, emit the cut SHA; the roots are stat'd host-side by
+the resident, so the container emits only the SHA), and the two main.go
+registration sites. Then S1.4 (dispatch step), S1.5 (resident precreate +
+RegisterInitiativeSetup write).
