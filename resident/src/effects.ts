@@ -380,22 +380,44 @@ async function homieStop(effect: HomieStopEffect, deps: TickDeps): Promise<void>
  * the pipeline agent container; network guards are added only with ADR-018's
  * guard runtime and must join this exact inventory then. */
 export async function requireAcceptedSealProducerAbsent(runId: string, deps: TickDeps): Promise<void> {
-	if (!SAFE_ID.test(runId)) throw new Error("accepted seal producer run id is malformed");
+	await confirmPipelineRunAbsent(runId, deps, "accepted seal producer");
+}
+
+/** ADR-025 D6 producer-absence, extended per-initiative: before a next
+ * initiative-family container for initiative I is prepared, confirm every prior
+ * child run of I is POSITIVELY absent. Reap's best-effort `docker stop` is not
+ * confirmation (ADR-017:533). The prior-child run-id set is projected by
+ * dispatch into the frozen mount plan — the resident cannot query the spine —
+ * and each is checked by the same positive-inspect-by-name primitive, so a
+ * container hiding by omitting a label cannot pass as absent. */
+export async function requireInitiativeChildrenAbsent(runIds: string[], deps: TickDeps): Promise<void> {
+	for (const runId of runIds) {
+		await confirmPipelineRunAbsent(runId, deps, "initiative child producer");
+	}
+}
+
+/** The producer-absence primitive: confirm a single pipeline run's
+ * `mc-run-<id>` and `mc-setup-<id>` containers are POSITIVELY absent. Docker's
+ * exit-1 not-found is the only success; a live, exited-but-not-removed,
+ * malformed, or inspect-unavailable object throws. `describe` names the caller
+ * in every thrown message. */
+async function confirmPipelineRunAbsent(runId: string, deps: TickDeps, describe: string): Promise<void> {
+	if (!SAFE_ID.test(runId)) throw new Error(`${describe} run id is malformed`);
 	for (const component of ["mc-run", "mc-setup"]) {
 		const name = `${component}-${runId}`;
 		const inspected = await deps.docker(["inspect", "--type", "container", name]);
 		if (inspected.exitCode === 1) continue; // Docker's exact not-found result.
 		if (inspected.exitCode !== 0) {
-			throw new Error(`cannot confirm accepted seal producer absence for ${name}: docker inspect exited ${inspected.exitCode}`);
+			throw new Error(`cannot confirm ${describe} absence for ${name}: docker inspect exited ${inspected.exitCode}`);
 		}
 		let records: unknown;
 		try {
 			records = JSON.parse(inspected.stdout);
 		} catch {
-			throw new Error(`accepted seal producer identity is ambiguous for ${name}`);
+			throw new Error(`${describe} identity is ambiguous for ${name}`);
 		}
 		if (!Array.isArray(records) || records.length !== 1 || records[0] === null || typeof records[0] !== "object") {
-			throw new Error(`accepted seal producer identity is ambiguous for ${name}`);
+			throw new Error(`${describe} identity is ambiguous for ${name}`);
 		}
 		const record = records[0] as {
 			Id?: unknown; Name?: unknown; Config?: { Labels?: Record<string, unknown> }; State?: { Status?: unknown };
@@ -406,9 +428,9 @@ export async function requireAcceptedSealProducerAbsent(runId: string, deps: Tic
 			labels["mc-managed"] !== "true" || labels["mc-tier"] !== "pipeline" || labels["mc-run-id"] !== runId ||
 			typeof record.State?.Status !== "string" ||
 			!(["created", "running", "paused", "restarting", "removing", "exited", "dead"] as string[]).includes(record.State.Status)) {
-			throw new Error(`accepted seal producer identity is ambiguous for ${name}`);
+			throw new Error(`${describe} identity is ambiguous for ${name}`);
 		}
-		throw new Error(`accepted seal producer is still present: ${name} (${record.State.Status})`);
+		throw new Error(`${describe} is still present: ${name} (${record.State.Status})`);
 	}
 }
 

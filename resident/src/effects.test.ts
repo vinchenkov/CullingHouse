@@ -4,7 +4,7 @@
 // `mc land report` handoff, exact-name reap, and idle/reenter as no-ops.
 
 import { describe, expect, test } from "bun:test";
-import { applyEffect, requireAcceptedSealProducerAbsent, runSealedLanding } from "./effects";
+import { applyEffect, requireAcceptedSealProducerAbsent, requireInitiativeChildrenAbsent, runSealedLanding } from "./effects";
 import { fail, makeRig, ok, testConfig } from "./test-helpers";
 import type { Effect, MountPlan } from "./types";
 
@@ -1800,5 +1800,70 @@ describe("initiative-setup effect (ADR-025 D3)", () => {
     expect(rig.docker.calls).toEqual([]);
     expect(rig.mc.calls).toEqual([]);
     expect(rig.logs.some((l) => l.includes("id mismatch"))).toBe(true);
+  });
+});
+
+/** A well-formed live-container inspect record for the given child run — the
+ * positive shape `confirmPipelineRunAbsent` treats as "still present". */
+function presentChild(runId: string, component: string, status = "exited"): string {
+  return JSON.stringify([{
+    Id: "a".repeat(64),
+    Name: `/${component}-${runId}`,
+    Config: { Labels: { "mc-managed": "true", "mc-run-id": runId, "mc-tier": "pipeline" } },
+    State: { Status: status },
+  }]);
+}
+
+describe("initiative child producer-absence (ADR-025 D6)", () => {
+  test("resolves when every prior child's mc-run and mc-setup are positively absent", async () => {
+    const rig = makeRig();
+    rig.docker.enqueue(fail(1, "No such container"), fail(1, "No such container"),
+                       fail(1, "No such container"), fail(1, "No such container"));
+    await expect(requireInitiativeChildrenAbsent(["run-7a-worker", "run-7b-verifier"], rig.deps)).resolves.toBeUndefined();
+    expect(rig.docker.calls).toEqual([
+      ["inspect", "--type", "container", "mc-run-run-7a-worker"],
+      ["inspect", "--type", "container", "mc-setup-run-7a-worker"],
+      ["inspect", "--type", "container", "mc-run-run-7b-verifier"],
+      ["inspect", "--type", "container", "mc-setup-run-7b-verifier"],
+    ]);
+  });
+
+  test("an empty prior-child set makes no docker call and resolves", async () => {
+    const rig = makeRig();
+    await expect(requireInitiativeChildrenAbsent([], rig.deps)).resolves.toBeUndefined();
+    expect(rig.docker.calls).toEqual([]);
+  });
+
+  test("a surviving prior child (any of its containers present) throws still-present", async () => {
+    const rig = makeRig();
+    // First child absent; second child's mc-run is still present.
+    rig.docker.enqueue(fail(1), fail(1), ok(presentChild("run-7b-verifier", "mc-run", "running")));
+    await expect(requireInitiativeChildrenAbsent(["run-7a-worker", "run-7b-verifier"], rig.deps))
+      .rejects.toThrow("initiative child producer is still present: mc-run-run-7b-verifier (running)");
+  });
+
+  test("an inspect that is neither found nor not-found is not treated as absence", async () => {
+    const rig = makeRig();
+    rig.docker.enqueue(fail(2, "docker daemon unreachable"));
+    await expect(requireInitiativeChildrenAbsent(["run-7a-worker"], rig.deps))
+      .rejects.toThrow("cannot confirm initiative child producer absence");
+  });
+
+  test("an ambiguously labelled prior child throws rather than passing as absent", async () => {
+    const rig = makeRig();
+    rig.docker.enqueue(ok(JSON.stringify([{
+      Id: "a".repeat(64), Name: "/mc-run-run-7a-worker",
+      Config: { Labels: { "mc-managed": "true", "mc-tier": "pipeline" } }, // mc-run-id missing
+      State: { Status: "exited" },
+    }])));
+    await expect(requireInitiativeChildrenAbsent(["run-7a-worker"], rig.deps))
+      .rejects.toThrow("initiative child producer identity is ambiguous");
+  });
+
+  test("a malformed prior-child run id is refused before any docker call", async () => {
+    const rig = makeRig();
+    await expect(requireInitiativeChildrenAbsent(["../escape"], rig.deps))
+      .rejects.toThrow("initiative child producer run id is malformed");
+    expect(rig.docker.calls).toEqual([]);
   });
 });
