@@ -55,6 +55,25 @@ func TestNextInitiativeSetupRespectsTheReceiptAndRowShape(t *testing.T) {
 	}
 }
 
+// Decide emits KindInitiativeSetup for a promoted uncut initiative ahead of its
+// Strategist(initiative) spawn; once the receipt exists it falls through to the
+// Strategist.
+func TestDecideEmitsInitiativeSetupAheadOfTheStrategist(t *testing.T) {
+	uncut := recs([]Task{tk(5, StatusSeeded, initiative(), branch("mc/initiative-5", ""))}, nil)
+	a := Decide(uncut, freeLock(), realCfg(), noonClock())
+	assertWellFormed(t, a)
+	if a.Kind != KindInitiativeSetup || a.InitiativeSetup == nil || a.InitiativeSetup.InitiativeID != 5 {
+		t.Fatalf("uncut action = %+v, want KindInitiativeSetup for 5", a)
+	}
+
+	cut := recs([]Task{tk(5, StatusSeeded, initiative(), branch("mc/initiative-5", ""), setupDone())}, nil)
+	b := Decide(cut, freeLock(), realCfg(), noonClock())
+	assertWellFormed(t, b)
+	if b.Kind != KindSpawn || b.Spawn == nil || b.Spawn.Role != RoleStrategistInitiative {
+		t.Fatalf("cut action = %+v, want Strategist(initiative)", b)
+	}
+}
+
 // One per tick, lowest id first (deterministic).
 func TestNextInitiativeSetupPicksTheLowestIDDeterministically(t *testing.T) {
 	rec := recs([]Task{

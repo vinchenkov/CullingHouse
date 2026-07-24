@@ -66,6 +66,9 @@ func dispatchWithIdentity(db *sql.DB, identity dispatchProtocolIdentity) (any, e
 	if prepared.landing != nil {
 		return dispatchLandingRound(db, home, prepared)
 	}
+	if prepared.initiativeSetup != nil {
+		return dispatchInitiativeSetupRound(db, home, prepared)
+	}
 
 	attested, err := dispatchAttest(home, prepared)
 	if err != nil {
@@ -77,6 +80,27 @@ func dispatchWithIdentity(db *sql.DB, identity dispatchProtocolIdentity) (any, e
 	if err := underDispatchLock(db, func(ctx context.Context, q Q) error {
 		var e error
 		effect, e = dispatchCommit(ctx, q, prepared, attested)
+		return e
+	}); err != nil {
+		return nil, err
+	}
+	return effect, nil
+}
+
+// dispatchInitiativeSetupRound is the ADR-025 D3 lane's attest/commit half,
+// mirroring dispatchLandingRound: a route-free attest (mount plan only) then a
+// commit that, unlike landing, claims the lease and opens the Worker-tier run.
+func dispatchInitiativeSetupRound(db *sql.DB, home string, prepared preparedDispatch) (map[string]any, error) {
+	attested, err := dispatchAttestInitiativeSetup(home, prepared)
+	if err != nil {
+		return nil, err
+	}
+	attested = dispatchRecheckAttestation(home, prepared, attested)
+
+	var effect map[string]any
+	if err := underDispatchLock(db, func(ctx context.Context, q Q) error {
+		var e error
+		effect, e = dispatchCommitInitiativeSetup(ctx, q, prepared, attested)
 		return e
 	}); err != nil {
 		return nil, err
@@ -439,6 +463,13 @@ func applyAction(ctx context.Context, q Q, now time.Time, a dispatch.Action, tun
 		// next), so it never applies from prepare's transaction: the seam
 		// returns a candidate and dispatchCommit applies it (ADR-016 D1).
 		return nil, Domainf("dispatch: a spawn consequence applies only through the prepare/attest/commit seam")
+
+	case dispatch.KindInitiativeSetup:
+		// Like a spawn, the ADR-025 D3 cut needs host authority (the shared-store
+		// precreate mount plan), so it never applies from prepare's transaction:
+		// the seam returns an initiativeSetup arm and dispatchCommitInitiativeSetup
+		// applies it.
+		return nil, Domainf("dispatch: an initiative-setup consequence applies only through the prepare/attest/commit seam")
 
 	case dispatch.KindReap:
 		// The reap decision's charge/block computation is Decide's; the write

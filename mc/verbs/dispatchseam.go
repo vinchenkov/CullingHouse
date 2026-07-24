@@ -504,6 +504,11 @@ type preparedDispatch struct {
 	// Spawn. Keeping it out here is what makes them unreachable by TYPE.
 	// Do not "simplify" this into preparedCandidate.
 	landing *preparedLanding
+	// initiativeSetup is the ADR-025 D3 route-free InitiativeSetup arm, a fourth
+	// mutually-exclusive variant. Like landing it is a SIBLING (not a
+	// preparedCandidate variant) so this file's unguarded cand.spawn derefs stay
+	// unreachable by type; unlike landing it opens a run.
+	initiativeSetup *preparedInitiativeSetup
 }
 
 type preparedCandidate struct {
@@ -614,6 +619,13 @@ func dispatchPrepareWithIdentity(ctx context.Context, q Q, identity dispatchProt
 		}
 	}
 
+	// The ADR-025 D3 InitiativeSetup needs host authority (the shared-store
+	// precreate mount plan) but no routing, so like a landing it returns its own
+	// candidate arm rather than finishing here.
+	if sel.action.Kind == dispatch.KindInitiativeSetup && sel.action.InitiativeSetup != nil {
+		return dispatchInitiativeSetupPrepare(ctx, q, identity, uuid, requestID, sel, sel.action.InitiativeSetup.InitiativeID)
+	}
+
 	effect, err := applyAction(ctx, q, sel.now, sel.action, sel.tun)
 	if err != nil {
 		return preparedDispatch{}, err
@@ -710,6 +722,8 @@ func dispatchRecheckAttestation(home string, prepared preparedDispatch, first at
 	reattest := dispatchAttest
 	if prepared.landing != nil {
 		reattest = dispatchAttestLanding
+	} else if prepared.initiativeSetup != nil {
+		reattest = dispatchAttestInitiativeSetup
 	}
 	second, err := reattest(home, prepared)
 	if err == nil && reflect.DeepEqual(canonicalPrivateAttestation(first), canonicalPrivateAttestation(second)) {

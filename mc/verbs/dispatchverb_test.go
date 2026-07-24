@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"mc/dispatch"
+	"mc/routing"
 )
 
 var (
@@ -132,10 +133,13 @@ func dvTask(id int64, scope dispatch.Scope, status dispatch.Status, priority int
 }
 
 func dvConfig(hour int) dispatch.Config {
+	// Mirror selectFromSpine's RealRouting so the pure-Decide oracle matches the
+	// real Dispatch path (the ADR-025 S1.4 InitiativeSetup emission gate).
+	_, allowFakeDecorrelation := routing.ActiveRegistry()
 	return dispatch.Config{
 		ReviewWIPCap: 3, TimeoutMinutes: 60, GraceMinutes: 15,
 		SpawnGraceS: 60, ConsoleHour: hour, ConsoleMinute: 0,
-		ConsoleLoc: time.UTC,
+		ConsoleLoc: time.UTC, RealRouting: !allowFakeDecorrelation,
 	}
 }
 

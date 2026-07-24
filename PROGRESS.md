@@ -67,10 +67,12 @@ resident `SPINE_SCHEMA_VERSION` moved to 14 in lockstep.
 
 2. `resident one-use dispatch control > rejects every identity mismatch before
    accepting child output` (`resident/src/resident-control.test.ts`),
-   load-sensitive. Repro while another suite runs:
+   load-sensitive; observed ~1 in 3 full-suite runs during heavy parallel
+   looping (2026-07-24). Repro while another suite runs:
    `for i in $(seq 1 8); do ./resident/check.sh || break; done`
-   Test-only child exit can race the fd-3 poller and surface `EBADF`; production
-   waits for ack. Fail-closed and pre-existing.
+   Test-only child exit can race the fd-3 poller and surface `EBADF` on
+   read/close; production waits for ack. Always clears on an isolated re-run.
+   Fail-closed and pre-existing.
 
 ## Phase state
 
@@ -171,11 +173,14 @@ resident `SPINE_SCHEMA_VERSION` moved to 14 in lockstep.
         fake-safe gate, and the loadRecords receipt JOIN — all flowing into
         `Decide` but unused, zero behavioral change); design + the build-tag
         fake-safety nuance in IMPLEMENTATION-NOTES 2026-07-23 / ledger 2026-07-24.
-        S1.4c-1 landed the inert `PrivateDispatchInitiativePrecreate` mount-plan
-        step + validation; S1.4c-2a landed `captureInitiativePrecreate` (the
-        attest-side authoring — two proven parents, on-disk fresh/retry, inert).
-        Owed: S1.4c-2b (the lane wiring: emission→route-free attest→commit), S1.5
-        (resident precreate + register), S3b (D6 fence), S4–S6.
+        S1.4c wired the whole route-free InitiativeSetup dispatch lane, now LIVE
+        in-process: under real routing a promoted-uncut initiative drives
+        Decide→attest→commit, claiming the lease and opening a worker/pipeline run
+        that carries the shared-store precreate plan (the first tick ADR-025 stops
+        being purely inert — but nothing executes until S1.5's resident runs it).
+        Owed: S1.5 (resident precreate + `mc __setup-initiative` + register),
+        S1.4c-2c (the Darwin private-frame carrier — non-blocking, guarded
+        fail-closed), S3b (D6 fence), S4–S6.
 - [ ] Release prep — install/onboard front door and construction-document
       disposition.
 
@@ -241,8 +246,24 @@ native resume, container reconciliation, Homie credential projection,
 dashboard LaunchAgent generation, and the four non-Console tabs. Details and
 commit map are in the closed Phase 4 ledger.
 
-NEXT: ADR-025 S1.4c-2b — wire the route-free InitiativeSetup lane around the
-now-landed `captureInitiativePrecreate` (S1.4c-2a). This is the ATOMIC remainder:
+NEXT: ADR-025 S1.5 — the resident runs the now-dispatched InitiativeSetup cut,
+completing S1. On an `{action:"initiative-setup"}` effect (see the effect keys in
+`applyInitiativeSetup`, mc/verbs/dispatchinitiativesetupseam.go) the resident
+(resident/src/effects.ts): (1) PRECREATES the skeleton from the mount plan's
+`initiative_precreate` step — store root 0555 with exactly {git, source} under
+the proven `.mission-control/initiatives` parent, worktree dir 0700 under the
+proven `.mc-worktrees` parent (mirror how the task precreate is executed on
+`mount_plan.task_precreate`, effects.ts ~:497-521); (2) writes the setup envelope
+(operation `initiative-setup`, the two container roots + Setup instruction) and
+runs `mc __setup-initiative` in the network=none/uid-10002/cap-drop container
+(store RW, worktree RW, real repo RO); (3) on the emitted cut SHA, stat's the two
+roots host-side and REGISTERS the durable receipt via a NEW verbs
+`RegisterInitiativeSetup` (the write deferred from S1.1 — idempotent-by-
+initiative_id like task_assignments, lease-fenced; insert into
+initiative_setup_receipts). Study the task first-task setup resident path
+(`runFirstTaskSetup`, effects.ts) + `RegisterFirstTaskSetup` (tasksetup.go) as
+analogs. Then S3b (D6 fence), S4–S6. The Darwin private-frame carrier (S1.4c-2c)
+is owed but non-blocking (the resident uses the in-process `mc dispatch` path). This is the ATOMIC remainder:
 emission + commit MUST land together (a Decide that emits an uncommittable Kind
 wedges/spins production once RealRouting is true). Full Plan-agent map in the
 ledger 2026-07-24; the lane FUSES the landing lane (route-free) with the spawn

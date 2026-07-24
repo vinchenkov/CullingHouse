@@ -462,6 +462,16 @@ func Decide(rec Records, lock Lock, cfg Config, clk Clock) Action {
 		}}
 	}
 
+	// (0d) An initiative promoted but not yet cut owes its shared-store
+	// InitiativeSetup before any other initiative-family spawn (ADR-025 D3).
+	// Placed after landing (an approved arc still lands before a re-cut is
+	// attempted) and before occupancy so the cut is never starved by a full
+	// review queue. Gated to real routing: under fake routing children make the
+	// shared worktree themselves (S1.4 design note).
+	if id, ok := nextInitiativeSetup(rec, cfg); ok {
+		return Action{Kind: KindInitiativeSetup, InitiativeSetup: &InitiativeSetup{InitiativeID: id}}
+	}
+
 	// (1) Queue occupancy: unarchived packets across all Worksources
 	// (Inv. 18 — the single global cap). Landing-pending packets still count:
 	// the slot frees on landing success, never at approve time (§10 step 0c).

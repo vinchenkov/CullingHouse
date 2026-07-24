@@ -911,3 +911,46 @@ parent). Full fast suite green.
 
 NEXT: S1.4c-2b — wire the lane (emission→route-free attest→commit) around
 captureInitiativePrecreate; see PROGRESS NEXT.
+
+## 2026-07-24 — ADR-025 S1.4c-2b: the InitiativeSetup lane is LIVE (in-process)
+
+The route-free InitiativeSetup dispatch lane is wired: under real routing a
+promoted-but-uncut initiative now drives the full emission→attest→commit path.
+This is the first tick where ADR-025 stops being purely inert — the cut is
+actually dispatched (the resident that runs it is S1.5, still owed, so nothing
+executes yet). Production reaches this via the in-process `mc dispatch`
+(DispatchWithProtocolIdentity) the resident's tick loop uses (tick-loop.ts:58 →
+main.go:390), NOT the Darwin private frame.
+
+- Emission: `Decide` step (0d) — after (0c) landing, before (1) occupancy — calls
+  `nextInitiativeSetup(rec, cfg)` and returns `KindInitiativeSetup`;
+  `assertWellFormed` gained the arm. `dvConfig` now sets
+  `RealRouting=!allowFakeDecorrelation` so the pure-Decide oracle matches the
+  real Dispatch path.
+- Lane (new `dispatchinitiativesetupseam.go`, mirroring the landing seam):
+  `preparedDispatch.initiativeSetup` (a 4th mutually-exclusive sibling);
+  `dispatchInitiativeSetupPrepare` (allocates the run id, freezes the token over
+  a Worker-tier candidate projection); route-free `dispatchAttestInitiativeSetup`
+  (no routing.md; authors the plan via captureInitiativePrecreate; failures are
+  deployment health); `dispatchCommitInitiativeSetup` +
+  `initiativeSetupCommitFences` (DeepEqual/token/re-decide; the re-decide fence
+  catches a concurrent cut — if the receipt appeared, Decide no longer selects
+  it); `applyInitiativeSetup` (domain.Claim role=worker/tier=pipeline,
+  subject=initiative id, EMPTY binding, no pool/brief; effect
+  `{action:"initiative-setup", run_id, initiative_id, subject_id,
+  heartbeat_interval_s, mount_plan}`; writeAttestedReceipt). Round + branch +
+  recheck + the applyAction guard case wired in dispatchverb/dispatchseam.
+- Private-frame guard: the Darwin `DispatchPreparePrivate` fails CLOSED on an
+  initiativeSetup arm (it would otherwise nil-deref the candidate) — its carrier
+  (S1.4c-2c) is owed but non-critical (the resident uses the in-process path).
+- Test audit held: NO existing default-build test broke (branch-less initiative
+  fixtures keep the predicate inert).
+
+Tests: pure-Decide emission ahead of the Strategist (falls through once cut); a
+full-path `Dispatch()` verb test proving the effect, the claimed lease, and a
+worker/pipeline run keyed on the arc with an empty binding and no harness/brief.
+Full fast suite green.
+
+NEXT: S1.5 — the resident runs it (precreate the skeleton, launch
+`mc __setup-initiative`, register the receipt via `RegisterInitiativeSetup`).
+The private-frame carrier (S1.4c-2c) is owed but non-blocking.

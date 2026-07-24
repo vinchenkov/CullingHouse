@@ -127,6 +127,9 @@ func assertWellFormed(t *testing.T, a Action) {
 	if a.Reenter != nil {
 		n++
 	}
+	if a.InitiativeSetup != nil {
+		n++
+	}
 	switch a.Kind {
 	case KindIdle:
 		if n != 0 || a.Idle == "" {
@@ -147,6 +150,10 @@ func assertWellFormed(t *testing.T, a Action) {
 	case KindReenter:
 		if n != 1 || a.Reenter == nil {
 			t.Fatalf("malformed reenter action: %+v", a)
+		}
+	case KindInitiativeSetup:
+		if n != 1 || a.InitiativeSetup == nil {
+			t.Fatalf("malformed initiative-setup action: %+v", a)
 		}
 	default:
 		t.Fatalf("unknown action kind %q", a.Kind)

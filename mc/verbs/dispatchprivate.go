@@ -203,6 +203,13 @@ func DispatchPreparePrivate(ctx context.Context, q Q, req PrivateDispatchPrepare
 		response.Landing = privateLandingFromPrepared(prepared.landing)
 		return response, nil
 	}
+	if prepared.initiativeSetup != nil {
+		// The ADR-025 D3 InitiativeSetup lane is carried by the in-process
+		// `mc dispatch` path the resident's tick loop uses, not by this Darwin
+		// private frame yet (its carrier is owed — S1.4c-2c). Fail closed with a
+		// clear message rather than fall through to the nil candidate deref below.
+		return PrivateDispatchPrepareResponse{}, Domainf("dispatch: the initiative-setup lane is not carried by the private dispatch frame (ADR-025 S1.4c-2c owed)")
+	}
 	response.Kind = "candidate"
 	response.Candidate = privateCandidateFromPrepared(prepared.candidate)
 	return response, nil
