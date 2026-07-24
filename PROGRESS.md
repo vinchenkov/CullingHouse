@@ -6,17 +6,18 @@ REPO PATH: `~/dev/ai/homie`. Never relocate this repo into `~/Documents`,
 `~/Desktop`, or `~/Downloads`: macOS TCC can revoke an agent session's own
 filesystem access there during fan-out. Full Disk Access does not fix it.
 
-LAST GREEN SHA: `356896d` — ADR-025 S1.3a: `MaterializeInitiativeStore`, the
-cross-base initiative store/worktree cut (real-git spike-validated: the checkout
-uses explicit GIT_DIR/GIT_WORK_TREE because the store and worktree bases are not
-host-siblings, so the container-relative pointers resolve only in-container).
-Host-side unit-tested, inert until the S1.3b subcommand + S1.5 resident
-invocation. Atop S1.1 (the `initiative_setup_receipts` v14 table + read half)
-and S2/S3a (the inert host-side mount arms: Worker RW + Verifier/Packager RO,
-receipt-vouched). Still inert end-to-end: no receipt producer, so a real child
-health-refuses on an absent store. S2 was adversarially reviewed (3 lenses, no
-findings). Full fast suite green; `verbs`/`substrate` cold `-count=1` green;
-launchd not loaded. Prior codex green was `28d6102` (production reset lifecycle).
+LAST GREEN SHA: `ba3811c` — ADR-025 S1.3b: the `mc __setup-initiative`
+subcommand + closed-union envelope arm wrapping S1.3a's
+`MaterializeInitiativeStore` — the entire container side of the InitiativeSetup
+cut (cross-base store/worktree, spike-validated GIT_DIR/GIT_WORK_TREE checkout;
+fresh/retry with idempotent-residue). Host-side tested. Atop S1.1 (the
+`initiative_setup_receipts` v14 table + read half) and S2/S3a (the inert
+host-side mount arms). Still inert end-to-end: nothing invokes the cut yet, no
+receipt producer, so a real child health-refuses on an absent store. S2 was
+adversarially reviewed (3 lenses, no findings). Full fast suite green (after a
+transient mc-land hang cleared on re-run — ledger 2026-07-23); `verbs`/
+`cmd/mc`/`substrate` cold `-count=1` green; launchd not loaded. Prior codex
+green was `28d6102` (production reset lifecycle).
 Full Docker lanes (26 `docker_boundary`; 10 `docker_e2e`) were green at
 `c8f37e9`-era HEAD. Extended Playwright smoke and install.sh dev walk were last
 green at `d0ef4bb`; real onboarding crossing at `bf5981d`. Production image
