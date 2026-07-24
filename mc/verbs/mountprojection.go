@@ -67,6 +67,20 @@ func loadDispatchMountState(ctx context.Context, q Q, sp *dispatch.Spawn, rec di
 			return state, err
 		}
 		state.SubjectAcceptedSealRebuild = rebuild
+		// An initiative child's shared-store setup receipt (ADR-025 D3) is keyed
+		// on the PARENT initiative (SubjectInitiativeID = child.initiative_id),
+		// never on the child subject task id — the receipt belongs to the one
+		// shared store, not to any single child. Freezing it under the token
+		// makes the host mount vouch (requireInitiativeSetupReceiptVouch)
+		// reachable; a nil receipt is the normal pre-cut state and leaves the
+		// child health-refusing on an absent store.
+		if state.SubjectInitiativeID != nil {
+			setup, err := substrate.LoadSubjectInitiativeSetup(ctx, q, *state.SubjectInitiativeID)
+			if err != nil {
+				return state, err
+			}
+			state.SubjectInitiativeSetup = setup
+		}
 	}
 
 	rows, err := substrate.LoadDispatchWorksourceProjection(ctx, q)

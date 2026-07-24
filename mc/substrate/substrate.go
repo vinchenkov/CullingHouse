@@ -83,7 +83,7 @@ func Init(db *sql.DB) error {
 // runtime_auth_delivery to projection|materialized (ADR-022).
 // Version 13 adds the lock's homie_idle_timeout_s tunable (ADR-016 D3 Homie
 // wake selector / launch-bind non-idle CAS).
-const CurrentSchemaVersion = 13
+const CurrentSchemaVersion = 14
 
 // migrationV1ToV2 is ADR-016 Decision 2's storage step, frozen as history.
 //
@@ -534,6 +534,53 @@ ALTER TABLE lock ADD COLUMN homie_idle_timeout_s INTEGER NOT NULL DEFAULT 1800
     CHECK (homie_idle_timeout_s > 0);
 `
 
+// migrationV13ToV14 adds the initiative_setup_receipts table (ADR-025 D3): the
+// durable, initiative-keyed, immutable record of an initiative's shared-store
+// cut — both setup-root identities plus the recorded cut SHA. Purely additive
+// (a new table with its durable-evidence triggers), so a migrated spine and a
+// fresh one are indistinguishable and no row is rebuilt. This text is frozen; a
+// later step is a new constant, never an edit to this one.
+const migrationV13ToV14 = `
+CREATE TABLE initiative_setup_receipts (
+    initiative_id       INTEGER PRIMARY KEY REFERENCES tasks(id),
+    store_device        TEXT NOT NULL
+                       CHECK (typeof(store_device) = 'text' AND
+                              store_device GLOB '[0-9]*' AND store_device NOT GLOB '*[^0-9]*'),
+    store_inode         TEXT NOT NULL
+                       CHECK (typeof(store_inode) = 'text' AND
+                              store_inode GLOB '[0-9]*' AND store_inode NOT GLOB '*[^0-9]*'),
+    store_owner_uid     INTEGER NOT NULL
+                       CHECK (typeof(store_owner_uid) = 'integer' AND store_owner_uid >= 0),
+    worktree_device     TEXT NOT NULL
+                       CHECK (typeof(worktree_device) = 'text' AND
+                              worktree_device GLOB '[0-9]*' AND worktree_device NOT GLOB '*[^0-9]*'),
+    worktree_inode      TEXT NOT NULL
+                       CHECK (typeof(worktree_inode) = 'text' AND
+                              worktree_inode GLOB '[0-9]*' AND worktree_inode NOT GLOB '*[^0-9]*'),
+    worktree_owner_uid  INTEGER NOT NULL
+                       CHECK (typeof(worktree_owner_uid) = 'integer' AND worktree_owner_uid >= 0),
+    cut_sha             TEXT NOT NULL
+                       CHECK (typeof(cut_sha) = 'text' AND
+                              cut_sha GLOB '[0-9a-f]*' AND cut_sha NOT GLOB '*[^0-9a-f]*' AND
+                              (length(cut_sha) = 40 OR length(cut_sha) = 64)),
+    registered_at       TEXT NOT NULL DEFAULT (datetime('now')),
+    CHECK (length(store_device) <= 20 AND length(store_inode) <= 20 AND
+           length(worktree_device) <= 20 AND length(worktree_inode) <= 20)
+);
+
+CREATE TRIGGER initiative_setup_receipts_immutable
+BEFORE UPDATE ON initiative_setup_receipts
+BEGIN
+    SELECT RAISE(ABORT, 'initiative setup receipt is immutable; a retry reuses its recorded cut and roots, never re-resolves main (ADR-025 D3)');
+END;
+
+CREATE TRIGGER initiative_setup_receipts_no_delete
+BEFORE DELETE ON initiative_setup_receipts
+BEGIN
+    SELECT RAISE(ABORT, 'initiative setup receipts are durable cut evidence (ADR-025 D3)');
+END;
+`
+
 // Migrate brings an existing spine up to CurrentSchemaVersion, reporting
 // whether it changed anything. It is the "present with an older schema →
 // migrate" arm of §16.4; the caller owns the "absent on a non-empty volume →
@@ -559,7 +606,7 @@ func Migrate(db *sql.DB) (bool, error) {
 		return false, err
 	}
 
-	steps := map[int]string{1: migrationV1ToV2, 2: migrationV2ToV3, 3: migrationV3ToV4, 4: migrationV4ToV5, 5: migrationV5ToV6, 6: migrationV6ToV7, 7: migrationV7ToV8, 8: migrationV8ToV9, 9: migrationV9ToV10, 10: migrationV10ToV11, 11: migrationV11ToV12, 12: migrationV12ToV13}
+	steps := map[int]string{1: migrationV1ToV2, 2: migrationV2ToV3, 3: migrationV3ToV4, 4: migrationV4ToV5, 5: migrationV5ToV6, 6: migrationV6ToV7, 7: migrationV7ToV8, 8: migrationV8ToV9, 9: migrationV9ToV10, 10: migrationV10ToV11, 11: migrationV11ToV12, 12: migrationV12ToV13, 13: migrationV13ToV14}
 	changed := false
 	for version < CurrentSchemaVersion {
 		step, ok := steps[version]

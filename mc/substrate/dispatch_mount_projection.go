@@ -61,12 +61,12 @@ type DispatchMountState struct {
 // two setup roots (ADR-025 D3): the sanitized store root and the shared
 // worktree root, each carrying the canonical decimal device/inode/owner the
 // resident registered. The two are vouched independently because the worktree
-// is not a descendant of the store root (ADR-025 D1). The recorded cut SHA the
-// receipt also carries is owed to the slice that consumes it (arc verify/land),
-// not to this mount-vouch carrier.
+// is not a descendant of the store root (ADR-025 D1). CutSHA is the recorded
+// cut the arc verify/land slice reuses; the S2 mount vouch reads only the roots.
 type DispatchInitiativeSetup struct {
 	StoreRoot    DispatchTaskSetupIdentity `json:"store_root"`
 	WorktreeRoot DispatchTaskSetupIdentity `json:"worktree_root"`
+	CutSHA       string                    `json:"cut_sha,omitempty"`
 }
 
 // DispatchTaskAssignment is the git-derived half of a task_assignments row,
@@ -256,6 +256,37 @@ func LoadSubjectTaskAssignment(ctx context.Context, q dispatchProjectionQuerier,
 		return nil, err
 	}
 	return &a, rows.Err()
+}
+
+// LoadSubjectInitiativeSetup returns the durable ADR-025 D3 setup receipt for
+// one initiative (a scope='initiative' tasks row), or nil when none exists.
+// Like LoadSubjectTaskAssignment it is a projection consumed at dispatch
+// prepare (frozen into the token, re-derived and DeepEqual'd at commit), not a
+// lease-fenced reader. A nil result is the normal pre-cut state — the shared
+// store has not been materialized yet, so an initiative child resolves an
+// absent store and health-refuses. The two roots are keyed independently
+// because the worktree is not a descendant of the store (ADR-025 D1).
+func LoadSubjectInitiativeSetup(ctx context.Context, q dispatchProjectionQuerier, initiativeID int64) (*DispatchInitiativeSetup, error) {
+	rows, err := q.QueryContext(ctx, `
+		SELECT store_device, store_inode, store_owner_uid,
+		       worktree_device, worktree_inode, worktree_owner_uid, cut_sha
+		FROM initiative_setup_receipts WHERE initiative_id = ?`, initiativeID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	if !rows.Next() {
+		return nil, rows.Err()
+	}
+	var out DispatchInitiativeSetup
+	if err := rows.Scan(&out.StoreRoot.Device, &out.StoreRoot.Inode, &out.StoreRoot.OwnerUID,
+		&out.WorktreeRoot.Device, &out.WorktreeRoot.Inode, &out.WorktreeRoot.OwnerUID, &out.CutSHA); err != nil {
+		return nil, err
+	}
+	if rows.Next() {
+		return nil, fmt.Errorf("initiative %d has more than one setup receipt", initiativeID)
+	}
+	return &out, rows.Err()
 }
 
 // LoadSubjectAcceptedCompletionSeal projects only the receipt explicitly

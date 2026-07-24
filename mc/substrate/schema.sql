@@ -824,6 +824,58 @@ BEGIN
     SELECT RAISE(ABORT, 'task assignments are durable retry evidence (ADR-016 D5)');
 END;
 
+------------------------------------------------------------------------------
+-- initiative_setup_receipts — the durable ADR-025 D3 receipt of an initiative's
+-- shared-store cut. Keyed by the initiative (a scope='initiative' tasks row),
+-- one immutable row: it fuses the task machinery's two halves for the shared
+-- store — the vouch identities of BOTH setup roots (the sanitized store root
+-- and the shared worktree root; the worktree is not a descendant of the store,
+-- so both are vouched independently) AND the recorded cut SHA a retry reuses
+-- rather than re-resolving main (mirroring task_assignments' reuse rationale).
+-- Host paths deliberately stay out of the spine; the two root identities are
+-- typeof-fenced like every other D2 identity so a BLOB forgery cannot bypass
+-- the GLOB checks.
+------------------------------------------------------------------------------
+
+CREATE TABLE initiative_setup_receipts (
+    initiative_id       INTEGER PRIMARY KEY REFERENCES tasks(id),
+    store_device        TEXT NOT NULL
+                       CHECK (typeof(store_device) = 'text' AND
+                              store_device GLOB '[0-9]*' AND store_device NOT GLOB '*[^0-9]*'),
+    store_inode         TEXT NOT NULL
+                       CHECK (typeof(store_inode) = 'text' AND
+                              store_inode GLOB '[0-9]*' AND store_inode NOT GLOB '*[^0-9]*'),
+    store_owner_uid     INTEGER NOT NULL
+                       CHECK (typeof(store_owner_uid) = 'integer' AND store_owner_uid >= 0),
+    worktree_device     TEXT NOT NULL
+                       CHECK (typeof(worktree_device) = 'text' AND
+                              worktree_device GLOB '[0-9]*' AND worktree_device NOT GLOB '*[^0-9]*'),
+    worktree_inode      TEXT NOT NULL
+                       CHECK (typeof(worktree_inode) = 'text' AND
+                              worktree_inode GLOB '[0-9]*' AND worktree_inode NOT GLOB '*[^0-9]*'),
+    worktree_owner_uid  INTEGER NOT NULL
+                       CHECK (typeof(worktree_owner_uid) = 'integer' AND worktree_owner_uid >= 0),
+    cut_sha             TEXT NOT NULL
+                       CHECK (typeof(cut_sha) = 'text' AND
+                              cut_sha GLOB '[0-9a-f]*' AND cut_sha NOT GLOB '*[^0-9a-f]*' AND
+                              (length(cut_sha) = 40 OR length(cut_sha) = 64)),
+    registered_at       TEXT NOT NULL DEFAULT (datetime('now')),
+    CHECK (length(store_device) <= 20 AND length(store_inode) <= 20 AND
+           length(worktree_device) <= 20 AND length(worktree_inode) <= 20)
+);
+
+CREATE TRIGGER initiative_setup_receipts_immutable
+BEFORE UPDATE ON initiative_setup_receipts
+BEGIN
+    SELECT RAISE(ABORT, 'initiative setup receipt is immutable; a retry reuses its recorded cut and roots, never re-resolves main (ADR-025 D3)');
+END;
+
+CREATE TRIGGER initiative_setup_receipts_no_delete
+BEFORE DELETE ON initiative_setup_receipts
+BEGIN
+    SELECT RAISE(ABORT, 'initiative setup receipts are durable cut evidence (ADR-025 D3)');
+END;
+
 CREATE TABLE completion_seals (
     run_id TEXT PRIMARY KEY REFERENCES runs(id), task_id INTEGER NOT NULL REFERENCES tasks(id),
     completion_request_id TEXT NOT NULL UNIQUE CHECK (typeof(completion_request_id)='text' AND length(completion_request_id)=16 AND completion_request_id GLOB '[0-9a-f]*' AND completion_request_id NOT GLOB '*[^0-9a-f]*'),

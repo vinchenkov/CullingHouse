@@ -839,6 +839,13 @@ func validatePrivateInitiativeSetup(setup *PrivateDispatchInitiativeSetup) error
 			return Domainf("dispatch: private initiative setup root identity is malformed")
 		}
 	}
+	// The cut SHA mirrors the initiative_setup_receipts.cut_sha CHECK: a git
+	// object hash (40 or 64 lowercase hex). It is carried for the arc verify/land
+	// slice; the mount vouch reads only the roots, so an empty value from a
+	// pre-cut carrier is admitted, but a present one must be well-formed.
+	if setup.CutSHA != "" && (len(setup.CutSHA) != 40 && len(setup.CutSHA) != 64 || !assignmentHex.MatchString(setup.CutSHA)) {
+		return Domainf("dispatch: private initiative setup cut sha is malformed")
+	}
 	return nil
 }
 

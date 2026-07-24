@@ -42,11 +42,14 @@ Phase-completion Docker regression:
 `cd mc && mise exec -- go test -tags docker_e2e -timeout 15m ./e2e/...`
 Phase-completion dashboard browser smoke: `./dashboard/smoke.sh` (no Docker).
 
-Schema is v13. `mc onboard home` migrates v1 through v13 in place. v11 widened
+Schema is v14. `mc onboard home` migrates v1 through v14 in place. v11 widened
 the approve landing fence to assignment-armed tasks; v12 retires
 `egress_policy`/`network_allow` and narrows `runtime_auth_delivery` to
 `projection|materialized` (ADR-022) via the chain's first rebuild-and-copy
-(NULL-stash of the worksource references, not deferred FKs — see ledger).
+(NULL-stash of the worksource references, not deferred FKs — see ledger); v14
+adds `initiative_setup_receipts` (ADR-025 D3: one immutable, initiative-keyed
+row per shared-store cut — both setup roots + the recorded cut SHA). The
+resident `SPINE_SCHEMA_VERSION` moved to 14 in lockstep.
 
 ## Known intermittent failures
 
@@ -154,8 +157,12 @@ the approve landing fence to assignment-armed tasks; v12 retires
         receipt-vouched Worker mount arm (`6fd88cb`, 3-lens review clean); S3a
         the Verifier/Packager forced-RO reader arm (`875dcd8`). A real child
         still resolves an absent store and refuses; every other role/shape
-        refuses. Owed: S1 (cut+receipts, NEXT), S3b (D6 fence), S4–S6 (roles,
-        arc verify, landing import).
+        refuses. S1.1 landed the `initiative_setup_receipts` spine table (v14) +
+        `LoadSubjectInitiativeSetup` + loader wiring (keyed on the parent
+        initiative) + `CutSHA` carrier — the READ half of the D3 receipt; the
+        register/write is owed to S1.5. Owed: S1.3 (`__setup-initiative`
+        materializer), S1.4 (dispatch step), S1.5 (resident precreate +
+        register), S3b (D6 fence), S4–S6.
 - [ ] Release prep — install/onboard front door and construction-document
       disposition.
 
@@ -221,16 +228,16 @@ native resume, container reconciliation, Homie credential projection,
 dashboard LaunchAgent generation, and the four non-Console tabs. Details and
 commit map are in the closed Phase 4 ledger.
 
-NEXT: ADR-025 S1 — `InitiativeSetup` cut (re-sequenced ahead of S3b; see
-IMPLEMENTATION-NOTES 2026-07-23). S2/S3a landed the inert host-side mount arms;
-S1 is the missing producer that makes their receipt vouch reachable and
-establishes the initiative-child container lifecycle the D6 fence (S3b) will
-guard. Build: skeleton precreate (store root 0555 with exactly {git, source},
-worktree dir 0700 under `.mc-worktrees`), the `mc __setup-initiative`
-materializer (sanitized store cut from CURRENT main tip + checkout, generalizing
-`MaterializeFirstTaskStore`), initiative-keyed durable receipts carrying BOTH
-roots + the recorded cut SHA, retry-reuse (never re-resolve main), the
-`.mc-worktrees` discipline, D10 reservations/covers, and the receipt loader that
-populates `SubjectInitiativeSetup`. The D6-fence seam map and the InitiativeSetup
-step-emission notes are in `docs/ledger/phase-5.md` (2026-07-23). S3b (D6 fence)
-and S4–S6 still owed; see `docs/adr/025-initiative-production-mounts.md` §Slices.
+NEXT: ADR-025 S1.3 — the `mc __setup-initiative` materializer subcommand (Go),
+generalizing `MaterializeFirstTaskStore` (`setupenvelope.go:281`). It runs in a
+network=none, uid-10002, cap-drop-ALL container (real repo RO, store RW,
+worktree RW) and materializes the sanitized store cut from the CURRENT main tip
+plus the checkout: bare sanitized store (exact closure pack of the cut commit,
+`HEAD -> refs/heads/mc/initiative-<id>` at the cut SHA, sanitized config, empty
+hooks/info/objects-info/packed-refs/shallow, `worktrees/mc-initiative-<id>/`) and
+the shared worktree checkout with the container-relative pointer bytes. It
+records the cut SHA; a retry reuses the recorded cut SHA exactly (never
+re-resolves main). Study `MaterializeFirstTaskStore` and the `mc __` setup
+subcommands in `main.go` before implementing. Then S1.4 (dispatch step), S1.5
+(resident precreate + `RegisterInitiativeSetup` write, deferred from S1.1), S3b
+(D6 fence), S4–S6. Register/write scope: S1.5. See ADR-025 §Slices.

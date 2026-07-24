@@ -639,3 +639,42 @@ discipline, and D10 reservations/covers. Then the receipt loader populates
 Scope the dispatch InitiativeSetup step emission (D3: first tick where promotion
 is observable, before any other initiative-family spawn) against the existing
 task precreate/setup step machinery before implementing.
+
+## 2026-07-23 — ADR-025 S1.1: initiative_setup_receipts (read half of the D3 cut)
+
+Bottom-up start on S1 (the InitiativeSetup cut). This slice lands the spine
+table and the READ path; the register/write is deferred to S1.5 where the
+lease/step context can fence it (the task analog `RegisterFirstTaskSetup`
+fences on a live Worker run + lock lease — that fence has no S1.1 equivalent
+yet). Still inert: with no producer, `initiative_setup_receipts` is empty, so
+`LoadSubjectInitiativeSetup` returns nil, `SubjectInitiativeSetup` stays nil,
+and an initiative child health-refuses on an absent store exactly as before.
+
+- Schema (v13→v14): `initiative_setup_receipts` — `initiative_id PRIMARY KEY
+  REFERENCES tasks(id)` (the scope='initiative' row; no `initiatives` table),
+  two independent root triples (store + worktree, decimal-GLOB/typeof-fenced
+  like `task_setup_receipts`; the worktree is not a descendant of the store,
+  ADR-025 D1), `cut_sha` (git-hash hex, len 40|64 — kept simpler than
+  `task_assignments.base_sha`: no separate `object_format` column, since S1.1
+  does not consume it), `registered_at`, plus immutable + no-delete triggers.
+  Keyed by initiative (one immutable row → retry reuses the recorded cut,
+  mirroring `task_assignments`' keying, NOT run-keyed like
+  `task_setup_receipts`). Added to schema.sql AND as `migrationV13ToV14`
+  (byte-identical), registered in the steps map; `CurrentSchemaVersion`→14 and
+  the resident `SPINE_SCHEMA_VERSION`→14 in lockstep (plus the resident
+  handshake-test default 13→14 — this bun test catches the mismatch without
+  Docker, unlike the LESSON's usual Docker-only catch).
+- Read: `LoadSubjectInitiativeSetup` (single `*DispatchInitiativeSetup` or nil,
+  modeled on `LoadSubjectTaskAssignment`). Loader wiring in
+  `loadDispatchMountState` keys on `*state.SubjectInitiativeID` (the PARENT
+  initiative id = child.initiative_id), NEVER the child subject id — the
+  receipt belongs to the one shared store (ADR-025 D2). Carrier gained
+  `CutSHA` (omitempty); helper-boundary validation checks it when present
+  (git-hash hex). The mount vouch still reads only the two roots.
+- Tests: immutable/typed/closed (PK one-row, cut_sha length/hex/BLOB fences,
+  negative-uid, non-decimal device, immutable/no-delete); migrate-matches-fresh
+  (via `migratedV1Spine`, no new testdata file); load projects both roots + cut
+  and returns nil for an absent initiative. Full fast suite green;
+  `substrate`/`verbs` cold `-count=1` green.
+
+NEXT: S1.3 — the `mc __setup-initiative` materializer (see PROGRESS NEXT).
