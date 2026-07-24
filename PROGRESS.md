@@ -6,13 +6,15 @@ REPO PATH: `~/dev/ai/homie`. Never relocate this repo into `~/Documents`,
 `~/Desktop`, or `~/Downloads`: macOS TCC can revoke an agent session's own
 filesystem access there during fan-out. Full Disk Access does not fix it.
 
-LAST GREEN SHA: `cf71fc7` — ADR-025 S3b.2: the in-container store-worktree
-cleanliness executor (`mc __verify-initiative-clean` + `RunInitiativeCleanFence`)
-— status-clean + hidden-index-flag refusal + HEAD-on-managed-branch on the
-cross-base worktree, its own minimal fence envelope. S3b.1 (`cf71fc7`'s parent
-`ad88dc9`) added the resident per-initiative producer-absence loop
-`requireInitiativeChildrenAbsent`. Both INERT (no caller yet) — S3b.3 (dispatch
-projection + marker) then S3b.4 (resident wiring) make the D6 fence LIVE. S1 (the
+LAST GREEN SHA: `8b9c209` — ADR-025 S3b.3a: `substrate.LoadInitiativePriorChildRuns`
+— the id-sorted pipeline-tier run ids of an initiative's child tasks (the D6
+producer-absence input), a MaxInitiativePriorChildRuns=512 cap that REFUSES
+rather than truncates. Standalone + tested, NOT yet wired. Prior inert D6 halves:
+S3b.2 (`cf71fc7`, the `mc __verify-initiative-clean` cleanliness executor) and
+S3b.1 (`ad88dc9`, the resident `requireInitiativeChildrenAbsent` absence loop).
+Owed to make D6 LIVE: S3b.3b (wire the projection into `loadDispatchMountState` +
+author the `initiative_child` spawn-plan marker) then S3b.4 (resident create-path
+gate). S1 (the
 cut) is COMPLETE (S1.5b-2 `8aba956`): the receipt producer exists and S2/S3a's
 mount vouch is reachable end-to-end. Full fast suite green (the load-sensitive resident EBADF flake —
 intermittent #2, ~1 in 3 under heavy looping — clears on re-run);
