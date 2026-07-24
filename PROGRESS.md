@@ -6,17 +6,17 @@ REPO PATH: `~/dev/ai/homie`. Never relocate this repo into `~/Documents`,
 `~/Desktop`, or `~/Downloads`: macOS TCC can revoke an agent session's own
 filesystem access there during fan-out. Full Disk Access does not fix it.
 
-LAST GREEN SHA: `933a5e0` — ADR-025 S1.4a: the inert dispatch foundation for the
-InitiativeSetup emission — `dispatch.Task.InitiativeSetupDone`, `KindInitiativeSetup`
-+ its action arm, `Config.RealRouting` (the fake-safe gate, default false), and
-the pure `nextInitiativeSetup` predicate (NOT yet called by `Decide`, so zero
-behavioral change). Design settled in IMPLEMENTATION-NOTES 2026-07-23 (a novel
-route-free lease-claiming setup action + the fake-lane regression gate). Atop
-S1.3 (the container side of the cut: `MaterializeInitiativeStore` +
-`mc __setup-initiative`), S1.1 (`initiative_setup_receipts` v14 + read), and
-S2/S3a (inert host-side mount arms). Still inert end-to-end: nothing emits or
-invokes the cut yet. S2 was adversarially reviewed (3 lenses, no findings). Full
-fast suite green (after the documented resident EBADF flake cleared on re-run);
+LAST GREEN SHA: `999f6e7` — ADR-025 S1.4b: the inert dispatch data plumbing —
+the loadRecords `initiative_setup_receipts` JOIN (sets `Task.InitiativeSetupDone`)
+and `Config.RealRouting = !allowFakeDecorrelation` in selectFromSpine, atop
+S1.4a's `nextInitiativeSetup` predicate + `KindInitiativeSetup` type. All flow
+into `Decide` but stay unused (the emission wires in S1.4c), so zero behavioral
+change. Build-tag nuance nailed down (ledger 2026-07-24): default build →
+RealRouting=true (real seam tests get the emission in S1.4c); test_fake_routing
+tag → false (protects the Phase 4 fake E2E). Atop S1.3 (the container side of the
+cut), S1.1 (`initiative_setup_receipts` v14 + read), and S2/S3a (inert host-side
+mount arms). Still inert end-to-end: nothing emits or invokes the cut yet. S2 was
+adversarially reviewed (3 lenses, no findings). Full fast suite green;
 `dispatch`/`verbs`/`cmd/mc`/`substrate` cold `-count=1` green; launchd not
 loaded. Prior codex green was `28d6102` (production reset lifecycle).
 Full Docker lanes (26 `docker_boundary`; 10 `docker_e2e`) were green at
