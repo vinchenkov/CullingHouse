@@ -6,14 +6,14 @@ REPO PATH: `~/dev/ai/homie`. Never relocate this repo into `~/Documents`,
 `~/Desktop`, or `~/Downloads`: macOS TCC can revoke an agent session's own
 filesystem access there during fan-out. Full Disk Access does not fix it.
 
-LAST GREEN SHA: `e09add7` — ADR-025 S1.5a/a.2: the Go side of the resident
-handoff — `RegisterInitiativeSetup` (the receipt write deferred from S1.1, the
-last missing producer; two-root, fenced on the initiative, idempotent, re-cut
-refuses) + `ContinueInitiativeSetup` (the seal-free lease terminal that frees the
-singleton lease the InitiativeSetup run claims) + their `mc initiative
-setup-register`/`setup-continue` CLIs. Atop S1.4c-2b: the whole route-free
-InitiativeSetup dispatch lane is LIVE in-process. Only the resident TS handler
-(S1.5b) remains to complete S1. Under real routing a
+LAST GREEN SHA: `3703c2b` — ADR-025 S1.5b-1: `precreateInitiativeSkeleton`, the
+resident-side two-root precreate (store root 0555 {git,source} + empty 0700
+worktree on separate bases, D1; proves both parents; refuses recover/existing/
+non-0700-parent). Inert (exported + tested, not wired into applyEffect until
+S1.5b-2). Atop S1.5a/a.2 (the Go register + continue verbs + CLIs) and S1.4c-2b
+(the whole route-free InitiativeSetup dispatch lane, LIVE in-process). Only the
+resident effect handler (S1.5b-2) remains to complete S1 — after which S2/S3a's
+mount vouch is reachable end-to-end. Under real routing a
 promoted-uncut initiative drives Decide (0d emission) → route-free attest
 (captureInitiativePrecreate) → commit (claims the lease, opens a worker/pipeline
 run keyed on the arc with empty binding + no harness/brief, carries the
