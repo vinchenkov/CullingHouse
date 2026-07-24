@@ -1,16 +1,92 @@
-import { chmod, lstat, mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdir, mkdtemp, readdir, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, describe, expect, test } from "bun:test";
-import { precreateTaskSkeleton, recheckAcceptedSeal, type PathIdentity } from "./task-skeleton";
+import { precreateInitiativeSkeleton, precreateTaskSkeleton, recheckAcceptedSeal, type PathIdentity } from "./task-skeleton";
 
 const homes: string[] = [];
 
 afterEach(async () => {
   for (const path of homes.splice(0)) {
     await chmod(join(path, "workspace", ".mission-control", "tasks", "task-7"), 0o700).catch(() => {});
+    // The initiative store root is fixed 0555; make it writable before rm.
+    await chmod(join(path, "workspace", ".mission-control", "initiatives", "initiative-7"), 0o700).catch(() => {});
     await rm(path, { recursive: true, force: true });
   }
+});
+
+async function idOf(path: string): Promise<PathIdentity> {
+  const stat = await lstat(path, { bigint: true });
+  return { canonical: path, device: stat.dev.toString(10), inode: stat.ino.toString(10), owner_uid: Number(stat.uid) };
+}
+
+async function initiativeFixture(): Promise<{ workspace: string; store_parent: PathIdentity; worktree_parent: PathIdentity }> {
+  const root = await realpath(await mkdtemp(join(tmpdir(), "mc-initiative-skeleton-")));
+  homes.push(root);
+  const workspace = join(root, "workspace");
+  const storeParent = join(workspace, ".mission-control", "initiatives");
+  const worktreeParent = join(workspace, ".mc-worktrees");
+  await mkdir(storeParent, { recursive: true, mode: 0o700 });
+  await mkdir(worktreeParent, { recursive: true, mode: 0o700 });
+  await chmod(storeParent, 0o700);
+  await chmod(worktreeParent, 0o700);
+  return { workspace, store_parent: await idOf(storeParent), worktree_parent: await idOf(worktreeParent) };
+}
+
+const freshInitiativeSetup = { mode: "fresh" as const, object_format: "sha1", target_ref: "main" };
+
+describe("resident initiative-skeleton precreate (ADR-025 D3)", () => {
+  test("creates the 0555 store {git,source} and the empty 0700 worktree on two bases", async () => {
+    const f = await initiativeFixture();
+    const { store, worktree } = await precreateInitiativeSkeleton({
+      workspace_root: f.workspace, initiative_id: 7, child_mode: 0o700,
+      setup: freshInitiativeSetup, store_parent: f.store_parent, worktree_parent: f.worktree_parent,
+    });
+    const storeRoot = join(f.workspace, ".mission-control", "initiatives", "initiative-7");
+    const worktreeRoot = join(f.workspace, ".mc-worktrees", "initiative-7");
+    expect(store.canonical).toBe(storeRoot);
+    expect(worktree.canonical).toBe(worktreeRoot);
+    expect(Number((await lstat(storeRoot, { bigint: true })).mode & 0o777n)).toBe(0o555);
+    expect(Number((await lstat(worktreeRoot, { bigint: true })).mode & 0o777n)).toBe(0o700);
+    for (const child of ["git", "source"]) {
+      const s = await lstat(join(storeRoot, child), { bigint: true });
+      expect(s.isDirectory()).toBe(true);
+      expect(Number(s.mode & 0o777n)).toBe(0o700);
+    }
+    expect((await readdir(worktreeRoot)).length).toBe(0);
+    expect(store.device).toBe((await lstat(storeRoot, { bigint: true })).dev.toString(10));
+  });
+
+  test("refuses an existing store root without touching its bytes", async () => {
+    const f = await initiativeFixture();
+    const storeRoot = join(f.workspace, ".mission-control", "initiatives", "initiative-7");
+    await mkdir(storeRoot, { mode: 0o700 });
+    const sentinel = join(storeRoot, "operator.txt");
+    await writeFile(sentinel, "keep me\n", { mode: 0o600 });
+    await expect(precreateInitiativeSkeleton({
+      workspace_root: f.workspace, initiative_id: 7, child_mode: 0o700,
+      setup: freshInitiativeSetup, store_parent: f.store_parent, worktree_parent: f.worktree_parent,
+    })).rejects.toThrow("already exists");
+    expect(await readFile(sentinel, "utf8")).toBe("keep me\n");
+  });
+
+  test("refuses a non-0700 store parent", async () => {
+    const f = await initiativeFixture();
+    await chmod(join(f.workspace, ".mission-control", "initiatives"), 0o755);
+    await expect(precreateInitiativeSkeleton({
+      workspace_root: f.workspace, initiative_id: 7, child_mode: 0o700,
+      setup: freshInitiativeSetup, store_parent: f.store_parent, worktree_parent: f.worktree_parent,
+    })).rejects.toThrow();
+  });
+
+  test("refuses a recovery request (host helper's job)", async () => {
+    const f = await initiativeFixture();
+    await expect(precreateInitiativeSkeleton({
+      workspace_root: f.workspace, initiative_id: 7, child_mode: 0o700,
+      setup: freshInitiativeSetup, store_parent: f.store_parent, worktree_parent: f.worktree_parent,
+      recover_store: f.store_parent, recover_worktree: f.worktree_parent,
+    })).rejects.toThrow("host helper");
+  });
 });
 
 async function fixture(): Promise<{ workspace: string; tasks: string; identity: PathIdentity }> {

@@ -190,10 +190,11 @@ resident `SPINE_SCHEMA_VERSION` moved to 14 in lockstep.
         `RegisterInitiativeSetup` (the receipt write deferred from S1.1 — the last
         missing producer) + `ContinueInitiativeSetup` (the seal-free lease
         terminal — the run the lane opens must release the singleton lease) +
-        their `mc initiative setup-register`/`setup-continue` CLIs. Owed: S1.5b
-        (the resident TS handler that calls them), S1.4c-2c (the Darwin
-        private-frame carrier — non-blocking, guarded fail-closed), S3b (D6
-        fence), S4–S6.
+        their `mc initiative setup-register`/`setup-continue` CLIs. S1.5b-1
+        landed `precreateInitiativeSkeleton` (the two-root TS primitive; inert).
+        Owed: S1.5b-2 (the effect handler wiring precreate + container + register
+        + continue — completes S1), S1.4c-2c (the Darwin private-frame carrier —
+        non-blocking, guarded fail-closed), S3b (D6 fence), S4–S6.
 - [ ] Release prep — install/onboard front door and construction-document
       disposition.
 
@@ -259,69 +260,26 @@ native resume, container reconciliation, Homie credential projection,
 dashboard LaunchAgent generation, and the four non-Console tabs. Details and
 commit map are in the closed Phase 4 ledger.
 
-NEXT: ADR-025 S1.5b — the resident TS effect handler, completing S1 (S1.5a
-landed the `RegisterInitiativeSetup` write + `mc initiative setup-register` CLI).
-On an `{action:"initiative-setup"}` effect (effect keys in `applyInitiativeSetup`,
-mc/verbs/dispatchinitiativesetupseam.go) the resident (resident/src/effects.ts):
-(1) PRECREATES the skeleton from `mount_plan.initiative_precreate` — store root
-0555 with exactly {git, source} under the proven `.mission-control/initiatives`
-parent, worktree dir 0700 under the proven `.mc-worktrees` parent, re-attesting
-both parent identities before creating (mirror how the task precreate executes on
-`mount_plan.task_precreate`); (2) writes the setup envelope (operation
-`initiative-setup`, the two container roots + the Setup instruction) and runs
-`mc __setup-initiative` in the network=none/uid-10002/cap-drop container (store
-RW, worktree RW, real repo RO), capturing the SetupResult stdout; (3) on the
-emitted cut SHA, stat's the two roots host-side and calls `mc initiative
-setup-register …` then `mc initiative setup-continue --run …` (the seal-free
-lease terminal), then `fs.rm` the envelope. Both Go verbs + CLIs already exist
-(S1.5a/a.2). Add the TS `initiative_precreate` mount-plan type + the
-`initiative-setup` Effect variant. KEY DIFFERENCES from the task path (full map:
-resident Plan-agent trace, this session): (i) it is a TOP-LEVEL effect with its
-own `applyEffect` case, NOT a spawn arm — no route/harness/brief/agent-launch;
-(ii) TWO roots on two non-nested bases (store 0555 {git,source}, worktree 0700,
-no children) — the precreate helper returns BOTH identities; (iii) the register
-happens AFTER the container (the cut SHA is only known post-materialize), unlike
-the task's pre-container register; (iv) ONE receipt = register + assignment (no
-`setup-record`/`task_assignments`); (v) a SECOND D10 cover — bind an empty RO
-cover over `/repo/source/.mc-worktrees` in addition to the `.mission-control`
-cover; (vi) container dests are the resident's choice but must match the envelope
-(`source_repo:/repo/source`, `task_root`=store, `worktree_root`=worktree). Study
-`runFirstTaskSetup` (effects.ts:747) + `precreateTaskSkeleton` (task-skeleton.ts)
-+ the effects.test.ts fake docker/runMc/fs rig. Once it lands, S2/S3a's mount
-vouch is reachable end-to-end and S1 is COMPLETE. Then S3b (D6 fence), S4–S6. The
-Darwin private-frame carrier (S1.4c-2c) is owed but non-blocking. This is the ATOMIC remainder:
-emission + commit MUST land together (a Decide that emits an uncommittable Kind
-wedges/spins production once RealRouting is true). Full Plan-agent map in the
-ledger 2026-07-24; the lane FUSES the landing lane (route-free) with the spawn
-lane's lease claim. Do:
-  (a) Emission: `nextInitiativeSetup(rec, cfg)` in `Decide` right after (0c)
-      landing (`dispatch.go` ~:463) and before the (1) occupancy loop; return
-      `Action{Kind: KindInitiativeSetup, InitiativeSetup:...}`. Add the
-      `KindInitiativeSetup` arm to `assertWellFormed` (`dispatch_test.go:115`).
-      FIX `dvConfig` (`dispatchverb_test.go:134`) to set RealRouting to match the
-      real Dispatch path (the flagged oracle mismatch — no current fixture
-      changes action).
-  (b) `preparedDispatch.initiativeSetup` (a 4th mutually-exclusive variant beside
-      final/candidate/landing) + `dispatchInitiativeSetupRound` (mirror
-      `dispatchLandingRound` `dispatchverb.go:92`) + the prepare divert after the
-      KindLand divert (`dispatchseam.go:611`); extend `dispatchRecheckAttestation`
-      (:703). Freeze the arc target ref into `DispatchMountState` (needed by
-      captureInitiativePrecreate's fresh mode; loadDispatchMountState already
-      loads `SubjectTaskTargetRef` — confirm it carries the arc row's target ref).
-  (c) Route-free `dispatchAttestInitiativeSetup` (mirror `dispatchAttestLanding`
-      `dispatchlandingseam.go:246` — no routing.md read) authoring the plan
-      `{Version:1, Entries:[], InitiativePrecreate: captureInitiativePrecreate(...)}`,
-      classifying failures as deployment health.
-  (d) `dispatchCommitInitiativeSetup` (mirror `dispatchCommitLanding` :405 —
-      DeepEqual/token/recheck fences; RefusalSubjectlessPipeline) + a NEW
-      `applyInitiativeSetup` (`domain.Claim` role="worker"/tier=pipeline,
-      subject=initiative id, empty binding, no pool/brief; effect
-      `{action:"initiative-setup", run_id, initiative_id, subject_id,
-      heartbeat_interval_s, mount_plan}`; `writeAttestedReceipt`
-      "dispatch.initiative-setup"). Add the `KindInitiativeSetup` guard case to
-      `applyAction` (:432) like the KindSpawn guard.
-Test audit (already done): NO existing default-build test breaks — every other
-initiative fixture is branch-LESS so the predicate stays inert. Add pure-dispatch
-emission tests + a full-path verb test. The private-frame carrier (Darwin split)
-may follow as S1.4c-2c. Then S1.5 (resident precreate + `RegisterInitiativeSetup`
-write). See ADR-025 §Slices.
+NEXT: ADR-025 S1.5b-2 — wire the initiative-setup effect handler, completing S1
+(S1.5a/a.2 landed the Go register+continue verbs; S1.5b-1 landed
+`precreateInitiativeSkeleton`; both are ready to call). In resident/src: add the
+`initiative-setup` variant to the `Effect` union + `MountPlan.initiative_precreate`
+(types.ts), the `applyEffect` case (effects.ts:31), and the `initiativeSetup`
+handler (mirror the `task_precreate` arm at effects.ts:497 + `runFirstTaskSetup`
+at :747). The handler: (1) validate the step + subject; recheck the two parents;
+call `precreateInitiativeSkeleton` (fresh) → {store, worktree} identities; (2)
+write `/mc/setup.json` (operation `initiative-setup`, branch `mc/initiative-<id>`,
+worktree_name `mc-initiative-<id>`, `source_repo:/repo/source`, task_root=store
+dest, `worktree_root`=worktree dest, the Setup instruction) and `docker run … mc
+__setup-initiative /mc/setup.json` binding real repo RO + BOTH D10 covers
+(`.mission-control` AND `.mc-worktrees`, empty RO) + store git/source RW + the
+worktree RW; (3) parse SetupResult.base_sha; call `mc initiative setup-register
+--run … --initiative … --store-device/inode/owner-uid (from store identity)
+--worktree-device/inode/owner-uid (from worktree identity) --cut-sha <base_sha>`
+then `mc initiative setup-continue --run …`; `fs.rm` the envelope. Wire the three
+new TickDeps (precreate/recheck) — real in main.ts, fake in test-helpers.ts — and
+add effects.test.ts cases (fresh happy path asserting docker+mc call order;
+container-throws). NOT a spawn arm (no route/harness/brief). Once it lands S2/S3a's
+mount vouch is reachable end-to-end and S1 is COMPLETE. Then S3b (D6 fence), S4–S6;
+the Darwin private-frame carrier (S1.4c-2c) is owed but non-blocking. See ADR-025
+§Slices.

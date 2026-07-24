@@ -1000,3 +1000,30 @@ nothing (run not ended, lease intact). Full fast suite green.
 
 NEXT: S1.5b — the resident TS effect handler (precreate + `mc __setup-initiative`
 + `mc initiative setup-register` + `mc initiative setup-continue`), completing S1.
+
+## 2026-07-24 — ADR-025 S1.5b-1: precreateInitiativeSkeleton (the TS primitive)
+
+The resident handler (S1.5b) splits into the precreate primitive (this) and the
+effect handler (S1.5b-2). This lands the two-root skeleton creator, mirroring
+precreateTaskSkeleton but for ADR-025 D1's separate bases — inert (exported, not
+wired into applyEffect until S1.5b-2).
+
+`precreateInitiativeSkeleton(request) -> {store, worktree}` (resident/src/
+task-skeleton.ts): proves both operator-owned mode-0700 parents
+(`.mission-control/initiatives`, `.mc-worktrees`), then creates the sanitized
+store root `initiative-<id>/{git,source}` fixed 0555 (the task-root discipline —
+mkdir 0700, create the two children at child_mode, verify exactly two, chmod
+0555, re-verify identity) and the shared worktree root `initiative-<id>` as an
+empty operator-owned 0700 directory (the container populates it). Every path op
+is followed by an identity/shape check; residue is left in place on partial
+failure; a recovery request (recover_store/worktree set) is refused — that is the
+host helper's job, not this primitive's. New `InitiativeSkeletonRequest` type.
+
+Tests (host-side real temp fs): creates the 0555 store {git,source} + empty 0700
+worktree on two bases; refuses an existing store root without touching its bytes;
+refuses a non-0700 store parent; refuses a recovery request. Full fast suite
+green.
+
+NEXT: S1.5b-2 — the effect handler (applyEffect case + the initiativeSetup
+function: precreate + `mc __setup-initiative` container + register + continue),
+completing S1.
