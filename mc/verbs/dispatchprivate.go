@@ -507,7 +507,8 @@ func validatePrivateMountPlan(plan *PrivateDispatchMountPlan) error {
 		// landing/completion-seal exclusions) — one token must not authorize two
 		// mutating setup containers.
 		if plan.TaskPrecreate != nil || plan.CompletionSeal != nil ||
-			plan.AcceptedSealRebuild != nil || plan.VerifierProjection != nil || plan.Landing != nil {
+			plan.AcceptedSealRebuild != nil || plan.VerifierProjection != nil || plan.Landing != nil ||
+			plan.InitiativeChild != nil {
 			return Domainf("dispatch: private initiative precreate cannot share a plan with another setup step")
 		}
 		if len(plan.Entries) != 0 {
@@ -590,7 +591,8 @@ func validatePrivateMountPlan(plan *PrivateDispatchMountPlan) error {
 		// RW real-repository grant from one token; carrying an entry would put
 		// an agent-plane mount in a class with no agent process (ADR-017:711).
 		if plan.TaskPrecreate != nil || plan.CompletionSeal != nil ||
-			plan.AcceptedSealRebuild != nil || plan.VerifierProjection != nil {
+			plan.AcceptedSealRebuild != nil || plan.VerifierProjection != nil ||
+			plan.InitiativeChild != nil {
 			return Domainf("dispatch: private landing cannot share a plan with a setup step")
 		}
 		if len(plan.Entries) != 0 {
@@ -625,6 +627,39 @@ func validatePrivateMountPlan(plan *PrivateDispatchMountPlan) error {
 			!validDecimalText(root.Device) || !validDecimalText(root.Inode) ||
 			root.OwnerUID != ws.OwnerUID {
 			return Domainf("dispatch: private landing task root evidence is invalid")
+		}
+	}
+	if step := plan.InitiativeChild; step != nil {
+		// ADR-025 D6: a resident INPUT (the producer-absence run-id set), not a
+		// setup step. It rides an ordinary initiative-child agent plan's entries,
+		// so unlike the precreate/landing arms it carries NO entries refusal; but
+		// it must never share a token with a mutating setup step or a landing.
+		if plan.TaskPrecreate != nil || plan.InitiativePrecreate != nil ||
+			plan.CompletionSeal != nil || plan.AcceptedSealRebuild != nil ||
+			plan.VerifierProjection != nil || plan.Landing != nil {
+			return Domainf("dispatch: private initiative child marker cannot share a plan with a setup or landing step")
+		}
+		if step.InitiativeID < 1 || step.InitiativeID > maxJavaScriptSafeInteger {
+			return Domainf("dispatch: private initiative child marker identity is invalid")
+		}
+		// A nil set is a stripped marker (fail-closed): the empty set marshals as
+		// [], so a legitimately childless first child arrives as a non-nil empty
+		// slice, never nil.
+		if step.PriorChildRuns == nil {
+			return Domainf("dispatch: private initiative child marker carries no explicit prior-run set")
+		}
+		if len(step.PriorChildRuns) > substrate.MaxInitiativePriorChildRuns ||
+			!validStructuralTexts(step.PriorChildRuns, maxPrivateScalarBytes) {
+			return Domainf("dispatch: private initiative child prior-run set is invalid")
+		}
+		// Id-sorted and duplicate-free, matching the loader's ORDER BY: a broker
+		// cannot reorder or pad the frozen set past the commit DeepEqual.
+		prev := ""
+		for i, run := range step.PriorChildRuns {
+			if i > 0 && run <= prev {
+				return Domainf("dispatch: private initiative child prior runs are unsorted or duplicated")
+			}
+			prev = run
 		}
 	}
 	prior := ""

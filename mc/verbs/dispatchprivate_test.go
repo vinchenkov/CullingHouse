@@ -479,6 +479,62 @@ func TestValidatePrivateMountPlanInitiativePrecreateRules(t *testing.T) {
 	}
 }
 
+func TestValidatePrivateMountPlanInitiativeChildRules(t *testing.T) {
+	// The D6 marker legitimately rides an ordinary initiative-child agent plan,
+	// so it coexists with entries — unlike the setup/landing steps.
+	valid := func() *PrivateDispatchMountPlan {
+		return &PrivateDispatchMountPlan{
+			Entries: []PrivateDispatchMountEntry{},
+			InitiativeChild: &PrivateDispatchInitiativeChild{
+				InitiativeID: 9, PriorChildRuns: []string{"run-a1", "run-a2", "run-b1"},
+			},
+			Version: 1,
+		}
+	}
+	if err := validatePrivateMountPlan(valid()); err != nil {
+		t.Fatalf("valid initiative child marker rejected: %v", err)
+	}
+	// A childless first child carries a non-nil empty set.
+	empty := valid()
+	empty.InitiativeChild.PriorChildRuns = []string{}
+	if err := validatePrivateMountPlan(empty); err != nil {
+		t.Fatalf("empty prior-run set rejected: %v", err)
+	}
+
+	overCap := make([]string, substrate.MaxInitiativePriorChildRuns+1)
+	for i := range overCap {
+		overCap[i] = fmt.Sprintf("r%05d", i)
+	}
+
+	bad := map[string]func(*PrivateDispatchMountPlan){
+		"id":        func(p *PrivateDispatchMountPlan) { p.InitiativeChild.InitiativeID = 0 },
+		"nil_set":   func(p *PrivateDispatchMountPlan) { p.InitiativeChild.PriorChildRuns = nil },
+		"empty_run": func(p *PrivateDispatchMountPlan) { p.InitiativeChild.PriorChildRuns = []string{"run-a1", ""} },
+		"unsorted":  func(p *PrivateDispatchMountPlan) { p.InitiativeChild.PriorChildRuns = []string{"run-b1", "run-a1"} },
+		"duplicate": func(p *PrivateDispatchMountPlan) { p.InitiativeChild.PriorChildRuns = []string{"run-a1", "run-a1"} },
+		"over_cap":  func(p *PrivateDispatchMountPlan) { p.InitiativeChild.PriorChildRuns = overCap },
+		"shares_task_precreate": func(p *PrivateDispatchMountPlan) {
+			p.TaskPrecreate = &PrivateDispatchTaskPrecreate{}
+		},
+		"shares_initiative_precreate": func(p *PrivateDispatchMountPlan) {
+			p.InitiativePrecreate = &PrivateDispatchInitiativePrecreate{}
+		},
+		"shares_completion_seal": func(p *PrivateDispatchMountPlan) {
+			p.CompletionSeal = &PrivateDispatchCompletionSeal{}
+		},
+		"shares_landing": func(p *PrivateDispatchMountPlan) { p.Landing = &PrivateDispatchLanding{} },
+	}
+	for name, mutate := range bad {
+		t.Run(name, func(t *testing.T) {
+			p := valid()
+			mutate(p)
+			if err := validatePrivateMountPlan(p); err == nil {
+				t.Fatalf("%s: a malformed initiative child plan was accepted", name)
+			}
+		})
+	}
+}
+
 func TestValidatePrivateAttestationTaskPrecreateRules(t *testing.T) {
 	digest := strings.Repeat("ab", 32)
 	valid := func() *PrivateDispatchMountPlan {

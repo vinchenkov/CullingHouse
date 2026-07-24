@@ -270,10 +270,26 @@ type PrivateDispatchLanding struct {
 	WorksourceRoot PrivateDispatchPathIdentity `json:"worksource_root"`
 }
 
+// PrivateDispatchInitiativeChild carries ADR-025 D6's producer-absence input to
+// the resident: the exact token-frozen prior-child pipeline run-id set, every
+// `mc-run-<id>`/`mc-setup-<id>` container of which the resident must positively
+// confirm absent before a next initiative-family container is prepared. Unlike
+// TaskPrecreate — a host-probed fact absent from the token — this is authored
+// ENTIRELY from the frozen mount state, so it is re-derivable at commit and
+// rides the mount-state DeepEqual/token fence plus the plan digest. It is not a
+// setup step: it authorizes no host mutation and legitimately coexists with an
+// ordinary initiative-child agent plan's entries. PriorChildRuns is never
+// omitempty so the empty set marshals as [] for a deterministic digest.
+type PrivateDispatchInitiativeChild struct {
+	InitiativeID   int64    `json:"initiative_id"`
+	PriorChildRuns []string `json:"prior_child_runs"`
+}
+
 type PrivateDispatchMountPlan struct {
 	AcceptedSealRebuild *PrivateDispatchAcceptedSealRebuild `json:"accepted_seal_rebuild,omitempty"`
 	CompletionSeal      *PrivateDispatchCompletionSeal      `json:"completion_seal,omitempty"`
 	Entries             []PrivateDispatchMountEntry         `json:"entries"`
+	InitiativeChild     *PrivateDispatchInitiativeChild     `json:"initiative_child,omitempty"`
 	InitiativePrecreate *PrivateDispatchInitiativePrecreate `json:"initiative_precreate,omitempty"`
 	JurisdictionDigest  string                              `json:"jurisdiction_digest,omitempty"`
 	Landing             *PrivateDispatchLanding             `json:"landing,omitempty"`
