@@ -1662,3 +1662,26 @@ rules in code the sealed lane does not own.
 - Spec impact: none — D3's receipt shape is unchanged; the mount-vouch carrier
   is a strict subset until the slice that needs the cut SHA lands.
 - Needs your decision: no.
+
+## 2026-07-23 — ADR-025 S3b (D6 fence) deferred behind S1
+- Where: ADR-025 §Slices lists S3 as "Child Verifier/Packager RO arms; D6
+  fence". S3a (the RO derive arm) landed; this note defers S3b (the D6
+  producer-absence + store-cleanliness fence) until after S1.
+- Reason: S2/S3a are pure host-side attest derivation and are inert without a
+  receipt, so pulling them ahead of S1 (the ADR's first slice) added no
+  reachable path. S3b is different — it is resident/container-prep machinery
+  (mirror `requireAcceptedSealProducerAbsent` in effects.ts; add an in-container
+  `git status --porcelain` cleanliness subcommand launched by the resident) that
+  guards the initiative-child spawn path S1 establishes. Building it now would
+  require inventing the initiative-child resident effect shape and the prior-
+  child enumeration mechanism (new `mc-initiative-id` label vs dispatch-projected
+  run-id set) ahead of their producer — premature and likely to be reworked.
+- Choice: realign to the ADR's own S1-first order. Next slice is S1
+  (`__setup-initiative` cut + receipts); S3b follows once the lifecycle exists.
+  Sequencing is a delegated implementation decision within the ADR (mechanism is
+  delegated), reversible, and preserves every invariant — S2/S3a stay inert and
+  fail-closed. The D6-fence seam map is recorded in docs/ledger/phase-5.md
+  (2026-07-23) for when S3b is picked up.
+- Spec impact: none — no decision reordered, only the landing order of two inert
+  slices; every existing refusal stays fail-closed until S6.
+- Needs your decision: no.

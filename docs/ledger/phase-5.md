@@ -591,3 +591,51 @@ initiative — reap's best-effort `docker stop` is not confirmation), and
 attestation asserts store-worktree cleanliness (working tree and index clean at
 the branch tip). This is resident/attestation-side machinery; scope the exact
 seam before implementing.
+
+## 2026-07-23 — D6-fence seam scouting + S3b/S1 re-sequencing
+
+Read-only scout of the D6-fence seam (recorded so S3b starts with the hooks
+identified). Producer-absence precedent: `resident/src/effects.ts:380`
+`requireAcceptedSealProducerAbsent` confirms a prior container's ABSENCE via
+`docker inspect --type container mc-run-<runId>` / `mc-setup-<runId>` (exit-1
+not-found is the only success — a positive absence, never reap's best-effort
+`docker stop` at effects.ts:1085). Its sole caller is the accepted-seal-rebuild
+arm at `effects.ts:452` inside `spawn()`. Child containers carry only labels
+`mc-managed=true`, `mc-tier=pipeline`, `mc-run-id=<run>` (effects.ts:692-694) —
+NO `mc-initiative-id` label yet; the `mc-approved-run-id` label on the sealed-
+landing container (effects.ts:966) is the precedent for a task/initiative-scoped
+label. So per-initiative absence needs either a new `mc-initiative-id=<I>` label
++ `docker ps --filter label` enumeration, or dispatch projecting the prior
+child run-id set into the effect (the resident cannot query the spine).
+Cleanliness precedent: every "clean tree/index" assertion runs IN-CONTAINER via
+`git status --porcelain=v1 --untracked-files=all == ""` —
+`verifierprojection.go:32` (closest analog), `landsealed.go:360`,
+`completionsealpublish.go:216`; the host never runs Git (ADR-016 D5). mc-land's
+host-side dirty fence (`runner/image/mc-land:433`) resolves empty for
+store-linked worktrees (D8), so cleanliness must move into a store-mounted
+`mc __…` subcommand launched like `__setup-verifier-projection`
+(effects.ts:482). S1 producer is ENTIRELY owed: no receipt table in schema.sql,
+no `mc __setup-initiative`, no InitiativeSetup dispatch step, no receipt loader
+in mountprojection.go (contrast the task path's `LoadSubjectTaskSetupRoots`).
+
+Re-sequencing decision (deviation logged in IMPLEMENTATION-NOTES 2026-07-23):
+the D6 fence and its cleanliness subcommand are resident/container-prep
+machinery that hook the initiative-child spawn path S1 establishes. Building it
+now would invent the initiative-child resident effect shape and the
+child-enumeration mechanism ahead of their producer. The ADR's own slice order
+is S1 first; the earlier pull-forward of S2/S3a was safe only because those are
+inert host-side attest derivation. So the next slice is S1
+(`__setup-initiative` cut + receipts), after which S3b's fence has a real
+lifecycle to guard. S2/S3a stay inert and correct in the meantime.
+
+NEXT: ADR-025 S1 — `InitiativeSetup` cut. Skeleton precreate (store root 0555
+with exactly {git, source}, worktree dir 0700 under `.mc-worktrees`),
+`mc __setup-initiative` materializer (sanitized store cut from CURRENT main tip
++ checkout, generalizing `MaterializeFirstTaskStore` at setupenvelope.go:281),
+initiative-keyed durable receipts carrying BOTH roots + the recorded cut SHA,
+retry-reuse of the recorded cut SHA (never re-resolve main), the `.mc-worktrees`
+discipline, and D10 reservations/covers. Then the receipt loader populates
+`SubjectInitiativeSetup` (mountprojection.go), making S2/S3a's vouch reachable.
+Scope the dispatch InitiativeSetup step emission (D3: first tick where promotion
+is observable, before any other initiative-family spawn) against the existing
+task precreate/setup step machinery before implementing.

@@ -147,21 +147,15 @@ the approve landing fence to assignment-armed tasks; v12 retires
   - [x] Production reset is confirmation-gated, requires supervision unloaded,
         commits a host backup before exact helper/volume teardown, and has an
         identity-bound already-reset replay (`28d6102`).
-  - [~] ADR-025 accepted (production initiative mounts/cut/arc landing, the
-        owed ADR-017 D6 / ADR-023 D6 follow-on). Groundwork inert at `fc72175`:
-        `.mc-worktrees` reserved (D10), two-family worktree grammar (D2), and
-        the two-base child skeleton row set + resolver. S2 landed inert: the
-        receipt-vouched initiative-child Worker mount arm (D2 rows over the two
-        host bases, `SubjectInitiativeID` capture gate before the task arm,
-        two-root receipt vouch, D4 seal-emission suppression) replaces the
-        `mountattest.go` child refusal for that one case; every other
-        combination stays health-refused. Still fail-closed end-to-end — no S1
-        receipt producer exists, so a real child resolves an absent store and
-        refuses. S3a landed the child Verifier/Packager forced-RO derive arm
-        (D5 readers; no seal gate); Refiner/Editor/Strategist keep refusing.
-        STILL OWED in S3: the D6 producer-absence + store-worktree cleanliness
-        fence. Slices S1 (cut), S3b (D6 fence), and S4–S6 (roles, arc verify,
-        landing import) still owed.
+  - [~] ADR-025 accepted (production initiative mounts/cut/arc landing).
+        Landed inert host-side, all fail-closed until a receipt producer exists
+        (details in `docs/ledger/phase-5.md`): D10 reserve + two-family worktree
+        grammar + two-base child skeleton/resolver (`fc72175`); S2 the
+        receipt-vouched Worker mount arm (`6fd88cb`, 3-lens review clean); S3a
+        the Verifier/Packager forced-RO reader arm (`875dcd8`). A real child
+        still resolves an absent store and refuses; every other role/shape
+        refuses. Owed: S1 (cut+receipts, NEXT), S3b (D6 fence), S4–S6 (roles,
+        arc verify, landing import).
 - [ ] Release prep — install/onboard front door and construction-document
       disposition.
 
@@ -227,14 +221,16 @@ native resume, container reconciliation, Homie credential projection,
 dashboard LaunchAgent generation, and the four non-Console tabs. Details and
 commit map are in the closed Phase 4 ledger.
 
-NEXT: ADR-025 slice S3b — the D6 fence (S3a landed the child Verifier/Packager
-forced-RO derive arm). Before any next initiative-family container for
-initiative I is prepared, confirm the ABSENCE of every prior child container of
-I (the ADR-017:533 producer-absence discipline extended per-initiative — reap's
-best-effort `docker stop` is not confirmation), and attestation asserts
-store-worktree cleanliness (working tree and index clean at the branch tip).
-This is resident/attestation-side machinery: scope the exact seam
-(reap/producer-absence code + how cleanliness is asserted without host Git,
-likely a container check) before implementing. S1 (`__setup-initiative` cut +
-receipts) and S4–S6 still owed; see
-`docs/adr/025-initiative-production-mounts.md` §Slices.
+NEXT: ADR-025 S1 — `InitiativeSetup` cut (re-sequenced ahead of S3b; see
+IMPLEMENTATION-NOTES 2026-07-23). S2/S3a landed the inert host-side mount arms;
+S1 is the missing producer that makes their receipt vouch reachable and
+establishes the initiative-child container lifecycle the D6 fence (S3b) will
+guard. Build: skeleton precreate (store root 0555 with exactly {git, source},
+worktree dir 0700 under `.mc-worktrees`), the `mc __setup-initiative`
+materializer (sanitized store cut from CURRENT main tip + checkout, generalizing
+`MaterializeFirstTaskStore`), initiative-keyed durable receipts carrying BOTH
+roots + the recorded cut SHA, retry-reuse (never re-resolve main), the
+`.mc-worktrees` discipline, D10 reservations/covers, and the receipt loader that
+populates `SubjectInitiativeSetup`. The D6-fence seam map and the InitiativeSetup
+step-emission notes are in `docs/ledger/phase-5.md` (2026-07-23). S3b (D6 fence)
+and S4–S6 still owed; see `docs/adr/025-initiative-production-mounts.md` §Slices.
