@@ -355,6 +355,41 @@ func TestLoadDispatchMountStateFreezesInitiativeChildIdentity(t *testing.T) {
 	if state.SubjectInitiativeID == nil || *state.SubjectInitiativeID != initiativeID {
 		t.Fatalf("subject initiative = %v, want %d", state.SubjectInitiativeID, initiativeID)
 	}
+	// No child runs in dvSpine — the D6 producer-absence set is empty (omitted).
+	if len(state.SubjectInitiativePriorChildRuns) != 0 {
+		t.Fatalf("prior child runs = %+v, want empty", state.SubjectInitiativePriorChildRuns)
+	}
+}
+
+func TestLoadDispatchMountStateFreezesInitiativePriorChildRuns(t *testing.T) {
+	db := dvSpine(t)
+	// Initiative 9 with two children (7, 8); the sibling child 8 has a prior
+	// pipeline run that the D6 fence must later confirm absent.
+	dvExec(t, db, `INSERT INTO tasks (id, title, scope, priority, created_at, status,
+		dispatch_retries, origin, worksource, target_ref)
+		VALUES (9, 'arc', 'initiative', 1, ?, 'proposed', 3, 'user', 'ws-test', 'main')`,
+		dvOld.Format(spineTime))
+	dvExec(t, db, `UPDATE tasks SET status='seeded' WHERE id=9`)
+	for _, id := range []int64{7, 8} {
+		dvExec(t, db, `INSERT INTO tasks (id, title, scope, status, initiative_id,
+			priority, created_at, dispatch_retries, origin, worksource, target_ref)
+			VALUES (?, 'child', 'task', 'seeded', 9, 1, ?, 3, 'autonomous', 'ws-test', 'main')`,
+			id, dvOld.Format(spineTime))
+	}
+	dvExec(t, db, `INSERT INTO runs (id, tier, role, worksource, subject)
+		VALUES ('run-8-worker', 'pipeline', 'worker', 'ws-test', 8)`)
+
+	subject := int64(7)
+	initiativeID := int64(9)
+	state, err := loadDispatchMountState(context.Background(), db, &dispatch.Spawn{SubjectID: &subject}, dispatch.Records{
+		Tasks: []dispatch.Task{{ID: subject, Worksource: "ws-test", InitiativeID: &initiativeID}},
+	})
+	if err != nil {
+		t.Fatalf("loadDispatchMountState: %v", err)
+	}
+	if !reflect.DeepEqual(state.SubjectInitiativePriorChildRuns, []string{"run-8-worker"}) {
+		t.Fatalf("prior child runs = %+v, want [run-8-worker]", state.SubjectInitiativePriorChildRuns)
+	}
 }
 
 func TestDispatchInvalidSelectedProfileMountNeverClaimsOrSpawns(t *testing.T) {

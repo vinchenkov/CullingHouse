@@ -55,6 +55,14 @@ type DispatchMountState struct {
 	// child resolves an absent store and health-refuses. omitempty keeps every
 	// pre-existing state's canonical bytes (and its preparation token) unchanged.
 	SubjectInitiativeSetup *DispatchInitiativeSetup `json:"subject_initiative_setup,omitempty"`
+	// SubjectInitiativePriorChildRuns freezes, under the preparation token, the
+	// id-sorted pipeline-tier run ids of every prior child task of an initiative
+	// (ADR-025 D6). The resident cannot query the spine, so this set rides the
+	// token to the producer-absence fence, which positively confirms each prior
+	// child's `mc-run-<id>`/`mc-setup-<id>` container is absent before a next
+	// initiative-family container is prepared. omitempty keeps every pre-existing
+	// state's canonical bytes (and its token) unchanged; a first child is empty.
+	SubjectInitiativePriorChildRuns []string `json:"subject_initiative_prior_child_runs,omitempty"`
 }
 
 // DispatchInitiativeSetup is the path-free durable identity of an initiative's

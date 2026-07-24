@@ -80,6 +80,17 @@ func loadDispatchMountState(ctx context.Context, q Q, sp *dispatch.Spawn, rec di
 				return state, err
 			}
 			state.SubjectInitiativeSetup = setup
+			// The ADR-025 D6 producer-absence input: the id-sorted prior child
+			// pipeline runs of this initiative, frozen so the resident (which cannot
+			// query the spine) can confirm each prior child container is absent. Same
+			// code path on prepare and commit — both legs get the loader's non-nil
+			// []string, so the commit-time mount-state DeepEqual never spuriously
+			// stales on nil-vs-empty.
+			priorChildRuns, err := substrate.LoadInitiativePriorChildRuns(ctx, q, *state.SubjectInitiativeID)
+			if err != nil {
+				return state, err
+			}
+			state.SubjectInitiativePriorChildRuns = priorChildRuns
 		}
 	}
 
