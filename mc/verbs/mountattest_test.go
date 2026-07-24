@@ -234,9 +234,36 @@ func TestDeriveDispatchMountRequestsDerivesInitiativeChildWorkerRows(t *testing.
 	}
 }
 
-// D5 retention: every non-Worker initiative role, and any initiative child on a
-// non-repo/profile-less Worksource, still health-refuses in S2.
-func TestDeriveDispatchMountRequestsRetainsNonWorkerInitiativeRefusal(t *testing.T) {
+// D5: a child Verifier or Packager gets the same 15 destinations with EVERY row
+// forced RO — the branch-tip reader never writes the shared store.
+func TestDeriveDispatchMountRequestsForcesInitiativeReaderRowsReadOnly(t *testing.T) {
+	root := t.TempDir()
+	workspace := maMkdir(t, root, "repo")
+	initiativeID := int64(9)
+	taskID := int64(7)
+	state := maInitiativeChildState(t, workspace, initiativeID)
+	for _, role := range []string{"verifier", "packager"} {
+		t.Run(role, func(t *testing.T) {
+			requests, _, r, err := deriveDispatchMountRequests(state, role, &taskID, false)
+			if err != nil || r != nil {
+				t.Fatalf("initiative %s refused: refusal %+v err %v", role, r, err)
+			}
+			if len(requests) != len(initiativePlanRows(initiativeID)) {
+				t.Fatalf("initiative %s derived %d rows, want the full table", role, len(requests))
+			}
+			for _, req := range requests {
+				if req.Access != boundary.AccessRO {
+					t.Fatalf("initiative %s row %q access = %v, want every row RO", role, req.Destination, req.Access)
+				}
+			}
+		})
+	}
+}
+
+// D5 retention: a Refiner or Strategist/Editor over a child, and any initiative
+// child on a non-repo/profile-less Worksource or with no subject, still
+// health-refuses.
+func TestDeriveDispatchMountRequestsRetainsInitiativeRefusals(t *testing.T) {
 	root := t.TempDir()
 	workspace := maMkdir(t, root, "repo")
 	initiativeID := int64(9)
@@ -250,9 +277,9 @@ func TestDeriveDispatchMountRequestsRetainsNonWorkerInitiativeRefusal(t *testing
 		role    string
 		subject *int64
 	}{
-		{"verifier", repoState, "verifier", &taskID},
-		{"packager", repoState, "packager", &taskID},
+		{"refiner", repoState, "refiner", &taskID},
 		{"editor", repoState, "editor", &taskID},
+		{"strategist", repoState, "strategist", &taskID},
 		{"worker_no_subject", repoState, "worker", nil},
 		{"worker_non_repo", nonRepo, "worker", &taskID},
 	}
@@ -833,6 +860,31 @@ func TestAttestCandidateMountsInitiativeChildWorkerSuppressesSeal(t *testing.T) 
 	}
 	if got := byDest["/workspace"]; got.Access != "ro" || got.Mode != 0o555 {
 		t.Fatalf("store root entry = %+v, want RO mode-0555", got)
+	}
+}
+
+// A real-routed initiative-child Verifier reads the branch tip: it derives the
+// same 15 rows through the real capture, is receipt-vouched, gets EVERY row RO
+// (D5), and carries no seal machinery (D4).
+func TestAttestCandidateMountsInitiativeChildVerifierGetsReadOnlyRows(t *testing.T) {
+	subject := int64(3)
+	mcHome, cand, _ := maInitiativeChildCandidate(t, dispatch.RoleVerifier, &subject)
+
+	plan, r, err := attestCandidateMounts(mcHome, cand, false)
+	if err != nil || r != nil {
+		t.Fatalf("initiative verifier attest = refusal %+v err %v", r, err)
+	}
+	if plan == nil || len(plan.Entries) != 15 {
+		t.Fatalf("plan = %+v, want the 15 initiative shared-store rows", plan)
+	}
+	for _, e := range plan.Entries {
+		if e.Access != "ro" {
+			t.Fatalf("verifier row %q access = %q, want every row ro", e.Destination, e.Access)
+		}
+	}
+	if plan.CompletionSeal != nil || plan.AcceptedSealRebuild != nil || plan.VerifierProjection != nil {
+		t.Fatalf("initiative verifier plan carries seal machinery (ADR-025 D4): seal %+v rebuild %+v projection %+v",
+			plan.CompletionSeal, plan.AcceptedSealRebuild, plan.VerifierProjection)
 	}
 }
 

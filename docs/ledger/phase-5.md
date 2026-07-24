@@ -560,3 +560,34 @@ NEXT: ADR-025 S3 — child Verifier/Packager get the D2 table with every row
 forced RO (`readOnlyView`), gated on the vouched receipt, plus the D6
 producer-absence/cleanliness fence for the shared store; Refiner over a child
 keeps refusing.
+
+## 2026-07-23 — ADR-025 S3a: child Verifier/Packager forced-RO arm (inert)
+
+The initiative-child derive arm now admits three roles on a repo Worksource:
+the Worker (row-declared access, RW source/git) and a Verifier or Packager,
+which get the same 15 D2 destinations with EVERY row forced RO (D5 — the
+branch-tip reader never writes the shared store; no completion-seal gate, D4).
+A Refiner over a child and a Strategist/Editor keep refusing (S4 owed), as do
+non-repo/profile-less/no-subject shapes. The capture-side resolve+vouch already
+ran for any initiative role, so no capture change was needed; the receipt gate
+holds for readers too. Still inert: no S1 receipt producer, so a real reader
+resolves an absent store and refuses.
+
+Tests: verifier/packager derive all-RO rows; refiner/editor/strategist/
+no-subject/non-repo refusal retention; a full real-capture attest for a child
+Verifier proving 15 rows all RO with no seal/rebuild/projection machinery.
+Fast suite green.
+
+STILL OWED in S3: the D6 producer-absence + store-worktree cleanliness fence.
+D5 gates the reader arm on "the vouched initiative receipt AND D6's fence"; only
+the receipt gate is implemented. Because the arm is inert until S1's receipt
+exists, landing the RO arm ahead of the fence adds no reachable path — but the
+fence must land before S6.
+
+NEXT: ADR-025 S3b — the D6 fence: before any next initiative-family container
+for initiative I is prepared, confirm the ABSENCE of every prior child
+container of I (the ADR-017:533 producer-absence discipline extended per-
+initiative — reap's best-effort `docker stop` is not confirmation), and
+attestation asserts store-worktree cleanliness (working tree and index clean at
+the branch tip). This is resident/attestation-side machinery; scope the exact
+seam before implementing.

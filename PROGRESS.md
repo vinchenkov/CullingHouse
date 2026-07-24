@@ -156,8 +156,11 @@ the approve landing fence to assignment-armed tasks; v12 retires
         `mountattest.go` child refusal for that one case; every other
         combination stays health-refused. Still fail-closed end-to-end — no S1
         receipt producer exists, so a real child resolves an absent store and
-        refuses. Slices S1 (cut) and S3–S6 (Verifier/Packager RO + D6 fence,
-        roles, arc verify, landing import) still owed.
+        refuses. S3a landed the child Verifier/Packager forced-RO derive arm
+        (D5 readers; no seal gate); Refiner/Editor/Strategist keep refusing.
+        STILL OWED in S3: the D6 producer-absence + store-worktree cleanliness
+        fence. Slices S1 (cut), S3b (D6 fence), and S4–S6 (roles, arc verify,
+        landing import) still owed.
 - [ ] Release prep — install/onboard front door and construction-document
       disposition.
 
@@ -223,10 +226,14 @@ native resume, container reconciliation, Homie credential projection,
 dashboard LaunchAgent generation, and the four non-Console tabs. Details and
 commit map are in the closed Phase 4 ledger.
 
-NEXT: ADR-025 slice S3 — a child Verifier/Packager subject gets the D2 table
-with every row forced RO (`readOnlyView` analog, gated on the vouched
-initiative receipt, no completion-seal gate per D4), plus the D6
-producer-absence/cleanliness fence for the shared store; a Refiner over a child
-keeps refusing (parity with the standalone table). S1 (`__setup-initiative`
-cut + receipts) and S4–S6 still owed; see
+NEXT: ADR-025 slice S3b — the D6 fence (S3a landed the child Verifier/Packager
+forced-RO derive arm). Before any next initiative-family container for
+initiative I is prepared, confirm the ABSENCE of every prior child container of
+I (the ADR-017:533 producer-absence discipline extended per-initiative — reap's
+best-effort `docker stop` is not confirmation), and attestation asserts
+store-worktree cleanliness (working tree and index clean at the branch tip).
+This is resident/attestation-side machinery: scope the exact seam
+(reap/producer-absence code + how cleanliness is asserted without host Git,
+likely a container check) before implementing. S1 (`__setup-initiative` cut +
+receipts) and S4–S6 still owed; see
 `docs/adr/025-initiative-production-mounts.md` §Slices.

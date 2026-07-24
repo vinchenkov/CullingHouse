@@ -323,22 +323,30 @@ func deriveDispatchMountRequests(state PrivateDispatchMountState, role string, s
 }
 
 // deriveInitiativeChildMountRequests derives the ADR-025 D2 shared-store rows
-// for a real-routed initiative child. S2 admits exactly one arm: a Worker
-// child on a repo Worksource with a positive subject and a workspace root.
-// Every other role and shape (a child Verifier/Packager — S3, a
-// Strategist/Editor — S4, a non-repo or profile-less Worksource — D5) retains
-// today's health refusal. Like the standalone-task arm this only constructs
-// the request sources; the shared store's existence, ownership, content, and
-// receipt vouch are proved in captureDispatchMountHostSnapshot.
+// for a real-routed initiative child. Three arms are admitted on a repo
+// Worksource with a positive subject and a workspace root: a Worker child gets
+// the row's declared access (RW on source/git); a child Verifier or Packager
+// gets the same 15 destinations with EVERY row forced RO (D5 — no completion
+// seal gate, D4). A Refiner over a child, a Strategist/Editor (S4), and any
+// non-repo or profile-less Worksource (D5) retain today's health refusal. Like
+// the standalone-task arm this only constructs the request sources; the shared
+// store's existence, ownership, content, and receipt vouch are proved in
+// captureDispatchMountHostSnapshot.
 func deriveInitiativeChildMountRequests(state PrivateDispatchMountState, role string, subjectID *int64, requests []mountRequest, selected PrivateDispatchWorksource) ([]mountRequest, PrivateDispatchWorksource, *refusal.Refusal, error) {
+	base0 := baseRole(role)
+	admitted := base0 == "worker" || base0 == "verifier" || base0 == "packager"
 	if selected.WorksourceID == "" || selected.Kind != "repo" || selected.WorkspaceRoot == "" ||
-		baseRole(role) != "worker" || subjectID == nil {
+		!admitted || subjectID == nil {
 		r, err := refusalForMountError(&boundary.MountError{
 			Code: boundary.CodeRuntimeUnappliable,
-			Msg:  "no authorized initiative mount arm for this role: only a repo-Worksource Worker child has a shared-store representation until the later slices land (ADR-025 D2/D5)",
+			Msg:  "no authorized initiative mount arm for this role: only a repo-Worksource Worker (RW) or Verifier/Packager (RO) child has a shared-store representation (ADR-025 D2/D5)",
 		}, refusal.AuthorityDeployment, nil)
 		return nil, selected, &r, err
 	}
+	// A child Verifier/Packager reads the branch tip; every row is forced RO,
+	// exactly as the standalone sealed-view readers get every task row RO. Only
+	// the Worker child writes the shared store (D5).
+	forceRO := base0 != "worker"
 	store := InitiativeStoreRoot(selected.WorkspaceRoot, *state.SubjectInitiativeID)
 	worktree := InitiativeWorktreeRoot(selected.WorkspaceRoot, *state.SubjectInitiativeID)
 	for _, row := range initiativePlanRows(*state.SubjectInitiativeID) {
@@ -350,10 +358,12 @@ func deriveInitiativeChildMountRequests(state PrivateDispatchMountState, role st
 		if row.Rel != "" {
 			source = filepath.Join(base, filepath.FromSlash(row.Rel))
 		}
-		// A Worker child gets the row's declared access (RW on source/git);
-		// the forced-RO view for a child Verifier/Packager is a later slice.
+		access := row.Access
+		if forceRO {
+			access = boundary.AccessRO
+		}
 		request := mountRequest{
-			Source: source, Access: row.Access, Authority: refusal.AuthorityDeployment,
+			Source: source, Access: access, Authority: refusal.AuthorityDeployment,
 			Kind: row.Kind, Destination: row.Dest, RequireEmptyDir: row.MustBeEmptyDir,
 		}
 		if row.WantBytes != nil {
