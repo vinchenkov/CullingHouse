@@ -6,18 +6,19 @@ REPO PATH: `~/dev/ai/homie`. Never relocate this repo into `~/Documents`,
 `~/Desktop`, or `~/Downloads`: macOS TCC can revoke an agent session's own
 filesystem access there during fan-out. Full Disk Access does not fix it.
 
-LAST GREEN SHA: `ba3811c` — ADR-025 S1.3b: the `mc __setup-initiative`
-subcommand + closed-union envelope arm wrapping S1.3a's
-`MaterializeInitiativeStore` — the entire container side of the InitiativeSetup
-cut (cross-base store/worktree, spike-validated GIT_DIR/GIT_WORK_TREE checkout;
-fresh/retry with idempotent-residue). Host-side tested. Atop S1.1 (the
-`initiative_setup_receipts` v14 table + read half) and S2/S3a (the inert
-host-side mount arms). Still inert end-to-end: nothing invokes the cut yet, no
-receipt producer, so a real child health-refuses on an absent store. S2 was
-adversarially reviewed (3 lenses, no findings). Full fast suite green (after a
-transient mc-land hang cleared on re-run — ledger 2026-07-23); `verbs`/
-`cmd/mc`/`substrate` cold `-count=1` green; launchd not loaded. Prior codex
-green was `28d6102` (production reset lifecycle).
+LAST GREEN SHA: `933a5e0` — ADR-025 S1.4a: the inert dispatch foundation for the
+InitiativeSetup emission — `dispatch.Task.InitiativeSetupDone`, `KindInitiativeSetup`
++ its action arm, `Config.RealRouting` (the fake-safe gate, default false), and
+the pure `nextInitiativeSetup` predicate (NOT yet called by `Decide`, so zero
+behavioral change). Design settled in IMPLEMENTATION-NOTES 2026-07-23 (a novel
+route-free lease-claiming setup action + the fake-lane regression gate). Atop
+S1.3 (the container side of the cut: `MaterializeInitiativeStore` +
+`mc __setup-initiative`), S1.1 (`initiative_setup_receipts` v14 + read), and
+S2/S3a (inert host-side mount arms). Still inert end-to-end: nothing emits or
+invokes the cut yet. S2 was adversarially reviewed (3 lenses, no findings). Full
+fast suite green (after the documented resident EBADF flake cleared on re-run);
+`dispatch`/`verbs`/`cmd/mc`/`substrate` cold `-count=1` green; launchd not
+loaded. Prior codex green was `28d6102` (production reset lifecycle).
 Full Docker lanes (26 `docker_boundary`; 10 `docker_e2e`) were green at
 `c8f37e9`-era HEAD. Extended Playwright smoke and install.sh dev walk were last
 green at `d0ef4bb`; real onboarding crossing at `bf5981d`. Production image
