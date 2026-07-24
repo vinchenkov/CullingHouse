@@ -1073,3 +1073,56 @@ NEXT: ADR-025 S3b — the D6 producer-absence + store-worktree cleanliness fence
 enumeration: new `mc-initiative-id` label vs dispatch-projected run-id set; the
 in-container cleanliness subcommand shape) before implementing. See the
 2026-07-23 D6-fence scout above.
+
+## 2026-07-24 — ADR-025 S3b.1 + S3b.2: the two inert halves of the D6 fence
+
+Scoped the D6 fence seam (read-only Plan agent) and settled the two open design
+questions with code evidence, then built the two inert halves.
+
+DECISION A (per-initiative child enumeration): mechanism **A2** — dispatch
+projects the prior-child run-id SET into the frozen mount plan; the resident
+confirms each named run's `mc-run-<id>`/`mc-setup-<id>` container is POSITIVELY
+absent via the existing inspect-by-name primitive. Rejected A1 (`mc-initiative-id`
+label + `docker ps --filter`): filter-enumeration inverts the trust model — a
+container omitting/forging the label simply doesn't appear, so absence-by-omission
+reads as success, the exact surface the positive-by-name inspect
+(`requireAcceptedSealProducerAbsent`, effects.ts:382, exit-1-not-found the only
+success) avoids. A2 reuses the trusted primitive, needs no schema/label change,
+and rides the existing per-initiative projection (SubjectInitiativeSetup,
+dispatch_mount_projection.go).
+
+DECISION B (cleanliness subcommand): `mc __verify-initiative-clean` runs
+IN-CONTAINER (host never runs Git, ADR-016 D5) with its own minimal fence
+envelope (NOT the SetupEnvelope union — it opens no run and holds no lease), using
+the materializer's explicit GIT_DIR (linked worktree admin)/GIT_WORK_TREE
+(separate base) so the container-relative pointers are never consulted. Dispatch
+attestation authors the marker; the resident (the only container-runner) invokes
+the check and consumes the verdict fail-closed.
+
+S3b.1 (`ad88dc9`): extracted the single-run producer-absence primitive out of
+`requireAcceptedSealProducerAbsent` into `confirmPipelineRunAbsent` (message text
+byte-identical for the existing caller — verified by the unchanged accepted-seal
+tests) and added `requireInitiativeChildrenAbsent(runIds, deps)` looping it. Tests
+cover all-absent, empty set, a surviving child, inspect-unavailable, ambiguous
+label, and a malformed id. Inert.
+
+S3b.2 (`cf71fc7`): `RunInitiativeCleanFence` + the `__verify-initiative-clean`
+CLI arm + host-scope routing. Three genuinely-independent fences on the cross-base
+worktree — `git status --porcelain=v1 --untracked-files=all` empty, no
+skip-worktree/assume-unchanged index flags (`ls-files -v`, mirroring
+`refuseHiddenLandingIndexEntries`), HEAD symbolic to `mc/initiative-<id>`. Dropped
+the scout's fourth check (`rev-parse HEAD == branch tip`) as tautological with the
+symbolic-ref assertion — deviation logged (IMPLEMENTATION-NOTES 2026-07-24),
+following landsealed.go:347-355's documented anti-tautology stance; every state it
+could catch already surfaces in the status fence or detaches HEAD. Tests run
+against a real `MaterializeInitiativeStore` output: fresh cut passes; untracked
+file, modified tracked file, detached HEAD, skip-worktree-hidden mutation each
+refuse; envelope validation refuses bad version/operation/id/paths. Inert.
+
+Full mc + resident fast suites green.
+
+NEXT: ADR-025 S3b.3 — dispatch projection (`LoadInitiativePriorChildRuns` +
+`DispatchMountState.SubjectInitiativePriorChildRuns`) and the `InitiativeChild`
+marker authored in the initiative-child attest arm (mountattest.go:346-368). Then
+S3b.4 wires the resident create path (effects.ts:683) to gate absence + launch the
+clean fence, making D6 LIVE.

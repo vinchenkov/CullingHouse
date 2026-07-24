@@ -6,14 +6,15 @@ REPO PATH: `~/dev/ai/homie`. Never relocate this repo into `~/Documents`,
 `~/Desktop`, or `~/Downloads`: macOS TCC can revoke an agent session's own
 filesystem access there during fan-out. Full Disk Access does not fix it.
 
-LAST GREEN SHA: `8aba956` — ADR-025 S1.5b-2: the resident `initiative-setup`
-effect handler, completing S1 (the cut). On the route-free effect it precreates
-the two-root skeleton, runs `mc __setup-initiative` binding the real repo RO
-under BOTH D10 covers (`.mission-control` AND `.mc-worktrees`) + store git/source
-RW + worktree RW, parses the cut SHA, then `mc initiative setup-register` +
-`setup-continue`; all failures fail-closed. S1 is now COMPLETE and S2/S3a's mount
-vouch is reachable end-to-end (the ADR-025 slice map is in the phase bullet below
-+ the phase-5 ledger). Full fast suite green (the load-sensitive resident EBADF flake —
+LAST GREEN SHA: `cf71fc7` — ADR-025 S3b.2: the in-container store-worktree
+cleanliness executor (`mc __verify-initiative-clean` + `RunInitiativeCleanFence`)
+— status-clean + hidden-index-flag refusal + HEAD-on-managed-branch on the
+cross-base worktree, its own minimal fence envelope. S3b.1 (`cf71fc7`'s parent
+`ad88dc9`) added the resident per-initiative producer-absence loop
+`requireInitiativeChildrenAbsent`. Both INERT (no caller yet) — S3b.3 (dispatch
+projection + marker) then S3b.4 (resident wiring) make the D6 fence LIVE. S1 (the
+cut) is COMPLETE (S1.5b-2 `8aba956`): the receipt producer exists and S2/S3a's
+mount vouch is reachable end-to-end. Full fast suite green (the load-sensitive resident EBADF flake —
 intermittent #2, ~1 in 3 under heavy looping — clears on re-run);
 `verbs`/`dispatch`/`substrate` cold `-count=1` green; launchd not loaded. Prior
 codex green was `28d6102`.
@@ -189,25 +190,28 @@ native resume, container reconciliation, Homie credential projection,
 dashboard LaunchAgent generation, and the four non-Console tabs. Details and
 commit map are in the closed Phase 4 ledger.
 
-NEXT: ADR-025 S3b — the D6 fence, now that S1 gives it a real lifecycle to guard.
-Two obligations before any next initiative-family container for initiative I is
-prepared: (1) PRODUCER-ABSENCE — confirm the ABSENCE of every prior child
-container of I (ADR-017:533 producer-absence extended per-initiative; reap's
-best-effort `docker stop` is NOT confirmation). The precedent is
-`requireAcceptedSealProducerAbsent` (effects.ts:380: `docker inspect --type
-container mc-run-<run>`/`mc-setup-<run>`, exit-1-not-found the only success).
-Child containers carry NO `mc-initiative-id` label yet (effects.ts:692-694), so
-per-initiative absence needs either a new `mc-initiative-id=<I>` label +
-`docker ps --filter label` enumeration, or dispatch projecting the prior child
-run-id set into the effect (the resident cannot query the spine) — the
-`mc-approved-run-id` label at effects.ts:966 is the scoped-label precedent. (2)
-STORE-WORKTREE CLEANLINESS — attestation asserts working tree + index clean at
-the branch tip. Every clean-tree assertion runs IN-CONTAINER via `git status
---porcelain=v1 --untracked-files=all == ""` (verifierprojection.go:32 closest
-analog; host never runs Git per ADR-016 D5; mc-land's host dirty fence at
-runner/image/mc-land:433 resolves empty for store-linked worktrees per D8), so
-cleanliness moves into a store-mounted `mc __…` subcommand launched like
-`__setup-verifier-projection` (effects.ts:482). Scope the exact seam (label vs
-projected-set; new subcommand shape) before implementing. Then S4–S6; the Darwin
-private-frame carrier (S1.4c-2c) is owed but non-blocking. See ADR-025 §Slices +
-the 2026-07-23 D6-fence scout in docs/ledger/phase-5.md.
+NEXT: ADR-025 S3b.3 — dispatch projection + child-spawn marker authoring (Go), the
+first LIVE-making slice for the D6 fence (S3b.1/S3b.2 landed the two inert halves:
+the resident `requireInitiativeChildrenAbsent` loop and the `mc
+__verify-initiative-clean` executor). Design decided (S3b scout, phase-5 ledger
+2026-07-24): mechanism A2 — dispatch projects the prior-child run-id SET into the
+frozen mount plan (positive inspect-by-name, no `mc-initiative-id` label / no
+`docker ps --filter` enumeration-trust surface). Build: (a)
+`LoadInitiativePriorChildRuns(ctx,q,initiativeID)` — all `runs.id` whose subject ∈
+`tasks WHERE initiative_id=I`, excluding the current run (schema.sql:698-704 runs
+→ tasks(id)); (b) freeze it into `DispatchMountState`
+(substrate/dispatch_mount_projection.go:17, new `SubjectInitiativePriorChildRuns
+[]string`, omitempty) via the SubjectInitiativeSetup projection keyed on
+SubjectInitiativeID:269; (c) emit an `InitiativeChild` marker (new
+`MountPlan.initiative_child` sibling in resident types.ts, mirrored on the Go
+`PrivateDispatch…` carrier) in the initiative-child attest arm — the arm resolving
+`initiativePlanRows` (mountattest.go:346-368, the S2/S3a RO arms). Marker carries
+the prior-child run-id set + store/worktree identities + branch. Token/DeepEqual/
+plan-digest fences must hold; a sibling run opening between prepare and commit
+yields a stale-class inert refusal (harmless, as the setup/landing lanes already
+accept). Tests: marker carries the right set+identities+branch; stale-set refusal.
+Then S3b.4 (resident wiring at the effects.ts:683 create path — gate
+`requireInitiativeChildrenAbsent` + launch `mc __verify-initiative-clean`, making
+it LIVE), S3b.5 (deps/e2e). Then S4–S6; the Darwin private-frame carrier
+(S1.4c-2c) is owed but non-blocking. See ADR-025 §Slices + the D6-fence scout
+(phase-5 ledger, 2026-07-23 + 2026-07-24).
